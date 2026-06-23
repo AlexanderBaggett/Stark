@@ -7559,6 +7559,25 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void EquivalentFfiDeclarationsWithCallbackParametersShareLinkName()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_start")]
+            unsafe ffi(c) fn i32[min max] StartA(fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(rawmutptr<i8[min max]>)> callback);
+
+            [LinkName("native_start")]
+            unsafe ffi(c) fn i32[min max] StartB(fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(rawmutptr<i8[min max]>)> callback);
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+    }
+
+    [Fact]
     public void ExplicitFfiAbiModifiersEmitLlvmCallingConventions()
     {
         var result = Compile(

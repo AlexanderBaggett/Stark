@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Stark.Parsing;
@@ -14,7 +17,7 @@ internal sealed record ModuleOptimizationSafetyFacts(
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|--host-test-inspect|--host-test-server] [-I dir|--search-dir dir]* [--no-stark-path] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [--package-image-json] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [command|path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|doctor|inspect-pkg|inspect-package|--host-test-inspect|--host-test-server] [-I dir|--search-dir dir]* [--no-stark-path] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [--package-image-json] [--package-typed-only] [--package-profile dev|release] [--format text|json] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [--strict-integer-ranges] [--toolchain-dir dir] [--llvm-lib path] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
     private static readonly IReadOnlySet<string> EmptyImportedInlineCloneSeedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
@@ -48,13 +51,19 @@ internal static class CompilerCli
         var targetFeatures = new List<string>();
         var relocationModel = LlvmRelocationModel.Default;
         LlvmCodeModel? codeModel = null;
+        string? toolchainDirectory = null;
+        string? llvmLibraryPath = null;
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
         string? toolchainMetricsPath = null;
         string? packageLibraryFile = null;
         string? packageImageOutputPath = null;
+        string? packageProfile = null;
         var emitPackageImageJson = false;
+        var emitTypedOnlyPackageImage = false;
+        var packageInspectionFormat = PackageInspectionFormat.Text;
+        var hasPackageInspectionFormat = false;
         var diagnosticFormat = DiagnosticOutputFormat.Text;
         var logLevel = DiagnosticSeverity.Warning;
         var logVerbosity = CompilerLogVerbosity.Normal;
@@ -165,6 +174,46 @@ internal static class CompilerCli
             if (TryReadOptionValue(argument, "--archiver", args, ref index, out var archiverValue))
             {
                 archiverTool = archiverValue;
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--toolchain-dir", args, ref index, out var toolchainDirectoryValue))
+            {
+                if (string.IsNullOrWhiteSpace(toolchainDirectoryValue))
+                {
+                    await stderr.WriteLineAsync("Toolchain directory must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                toolchainDirectory = Path.GetFullPath(Environment.ExpandEnvironmentVariables(toolchainDirectoryValue.Trim()));
+                if (!Directory.Exists(toolchainDirectory))
+                {
+                    await stderr.WriteLineAsync($"Toolchain directory '{toolchainDirectory}' was not found.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--llvm-lib", args, ref index, out var llvmLibraryValue))
+            {
+                if (string.IsNullOrWhiteSpace(llvmLibraryValue))
+                {
+                    await stderr.WriteLineAsync("LLVM library path must not be empty.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                llvmLibraryPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(llvmLibraryValue.Trim()));
+                if (!File.Exists(llvmLibraryPath))
+                {
+                    await stderr.WriteLineAsync($"LLVM library '{llvmLibraryPath}' was not found.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
                 continue;
             }
 
@@ -296,9 +345,27 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (TryReadOptionValue(argument, "--package-profile", args, ref index, out var packageProfileValue))
+            {
+                if (!TryParsePackageProfile(packageProfileValue, out packageProfile))
+                {
+                    await stderr.WriteLineAsync($"Unknown package profile '{packageProfileValue}'. Expected dev or release.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                continue;
+            }
+
             if (string.Equals(argument, "--package-image-json", StringComparison.Ordinal))
             {
                 emitPackageImageJson = true;
+                continue;
+            }
+
+            if (string.Equals(argument, "--package-typed-only", StringComparison.Ordinal))
+            {
+                emitTypedOnlyPackageImage = true;
                 continue;
             }
 
@@ -323,6 +390,19 @@ internal static class CompilerCli
                     return 1;
                 }
 
+                continue;
+            }
+
+            if (TryReadOptionValue(argument, "--format", args, ref index, out var packageInspectionFormatValue))
+            {
+                if (!TryParsePackageInspectionFormat(packageInspectionFormatValue, out packageInspectionFormat))
+                {
+                    await stderr.WriteLineAsync($"Unknown package inspection format '{packageInspectionFormatValue}'. Expected text or json.");
+                    await stderr.WriteLineAsync(Usage);
+                    return 1;
+                }
+
+                hasPackageInspectionFormat = true;
                 continue;
             }
 
@@ -443,6 +523,13 @@ internal static class CompilerCli
             return 0;
         }
 
+        if (hasPackageInspectionFormat && mode != CliMode.InspectPackage)
+        {
+            await stderr.WriteLineAsync("--format is only valid for inspect-pkg.");
+            await stderr.WriteLineAsync(Usage);
+            return 1;
+        }
+
         if (mode == CliMode.InspectPackage)
         {
             if (packageImageOutputPath is not null)
@@ -452,7 +539,79 @@ internal static class CompilerCli
                 return 1;
             }
 
-            return await InspectPackageImageAsync(inputPath, outputPath, stdin, stdout, stderr, diagnosticFormat);
+            if (emitTypedOnlyPackageImage)
+            {
+                await stderr.WriteLineAsync("--package-typed-only is only valid for package emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            return await InspectPackageImageAsync(inputPath, outputPath, packageInspectionFormat, stdin, stdout, stderr, diagnosticFormat);
+        }
+
+        var nativeToolchain = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+            CliToolchainDirectory: toolchainDirectory,
+            LinkerTool: linkerTool,
+            ArchiverTool: archiverTool,
+            LlvmLibraryPath: llvmLibraryPath));
+        var nativeDependencies = new NativeDependencyCliOptions(
+            nativeSources,
+            nativeIncludeDirectories,
+            nativeLibraryDirectories,
+            nativeLibraries,
+            nativePkgConfigPackages,
+            nativeLinkArguments);
+
+        if (mode == CliMode.Doctor)
+        {
+            if (inputPath is not null)
+            {
+                await stderr.WriteLineAsync("doctor does not take a source input path.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (outputPath is not null)
+            {
+                await stderr.WriteLineAsync("-o is not valid for doctor.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (packageImageOutputPath is not null)
+            {
+                await stderr.WriteLineAsync("--package-image-output is only valid for library emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (emitPackageImageJson)
+            {
+                await stderr.WriteLineAsync("--package-image-json is only valid for package emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            if (emitTypedOnlyPackageImage)
+            {
+                await stderr.WriteLineAsync("--package-typed-only is only valid for package emission.");
+                await stderr.WriteLineAsync(Usage);
+                return 1;
+            }
+
+            return await RunDoctorAsync(
+                stdout,
+                targetTriple,
+                targetDataLayout,
+                targetCpu,
+                targetFeatures,
+                relocationModel,
+                codeModel,
+                linkerTool,
+                archiverTool,
+                nativeToolchain,
+                nativeDependencies,
+                useStarkPathEnvironment);
         }
 
         var requiresTargetInfo = mode is CliMode.Default
@@ -467,7 +626,8 @@ internal static class CompilerCli
             targetCpu,
             targetFeatures,
             relocationModel,
-            codeModel);
+            codeModel,
+            nativeToolchain);
         var source = inputPath is not null
             ? await File.ReadAllTextAsync(inputPath)
             : await stdin.ReadToEndAsync();
@@ -478,6 +638,13 @@ internal static class CompilerCli
         if (packageImageOutputPath is not null && effectiveMode != CliMode.EmitLibrary)
         {
             await stderr.WriteLineAsync("--package-image-output is only valid for library emission.");
+            await stderr.WriteLineAsync(Usage);
+            return 1;
+        }
+
+        if (emitTypedOnlyPackageImage && effectiveMode is not (CliMode.EmitLibrary or CliMode.EmitPackage))
+        {
+            await stderr.WriteLineAsync("--package-typed-only is only valid for package emission.");
             await stderr.WriteLineAsync(Usage);
             return 1;
         }
@@ -499,16 +666,10 @@ internal static class CompilerCli
             // functions outside that reachable set are dead weight. Inspection modes
             // (--check/--emit-mir/--emit-ssa/--emit-llvm) keep the full lowered view.
             PruneUnusedLoweredFunctions: effectiveMode is CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable);
-        var nativeDependencies = new NativeDependencyCliOptions(
-            nativeSources,
-            nativeIncludeDirectories,
-            nativeLibraryDirectories,
-            nativeLibraries,
-            nativePkgConfigPackages,
-            nativeLinkArguments);
         var toolchainOptions = new ToolchainCliOptions(
             linkerTool,
             archiverTool,
+            nativeToolchain,
             librarySearchDirectories,
             linkArguments,
             saveTempsDirectory,
@@ -527,6 +688,16 @@ internal static class CompilerCli
             return 1;
         }
 
+        if (RequiresBackendTargetValidation(effectiveMode))
+        {
+            var targetDiagnostics = TargetCompatibilityValidator.ValidateBeforeBackendUse(result, compilerOptions.TargetInfo, inputPath, packageProfile);
+            if (targetDiagnostics.Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            {
+                await WriteDiagnosticsAsync(stderr, result.Diagnostics.Concat(targetDiagnostics).ToArray(), diagnosticFormat, succeeded: false, source, inputPath);
+                return 1;
+            }
+        }
+
         await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: true, source, inputPath);
 
         switch (effectiveMode)
@@ -543,11 +714,11 @@ internal static class CompilerCli
             case CliMode.EmitObject:
                 return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitLibrary:
-                return await EmitLibraryAsync(outputPath, packageImageOutputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat, emitPackageImageJson);
+                return await EmitLibraryAsync(outputPath, packageImageOutputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat, emitPackageImageJson, emitTypedOnlyPackageImage, packageProfile);
             case CliMode.EmitExecutable:
                 return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
             case CliMode.EmitPackage:
-                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat, emitPackageImageJson);
+                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat, emitPackageImageJson, emitTypedOnlyPackageImage, packageProfile);
             default:
                 throw new InvalidOperationException($"Unhandled compiler mode '{effectiveMode}'.");
         }
@@ -573,7 +744,7 @@ internal static class CompilerCli
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
-        var canUseExecutableLto = ShouldEnableExecutableLto(toolchainOptions.LinkerTool);
+        var canUseExecutableLto = ShouldEnableExecutableLto(toolchainOptions.Toolchain);
         var enableRootModuleLto = canUseExecutableLto
                                   && ShouldEnableRootModuleLto(result);
         var enableDependencyLto = canUseExecutableLto;
@@ -588,7 +759,8 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                enableLto: enableRootModuleLto);
+                enableLto: enableRootModuleLto,
+                toolchain: toolchainOptions.Toolchain);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
@@ -644,6 +816,7 @@ internal static class CompilerCli
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
                     toolchainMetrics: toolchainMetrics,
                     enableLto: enableDependencyLto,
+                    toolchain: toolchainOptions.Toolchain,
                     importedInlineCloneSeedsByModule);
                 if (!sourceDependencyResult.Success)
                 {
@@ -705,7 +878,8 @@ internal static class CompilerCli
                 combinedLibrarySearchDirectories,
                 linkArguments,
                 compilerOptions.TargetInfo,
-                enableRootModuleLto || enableDependencyLto);
+                enableRootModuleLto || enableDependencyLto,
+                toolchainOptions.Toolchain);
             toolchainMetrics.AddLink(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
@@ -760,7 +934,9 @@ internal static class CompilerCli
         CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions,
         DiagnosticOutputFormat diagnosticFormat,
-        bool emitPackageImageJson)
+        bool emitPackageImageJson,
+        bool emitTypedOnlyPackageImage,
+        string? packageProfile)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -771,7 +947,7 @@ internal static class CompilerCli
         var resolvedOutputPath = outputPath ?? DeriveLibraryOutputPath(inputPath, result);
         var objectPaths = new List<string>();
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-lib-", out var cleanupDirectory);
-        var canUseLibraryLto = ShouldEnableLibraryLto();
+        var canUseLibraryLto = ShouldEnableLibraryLto(toolchainOptions.Toolchain);
         var enableRootModuleLto = canUseLibraryLto
                                   && ShouldEnableRootModuleLto(result);
         var enableDependencyLto = canUseLibraryLto;
@@ -786,7 +962,8 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                enableLto: enableRootModuleLto);
+                enableLto: enableRootModuleLto,
+                toolchain: toolchainOptions.Toolchain);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
             {
@@ -835,7 +1012,8 @@ internal static class CompilerCli
                         intermediateDirectory,
                         preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
                         toolchainMetrics: null,
-                        enableLto: dependencyLtoDecisions[index]));
+                        enableLto: dependencyLtoDecisions[index],
+                        toolchain: toolchainOptions.Toolchain));
 
                 foreach (var dependencyResult in dependencyResults)
                 {
@@ -868,7 +1046,11 @@ internal static class CompilerCli
                 }
             }
 
-            var toolchainResult = NativeToolchain.CreateStaticLibrary(objectPaths, resolvedOutputPath, toolchainOptions.ArchiverTool);
+            var toolchainResult = NativeToolchain.CreateStaticLibrary(
+                objectPaths,
+                resolvedOutputPath,
+                toolchainOptions.ArchiverTool,
+                toolchainOptions.Toolchain);
             toolchainMetrics.AddArchive(toolchainResult);
             if (!toolchainResult.Succeeded)
             {
@@ -890,16 +1072,19 @@ internal static class CompilerCli
                 packageImageOutputPath ?? DeriveLibraryManifestPath(toolchainResult.OutputPath, inputPath, result)));
             var manifestDirectory = Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory;
             Directory.CreateDirectory(manifestDirectory);
-            var manifest = PackageImageBuilder.Create(
-                result,
-                toolchainResult.OutputPath,
-                BuildPackageNativeDependencyManifest(
-                    toolchainOptions.NativeDependencies,
-                    manifestDirectory,
-                    requiresMathLibrary,
-                    requiresWinsockLibrary,
-                    requiresWindowsSynchronizationLibrary,
-                    requiresNtDllLibrary))
+            var manifest = PreparePackageImageForOutput(
+                PackageImageBuilder.Create(
+                    result,
+                    toolchainResult.OutputPath,
+                    BuildPackageNativeDependencyManifest(
+                        toolchainOptions.NativeDependencies,
+                        manifestDirectory,
+                        requiresMathLibrary,
+                        requiresWinsockLibrary,
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary),
+                    packageProfile),
+                emitTypedOnlyPackageImage)
                 with
                 {
                     LibraryFileName = BuildPackageLibraryReference(toolchainResult.OutputPath, manifestPath)
@@ -957,7 +1142,8 @@ internal static class CompilerCli
             llvmModule.Text,
             resolvedOutputPath,
             preservedLlvmOutputPath: preservedLlvmPath,
-            targetInfo: compilerOptions.TargetInfo);
+            targetInfo: compilerOptions.TargetInfo,
+            toolchain: toolchainOptions.Toolchain);
         toolchainMetrics.AddLlvmObject(toolchainResult);
         if (!toolchainResult.Succeeded)
         {
@@ -998,15 +1184,20 @@ internal static class CompilerCli
         string? packageLibraryFile,
         NativeDependencyCliOptions nativeDependencies,
         DiagnosticOutputFormat diagnosticFormat,
-        bool emitPackageImageJson)
+        bool emitPackageImageJson,
+        bool emitTypedOnlyPackageImage,
+        string? packageProfile)
     {
         var packageLibraryFileName = ResolvePackageLibraryFileName(packageLibraryFile, inputPath, result);
         var resolvedOutputPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(
             outputPath ?? DerivePackageImageOutputPath(inputPath, result, packageLibraryFileName)));
-        var packageImage = PackageImageBuilder.Create(
-            result,
-            packageLibraryFileName,
-            nativeDependencies.ToManifest(Path.GetDirectoryName(resolvedOutputPath) ?? Environment.CurrentDirectory));
+        var packageImage = PreparePackageImageForOutput(
+            PackageImageBuilder.Create(
+                result,
+                packageLibraryFileName,
+                nativeDependencies.ToManifest(Path.GetDirectoryName(resolvedOutputPath) ?? Environment.CurrentDirectory),
+                packageProfile),
+            emitTypedOnlyPackageImage);
         var diagnostics = PackageImageLoader.ValidateManifest(packageImage, inputPath);
         if (diagnostics.Count > 0)
         {
@@ -1030,15 +1221,65 @@ internal static class CompilerCli
         return 0;
     }
 
+    private static StarkPackageManifest PreparePackageImageForOutput(
+        StarkPackageManifest packageImage,
+        bool emitTypedOnlyPackageImage)
+    {
+        return emitTypedOnlyPackageImage
+            ? StripPackageSourceSurface(packageImage)
+            : packageImage;
+    }
+
+    private static StarkPackageManifest StripPackageSourceSurface(StarkPackageManifest packageImage)
+    {
+        return packageImage with
+        {
+            Modules = packageImage.Modules
+                .Select(static module =>
+                {
+                    var typedInterface = module.EffectiveTypedInterface;
+                    var compilerFacts = module.EffectiveCompilerFacts;
+                    var genericTemplates = module.EffectiveGenericTemplates;
+                    var sourceSurface = module.EffectiveSourceSurface;
+
+                    return module with
+                    {
+                        Functions = [],
+                        Types = [],
+                        Globals = [],
+                        TypeAliases = [],
+                        TypedInterface = typedInterface,
+                        CompilerFacts = compilerFacts,
+                        GenericTemplates = genericTemplates,
+                        Imports = null,
+                        SourceSurface = new StarkPackageSourceSurfaceSection(
+                            Imports: sourceSurface.Imports,
+                            ReExports: sourceSurface.ReExports,
+                            Functions: [],
+                            Types: [],
+                            Globals: [],
+                            TypeAliases: []),
+                        CompilerSections = new StarkPackageCompilerSectionsManifest(
+                            TypedInterface: typedInterface,
+                            CompilerFacts: compilerFacts,
+                            GenericTemplates: genericTemplates)
+                    };
+                })
+                .ToArray()
+        };
+    }
+
     private static async Task<int> InspectPackageImageAsync(
         string? inputPath,
         string? outputPath,
+        PackageInspectionFormat inspectionFormat,
         TextReader stdin,
         TextWriter stdout,
         TextWriter stderr,
         DiagnosticOutputFormat diagnosticFormat)
     {
-        string json;
+        StarkPackageManifest manifest;
+        IReadOnlyList<CompilerDiagnostic> diagnostics;
         string sourceName;
 
         if (inputPath is not null)
@@ -1052,33 +1293,38 @@ internal static class CompilerCli
             }
 
             var bytes = await File.ReadAllBytesAsync(fullPath);
-            if (PackageImageBinaryFormat.HasBinaryMagic(bytes))
+            if (PackageImageBinaryFormat.HasBinaryMagic(bytes)
+                || PackageImageBinaryFormat.HasBinaryFileName(fullPath))
             {
-                if (!PackageImageBinaryFormat.TryDecode(bytes, out var binaryManifest))
+                if (!PackageImageBinaryFormat.TryDecode(bytes, fullPath, out manifest, out diagnostics))
                 {
-                    await stderr.WriteLineAsync($"Package image file '{fullPath}' is not a readable binary package image.");
+                    await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
                     return 1;
                 }
 
-                json = binaryManifest.ToJson();
+                diagnostics = PackageImageLoader.ValidateManifest(manifest, fullPath);
             }
             else
             {
-                json = System.Text.Encoding.UTF8.GetString(bytes);
+                var json = System.Text.Encoding.UTF8.GetString(bytes);
+                if (!PackageImageLoader.TryParseManifestJson(json, fullPath, out manifest, out diagnostics))
+                {
+                    await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+                    return 1;
+                }
             }
 
             sourceName = fullPath;
         }
         else
         {
-            json = await stdin.ReadToEndAsync();
             sourceName = "<stdin>";
-        }
-
-        if (!PackageImageLoader.TryParseManifestJson(json, sourceName, out var manifest, out var diagnostics))
-        {
-            await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
-            return 1;
+            var json = await stdin.ReadToEndAsync();
+            if (!PackageImageLoader.TryParseManifestJson(json, sourceName, out manifest, out diagnostics))
+            {
+                await WriteDiagnosticsAsync(stderr, diagnostics, diagnosticFormat, succeeded: false);
+                return 1;
+            }
         }
 
         if (diagnostics.Count > 0)
@@ -1090,7 +1336,12 @@ internal static class CompilerCli
             }
         }
 
-        var inspection = RenderPackageImageInspection(sourceName, manifest);
+        var inspection = inspectionFormat switch
+        {
+            PackageInspectionFormat.Text => RenderPackageImageInspection(sourceName, manifest),
+            PackageInspectionFormat.Json => manifest.ToJson(),
+            _ => RenderPackageImageInspection(sourceName, manifest)
+        };
         if (outputPath is not null)
         {
             await File.WriteAllTextAsync(Path.GetFullPath(outputPath), inspection);
@@ -1109,6 +1360,16 @@ internal static class CompilerCli
         builder.AppendLine($"package image: {sourceName}");
         builder.AppendLine($"root module: {manifest.RootModule}");
         builder.AppendLine($"library file: {manifest.LibraryFileName}");
+        builder.AppendLine($"build profile: {manifest.BuildProfile?.Name ?? "<unspecified>"}");
+        builder.AppendLine($"target: {manifest.Target?.Triple ?? "<unspecified>"}");
+        if (manifest.Target is not null)
+        {
+            builder.AppendLine($"target data layout: {manifest.Target.DataLayout ?? "<unspecified>"}");
+            builder.AppendLine($"target c data model: {manifest.Target.CDataModel?.Kind ?? "<unresolved>"}");
+            builder.AppendLine(
+                $"target aggregate layout: pointer-size={manifest.Target.AggregateLayout?.PointerSizeBytes.ToString() ?? "<unresolved>"}, pointer-align={manifest.Target.AggregateLayout?.PointerAlignmentBytes.ToString() ?? "<unresolved>"}");
+        }
+
         builder.AppendLine($"module count: {manifest.Modules.Count}");
         builder.AppendLine(
             $"native dependencies: sources={manifest.NativeDependencies?.Sources?.Count ?? 0}, includes={manifest.NativeDependencies?.IncludeDirectories?.Count ?? 0}, library-dirs={manifest.NativeDependencies?.LibraryDirectories?.Count ?? 0}, libraries={manifest.NativeDependencies?.Libraries?.Count ?? 0}, pkg-config={manifest.NativeDependencies?.PkgConfigPackages?.Count ?? 0}, link-args={manifest.NativeDependencies?.LinkArguments?.Count ?? 0}");
@@ -1135,6 +1396,542 @@ internal static class CompilerCli
 
         return builder.ToString().TrimEnd();
     }
+
+    private static async Task<int> RunDoctorAsync(
+        TextWriter stdout,
+        string? targetTriple,
+        string? targetDataLayout,
+        string? targetCpu,
+        IReadOnlyList<string> targetFeatures,
+        LlvmRelocationModel relocationModel,
+        LlvmCodeModel? codeModel,
+        string? linkerTool,
+        string? archiverTool,
+        NativeToolchainResolution toolchain,
+        NativeDependencyCliOptions nativeDependencies,
+        bool useStarkPathEnvironment)
+    {
+        var targetInfo = ResolveTargetInfo(
+            requiresTargetInfo: true,
+            targetTriple,
+            targetDataLayout,
+            targetCpu,
+            targetFeatures,
+            relocationModel,
+            codeModel,
+            toolchain);
+        var assembly = typeof(CompilerCli).Assembly;
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "<unknown>";
+
+        await stdout.WriteLineAsync("Stark doctor");
+        await stdout.WriteLineAsync("compiler:");
+        await stdout.WriteLineAsync($"  version: {informationalVersion}");
+        await stdout.WriteLineAsync($"  path: {assembly.Location}");
+        await stdout.WriteLineAsync("runtime:");
+        await stdout.WriteLineAsync($"  runtime id: {RuntimeInformation.RuntimeIdentifier}");
+        await stdout.WriteLineAsync($"  framework: {RuntimeInformation.FrameworkDescription}");
+        await stdout.WriteLineAsync($"  os: {RuntimeInformation.OSDescription}");
+        await stdout.WriteLineAsync($"  process architecture: {RuntimeInformation.ProcessArchitecture}");
+        await stdout.WriteLineAsync("target:");
+        await stdout.WriteLineAsync($"  triple: {targetInfo?.Triple ?? "<unresolved>"}");
+        await stdout.WriteLineAsync($"  data layout: {FormatOptionalDoctorValue(targetInfo?.DataLayout)}");
+        await stdout.WriteLineAsync($"  cpu: {FormatOptionalDoctorValue(targetInfo?.Cpu)}");
+        await stdout.WriteLineAsync($"  features: {FormatListDoctorValue(targetInfo?.Features)}");
+        await stdout.WriteLineAsync($"  relocation model: {FormatRelocationModel(targetInfo?.RelocationModel ?? relocationModel)}");
+        await stdout.WriteLineAsync($"  code model: {(targetInfo?.CodeModel ?? codeModel)?.ToString().ToLowerInvariant() ?? "<default>"}");
+        await stdout.WriteLineAsync($"  c data model: {FormatCDataModel(targetInfo)}");
+        await stdout.WriteLineAsync("toolchain:");
+
+        WriteDoctorToolchainSearchRoots(stdout, toolchain);
+        var clangOk = await WriteDoctorToolProbeAsync(stdout, "clang", toolchain.Clang, "--version");
+        var linkerOk = await WriteDoctorToolProbeAsync(stdout, "linker", toolchain.Linker, "--version");
+        var archiverOk = await WriteDoctorToolProbeAsync(stdout, "archiver", toolchain.Archiver, "--version");
+        var lldOk = await WriteDoctorToolProbeAsync(stdout, "lld", toolchain.Lld, "--version");
+        var pkgConfigOk = await WriteDoctorToolProbeAsync(stdout, "pkg-config", toolchain.PkgConfig, "--version");
+        var llvmOk = WriteDoctorResolvedFile(stdout, "libLLVM", toolchain.LlvmLibrary);
+        var xcrunOk = !OperatingSystem.IsMacOS()
+            || await WriteDoctorToolProbeAsync(stdout, "xcrun", toolchain.Xcrun, "--version");
+
+        await stdout.WriteLineAsync("sdk:");
+        var sdkOk = WriteDoctorSdkStatus(stdout, targetInfo, toolchain);
+        await stdout.WriteLineAsync("libraries:");
+        var stdlibOk = WriteDoctorLibraryStatus(stdout, "stdlib", useStarkPathEnvironment);
+        var vendorOk = WriteDoctorLibraryStatus(stdout, "vendor", useStarkPathEnvironment);
+        await stdout.WriteLineAsync("diagnostics:");
+        var hasDiagnosticWarnings = WriteDoctorDiagnostics(
+            stdout,
+            targetInfo,
+            linkerTool,
+            archiverTool,
+            nativeDependencies,
+            clangOk,
+            linkerOk,
+            archiverOk,
+            lldOk,
+            pkgConfigOk,
+            llvmOk,
+            xcrunOk,
+            sdkOk,
+            stdlibOk,
+            vendorOk);
+
+        var hasWarnings = !clangOk
+            || !linkerOk
+            || !archiverOk
+            || !lldOk
+            || !pkgConfigOk
+            || !llvmOk
+            || !xcrunOk
+            || !sdkOk
+            || !stdlibOk
+            || !vendorOk
+            || hasDiagnosticWarnings
+            || targetInfo is null;
+        await stdout.WriteLineAsync($"status: {(hasWarnings ? "warnings" : "ok")}");
+        return 0;
+    }
+
+    private static void WriteDoctorToolchainSearchRoots(TextWriter stdout, NativeToolchainResolution toolchain)
+    {
+        if (toolchain.SearchRoots.Count == 0)
+        {
+            stdout.WriteLine("  search roots: <none>");
+            return;
+        }
+
+        stdout.WriteLine("  search roots:");
+        foreach (var root in toolchain.SearchRoots)
+        {
+            stdout.WriteLine($"    {root}");
+        }
+    }
+
+    private static async Task<bool> WriteDoctorToolProbeAsync(
+        TextWriter stdout,
+        string label,
+        NativeResolvedTool tool,
+        string versionArgument)
+    {
+        if (!tool.IsAvailable)
+        {
+            await stdout.WriteLineAsync($"  {label}: <missing> ({tool.RequestedName}, {FormatResolutionSource(tool.Source)})");
+            return false;
+        }
+
+        var version = await ReadToolVersionAsync(tool.Path!, versionArgument);
+        await stdout.WriteLineAsync($"  {label}: {tool.Path} ({FormatResolutionSource(tool.Source)}, {version})");
+        return true;
+    }
+
+    private static bool WriteDoctorResolvedFile(TextWriter stdout, string label, NativeResolvedFile file)
+    {
+        if (!file.IsAvailable)
+        {
+            stdout.WriteLine($"  {label}: <missing> ({file.RequestedName}, {FormatResolutionSource(file.Source)})");
+            return false;
+        }
+
+        stdout.WriteLine($"  {label}: {file.Path} ({FormatResolutionSource(file.Source)})");
+        return true;
+    }
+
+    private static bool WriteDoctorSdkStatus(TextWriter stdout, LlvmTargetInfo? targetInfo, NativeToolchainResolution toolchain)
+    {
+        if (!NativeToolchain.ShouldUseMacOSPlatformSdkForTarget(targetInfo))
+        {
+            stdout.WriteLine("  macos: not required for this host/target");
+            return true;
+        }
+
+        if (NativeToolchain.TryResolveMacOSSdkRoot(out var sdkRoot, toolchain))
+        {
+            stdout.WriteLine($"  macos: {sdkRoot}");
+            return true;
+        }
+
+        stdout.WriteLine("  macos: <missing>");
+        return false;
+    }
+
+    private static string FormatResolutionSource(NativeToolchainResolutionSource source)
+    {
+        return source switch
+        {
+            NativeToolchainResolutionSource.CliOverride => "cli",
+            NativeToolchainResolutionSource.EnvironmentOverride => "environment",
+            NativeToolchainResolutionSource.UserConfig => "user config",
+            NativeToolchainResolutionSource.Bundled => "bundled",
+            NativeToolchainResolutionSource.Path => "PATH",
+            NativeToolchainResolutionSource.Missing => "missing",
+            _ => source.ToString()
+        };
+    }
+
+    private static bool WriteDoctorDiagnostics(
+        TextWriter stdout,
+        LlvmTargetInfo? targetInfo,
+        string? linkerTool,
+        string? archiverTool,
+        NativeDependencyCliOptions nativeDependencies,
+        bool clangOk,
+        bool linkerOk,
+        bool archiverOk,
+        bool lldOk,
+        bool pkgConfigOk,
+        bool llvmOk,
+        bool xcrunOk,
+        bool sdkOk,
+        bool stdlibOk,
+        bool vendorOk)
+    {
+        var diagnostics = BuildDoctorDiagnostics(
+            targetInfo,
+            linkerTool,
+            archiverTool,
+            nativeDependencies,
+            clangOk,
+            linkerOk,
+            archiverOk,
+            lldOk,
+            pkgConfigOk,
+            llvmOk,
+            xcrunOk,
+            sdkOk,
+            stdlibOk,
+            vendorOk).ToArray();
+
+        if (diagnostics.Length == 0)
+        {
+            stdout.WriteLine("  none");
+            return false;
+        }
+
+        var hasWarnings = false;
+        foreach (var diagnostic in diagnostics)
+        {
+            stdout.WriteLine($"  {diagnostic.Severity}: {diagnostic.Area}: {diagnostic.Message}");
+            hasWarnings |= string.Equals(diagnostic.Severity, "warning", StringComparison.Ordinal);
+        }
+
+        return hasWarnings;
+    }
+
+    private static IEnumerable<DoctorDiagnostic> BuildDoctorDiagnostics(
+        LlvmTargetInfo? targetInfo,
+        string? linkerTool,
+        string? archiverTool,
+        NativeDependencyCliOptions nativeDependencies,
+        bool clangOk,
+        bool linkerOk,
+        bool archiverOk,
+        bool lldOk,
+        bool pkgConfigOk,
+        bool llvmOk,
+        bool xcrunOk,
+        bool sdkOk,
+        bool stdlibOk,
+        bool vendorOk)
+    {
+        if (targetInfo is null)
+        {
+            yield return DoctorWarning(
+                "target",
+                "default target facts could not be detected; pass --target and --target-data-layout when building without a detectable clang target.");
+        }
+
+        if (!clangOk)
+        {
+            yield return DoctorWarning(
+                "toolchain",
+                "clang is missing; install a Stark archive with the bundled toolchain, pass --toolchain-dir, set STARK_TOOLCHAIN_DIR, or set STARK_CLANG.");
+        }
+
+        if (!linkerOk)
+        {
+            var overrideHint = string.IsNullOrWhiteSpace(linkerTool)
+                ? "pass --linker or provide the bundled linker through --toolchain-dir/STARK_TOOLCHAIN_DIR"
+                : $"the --linker override '{linkerTool.Trim()}' was not found";
+            yield return DoctorWarning(
+                "linker",
+                $"executable links cannot run because the linker is missing; {overrideHint}.");
+        }
+
+        if (!archiverOk)
+        {
+            var overrideHint = string.IsNullOrWhiteSpace(archiverTool)
+                ? "pass --archiver or provide the bundled archiver through --toolchain-dir/STARK_TOOLCHAIN_DIR"
+                : $"the --archiver override '{archiverTool.Trim()}' was not found";
+            yield return DoctorWarning(
+                "archiver",
+                $"static-library output cannot run because the archiver is missing; {overrideHint}.");
+        }
+
+        if (!lldOk)
+        {
+            yield return DoctorWarning(
+                "link-time optimization",
+                "lld is missing, so ThinLTO and the fastest executable link path are unavailable; use the bundled LLVM toolchain or put ld.lld/lld-link on PATH.");
+        }
+
+        if (!llvmOk)
+        {
+            yield return DoctorWarning(
+                "libLLVM",
+                "the libLLVM backend library is missing; pass --llvm-lib, set STARK_LLVM_LIB, or use --toolchain-dir/STARK_TOOLCHAIN_DIR.");
+        }
+
+        if (!xcrunOk)
+        {
+            yield return DoctorWarning(
+                "macos sdk",
+                "xcrun is missing; install Xcode Command Line Tools or full Xcode so macOS SDK discovery can run.");
+        }
+
+        if (!sdkOk)
+        {
+            yield return DoctorWarning(
+                "macos sdk",
+                "the macOS SDK root is missing; install Xcode Command Line Tools, install full Xcode, or set SDKROOT to a usable SDK.");
+        }
+
+        if (!stdlibOk)
+        {
+            yield return DoctorWarning(
+                "stdlib",
+                "the standard library was not found in the bundled archive, repo development roots, or STARK_PATH.");
+        }
+
+        if (!vendorOk)
+        {
+            yield return DoctorWarning(
+                "vendor",
+                "the official vendor library was not found in the bundled archive, repo development roots, or STARK_PATH.");
+        }
+
+        if (IsWindowsTarget(targetInfo))
+        {
+            yield return DoctorNote(
+                "windows crt",
+                "Windows executable links use the current linker-driver path and require Windows SDK/CRT import libraries to be visible to that driver.");
+        }
+
+        if (IsLinuxTarget(targetInfo))
+        {
+            yield return DoctorNote(
+                "linux libc",
+                "Stark-owned Linux stdlib/runtime code uses syscalls and does not require libc/glibc; native or vendor dependencies may still require their own system libraries.");
+        }
+
+        if (!pkgConfigOk)
+        {
+            yield return DoctorWarning(
+                "pkg-config",
+                "pkg-config is unavailable; native/vendor packages that declare pkg-config metadata will fail unless they also provide explicit fallback include and library metadata.");
+        }
+
+        if (nativeDependencies.PkgConfigPackages.Count != 0)
+        {
+            yield return DoctorNote(
+                "pkg-config",
+                $"this invocation declares pkg-config packages: {string.Join(", ", nativeDependencies.PkgConfigPackages)}.");
+        }
+
+        if (nativeDependencies.HasAny)
+        {
+            yield return DoctorNote(
+                "native dependencies",
+                "this invocation declares native dependency metadata; verify source, include, library, and runtime paths for the selected target.");
+        }
+
+        yield return DoctorNote(
+            "native/vendor dependencies",
+            "package images may require pkg-config packages, explicit include/library directories, native sources, runtime DLL staging, or platform fallbacks; Stark releases remain relocatable archives and do not use package managers.");
+    }
+
+    private static DoctorDiagnostic DoctorWarning(string area, string message) => new("warning", area, message);
+
+    private static DoctorDiagnostic DoctorNote(string area, string message) => new("note", area, message);
+
+    private static bool IsLinuxTarget(LlvmTargetInfo? targetInfo)
+    {
+        if (targetInfo?.Triple is { Length: > 0 } triple)
+        {
+            return triple.Contains("linux", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return OperatingSystem.IsLinux();
+    }
+
+    private static bool WriteDoctorLibraryStatus(TextWriter stdout, string rootName, bool useStarkPathEnvironment)
+    {
+        stdout.WriteLine($"  {rootName}:");
+        var compilerDirectory = Path.GetDirectoryName(typeof(CompilerCli).Assembly.Location);
+        var available = false;
+        available |= WriteDoctorPathStatus(stdout, "    bundled", compilerDirectory is null ? null : Path.Combine(compilerDirectory, rootName));
+        available |= WriteDoctorPathStatus(stdout, "    repo dist", FindNearestExistingDirectory(rootName, "dist"));
+        available |= WriteDoctorPathStatus(stdout, "    repo src", FindNearestExistingDirectory(rootName, "src"));
+
+        if (!useStarkPathEnvironment)
+        {
+            stdout.WriteLine("    STARK_PATH: ignored by --no-stark-path");
+            return available;
+        }
+
+        var starkPath = Environment.GetEnvironmentVariable("STARK_PATH");
+        stdout.WriteLine($"    STARK_PATH: {FormatOptionalDoctorValue(starkPath)}");
+        return available || !string.IsNullOrWhiteSpace(starkPath);
+    }
+
+    private static bool WriteDoctorPathStatus(TextWriter stdout, string label, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            stdout.WriteLine($"{label}: <missing>");
+            return false;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var exists = Directory.Exists(fullPath);
+        stdout.WriteLine($"{label}: {(exists ? fullPath : "<missing>")}");
+        return exists;
+    }
+
+    private static string? FindNearestExistingDirectory(string rootName, string childName)
+    {
+        for (var directory = new DirectoryInfo(Environment.CurrentDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, rootName, childName);
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<string> ReadToolVersionAsync(string toolPath, string versionArgument)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = toolPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add(versionArgument);
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return "version unavailable";
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var exited = process.WaitForExit(2000);
+            if (!exited)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort timeout cleanup only.
+                }
+
+                return "version timed out";
+            }
+
+            var standardOutput = await stdoutTask;
+            var standardError = await stderrTask;
+            var text = standardOutput.Length != 0 ? standardOutput : standardError;
+            var firstLine = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            return string.IsNullOrWhiteSpace(firstLine) ? "version unavailable" : firstLine;
+        }
+        catch
+        {
+            return "version unavailable";
+        }
+    }
+
+    private static string? FindExecutableOnPath(string commandName)
+    {
+        if (Path.IsPathRooted(commandName) || commandName.Contains(Path.DirectorySeparatorChar) || commandName.Contains(Path.AltDirectorySeparatorChar))
+        {
+            return File.Exists(commandName) ? Path.GetFullPath(commandName) : null;
+        }
+
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var commandCandidates = BuildCommandCandidates(commandName);
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var commandCandidate in commandCandidates)
+            {
+                var candidate = Path.Combine(directory, commandCandidate);
+                if (File.Exists(candidate))
+                {
+                    return Path.GetFullPath(candidate);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<string> BuildCommandCandidates(string commandName)
+    {
+        if (Path.HasExtension(commandName) || !OperatingSystem.IsWindows())
+        {
+            return [commandName];
+        }
+
+        var candidates = new List<string> { commandName };
+        var extensions = Environment.GetEnvironmentVariable("PATHEXT")?
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            ?? [".COM", ".EXE", ".BAT", ".CMD"];
+
+        foreach (var extension in extensions)
+        {
+            candidates.Add($"{commandName}{extension}");
+        }
+
+        return candidates;
+    }
+
+    private static string FormatCDataModel(LlvmTargetInfo? targetInfo)
+    {
+        if (!StarkCDataModelFacts.TryResolve(targetInfo, out var dataModel))
+        {
+            return "<unresolved>";
+        }
+
+        return $"{dataModel.Kind}, pointer={dataModel.PointerBitWidth}, long={dataModel.LongBitWidth}, size_t={dataModel.SizeTBitWidth}, ptrdiff_t={dataModel.PtrDiffTBitWidth}, c_char={(dataModel.CharIsSigned ? "signed" : "unsigned")}";
+    }
+
+    private static string FormatOptionalDoctorValue(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "<default>" : value.Trim();
+
+    private static string FormatListDoctorValue(IReadOnlyList<string>? values) =>
+        values is null || values.Count == 0 ? "<default>" : string.Join(", ", values);
+
+    private static string FormatRelocationModel(LlvmRelocationModel model) =>
+        model.ToString().ToLowerInvariant();
 
     private static IModuleResolver? ResolveModuleResolver(
         string? inputPath,
@@ -1565,7 +2362,7 @@ internal static class CompilerCli
                     continue;
                 }
 
-                if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
+                if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest, out var loadDiagnostics))
                 {
                     diagnostics.Add(new CompilerDiagnostic(
                         Code: "STK7200",
@@ -1573,6 +2370,7 @@ internal static class CompilerCli
                         Message: $"Package image '{manifestPath}' could not be read while gathering native dependencies.",
                         Stage: "native-link",
                         Location: new SourceLocation(manifestPath, 1, 1)));
+                    diagnostics.AddRange(loadDiagnostics);
                     continue;
                 }
 
@@ -1684,7 +2482,8 @@ internal static class CompilerCli
                     sourcePath,
                     objectPath,
                     includeDirectories,
-                    compilerOptions.TargetInfo);
+                    compilerOptions.TargetInfo,
+                    toolchain: toolchainOptions.Toolchain);
                 toolchainMetrics?.AddNativeObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
@@ -2491,7 +3290,8 @@ internal static class CompilerCli
         string intermediateDirectory,
         bool preserveTemps,
         ToolchainMetrics? toolchainMetrics = null,
-        bool enableLto = false)
+        bool enableLto = false,
+        NativeToolchainResolution? toolchain = null)
     {
         var dependencyResult = CompileDependencyLlvm(module, rootOptions, importedInlineCloneSeedFunctions: null);
         if (!dependencyResult.Success)
@@ -2508,7 +3308,7 @@ internal static class CompilerCli
                 RequiresNtDllLibrary: false);
         }
 
-        var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
+        var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto, toolchain);
         toolchainMetrics?.AddLlvmObject(toolchainResult);
         return toolchainResult.Succeeded
             ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary, dependencyResult.RequiresNtDllLibrary)
@@ -2523,6 +3323,7 @@ internal static class CompilerCli
         bool preserveTemps,
         ToolchainMetrics? toolchainMetrics,
         bool enableLto,
+        NativeToolchainResolution toolchain,
         IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
     {
         var rootSymbols = SummarizeLlvmSymbols(rootLlvmText);
@@ -2614,12 +3415,13 @@ internal static class CompilerCli
                 var toolchainResult = EmitDependencyObject(
                     dependencyResult,
                     rootOptions,
-                    intermediateDirectory,
-                    preserveTemps,
-                    AddOptimizationDecision(
-                        toolchainMetrics,
-                        "source_dependency",
-                        AnalyzeModuleOptimizationSafety(dependencyResult.Module, enableLto)).CanEmitThinLtoBitcode);
+                        intermediateDirectory,
+                        preserveTemps,
+                        AddOptimizationDecision(
+                            toolchainMetrics,
+                            "source_dependency",
+                            AnalyzeModuleOptimizationSafety(dependencyResult.Module, enableLto)).CanEmitThinLtoBitcode,
+                        toolchain);
                 toolchainMetrics?.AddLlvmObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
@@ -3198,7 +4000,8 @@ internal static class CompilerCli
         CompilerOptions rootOptions,
         string intermediateDirectory,
         bool preserveTemps,
-        bool enableLto = false)
+        bool enableLto = false,
+        NativeToolchainResolution? toolchain = null)
     {
         if (dependencyResult.LlvmText is null)
         {
@@ -3221,23 +4024,24 @@ internal static class CompilerCli
             objectPath,
             preservedLlvmOutputPath: llvmPath,
             targetInfo: rootOptions.TargetInfo,
-            enableLto: enableLto);
+            enableLto: enableLto,
+            toolchain: toolchain);
     }
 
-    private static bool ShouldEnableExecutableLto(string? linkerTool)
+    private static bool ShouldEnableExecutableLto(NativeToolchainResolution toolchain)
     {
-        if (!string.IsNullOrWhiteSpace(linkerTool)
-            && !Path.GetFileName(linkerTool).Contains("clang", StringComparison.OrdinalIgnoreCase))
+        if (!toolchain.Linker.IsAvailable
+            || !Path.GetFileName(toolchain.Linker.Path!).Contains("clang", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        return NativeToolchain.SupportsExecutableThinLto();
+        return NativeToolchain.SupportsExecutableThinLto(toolchain);
     }
 
-    private static bool ShouldEnableLibraryLto()
+    private static bool ShouldEnableLibraryLto(NativeToolchainResolution toolchain)
     {
-        return NativeToolchain.SupportsExecutableThinLto();
+        return NativeToolchain.SupportsExecutableThinLto(toolchain);
     }
 
     internal static bool ShouldEnableDependencyLto(LoadedModuleDocument module)
@@ -3613,10 +4417,12 @@ internal static class CompilerCli
     {
         await stdout.WriteLineAsync(Usage);
         await stdout.WriteLineAsync();
-        await stdout.WriteLineAsync("Project Commands:");
+        await stdout.WriteLineAsync("Commands:");
         await stdout.WriteLineAsync("  build          Build the current Stark project or solution from a manifest");
         await stdout.WriteLineAsync("  run            Build and run the current Stark project or solution target");
         await stdout.WriteLineAsync("  test           Run tests for the current Stark project or solution");
+        await stdout.WriteLineAsync("  doctor         Inspect compiler, runtime, target, toolchain, SDK, stdlib, and vendor setup");
+        await stdout.WriteLineAsync("  inspect-pkg    Inspect and validate a Stark package image");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Workflows:");
         await stdout.WriteLineAsync("  (default)      Build an executable when the root source exports main; otherwise build a library");
@@ -3629,8 +4435,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package image");
         await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps\n  --package-image-json    Also write the indented JSON inspection sidecar next to the binary package image");
         await stdout.WriteLineAsync("  --emit-package Emit a Stark package image without linker/archive steps");
-        await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image");
-        await stdout.WriteLineAsync("  --inspect-package Inspect and validate a Stark package image");
+        await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image (legacy flag form)");
+        await stdout.WriteLineAsync("  --inspect-package Inspect and validate a Stark package image (legacy flag form)");
         await stdout.WriteLineAsync("  --host-test-inspect [path] Run structured host-compiler test inspection JSON");
         await stdout.WriteLineAsync("  --host-test-server Run persistent newline-delimited host-test inspection");
         await stdout.WriteLineAsync("  --emit-exe    Build a native executable");
@@ -3639,7 +4445,9 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("Inputs and Outputs:");
         await stdout.WriteLineAsync("  [path]                 Read a Stark source file instead of stdin");
         await stdout.WriteLineAsync("  -o <path>              Write the selected output artifact to <path>");
+        await stdout.WriteLineAsync("  --format <text|json>   Select inspect-pkg output format (default: text)");
         await stdout.WriteLineAsync("  --package-library-file <name>  Library file name stored in emitted package images");
+        await stdout.WriteLineAsync("  --package-profile <dev|release>  Record and validate the package build profile");
         await stdout.WriteLineAsync("  -I, --search-dir <dir> Add a Stark module/package search directory");
         await stdout.WriteLineAsync("  --no-stark-path       Ignore STARK_PATH module/package search entries");
         await stdout.WriteLineAsync("  -L, --library-dir <dir> Add a native library search directory for linking");
@@ -3652,6 +4460,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --relocation-model <default|static|pic|pie>  Choose the native relocation/PIC model");
         await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
         await stdout.WriteLineAsync("  --strict-integer-ranges        Keep strict integer range storage checks enabled (default)");
+        await stdout.WriteLineAsync("  --toolchain-dir <dir>          Resolve Stark-bundled LLVM/helper tools from <dir>");
+        await stdout.WriteLineAsync("  --llvm-lib <path>              Override the libLLVM library path used by the LLVM backend");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
@@ -3676,8 +4486,9 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
         await stdout.WriteLineAsync("  --emit-lib and --emit-exe force the archive/link workflow.");
-        await stdout.WriteLineAsync("  --emit-pkg validates and emits package image JSON only.");
-        await stdout.WriteLineAsync("  --inspect-pkg accepts a binary .starkpkg or legacy .starkpkg.json file path, or JSON from stdin.");
+        await stdout.WriteLineAsync("  --emit-pkg validates and emits a binary package image.");
+        await stdout.WriteLineAsync("  inspect-pkg accepts a binary .starkpkg or legacy .starkpkg.json file path, or JSON from stdin.");
+        await stdout.WriteLineAsync("  --inspect-pkg and --inspect-package remain accepted as legacy flag forms.");
         await stdout.WriteLineAsync("  --host-test-inspect and --host-test-server are for Stark-native tests targeting the current host compiler.");
         await stdout.WriteLineAsync("  With no workflow flag, the compiler infers executable vs library from the root source.");
         await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
@@ -3689,7 +4500,9 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
         await stdout.WriteLineAsync("  compiler libFacade.stark --emit-lib -o libFacade.a");
         await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg");
-        await stdout.WriteLineAsync("  compiler libFacade.starkpkg --inspect-pkg");
+        await stdout.WriteLineAsync("  compiler doctor");
+        await stdout.WriteLineAsync("  compiler inspect-pkg libFacade.starkpkg");
+        await stdout.WriteLineAsync("  compiler inspect-pkg libFacade.starkpkg --format json -o libFacade.starkpkg.json");
         await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
         await stdout.WriteLineAsync("  compiler --host-test-inspect request.json");
     }
@@ -3731,7 +4544,8 @@ internal static class CompilerCli
             "--emit-lib" => CliMode.EmitLibrary,
             "--emit-exe" or "--link-only" => CliMode.EmitExecutable,
             "--emit-pkg" or "--emit-package" => CliMode.EmitPackage,
-            "--inspect-pkg" or "--inspect-package" => CliMode.InspectPackage,
+            "doctor" or "--doctor" => CliMode.Doctor,
+            "inspect-pkg" or "inspect-package" or "--inspect-pkg" or "--inspect-package" => CliMode.InspectPackage,
             _ => CliMode.Default
         };
 
@@ -3769,7 +4583,8 @@ internal static class CompilerCli
         string? targetCpu,
         IReadOnlyList<string> targetFeatures,
         LlvmRelocationModel relocationModel,
-        LlvmCodeModel? codeModel)
+        LlvmCodeModel? codeModel,
+        NativeToolchainResolution? toolchain = null)
     {
         // An explicit --target steers target-dependent decisions (asm variant selection,
         // package facts) in every mode; only host-toolchain detection stays reserved for
@@ -3785,7 +4600,7 @@ internal static class CompilerCli
             return null;
         }
 
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo, toolchain))
         {
             return null;
         }
@@ -3852,6 +4667,14 @@ internal static class CompilerCli
             CliMode.EmitPackage => "lower-abi",
             _ => null
         };
+    }
+
+    private static bool RequiresBackendTargetValidation(CliMode mode)
+    {
+        return mode is CliMode.EmitLlvmIr
+            or CliMode.EmitObject
+            or CliMode.EmitLibrary
+            or CliMode.EmitExecutable;
     }
 
     private static string DeriveExecutableOutputPath(
@@ -3948,6 +4771,38 @@ internal static class CompilerCli
                 return true;
             default:
                 format = DiagnosticOutputFormat.Text;
+                return false;
+        }
+    }
+
+    private static bool TryParsePackageInspectionFormat(string value, out PackageInspectionFormat format)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "text":
+                format = PackageInspectionFormat.Text;
+                return true;
+            case "json":
+                format = PackageInspectionFormat.Json;
+                return true;
+            default:
+                format = PackageInspectionFormat.Text;
+                return false;
+        }
+    }
+
+    private static bool TryParsePackageProfile(string value, out string? profile)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "dev":
+                profile = "dev";
+                return true;
+            case "release":
+                profile = "release";
+                return true;
+            default:
+                profile = null;
                 return false;
         }
     }
@@ -4127,7 +4982,14 @@ internal static class CompilerCli
         EmitLibrary,
         EmitExecutable,
         EmitPackage,
-        InspectPackage
+        InspectPackage,
+        Doctor
+    }
+
+    private enum PackageInspectionFormat
+    {
+        Text,
+        Json
     }
 
     private sealed record DependencyCompileResult(
@@ -4174,6 +5036,11 @@ internal static class CompilerCli
         string BaseDirectory,
         string? ManifestPath,
         StarkPackageNativeDependencyManifest Dependencies);
+
+    private sealed record DoctorDiagnostic(
+        string Severity,
+        string Area,
+        string Message);
 
     private sealed record NativeDependencyLinkResult(
         bool Success,
@@ -4310,6 +5177,7 @@ internal static class CompilerCli
     private sealed record ToolchainCliOptions(
         string? LinkerTool,
         string? ArchiverTool,
+        NativeToolchainResolution Toolchain,
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
         string? SaveTempsDirectory,

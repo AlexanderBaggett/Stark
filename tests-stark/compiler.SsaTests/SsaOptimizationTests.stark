@@ -95,10 +95,10 @@ fn i32[min max] Run(i32[min max] value)
 internal fn bool CleanupRemovesIntegerAlgebraicIdentitiesImpl()
 {
     // PORT-NOTE: original chains `+0`, `1*x`, `&-1`, `<<0`, `^0` identities and
-    // asserts cleanup empties the block and returns `arg_value`; reconstructed as
-    // the same chain of identities and reduced to a successful compile through
-    // cleanup-ssa.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    // asserts cleanup removes every identity binary. The source-shaped lowering
+    // still carries copy scaffolding, so this checks the optimized artifact for
+    // absence of the identity operators.
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "ssaopt-p1-algebraic-identities",
         raw"""
 module Demo
@@ -114,7 +114,11 @@ fn i32[min max] Run(i32[min max] value)
 }
 """,
         "cleanup-ssa");
-    return SsaContains(compiled, "arg_value");
+    return OptimizedSsaLacks(compiled, " = + ")
+        && OptimizedSsaLacks(compiled, " = * ")
+        && OptimizedSsaLacks(compiled, " = & ")
+        && OptimizedSsaLacks(compiled, " = << ")
+        && OptimizedSsaLacks(compiled, " = ^ ");
 }
 
 // Ported from SsaOptimizationTests.CleanupRemovesIntegerModuloByOne.
@@ -149,7 +153,7 @@ internal fn bool CleanupRemovesSameOperandDivisionAndModuloWhenRangeExcludesZero
         raw"""
 module Demo
 
-fn i32[min max] Run(i32[1 100] value)
+fn i32[min max] Run(u8[1 100] value)
 {
     stack i32[min max] quotient = value / value;
     stack i32[min max] remainder = value % value;
@@ -299,7 +303,7 @@ module Demo
 
 fn i32[min max] Run(bool flag, i32[min max] value)
 {
-    stack mut [2]i32[min max] values = new [2]i32[min max]();
+    stack mut i32[min max][2] values = new i32[min max][2]();
     if (flag)
     {
         values[0] = value;
@@ -391,11 +395,11 @@ module Demo
 
 fn i32[min max] Run(bool flag, i32[min max] value)
 {
-    stack mut [2]i32[min max] left = new [2]i32[min max]();
+    stack mut i32[min max][2] left = new i32[min max][2]();
     left[0] = value;
-    stack mut [2]i32[min max] right = new [2]i32[min max]();
+    stack mut i32[min max][2] right = new i32[min max][2]();
     right[0] = value;
-    stack [2]i32[min max] selected = flag ? left : right;
+    stack i32[min max][2] selected = flag ? left : right;
     return selected[0];
 }
 """,
@@ -607,7 +611,7 @@ module Demo
 
 fn i32[min max] Run()
 {
-    stack [3]i32[min max] values = new [3]i32[min max]();
+    stack i32[min max][3] values = new i32[min max][3]();
     return 4;
 }
 """,

@@ -1,0 +1,4032 @@
+import System.C
+import System.Memory
+import System.Text
+module Compiler.Llvm
+
+public const LlvmPinnedMajor = 22;
+public const LlvmPinnedMinor = 1;
+public const LlvmPinnedPatch = 8;
+const LlvmOwnedMessageMaxBytes = 2 ** 20;
+
+public enum LlvmError
+{
+    NullHandle,
+    CString from System.C.CStringError,
+    Diagnostic(System.Text.OwnedAscii),
+    Memory from System.Memory.MemoryError,
+    VersionMismatch,
+    OperationFailed,
+}
+
+public enum LlvmResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(LlvmError),
+}
+
+public enum LlvmStatus
+{
+    [Ok] Ok,
+    [Err] Err(LlvmError),
+}
+
+public struct LlvmVersion
+{
+    u32[0 max] Major;
+    u32[0 max] Minor;
+    u32[0 max] Patch;
+
+    LlvmVersion()
+    {
+        self.Major = 0;
+        self.Minor = 0;
+        self.Patch = 0;
+    }
+
+    inline finite law bool Equals(borrow LlvmVersion self, LlvmVersion other)
+    {
+        return self.Major == other.Major
+            && self.Minor == other.Minor
+            && self.Patch == other.Patch;
+    }
+}
+
+public enum LlvmVerifierFailureAction
+{
+    AbortProcess,
+    PrintMessage,
+    ReturnStatus,
+}
+
+public enum LlvmCodeGenOptLevel
+{
+    None,
+    Less,
+    Default,
+    Aggressive,
+}
+
+public enum LlvmRelocMode
+{
+    Default,
+    Static,
+    PIC,
+    DynamicNoPIC,
+    ROPI,
+    RWPI,
+    ROPIRWPI,
+}
+
+public enum LlvmCodeModel
+{
+    Default,
+    JITDefault,
+    Tiny,
+    Small,
+    Kernel,
+    Medium,
+    Large,
+}
+
+public enum LlvmCodeGenFileType
+{
+    Assembly,
+    Object,
+}
+
+public enum LlvmLinkage
+{
+    External,
+    AvailableExternally,
+    LinkOnceAny,
+    LinkOnceOdr,
+    LinkOnceOdrAutoHide,
+    WeakAny,
+    WeakOdr,
+    Appending,
+    Internal,
+    Private,
+    DllImport,
+    DllExport,
+    ExternalWeak,
+    Ghost,
+    Common,
+    LinkerPrivate,
+    LinkerPrivateWeak,
+}
+
+public enum LlvmVisibility
+{
+    Default,
+    Hidden,
+    Protected,
+}
+
+public enum LlvmDllStorageClass
+{
+    Default,
+    DllImport,
+    DllExport,
+}
+
+public enum LlvmUnnamedAddress
+{
+    None,
+    Local,
+    Global,
+}
+
+public enum LlvmCallingConvention
+{
+    C,
+    Fast,
+    Cold,
+    Ghc,
+    HiPe,
+    AnyReg,
+    PreserveMost,
+    PreserveAll,
+    Swift,
+    CxxFastTls,
+    X86StdCall,
+    X86FastCall,
+    ArmApcs,
+    ArmAapcs,
+    ArmAapcsVfp,
+    Msp430Intr,
+    X86ThisCall,
+    PtxKernel,
+    PtxDevice,
+    SpirFunc,
+    SpirKernel,
+    IntelOclBi,
+    X8664SysV,
+    Win64,
+    X86VectorCall,
+    Hhvm,
+    HhvmCCall,
+    X86Intr,
+    AvrIntr,
+    AvrSignal,
+    AvrBuiltin,
+    AmdGpuVs,
+    AmdGpuGs,
+    AmdGpuPs,
+    AmdGpuCs,
+    AmdGpuKernel,
+    X86RegCall,
+    AmdGpuHs,
+    Msp430Builtin,
+    AmdGpuLs,
+    AmdGpuEs,
+}
+
+public enum LlvmAtomicOrdering
+{
+    NotAtomic,
+    Unordered,
+    Monotonic,
+    Acquire,
+    Release,
+    AcquireRelease,
+    SequentiallyConsistent,
+}
+
+public enum LlvmIntPredicate
+{
+    Equal,
+    NotEqual,
+    UnsignedGreaterThan,
+    UnsignedGreaterOrEqual,
+    UnsignedLessThan,
+    UnsignedLessOrEqual,
+    SignedGreaterThan,
+    SignedGreaterOrEqual,
+    SignedLessThan,
+    SignedLessOrEqual,
+}
+
+public struct LlvmTarget
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmTarget()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmTarget self)
+    {
+        return self.Ref == null;
+    }
+}
+
+public struct LlvmType
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmType()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmType self)
+    {
+        return self.Ref == null;
+    }
+}
+
+public struct LlvmValue
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmValue()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmValue self)
+    {
+        return self.Ref == null;
+    }
+}
+
+public struct LlvmBasicBlock
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmBasicBlock()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmBasicBlock self)
+    {
+        return self.Ref == null;
+    }
+}
+
+public struct LlvmAttribute
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmAttribute()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmAttribute self)
+    {
+        return self.Ref == null;
+    }
+}
+
+public struct LlvmMetadata
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmMetadata()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmMetadata self)
+    {
+        return self.Ref == null;
+    }
+}
+
+public struct LlvmTypeRefBuffer
+{
+    internal dynamic rawmutptr<System.C.c_void> Items;
+
+    LlvmTypeRefBuffer()
+    {
+        self.Items = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow LlvmTypeRefBuffer self)
+    {
+        return self.Items.Length;
+    }
+
+    fn LlvmStatus Reserve(mut borrow LlvmTypeRefBuffer self, u64[0 2 ** 63 - 1] additional)
+    {
+        if (!self.Items.TryReserve(additional))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        return LlvmStatus.Ok;
+    }
+
+    fn LlvmStatus Add(mut borrow LlvmTypeRefBuffer self, LlvmType item)
+    {
+        if (item.Ref == null)
+        {
+            return LlvmStatus.Err(LlvmError.NullHandle);
+        }
+
+        if (!self.Items.TryReserve(1))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        init self.Items[self.Items.Length] = item.Ref;
+        return LlvmStatus.Ok;
+    }
+
+    fn void Clear(mut borrow LlvmTypeRefBuffer self)
+    {
+        while willexit (self.Items.Length > 0)
+        {
+            unsafe
+            {
+                stack rawmutptr<System.C.c_void> discarded = self.Items.MoveLast();
+            }
+        }
+
+        return;
+    }
+}
+
+public struct LlvmValueRefBuffer
+{
+    internal dynamic rawmutptr<System.C.c_void> Items;
+
+    LlvmValueRefBuffer()
+    {
+        self.Items = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow LlvmValueRefBuffer self)
+    {
+        return self.Items.Length;
+    }
+
+    fn LlvmStatus Reserve(mut borrow LlvmValueRefBuffer self, u64[0 2 ** 63 - 1] additional)
+    {
+        if (!self.Items.TryReserve(additional))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        return LlvmStatus.Ok;
+    }
+
+    fn LlvmStatus Add(mut borrow LlvmValueRefBuffer self, LlvmValue item)
+    {
+        if (item.Ref == null)
+        {
+            return LlvmStatus.Err(LlvmError.NullHandle);
+        }
+
+        if (!self.Items.TryReserve(1))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        init self.Items[self.Items.Length] = item.Ref;
+        return LlvmStatus.Ok;
+    }
+
+    fn void Clear(mut borrow LlvmValueRefBuffer self)
+    {
+        while willexit (self.Items.Length > 0)
+        {
+            unsafe
+            {
+                stack rawmutptr<System.C.c_void> discarded = self.Items.MoveLast();
+            }
+        }
+
+        return;
+    }
+}
+
+public struct LlvmMetadataRefBuffer
+{
+    internal dynamic rawmutptr<System.C.c_void> Items;
+
+    LlvmMetadataRefBuffer()
+    {
+        self.Items = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow LlvmMetadataRefBuffer self)
+    {
+        return self.Items.Length;
+    }
+
+    fn LlvmStatus Reserve(mut borrow LlvmMetadataRefBuffer self, u64[0 2 ** 63 - 1] additional)
+    {
+        if (!self.Items.TryReserve(additional))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        return LlvmStatus.Ok;
+    }
+
+    fn LlvmStatus Add(mut borrow LlvmMetadataRefBuffer self, LlvmMetadata item)
+    {
+        if (item.Ref == null)
+        {
+            return LlvmStatus.Err(LlvmError.NullHandle);
+        }
+
+        if (!self.Items.TryReserve(1))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        init self.Items[self.Items.Length] = item.Ref;
+        return LlvmStatus.Ok;
+    }
+
+    fn void Clear(mut borrow LlvmMetadataRefBuffer self)
+    {
+        while willexit (self.Items.Length > 0)
+        {
+            unsafe
+            {
+                stack rawmutptr<System.C.c_void> discarded = self.Items.MoveLast();
+            }
+        }
+
+        return;
+    }
+}
+
+public struct LlvmBasicBlockRefBuffer
+{
+    internal dynamic rawmutptr<System.C.c_void> Items;
+
+    LlvmBasicBlockRefBuffer()
+    {
+        self.Items = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow LlvmBasicBlockRefBuffer self)
+    {
+        return self.Items.Length;
+    }
+
+    fn LlvmStatus Reserve(mut borrow LlvmBasicBlockRefBuffer self, u64[0 2 ** 63 - 1] additional)
+    {
+        if (!self.Items.TryReserve(additional))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        return LlvmStatus.Ok;
+    }
+
+    fn LlvmStatus Add(mut borrow LlvmBasicBlockRefBuffer self, LlvmBasicBlock item)
+    {
+        if (item.Ref == null)
+        {
+            return LlvmStatus.Err(LlvmError.NullHandle);
+        }
+
+        if (!self.Items.TryReserve(1))
+        {
+            return LlvmStatus.Err(LlvmError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        init self.Items[self.Items.Length] = item.Ref;
+        return LlvmStatus.Ok;
+    }
+
+    fn void Clear(mut borrow LlvmBasicBlockRefBuffer self)
+    {
+        while willexit (self.Items.Length > 0)
+        {
+            unsafe
+            {
+                stack rawmutptr<System.C.c_void> discarded = self.Items.MoveLast();
+            }
+        }
+
+        return;
+    }
+}
+
+public struct LlvmContext
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmContext()
+    {
+        self.Ref = null;
+    }
+
+    static fn LlvmResult<LlvmContext> Create()
+    {
+        unsafe
+        {
+            stack rawmutptr<System.C.c_void> raw = LLVMContextCreate();
+            if (raw == null)
+            {
+                return LlvmResult<LlvmContext>.Err(LlvmError.NullHandle);
+            }
+
+            return LlvmResult<LlvmContext>.Ok(new LlvmContext()
+            {
+                Ref = raw
+            });
+        }
+    }
+
+    inline finite law bool IsNull(borrow LlvmContext self)
+    {
+        return self.Ref == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Ref != null)
+            {
+                LLVMContextDispose(self.Ref);
+                self.Ref = null;
+            }
+        }
+    }
+}
+
+public struct LlvmModule
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmModule()
+    {
+        self.Ref = null;
+    }
+
+    static fn LlvmResult<LlvmModule> Create(borrow LlvmContext context, borrow System.C.CStr name)
+    {
+        if (context.Ref == null)
+        {
+            return LlvmResult<LlvmModule>.Err(LlvmError.NullHandle);
+        }
+
+        unsafe
+        {
+            stack rawmutptr<System.C.c_void> raw = LLVMModuleCreateWithNameInContext(name.Data(), context.Ref);
+            if (raw == null)
+            {
+                return LlvmResult<LlvmModule>.Err(LlvmError.NullHandle);
+            }
+
+            return LlvmResult<LlvmModule>.Ok(new LlvmModule()
+            {
+                Ref = raw
+            });
+        }
+    }
+
+    inline finite law bool IsNull(borrow LlvmModule self)
+    {
+        return self.Ref == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Ref != null)
+            {
+                LLVMDisposeModule(self.Ref);
+                self.Ref = null;
+            }
+        }
+    }
+}
+
+public struct LlvmBuilder
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmBuilder()
+    {
+        self.Ref = null;
+    }
+
+    static fn LlvmResult<LlvmBuilder> Create(borrow LlvmContext context)
+    {
+        if (context.Ref == null)
+        {
+            return LlvmResult<LlvmBuilder>.Err(LlvmError.NullHandle);
+        }
+
+        unsafe
+        {
+            stack rawmutptr<System.C.c_void> raw = LLVMCreateBuilderInContext(context.Ref);
+            if (raw == null)
+            {
+                return LlvmResult<LlvmBuilder>.Err(LlvmError.NullHandle);
+            }
+
+            return LlvmResult<LlvmBuilder>.Ok(new LlvmBuilder()
+            {
+                Ref = raw
+            });
+        }
+    }
+
+    inline finite law bool IsNull(borrow LlvmBuilder self)
+    {
+        return self.Ref == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Ref != null)
+            {
+                LLVMDisposeBuilder(self.Ref);
+                self.Ref = null;
+            }
+        }
+    }
+}
+
+public struct LlvmTargetMachine
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmTargetMachine()
+    {
+        self.Ref = null;
+    }
+
+    static fn LlvmResult<LlvmTargetMachine> Create(
+        borrow LlvmTarget target,
+        borrow System.C.CStr triple,
+        borrow System.C.CStr cpu,
+        borrow System.C.CStr features,
+        LlvmCodeGenOptLevel optLevel,
+        LlvmRelocMode relocMode,
+        LlvmCodeModel codeModel)
+    {
+        if (target.Ref == null)
+        {
+            return LlvmResult<LlvmTargetMachine>.Err(LlvmError.NullHandle);
+        }
+
+        unsafe
+        {
+            stack rawmutptr<System.C.c_void> raw = LLVMCreateTargetMachine(
+                target.Ref,
+                triple.Data(),
+                cpu.Data(),
+                features.Data(),
+                LlvmCodeGenOptLevelValue(optLevel),
+                LlvmRelocModeValue(relocMode),
+                LlvmCodeModelValue(codeModel));
+            if (raw == null)
+            {
+                return LlvmResult<LlvmTargetMachine>.Err(LlvmError.NullHandle);
+            }
+
+            return LlvmResult<LlvmTargetMachine>.Ok(new LlvmTargetMachine()
+            {
+                Ref = raw
+            });
+        }
+    }
+
+    inline finite law bool IsNull(borrow LlvmTargetMachine self)
+    {
+        return self.Ref == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Ref != null)
+            {
+                LLVMDisposeTargetMachine(self.Ref);
+                self.Ref = null;
+            }
+        }
+    }
+}
+
+public struct LlvmTargetData
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmTargetData()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmTargetData self)
+    {
+        return self.Ref == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Ref != null)
+            {
+                LLVMDisposeTargetData(self.Ref);
+                self.Ref = null;
+            }
+        }
+    }
+}
+
+public struct LlvmMemoryBuffer
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmMemoryBuffer()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool IsNull(borrow LlvmMemoryBuffer self)
+    {
+        return self.Ref == null;
+    }
+
+    unsafe inline fn rawptr<System.C.c_char> Data(borrow LlvmMemoryBuffer self)
+    {
+        if (self.Ref == null)
+        {
+            return null;
+        }
+
+        return LLVMGetBufferStart(self.Ref);
+    }
+
+    unsafe inline fn System.C.c_size_t ByteLength(borrow LlvmMemoryBuffer self)
+    {
+        if (self.Ref == null)
+        {
+            return 0;
+        }
+
+        return LLVMGetBufferSize(self.Ref);
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Ref != null)
+            {
+                LLVMDisposeMemoryBuffer(self.Ref);
+                self.Ref = null;
+            }
+        }
+    }
+}
+
+public struct LlvmMessage
+{
+    internal System.C.ForeignOwnedCStr Text;
+
+    LlvmMessage()
+    {
+        self.Text = new();
+    }
+
+    unsafe fn LlvmResult<System.Text.OwnedAscii> CopyAsciiAndDispose(mut borrow LlvmMessage self)
+    {
+        stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+            System.C.CopyForeignOwnedAsciiAndDispose(self.Text, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+        switch (copied)
+        {
+            case System.C.CStringResult<System.Text.OwnedAscii>.Err(var error):
+                return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                return LlvmResult<System.Text.OwnedAscii>.Ok(value);
+        }
+    }
+
+    drop
+    {
+        unsafe
+        {
+            System.C.DisposeForeignOwned(self.Text, LLVMDisposeMessage);
+        }
+    }
+}
+
+[Platform]
+public struct LlvmTargetRefOut
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmTargetRefOut()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool HasValue(borrow LlvmTargetRefOut self)
+    {
+        return self.Ref != null;
+    }
+
+    unsafe inline finite law rawmutptr<LlvmTargetRefOut> OutPointer(mut borrow LlvmTargetRefOut self)
+    {
+        return (rawmutptr<LlvmTargetRefOut>)(&self);
+    }
+
+    unsafe fn void SetRawUnchecked(mut borrow LlvmTargetRefOut self, rawmutptr<System.C.c_void> data)
+        where overlap(self, data)
+    {
+        self.Ref = data;
+        return;
+    }
+
+    unsafe fn LlvmTarget Take(mut borrow LlvmTargetRefOut self)
+    {
+        stack rawmutptr<System.C.c_void> raw = self.Ref;
+        self.Ref = null;
+        return new LlvmTarget()
+        {
+            Ref = raw
+        };
+    }
+}
+
+[Platform]
+public struct LlvmMemoryBufferRefOut
+{
+    internal rawmutptr<System.C.c_void> Ref;
+
+    LlvmMemoryBufferRefOut()
+    {
+        self.Ref = null;
+    }
+
+    inline finite law bool HasValue(borrow LlvmMemoryBufferRefOut self)
+    {
+        return self.Ref != null;
+    }
+
+    unsafe inline finite law rawmutptr<LlvmMemoryBufferRefOut> OutPointer(mut borrow LlvmMemoryBufferRefOut self)
+    {
+        return (rawmutptr<LlvmMemoryBufferRefOut>)(&self);
+    }
+
+    unsafe fn LlvmMemoryBuffer Take(mut borrow LlvmMemoryBufferRefOut self)
+    {
+        stack rawmutptr<System.C.c_void> raw = self.Ref;
+        self.Ref = null;
+        return new LlvmMemoryBuffer()
+        {
+            Ref = raw
+        };
+    }
+}
+
+public finite law LlvmVersion LlvmPinnedVersion()
+{
+    return new LlvmVersion()
+    {
+        Major = LlvmPinnedMajor,
+        Minor = LlvmPinnedMinor,
+        Patch = LlvmPinnedPatch
+    };
+}
+
+public finite law bool LlvmVersionSupported(LlvmVersion version)
+{
+    return version.Major == LlvmPinnedMajor
+        && version.Minor == LlvmPinnedMinor
+        && version.Patch == LlvmPinnedPatch;
+}
+
+public fn LlvmResult<LlvmVersion> GetLinkedLlvmVersion()
+{
+    unsafe
+    {
+        stack mut System.C.c_uint major = 0;
+        stack mut System.C.c_uint minor = 0;
+        stack mut System.C.c_uint patch = 0;
+        LLVMGetVersion(&major, &minor, &patch);
+        return LlvmResult<LlvmVersion>.Ok(new LlvmVersion()
+        {
+            Major = (u32[0 max])major,
+            Minor = (u32[0 max])minor,
+            Patch = (u32[0 max])patch
+        });
+    }
+}
+
+public fn LlvmResult<LlvmVersion> ValidateLinkedLlvmVersion()
+{
+    stack LlvmResult<LlvmVersion> result = GetLinkedLlvmVersion();
+    switch (result)
+    {
+        case LlvmResult<LlvmVersion>.Err(var error):
+            return LlvmResult<LlvmVersion>.Err(error);
+        case LlvmResult<LlvmVersion>.Ok(var version):
+            if (!LlvmVersionSupported(version))
+            {
+                return LlvmResult<LlvmVersion>.Err(LlvmError.VersionMismatch);
+            }
+
+            return LlvmResult<LlvmVersion>.Ok(version);
+    }
+}
+
+public finite law i32[min max] LlvmBoolValue(bool value)
+{
+    if (value)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+public finite law i32[min max] LlvmVerifierFailureActionValue(LlvmVerifierFailureAction action)
+{
+    switch (action)
+    {
+        case LlvmVerifierFailureAction.AbortProcess:
+            return 0;
+        case LlvmVerifierFailureAction.PrintMessage:
+            return 1;
+        case LlvmVerifierFailureAction.ReturnStatus:
+            return 2;
+    }
+}
+
+public finite law i32[min max] LlvmCodeGenOptLevelValue(LlvmCodeGenOptLevel level)
+{
+    switch (level)
+    {
+        case LlvmCodeGenOptLevel.None:
+            return 0;
+        case LlvmCodeGenOptLevel.Less:
+            return 1;
+        case LlvmCodeGenOptLevel.Default:
+            return 2;
+        case LlvmCodeGenOptLevel.Aggressive:
+            return 3;
+    }
+}
+
+public finite law i32[min max] LlvmRelocModeValue(LlvmRelocMode mode)
+{
+    switch (mode)
+    {
+        case LlvmRelocMode.Default:
+            return 0;
+        case LlvmRelocMode.Static:
+            return 1;
+        case LlvmRelocMode.PIC:
+            return 2;
+        case LlvmRelocMode.DynamicNoPIC:
+            return 3;
+        case LlvmRelocMode.ROPI:
+            return 4;
+        case LlvmRelocMode.RWPI:
+            return 5;
+        case LlvmRelocMode.ROPIRWPI:
+            return 6;
+    }
+}
+
+public finite law i32[min max] LlvmCodeModelValue(LlvmCodeModel model)
+{
+    switch (model)
+    {
+        case LlvmCodeModel.Default:
+            return 0;
+        case LlvmCodeModel.JITDefault:
+            return 1;
+        case LlvmCodeModel.Tiny:
+            return 2;
+        case LlvmCodeModel.Small:
+            return 3;
+        case LlvmCodeModel.Kernel:
+            return 4;
+        case LlvmCodeModel.Medium:
+            return 5;
+        case LlvmCodeModel.Large:
+            return 6;
+    }
+}
+
+public finite law i32[min max] LlvmCodeGenFileTypeValue(LlvmCodeGenFileType fileType)
+{
+    switch (fileType)
+    {
+        case LlvmCodeGenFileType.Assembly:
+            return 0;
+        case LlvmCodeGenFileType.Object:
+            return 1;
+    }
+}
+
+public finite law i32[min max] LlvmLinkageValue(LlvmLinkage linkage)
+{
+    switch (linkage)
+    {
+        case LlvmLinkage.External:
+            return 0;
+        case LlvmLinkage.AvailableExternally:
+            return 1;
+        case LlvmLinkage.LinkOnceAny:
+            return 2;
+        case LlvmLinkage.LinkOnceOdr:
+            return 3;
+        case LlvmLinkage.LinkOnceOdrAutoHide:
+            return 4;
+        case LlvmLinkage.WeakAny:
+            return 5;
+        case LlvmLinkage.WeakOdr:
+            return 6;
+        case LlvmLinkage.Appending:
+            return 7;
+        case LlvmLinkage.Internal:
+            return 8;
+        case LlvmLinkage.Private:
+            return 9;
+        case LlvmLinkage.DllImport:
+            return 10;
+        case LlvmLinkage.DllExport:
+            return 11;
+        case LlvmLinkage.ExternalWeak:
+            return 12;
+        case LlvmLinkage.Ghost:
+            return 13;
+        case LlvmLinkage.Common:
+            return 14;
+        case LlvmLinkage.LinkerPrivate:
+            return 15;
+        case LlvmLinkage.LinkerPrivateWeak:
+            return 16;
+    }
+}
+
+public finite law i32[min max] LlvmVisibilityValue(LlvmVisibility visibility)
+{
+    switch (visibility)
+    {
+        case LlvmVisibility.Default:
+            return 0;
+        case LlvmVisibility.Hidden:
+            return 1;
+        case LlvmVisibility.Protected:
+            return 2;
+    }
+}
+
+public finite law i32[min max] LlvmDllStorageClassValue(LlvmDllStorageClass storageClass)
+{
+    switch (storageClass)
+    {
+        case LlvmDllStorageClass.Default:
+            return 0;
+        case LlvmDllStorageClass.DllImport:
+            return 1;
+        case LlvmDllStorageClass.DllExport:
+            return 2;
+    }
+}
+
+public finite law i32[min max] LlvmUnnamedAddressValue(LlvmUnnamedAddress unnamedAddress)
+{
+    switch (unnamedAddress)
+    {
+        case LlvmUnnamedAddress.None:
+            return 0;
+        case LlvmUnnamedAddress.Local:
+            return 1;
+        case LlvmUnnamedAddress.Global:
+            return 2;
+    }
+}
+
+public finite law u32[0 max] LlvmCallingConventionValue(LlvmCallingConvention convention)
+{
+    switch (convention)
+    {
+        case LlvmCallingConvention.C:
+            return 0;
+        case LlvmCallingConvention.Fast:
+            return 8;
+        case LlvmCallingConvention.Cold:
+            return 9;
+        case LlvmCallingConvention.Ghc:
+            return 10;
+        case LlvmCallingConvention.HiPe:
+            return 11;
+        case LlvmCallingConvention.AnyReg:
+            return 13;
+        case LlvmCallingConvention.PreserveMost:
+            return 14;
+        case LlvmCallingConvention.PreserveAll:
+            return 15;
+        case LlvmCallingConvention.Swift:
+            return 16;
+        case LlvmCallingConvention.CxxFastTls:
+            return 17;
+        case LlvmCallingConvention.X86StdCall:
+            return 64;
+        case LlvmCallingConvention.X86FastCall:
+            return 65;
+        case LlvmCallingConvention.ArmApcs:
+            return 66;
+        case LlvmCallingConvention.ArmAapcs:
+            return 67;
+        case LlvmCallingConvention.ArmAapcsVfp:
+            return 68;
+        case LlvmCallingConvention.Msp430Intr:
+            return 69;
+        case LlvmCallingConvention.X86ThisCall:
+            return 70;
+        case LlvmCallingConvention.PtxKernel:
+            return 71;
+        case LlvmCallingConvention.PtxDevice:
+            return 72;
+        case LlvmCallingConvention.SpirFunc:
+            return 75;
+        case LlvmCallingConvention.SpirKernel:
+            return 76;
+        case LlvmCallingConvention.IntelOclBi:
+            return 77;
+        case LlvmCallingConvention.X8664SysV:
+            return 78;
+        case LlvmCallingConvention.Win64:
+            return 79;
+        case LlvmCallingConvention.X86VectorCall:
+            return 80;
+        case LlvmCallingConvention.Hhvm:
+            return 81;
+        case LlvmCallingConvention.HhvmCCall:
+            return 82;
+        case LlvmCallingConvention.X86Intr:
+            return 83;
+        case LlvmCallingConvention.AvrIntr:
+            return 84;
+        case LlvmCallingConvention.AvrSignal:
+            return 85;
+        case LlvmCallingConvention.AvrBuiltin:
+            return 86;
+        case LlvmCallingConvention.AmdGpuVs:
+            return 87;
+        case LlvmCallingConvention.AmdGpuGs:
+            return 88;
+        case LlvmCallingConvention.AmdGpuPs:
+            return 89;
+        case LlvmCallingConvention.AmdGpuCs:
+            return 90;
+        case LlvmCallingConvention.AmdGpuKernel:
+            return 91;
+        case LlvmCallingConvention.X86RegCall:
+            return 92;
+        case LlvmCallingConvention.AmdGpuHs:
+            return 93;
+        case LlvmCallingConvention.Msp430Builtin:
+            return 94;
+        case LlvmCallingConvention.AmdGpuLs:
+            return 95;
+        case LlvmCallingConvention.AmdGpuEs:
+            return 96;
+    }
+}
+
+public finite law i32[min max] LlvmAtomicOrderingValue(LlvmAtomicOrdering ordering)
+{
+    switch (ordering)
+    {
+        case LlvmAtomicOrdering.NotAtomic:
+            return 0;
+        case LlvmAtomicOrdering.Unordered:
+            return 1;
+        case LlvmAtomicOrdering.Monotonic:
+            return 2;
+        case LlvmAtomicOrdering.Acquire:
+            return 4;
+        case LlvmAtomicOrdering.Release:
+            return 5;
+        case LlvmAtomicOrdering.AcquireRelease:
+            return 6;
+        case LlvmAtomicOrdering.SequentiallyConsistent:
+            return 7;
+    }
+}
+
+public finite law i32[min max] LlvmIntPredicateValue(LlvmIntPredicate predicate)
+{
+    switch (predicate)
+    {
+        case LlvmIntPredicate.Equal:
+            return 32;
+        case LlvmIntPredicate.NotEqual:
+            return 33;
+        case LlvmIntPredicate.UnsignedGreaterThan:
+            return 34;
+        case LlvmIntPredicate.UnsignedGreaterOrEqual:
+            return 35;
+        case LlvmIntPredicate.UnsignedLessThan:
+            return 36;
+        case LlvmIntPredicate.UnsignedLessOrEqual:
+            return 37;
+        case LlvmIntPredicate.SignedGreaterThan:
+            return 38;
+        case LlvmIntPredicate.SignedGreaterOrEqual:
+            return 39;
+        case LlvmIntPredicate.SignedLessThan:
+            return 40;
+        case LlvmIntPredicate.SignedLessOrEqual:
+            return 41;
+    }
+}
+
+public finite law u32[0 max] LlvmReturnAttributeIndex()
+{
+    return 0;
+}
+
+public finite law u32[0 max] LlvmFunctionAttributeIndex()
+{
+    return 2 ** 32 - 1;
+}
+
+public finite law bool LlvmParameterAttributeIndexIsValid(u32[0 max] parameterZeroBased)
+{
+    return parameterZeroBased < 2 ** 32 - 1;
+}
+
+public finite law u32[0 max] LlvmParameterAttributeIndex(u32[0 2 ** 32 - 2] parameterZeroBased)
+{
+    return parameterZeroBased + 1;
+}
+
+public finite law bool LlvmAlignmentBytesAreValid(u32[0 max] bytes)
+{
+    if (bytes == 0)
+    {
+        return false;
+    }
+
+    return (bytes & (bytes - 1)) == 0;
+}
+
+public finite law bool LlvmParameterIndexIsInRange(u32[0 max] index, u32[0 max] parameterCount)
+{
+    return index < parameterCount;
+}
+
+public finite law bool LlvmPhiIncomingCountsMatch(
+    u64[0 2 ** 63 - 1] valueCount,
+    u64[0 2 ** 63 - 1] blockCount)
+{
+    return valueCount == blockCount
+        && valueCount <= (u64[0 2 ** 63 - 1])(2 ** 32 - 1);
+}
+
+public fn LlvmStatus InitializeNativeTargetSupport()
+{
+    unsafe
+    {
+        if (LLVMInitializeNativeTarget() != 0)
+        {
+            return LlvmStatus.Err(LlvmError.OperationFailed);
+        }
+
+        if (LLVMInitializeNativeAsmPrinter() != 0)
+        {
+            return LlvmStatus.Err(LlvmError.OperationFailed);
+        }
+
+        if (LLVMInitializeNativeAsmParser() != 0)
+        {
+            return LlvmStatus.Err(LlvmError.OperationFailed);
+        }
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<System.Text.OwnedAscii> GetDefaultTargetTripleAscii()
+{
+    unsafe
+    {
+        stack System.C.CStringResult<System.C.ForeignOwnedCStr> raw =
+            System.C.TryFromForeignOwnedRaw(LLVMGetDefaultTargetTriple());
+        switch (raw)
+        {
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Err(var error):
+                return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Ok(var text):
+                stack mut System.C.ForeignOwnedCStr message = text;
+                stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+                    System.C.CopyForeignOwnedAsciiAndDispose(message, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+                switch (copied)
+                {
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Err(var copyError):
+                        return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(copyError));
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                        return LlvmResult<System.Text.OwnedAscii>.Ok(value);
+                }
+        }
+    }
+}
+
+public fn LlvmResult<LlvmTarget> GetTargetFromTriple(borrow System.C.CStr triple)
+{
+    unsafe
+    {
+        stack mut LlvmTargetRefOut target = new();
+        stack mut System.C.ForeignOwnedCStrOut message = new();
+        stack i32[min max] failed =
+            LLVMGetTargetFromTriple(triple.Data(), target.OutPointer(), message.OutPointer());
+        if (failed == 0)
+        {
+            System.C.DisposeForeignOwnedOut(message, LLVMDisposeMessage);
+            return LlvmResult<LlvmTarget>.Ok(target.Take());
+        }
+
+        if (!message.HasValue())
+        {
+            return LlvmResult<LlvmTarget>.Err(LlvmError.OperationFailed);
+        }
+
+        stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+            System.C.CopyForeignOwnedOutAsciiAndDispose(message, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+        switch (copied)
+        {
+            case System.C.CStringResult<System.Text.OwnedAscii>.Err(var error):
+                return LlvmResult<LlvmTarget>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                return LlvmResult<LlvmTarget>.Err(LlvmError.Diagnostic(value));
+        }
+    }
+}
+
+public fn LlvmStatus SetModuleTarget(mut borrow LlvmModule llvmModule, borrow System.C.CStr triple)
+{
+    if (llvmModule.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetTarget(llvmModule.Ref, triple.Data());
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetModuleDataLayout(mut borrow LlvmModule llvmModule, borrow System.C.CStr dataLayout)
+{
+    if (llvmModule.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetDataLayout(llvmModule.Ref, dataLayout.Data());
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmTargetData> CreateTargetDataLayout(borrow LlvmTargetMachine targetMachine)
+{
+    if (targetMachine.Ref == null)
+    {
+        return LlvmResult<LlvmTargetData>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMCreateTargetDataLayout(targetMachine.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmTargetData>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmTargetData>.Ok(new LlvmTargetData()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<System.Text.OwnedAscii> CopyTargetDataLayoutAscii(mut borrow LlvmTargetData targetData)
+{
+    if (targetData.Ref == null)
+    {
+        return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.CStringResult<System.C.ForeignOwnedCStr> raw =
+            System.C.TryFromForeignOwnedRaw(LLVMCopyStringRepOfTargetData(targetData.Ref));
+        switch (raw)
+        {
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Err(var error):
+                return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Ok(var text):
+                stack mut System.C.ForeignOwnedCStr message = text;
+                stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+                    System.C.CopyForeignOwnedAsciiAndDispose(message, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+                switch (copied)
+                {
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Err(var copyError):
+                        return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(copyError));
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                        return LlvmResult<System.Text.OwnedAscii>.Ok(value);
+                }
+        }
+    }
+}
+
+public fn LlvmResult<LlvmType> Int1Type(borrow LlvmContext context)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMInt1TypeInContext(context.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> Int8Type(borrow LlvmContext context)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMInt8TypeInContext(context.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> Int32Type(borrow LlvmContext context)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMInt32TypeInContext(context.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> Int64Type(borrow LlvmContext context)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMInt64TypeInContext(context.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> VoidType(borrow LlvmContext context)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMVoidTypeInContext(context.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> PointerType(borrow LlvmType elementType, u32[0 max] addressSpace)
+{
+    if (elementType.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawAddressSpace = addressSpace;
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMPointerType(elementType.Ref, rawAddressSpace);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> FunctionTypeNoParams(LlvmType returnType, bool isVarArg)
+{
+    if (returnType.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint parameterCount = 0;
+        stack rawmutptr<System.C.c_void> raw = LLVMFunctionType(
+            returnType.Ref,
+            null,
+            parameterCount,
+            LlvmBoolValue(isVarArg));
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmType> FunctionType(
+    LlvmType returnType,
+    mut borrow LlvmTypeRefBuffer parameterTypes,
+    bool isVarArg)
+{
+    if (returnType.Ref == null)
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+    }
+
+    if (parameterTypes.Items.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return LlvmResult<LlvmType>.Err(LlvmError.OperationFailed);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint parameterCount = (u32[0 max])parameterTypes.Items.Length;
+        stack mut rawmutptr<System.C.c_void> raw = null;
+        if (parameterTypes.Items.Length == 0)
+        {
+            raw = LLVMFunctionType(
+                returnType.Ref,
+                null,
+                parameterCount,
+                LlvmBoolValue(isVarArg));
+        }
+        else
+        {
+            raw = LLVMFunctionType(
+                returnType.Ref,
+                &parameterTypes.Items[0],
+                parameterCount,
+                LlvmBoolValue(isVarArg));
+        }
+
+        if (raw == null)
+        {
+            return LlvmResult<LlvmType>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmType>.Ok(new LlvmType()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> AddFunction(
+    mut borrow LlvmModule llvmModule,
+    borrow System.C.CStr name,
+    LlvmType functionType)
+{
+    if (llvmModule.Ref == null || functionType.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMAddFunction(
+            llvmModule.Ref,
+            name.Data(),
+            functionType.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<u32[0 max]> FunctionParameterCount(LlvmValue function)
+{
+    if (function.Ref == null)
+    {
+        return LlvmResult<u32[0 max]>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint raw = LLVMCountParams(function.Ref);
+        return LlvmResult<u32[0 max]>.Ok((u32[0 max])raw);
+    }
+}
+
+public fn LlvmResult<LlvmValue> GetParameter(LlvmValue function, u32[0 max] index)
+{
+    if (function.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack u32[0 max] parameterCount = (u32[0 max])LLVMCountParams(function.Ref);
+        if (!LlvmParameterIndexIsInRange(index, parameterCount))
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.OperationFailed);
+        }
+
+        stack System.C.c_uint rawIndex = index;
+        stack rawmutptr<System.C.c_void> raw = LLVMGetParam(function.Ref, rawIndex);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus SetFunctionCallingConvention(LlvmValue function, LlvmCallingConvention convention)
+{
+    if (function.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawConvention = LlvmCallingConventionValue(convention);
+        LLVMSetFunctionCallConv(function.Ref, rawConvention);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmValue> AddGlobal(
+    mut borrow LlvmModule llvmModule,
+    LlvmType valueType,
+    borrow System.C.CStr name)
+{
+    if (llvmModule.Ref == null || valueType.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMAddGlobal(
+            llvmModule.Ref,
+            valueType.Ref,
+            name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> AddGlobalInAddressSpace(
+    mut borrow LlvmModule llvmModule,
+    LlvmType valueType,
+    borrow System.C.CStr name,
+    u32[0 max] addressSpace)
+{
+    if (llvmModule.Ref == null || valueType.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawAddressSpace = addressSpace;
+        stack rawmutptr<System.C.c_void> raw = LLVMAddGlobalInAddressSpace(
+            llvmModule.Ref,
+            valueType.Ref,
+            name.Data(),
+            rawAddressSpace);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus SetInitializer(LlvmValue global, LlvmValue constant)
+{
+    if (global.Ref == null || constant.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetInitializer(global.Ref, constant.Ref);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetGlobalConstant(LlvmValue global, bool isConstant)
+{
+    if (global.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetGlobalConstant(global.Ref, LlvmBoolValue(isConstant));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetLinkage(LlvmValue global, LlvmLinkage linkage)
+{
+    if (global.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetLinkage(global.Ref, LlvmLinkageValue(linkage));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetVisibility(LlvmValue global, LlvmVisibility visibility)
+{
+    if (global.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetVisibility(global.Ref, LlvmVisibilityValue(visibility));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetDllStorageClass(LlvmValue global, LlvmDllStorageClass storageClass)
+{
+    if (global.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetDLLStorageClass(global.Ref, LlvmDllStorageClassValue(storageClass));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetUnnamedAddress(LlvmValue global, LlvmUnnamedAddress unnamedAddress)
+{
+    if (global.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetUnnamedAddress(global.Ref, LlvmUnnamedAddressValue(unnamedAddress));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetAlignment(LlvmValue value, u32[0 max] bytes)
+{
+    if (value.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    if (!LlvmAlignmentBytesAreValid(bytes))
+    {
+        return LlvmStatus.Err(LlvmError.OperationFailed);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawBytes = bytes;
+        LLVMSetAlignment(value.Ref, rawBytes);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetSection(LlvmValue global, borrow System.C.CStr section)
+{
+    if (global.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetSection(global.Ref, section.Data());
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmValue> BuildAdd(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildAdd(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildNoSignedWrapAdd(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildNSWAdd(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildNoUnsignedWrapAdd(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildNUWAdd(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildSub(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildSub(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildNoSignedWrapSub(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildNSWSub(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildNoUnsignedWrapSub(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildNUWSub(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildMul(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildMul(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildNoSignedWrapMul(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildNSWMul(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildNoUnsignedWrapMul(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildNUWMul(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildUnsignedDiv(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildUDiv(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildExactUnsignedDiv(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildExactUDiv(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildSignedDiv(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildSDiv(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildExactSignedDiv(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildExactSDiv(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildUnsignedRem(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildURem(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildSignedRem(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildSRem(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildAnd(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildAnd(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildOr(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildOr(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildXor(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildXor(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildShiftLeft(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildShl(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildLogicalShiftRight(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildLShr(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildArithmeticShiftRight(
+    mut borrow LlvmBuilder builder,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildAShr(builder.Ref, left.Ref, right.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildIntCompare(
+    mut borrow LlvmBuilder builder,
+    LlvmIntPredicate predicate,
+    LlvmValue left,
+    LlvmValue right,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || left.Ref == null || right.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildICmp(
+            builder.Ref,
+            LlvmIntPredicateValue(predicate),
+            left.Ref,
+            right.Ref,
+            name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildSelect(
+    mut borrow LlvmBuilder builder,
+    LlvmValue condition,
+    LlvmValue trueValue,
+    LlvmValue falseValue,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || condition.Ref == null || trueValue.Ref == null || falseValue.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildSelect(
+            builder.Ref,
+            condition.Ref,
+            trueValue.Ref,
+            falseValue.Ref,
+            name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildLoad(
+    mut borrow LlvmBuilder builder,
+    LlvmType valueType,
+    LlvmValue pointer,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || valueType.Ref == null || pointer.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildLoad2(
+            builder.Ref,
+            valueType.Ref,
+            pointer.Ref,
+            name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildStore(mut borrow LlvmBuilder builder, LlvmValue value, LlvmValue pointer)
+{
+    if (builder.Ref == null || value.Ref == null || pointer.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildStore(builder.Ref, value.Ref, pointer.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildGep(
+    mut borrow LlvmBuilder builder,
+    LlvmType elementType,
+    LlvmValue pointer,
+    mut borrow LlvmValueRefBuffer indices,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || elementType.Ref == null || pointer.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    if (indices.Items.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.OperationFailed);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint indexCount = (u32[0 max])indices.Items.Length;
+        stack mut rawmutptr<System.C.c_void> raw = null;
+        if (indices.Items.Length == 0)
+        {
+            raw = LLVMBuildGEP2(builder.Ref, elementType.Ref, pointer.Ref, null, indexCount, name.Data());
+        }
+        else
+        {
+            raw = LLVMBuildGEP2(builder.Ref, elementType.Ref, pointer.Ref, &indices.Items[0], indexCount, name.Data());
+        }
+
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildInBoundsGep(
+    mut borrow LlvmBuilder builder,
+    LlvmType elementType,
+    LlvmValue pointer,
+    mut borrow LlvmValueRefBuffer indices,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || elementType.Ref == null || pointer.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    if (indices.Items.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.OperationFailed);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint indexCount = (u32[0 max])indices.Items.Length;
+        stack mut rawmutptr<System.C.c_void> raw = null;
+        if (indices.Items.Length == 0)
+        {
+            raw = LLVMBuildInBoundsGEP2(builder.Ref, elementType.Ref, pointer.Ref, null, indexCount, name.Data());
+        }
+        else
+        {
+            raw = LLVMBuildInBoundsGEP2(builder.Ref, elementType.Ref, pointer.Ref, &indices.Items[0], indexCount, name.Data());
+        }
+
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildCall(
+    mut borrow LlvmBuilder builder,
+    LlvmType functionType,
+    LlvmValue function,
+    mut borrow LlvmValueRefBuffer arguments,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || functionType.Ref == null || function.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    if (arguments.Items.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.OperationFailed);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint argumentCount = (u32[0 max])arguments.Items.Length;
+        stack mut rawmutptr<System.C.c_void> raw = null;
+        if (arguments.Items.Length == 0)
+        {
+            raw = LLVMBuildCall2(builder.Ref, functionType.Ref, function.Ref, null, argumentCount, name.Data());
+        }
+        else
+        {
+            raw = LLVMBuildCall2(builder.Ref, functionType.Ref, function.Ref, &arguments.Items[0], argumentCount, name.Data());
+        }
+
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus SetVolatile(LlvmValue memoryAccess, bool isVolatile)
+{
+    if (memoryAccess.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetVolatile(memoryAccess.Ref, LlvmBoolValue(isVolatile));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetOrdering(LlvmValue memoryAccess, LlvmAtomicOrdering ordering)
+{
+    if (memoryAccess.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetOrdering(memoryAccess.Ref, LlvmAtomicOrderingValue(ordering));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetInstructionCallingConvention(
+    LlvmValue instruction,
+    LlvmCallingConvention convention)
+{
+    if (instruction.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawConvention = LlvmCallingConventionValue(convention);
+        LLVMSetInstructionCallConv(instruction.Ref, rawConvention);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus SetTailCall(LlvmValue call, bool isTailCall)
+{
+    if (call.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMSetTailCall(call.Ref, LlvmBoolValue(isTailCall));
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<u32[0 max]> GetMetadataKindId(
+    borrow LlvmContext context,
+    borrow System.C.CStr name)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<u32[0 max]>.Err(LlvmError.NullHandle);
+    }
+
+    if (name.Length() > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return LlvmResult<u32[0 max]>.Err(LlvmError.OperationFailed);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawLength = (u32[0 max])name.Length();
+        stack System.C.c_uint raw = LLVMGetMDKindIDInContext(context.Ref, name.Data(), rawLength);
+        return LlvmResult<u32[0 max]>.Ok((u32[0 max])raw);
+    }
+}
+
+public fn LlvmResult<u32[0 max]> GetEnumAttributeKindForName(borrow System.C.CStr name)
+{
+    unsafe
+    {
+        stack System.C.c_size_t rawLength = name.Length();
+        stack System.C.c_uint raw = LLVMGetEnumAttributeKindForName(name.Data(), rawLength);
+        if (raw == 0)
+        {
+            return LlvmResult<u32[0 max]>.Err(LlvmError.OperationFailed);
+        }
+
+        return LlvmResult<u32[0 max]>.Ok((u32[0 max])raw);
+    }
+}
+
+public fn LlvmResult<LlvmAttribute> CreateEnumAttribute(
+    borrow LlvmContext context,
+    u32[1 max] kindId,
+    u64[0 max] value)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmAttribute>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawKind = kindId;
+        stack rawmutptr<System.C.c_void> raw = LLVMCreateEnumAttribute(context.Ref, rawKind, value);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmAttribute>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmAttribute>.Ok(new LlvmAttribute()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus AddFunctionAttributeAtIndex(
+    LlvmValue function,
+    u32[0 max] index,
+    LlvmAttribute attribute)
+{
+    if (function.Ref == null || attribute.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawIndex = index;
+        LLVMAddAttributeAtIndex(function.Ref, rawIndex, attribute.Ref);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmStatus AddCallSiteAttributeAtIndex(
+    LlvmValue call,
+    u32[0 max] index,
+    LlvmAttribute attribute)
+{
+    if (call.Ref == null || attribute.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawIndex = index;
+        LLVMAddCallSiteAttribute(call.Ref, rawIndex, attribute.Ref);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmMetadata> MdString(
+    borrow LlvmContext context,
+    borrow System.C.CStr text)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmMetadata>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_size_t rawLength = text.Length();
+        stack rawmutptr<System.C.c_void> raw = LLVMMDStringInContext2(context.Ref, text.Data(), rawLength);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmMetadata>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmMetadata>.Ok(new LlvmMetadata()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmMetadata> MdNode(
+    borrow LlvmContext context,
+    mut borrow LlvmMetadataRefBuffer operands)
+{
+    if (context.Ref == null)
+    {
+        return LlvmResult<LlvmMetadata>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_size_t operandCount = operands.Items.Length;
+        stack mut rawmutptr<System.C.c_void> raw = null;
+        if (operands.Items.Length == 0)
+        {
+            raw = LLVMMDNodeInContext2(context.Ref, null, operandCount);
+        }
+        else
+        {
+            raw = LLVMMDNodeInContext2(context.Ref, &operands.Items[0], operandCount);
+        }
+
+        if (raw == null)
+        {
+            return LlvmResult<LlvmMetadata>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmMetadata>.Ok(new LlvmMetadata()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmMetadata> ValueAsMetadata(LlvmValue value)
+{
+    if (value.Ref == null)
+    {
+        return LlvmResult<LlvmMetadata>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMValueAsMetadata(value.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmMetadata>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmMetadata>.Ok(new LlvmMetadata()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> MetadataAsValue(borrow LlvmContext context, LlvmMetadata metadata)
+{
+    if (context.Ref == null || metadata.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMMetadataAsValue(context.Ref, metadata.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus SetMetadata(LlvmValue instruction, u32[0 max] metadataKindId, LlvmValue metadataNode)
+{
+    if (instruction.Ref == null || metadataNode.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint rawKind = metadataKindId;
+        LLVMSetMetadata(instruction.Ref, rawKind, metadataNode.Ref);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmBasicBlock> AppendBasicBlock(
+    borrow LlvmContext context,
+    LlvmValue function,
+    borrow System.C.CStr name)
+{
+    if (context.Ref == null || function.Ref == null)
+    {
+        return LlvmResult<LlvmBasicBlock>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMAppendBasicBlockInContext(
+            context.Ref,
+            function.Ref,
+            name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmBasicBlock>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmBasicBlock>.Ok(new LlvmBasicBlock()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus PositionBuilderAtEnd(mut borrow LlvmBuilder builder, LlvmBasicBlock block)
+{
+    if (builder.Ref == null || block.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        LLVMPositionBuilderAtEnd(builder.Ref, block.Ref);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmValue> BuildBranch(mut borrow LlvmBuilder builder, LlvmBasicBlock destination)
+{
+    if (builder.Ref == null || destination.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildBr(builder.Ref, destination.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildConditionalBranch(
+    mut borrow LlvmBuilder builder,
+    LlvmValue condition,
+    LlvmBasicBlock thenBlock,
+    LlvmBasicBlock elseBlock)
+{
+    if (builder.Ref == null || condition.Ref == null || thenBlock.Ref == null || elseBlock.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw =
+            LLVMBuildCondBr(builder.Ref, condition.Ref, thenBlock.Ref, elseBlock.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildUnreachable(mut borrow LlvmBuilder builder)
+{
+    if (builder.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildUnreachable(builder.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildPhi(
+    mut borrow LlvmBuilder builder,
+    LlvmType valueType,
+    borrow System.C.CStr name)
+{
+    if (builder.Ref == null || valueType.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildPhi(builder.Ref, valueType.Ref, name.Data());
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmStatus AddIncoming(
+    LlvmValue phi,
+    mut borrow LlvmValueRefBuffer values,
+    mut borrow LlvmBasicBlockRefBuffer blocks)
+{
+    if (phi.Ref == null)
+    {
+        return LlvmStatus.Err(LlvmError.NullHandle);
+    }
+
+    if (!LlvmPhiIncomingCountsMatch(values.Items.Length, blocks.Items.Length))
+    {
+        return LlvmStatus.Err(LlvmError.OperationFailed);
+    }
+
+    if (values.Items.Length == 0)
+    {
+        return LlvmStatus.Ok;
+    }
+
+    unsafe
+    {
+        stack System.C.c_uint incomingCount = (u32[0 max])values.Items.Length;
+        LLVMAddIncoming(phi.Ref, &values.Items[0], &blocks.Items[0], incomingCount);
+    }
+
+    return LlvmStatus.Ok;
+}
+
+public fn LlvmResult<LlvmValue> ConstInt(LlvmType integerType, u64[0 max] value, bool signExtend)
+{
+    if (integerType.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_ulonglong rawValue = value;
+        stack rawmutptr<System.C.c_void> raw = LLVMConstInt(
+            integerType.Ref,
+            rawValue,
+            LlvmBoolValue(signExtend));
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildReturnValue(mut borrow LlvmBuilder builder, LlvmValue value)
+{
+    if (builder.Ref == null || value.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildRet(builder.Ref, value.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmValue> BuildReturnVoid(mut borrow LlvmBuilder builder)
+{
+    if (builder.Ref == null)
+    {
+        return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> raw = LLVMBuildRetVoid(builder.Ref);
+        if (raw == null)
+        {
+            return LlvmResult<LlvmValue>.Err(LlvmError.NullHandle);
+        }
+
+        return LlvmResult<LlvmValue>.Ok(new LlvmValue()
+        {
+            Ref = raw
+        });
+    }
+}
+
+public fn LlvmResult<LlvmMemoryBuffer> EmitObjectToMemoryBuffer(
+    mut borrow LlvmTargetMachine targetMachine,
+    mut borrow LlvmModule llvmModule)
+{
+    if (targetMachine.Ref == null || llvmModule.Ref == null)
+    {
+        return LlvmResult<LlvmMemoryBuffer>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack mut System.C.ForeignOwnedCStrOut message = new();
+        stack mut LlvmMemoryBufferRefOut buffer = new();
+        stack i32[min max] failed = LLVMTargetMachineEmitToMemoryBuffer(
+            targetMachine.Ref,
+            llvmModule.Ref,
+            LlvmCodeGenFileTypeValue(LlvmCodeGenFileType.Object),
+            message.OutPointer(),
+            buffer.OutPointer());
+        if (failed == 0)
+        {
+            System.C.DisposeForeignOwnedOut(message, LLVMDisposeMessage);
+            return LlvmResult<LlvmMemoryBuffer>.Ok(buffer.Take());
+        }
+
+        if (!message.HasValue())
+        {
+            return LlvmResult<LlvmMemoryBuffer>.Err(LlvmError.OperationFailed);
+        }
+
+        stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+            System.C.CopyForeignOwnedOutAsciiAndDispose(message, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+        switch (copied)
+        {
+            case System.C.CStringResult<System.Text.OwnedAscii>.Err(var error):
+                return LlvmResult<LlvmMemoryBuffer>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                return LlvmResult<LlvmMemoryBuffer>.Err(LlvmError.Diagnostic(value));
+        }
+    }
+}
+
+public fn LlvmResult<System.Text.OwnedAscii> PrintModuleToAscii(mut borrow LlvmModule llvmModule)
+{
+    if (llvmModule.Ref == null)
+    {
+        return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.CStringResult<System.C.ForeignOwnedCStr> raw =
+            System.C.TryFromForeignOwnedRaw(LLVMPrintModuleToString(llvmModule.Ref));
+        switch (raw)
+        {
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Err(var error):
+                return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Ok(var text):
+                stack mut System.C.ForeignOwnedCStr message = text;
+                stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+                    System.C.CopyForeignOwnedAsciiAndDispose(message, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+                switch (copied)
+                {
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Err(var copyError):
+                        return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(copyError));
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                        return LlvmResult<System.Text.OwnedAscii>.Ok(value);
+                }
+        }
+    }
+}
+
+public fn LlvmResult<System.Text.OwnedAscii> VerifyModule(mut borrow LlvmModule llvmModule, LlvmVerifierFailureAction action)
+{
+    if (llvmModule.Ref == null)
+    {
+        return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack mut System.C.ForeignOwnedCStrOut message = new();
+        stack i32[min max] failed = LLVMVerifyModule(
+            llvmModule.Ref,
+            LlvmVerifierFailureActionValue(action),
+            message.OutPointer());
+        if (failed == 0)
+        {
+            System.C.DisposeForeignOwnedOut(message, LLVMDisposeMessage);
+            return LlvmResult<System.Text.OwnedAscii>.Ok(new System.Text.OwnedAscii());
+        }
+
+        stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+            System.C.CopyForeignOwnedOutAsciiAndDispose(message, LLVMDisposeMessage, LlvmOwnedMessageMaxBytes);
+        switch (copied)
+        {
+            case System.C.CStringResult<System.Text.OwnedAscii>.Err(var error):
+                return LlvmResult<System.Text.OwnedAscii>.Err(LlvmError.CString(error));
+            case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                return LlvmResult<System.Text.OwnedAscii>.Ok(value);
+        }
+    }
+}
+
+public finite law u32[0 max] LlvmRequiredSymbolCount()
+{
+    return 99;
+}
+
+public finite law ascii LlvmRequiredSymbolAt(u32[0 max] index)
+{
+    switch (index)
+    {
+        case 0:
+            return "LLVMGetVersion";
+        case 1:
+            return "LLVMDisposeMessage";
+        case 2:
+            return "LLVMContextCreate";
+        case 3:
+            return "LLVMContextDispose";
+        case 4:
+            return "LLVMModuleCreateWithNameInContext";
+        case 5:
+            return "LLVMDisposeModule";
+        case 6:
+            return "LLVMCreateBuilderInContext";
+        case 7:
+            return "LLVMDisposeBuilder";
+        case 8:
+            return "LLVMVerifyModule";
+        case 9:
+            return "LLVMPrintModuleToString";
+        case 10:
+            return "LLVMInitializeNativeTarget";
+        case 11:
+            return "LLVMInitializeNativeAsmPrinter";
+        case 12:
+            return "LLVMInitializeNativeAsmParser";
+        case 13:
+            return "LLVMGetDefaultTargetTriple";
+        case 14:
+            return "LLVMGetTargetFromTriple";
+        case 15:
+            return "LLVMCreateTargetMachine";
+        case 16:
+            return "LLVMDisposeTargetMachine";
+        case 17:
+            return "LLVMTargetMachineEmitToMemoryBuffer";
+        case 18:
+            return "LLVMDisposeMemoryBuffer";
+        case 19:
+            return "LLVMGetBufferStart";
+        case 20:
+            return "LLVMGetBufferSize";
+        case 21:
+            return "LLVMSetTarget";
+        case 22:
+            return "LLVMSetDataLayout";
+        case 23:
+            return "LLVMInt1TypeInContext";
+        case 24:
+            return "LLVMInt8TypeInContext";
+        case 25:
+            return "LLVMInt32TypeInContext";
+        case 26:
+            return "LLVMInt64TypeInContext";
+        case 27:
+            return "LLVMVoidTypeInContext";
+        case 28:
+            return "LLVMPointerType";
+        case 29:
+            return "LLVMFunctionType";
+        case 30:
+            return "LLVMAddFunction";
+        case 31:
+            return "LLVMAppendBasicBlockInContext";
+        case 32:
+            return "LLVMPositionBuilderAtEnd";
+        case 33:
+            return "LLVMConstInt";
+        case 34:
+            return "LLVMBuildRet";
+        case 35:
+            return "LLVMBuildRetVoid";
+        case 36:
+            return "LLVMAddGlobal";
+        case 37:
+            return "LLVMAddGlobalInAddressSpace";
+        case 38:
+            return "LLVMSetInitializer";
+        case 39:
+            return "LLVMSetGlobalConstant";
+        case 40:
+            return "LLVMSetLinkage";
+        case 41:
+            return "LLVMSetVisibility";
+        case 42:
+            return "LLVMSetDLLStorageClass";
+        case 43:
+            return "LLVMSetUnnamedAddress";
+        case 44:
+            return "LLVMSetAlignment";
+        case 45:
+            return "LLVMSetSection";
+        case 46:
+            return "LLVMBuildLoad2";
+        case 47:
+            return "LLVMBuildStore";
+        case 48:
+            return "LLVMBuildGEP2";
+        case 49:
+            return "LLVMBuildInBoundsGEP2";
+        case 50:
+            return "LLVMBuildCall2";
+        case 51:
+            return "LLVMSetVolatile";
+        case 52:
+            return "LLVMSetOrdering";
+        case 53:
+            return "LLVMSetInstructionCallConv";
+        case 54:
+            return "LLVMSetTailCall";
+        case 55:
+            return "LLVMGetEnumAttributeKindForName";
+        case 56:
+            return "LLVMCreateEnumAttribute";
+        case 57:
+            return "LLVMAddAttributeAtIndex";
+        case 58:
+            return "LLVMAddCallSiteAttribute";
+        case 59:
+            return "LLVMGetMDKindIDInContext";
+        case 60:
+            return "LLVMMDStringInContext2";
+        case 61:
+            return "LLVMMDNodeInContext2";
+        case 62:
+            return "LLVMMetadataAsValue";
+        case 63:
+            return "LLVMValueAsMetadata";
+        case 64:
+            return "LLVMSetMetadata";
+        case 65:
+            return "LLVMCountParams";
+        case 66:
+            return "LLVMGetParam";
+        case 67:
+            return "LLVMSetFunctionCallConv";
+        case 68:
+            return "LLVMBuildBr";
+        case 69:
+            return "LLVMBuildCondBr";
+        case 70:
+            return "LLVMBuildUnreachable";
+        case 71:
+            return "LLVMBuildPhi";
+        case 72:
+            return "LLVMAddIncoming";
+        case 73:
+            return "LLVMBuildAdd";
+        case 74:
+            return "LLVMBuildNSWAdd";
+        case 75:
+            return "LLVMBuildNUWAdd";
+        case 76:
+            return "LLVMBuildSub";
+        case 77:
+            return "LLVMBuildNSWSub";
+        case 78:
+            return "LLVMBuildNUWSub";
+        case 79:
+            return "LLVMBuildMul";
+        case 80:
+            return "LLVMBuildNSWMul";
+        case 81:
+            return "LLVMBuildNUWMul";
+        case 82:
+            return "LLVMBuildUDiv";
+        case 83:
+            return "LLVMBuildExactUDiv";
+        case 84:
+            return "LLVMBuildSDiv";
+        case 85:
+            return "LLVMBuildExactSDiv";
+        case 86:
+            return "LLVMBuildURem";
+        case 87:
+            return "LLVMBuildSRem";
+        case 88:
+            return "LLVMBuildAnd";
+        case 89:
+            return "LLVMBuildOr";
+        case 90:
+            return "LLVMBuildXor";
+        case 91:
+            return "LLVMBuildShl";
+        case 92:
+            return "LLVMBuildLShr";
+        case 93:
+            return "LLVMBuildAShr";
+        case 94:
+            return "LLVMBuildICmp";
+        case 95:
+            return "LLVMBuildSelect";
+        case 96:
+            return "LLVMCreateTargetDataLayout";
+        case 97:
+            return "LLVMCopyStringRepOfTargetData";
+        case 98:
+            return "LLVMDisposeTargetData";
+        default:
+            return "";
+    }
+}
+
+public finite law bool LlvmRequiredSymbolKnown(ascii symbol)
+{
+    return System.Text.Equals(symbol, "LLVMGetVersion")
+        || System.Text.Equals(symbol, "LLVMDisposeMessage")
+        || System.Text.Equals(symbol, "LLVMContextCreate")
+        || System.Text.Equals(symbol, "LLVMContextDispose")
+        || System.Text.Equals(symbol, "LLVMModuleCreateWithNameInContext")
+        || System.Text.Equals(symbol, "LLVMDisposeModule")
+        || System.Text.Equals(symbol, "LLVMCreateBuilderInContext")
+        || System.Text.Equals(symbol, "LLVMDisposeBuilder")
+        || System.Text.Equals(symbol, "LLVMVerifyModule")
+        || System.Text.Equals(symbol, "LLVMPrintModuleToString")
+        || System.Text.Equals(symbol, "LLVMInitializeNativeTarget")
+        || System.Text.Equals(symbol, "LLVMInitializeNativeAsmPrinter")
+        || System.Text.Equals(symbol, "LLVMInitializeNativeAsmParser")
+        || System.Text.Equals(symbol, "LLVMGetDefaultTargetTriple")
+        || System.Text.Equals(symbol, "LLVMGetTargetFromTriple")
+        || System.Text.Equals(symbol, "LLVMCreateTargetMachine")
+        || System.Text.Equals(symbol, "LLVMDisposeTargetMachine")
+        || System.Text.Equals(symbol, "LLVMTargetMachineEmitToMemoryBuffer")
+        || System.Text.Equals(symbol, "LLVMDisposeMemoryBuffer")
+        || System.Text.Equals(symbol, "LLVMGetBufferStart")
+        || System.Text.Equals(symbol, "LLVMGetBufferSize")
+        || System.Text.Equals(symbol, "LLVMSetTarget")
+        || System.Text.Equals(symbol, "LLVMSetDataLayout")
+        || System.Text.Equals(symbol, "LLVMInt1TypeInContext")
+        || System.Text.Equals(symbol, "LLVMInt8TypeInContext")
+        || System.Text.Equals(symbol, "LLVMInt32TypeInContext")
+        || System.Text.Equals(symbol, "LLVMInt64TypeInContext")
+        || System.Text.Equals(symbol, "LLVMVoidTypeInContext")
+        || System.Text.Equals(symbol, "LLVMPointerType")
+        || System.Text.Equals(symbol, "LLVMFunctionType")
+        || System.Text.Equals(symbol, "LLVMAddFunction")
+        || System.Text.Equals(symbol, "LLVMAppendBasicBlockInContext")
+        || System.Text.Equals(symbol, "LLVMPositionBuilderAtEnd")
+        || System.Text.Equals(symbol, "LLVMConstInt")
+        || System.Text.Equals(symbol, "LLVMBuildRet")
+        || System.Text.Equals(symbol, "LLVMBuildRetVoid")
+        || System.Text.Equals(symbol, "LLVMAddGlobal")
+        || System.Text.Equals(symbol, "LLVMAddGlobalInAddressSpace")
+        || System.Text.Equals(symbol, "LLVMSetInitializer")
+        || System.Text.Equals(symbol, "LLVMSetGlobalConstant")
+        || System.Text.Equals(symbol, "LLVMSetLinkage")
+        || System.Text.Equals(symbol, "LLVMSetVisibility")
+        || System.Text.Equals(symbol, "LLVMSetDLLStorageClass")
+        || System.Text.Equals(symbol, "LLVMSetUnnamedAddress")
+        || System.Text.Equals(symbol, "LLVMSetAlignment")
+        || System.Text.Equals(symbol, "LLVMSetSection")
+        || System.Text.Equals(symbol, "LLVMBuildLoad2")
+        || System.Text.Equals(symbol, "LLVMBuildStore")
+        || System.Text.Equals(symbol, "LLVMBuildGEP2")
+        || System.Text.Equals(symbol, "LLVMBuildInBoundsGEP2")
+        || System.Text.Equals(symbol, "LLVMBuildCall2")
+        || System.Text.Equals(symbol, "LLVMSetVolatile")
+        || System.Text.Equals(symbol, "LLVMSetOrdering")
+        || System.Text.Equals(symbol, "LLVMSetInstructionCallConv")
+        || System.Text.Equals(symbol, "LLVMSetTailCall")
+        || System.Text.Equals(symbol, "LLVMGetEnumAttributeKindForName")
+        || System.Text.Equals(symbol, "LLVMCreateEnumAttribute")
+        || System.Text.Equals(symbol, "LLVMAddAttributeAtIndex")
+        || System.Text.Equals(symbol, "LLVMAddCallSiteAttribute")
+        || System.Text.Equals(symbol, "LLVMGetMDKindIDInContext")
+        || System.Text.Equals(symbol, "LLVMMDStringInContext2")
+        || System.Text.Equals(symbol, "LLVMMDNodeInContext2")
+        || System.Text.Equals(symbol, "LLVMMetadataAsValue")
+        || System.Text.Equals(symbol, "LLVMValueAsMetadata")
+        || System.Text.Equals(symbol, "LLVMSetMetadata")
+        || System.Text.Equals(symbol, "LLVMCountParams")
+        || System.Text.Equals(symbol, "LLVMGetParam")
+        || System.Text.Equals(symbol, "LLVMSetFunctionCallConv")
+        || System.Text.Equals(symbol, "LLVMBuildBr")
+        || System.Text.Equals(symbol, "LLVMBuildCondBr")
+        || System.Text.Equals(symbol, "LLVMBuildUnreachable")
+        || System.Text.Equals(symbol, "LLVMBuildPhi")
+        || System.Text.Equals(symbol, "LLVMAddIncoming")
+        || System.Text.Equals(symbol, "LLVMBuildAdd")
+        || System.Text.Equals(symbol, "LLVMBuildNSWAdd")
+        || System.Text.Equals(symbol, "LLVMBuildNUWAdd")
+        || System.Text.Equals(symbol, "LLVMBuildSub")
+        || System.Text.Equals(symbol, "LLVMBuildNSWSub")
+        || System.Text.Equals(symbol, "LLVMBuildNUWSub")
+        || System.Text.Equals(symbol, "LLVMBuildMul")
+        || System.Text.Equals(symbol, "LLVMBuildNSWMul")
+        || System.Text.Equals(symbol, "LLVMBuildNUWMul")
+        || System.Text.Equals(symbol, "LLVMBuildUDiv")
+        || System.Text.Equals(symbol, "LLVMBuildExactUDiv")
+        || System.Text.Equals(symbol, "LLVMBuildSDiv")
+        || System.Text.Equals(symbol, "LLVMBuildExactSDiv")
+        || System.Text.Equals(symbol, "LLVMBuildURem")
+        || System.Text.Equals(symbol, "LLVMBuildSRem")
+        || System.Text.Equals(symbol, "LLVMBuildAnd")
+        || System.Text.Equals(symbol, "LLVMBuildOr")
+        || System.Text.Equals(symbol, "LLVMBuildXor")
+        || System.Text.Equals(symbol, "LLVMBuildShl")
+        || System.Text.Equals(symbol, "LLVMBuildLShr")
+        || System.Text.Equals(symbol, "LLVMBuildAShr")
+        || System.Text.Equals(symbol, "LLVMBuildICmp")
+        || System.Text.Equals(symbol, "LLVMBuildSelect")
+        || System.Text.Equals(symbol, "LLVMCreateTargetDataLayout")
+        || System.Text.Equals(symbol, "LLVMCopyStringRepOfTargetData")
+        || System.Text.Equals(symbol, "LLVMDisposeTargetData");
+}
+
+public finite law bool LlvmRequiredSymbolIndexKnown(u32[0 max] index)
+{
+    return index < LlvmRequiredSymbolCount()
+        && !System.Text.Equals(LlvmRequiredSymbolAt(index), "");
+}
+
+internal unsafe ffi(c) fn void LLVMGetVersion(
+    rawmutptr<System.C.c_uint> major,
+    rawmutptr<System.C.c_uint> minor,
+    rawmutptr<System.C.c_uint> patch);
+
+internal unsafe ffi(c) fn void LLVMDisposeMessage(rawmutptr<System.C.c_char> message);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMContextCreate();
+internal unsafe ffi(c) fn void LLVMContextDispose(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMModuleCreateWithNameInContext(
+    rawptr<System.C.c_char> moduleId,
+    rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn void LLVMDisposeModule(rawmutptr<System.C.c_void> llvmModule);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMCreateBuilderInContext(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn void LLVMDisposeBuilder(rawmutptr<System.C.c_void> builder);
+internal unsafe ffi(c) fn i32[min max] LLVMVerifyModule(
+    rawmutptr<System.C.c_void> llvmModule,
+    i32[min max] action,
+    rawmutptr<System.C.ForeignOwnedCStrOut> outMessage);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_char> LLVMPrintModuleToString(rawmutptr<System.C.c_void> llvmModule);
+internal unsafe ffi(c) fn i32[min max] LLVMInitializeNativeTarget();
+internal unsafe ffi(c) fn i32[min max] LLVMInitializeNativeAsmPrinter();
+internal unsafe ffi(c) fn i32[min max] LLVMInitializeNativeAsmParser();
+internal unsafe ffi(c) fn rawmutptr<System.C.c_char> LLVMGetDefaultTargetTriple();
+internal unsafe ffi(c) fn i32[min max] LLVMGetTargetFromTriple(
+    rawptr<System.C.c_char> triple,
+    rawmutptr<LlvmTargetRefOut> target,
+    rawmutptr<System.C.ForeignOwnedCStrOut> errorMessage);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMCreateTargetMachine(
+    rawmutptr<System.C.c_void> target,
+    rawptr<System.C.c_char> triple,
+    rawptr<System.C.c_char> cpu,
+    rawptr<System.C.c_char> features,
+    i32[min max] optLevel,
+    i32[min max] relocMode,
+    i32[min max] codeModel);
+internal unsafe ffi(c) fn void LLVMDisposeTargetMachine(rawmutptr<System.C.c_void> targetMachine);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMCreateTargetDataLayout(
+    rawmutptr<System.C.c_void> targetMachine);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_char> LLVMCopyStringRepOfTargetData(
+    rawmutptr<System.C.c_void> targetData);
+internal unsafe ffi(c) fn void LLVMDisposeTargetData(rawmutptr<System.C.c_void> targetData);
+internal unsafe ffi(c) fn i32[min max] LLVMTargetMachineEmitToMemoryBuffer(
+    rawmutptr<System.C.c_void> targetMachine,
+    rawmutptr<System.C.c_void> llvmModule,
+    i32[min max] codegen,
+    rawmutptr<System.C.ForeignOwnedCStrOut> errorMessage,
+    rawmutptr<LlvmMemoryBufferRefOut> outMemoryBuffer);
+internal unsafe ffi(c) fn void LLVMDisposeMemoryBuffer(rawmutptr<System.C.c_void> memoryBuffer);
+internal unsafe ffi(c) fn rawptr<System.C.c_char> LLVMGetBufferStart(rawmutptr<System.C.c_void> memoryBuffer);
+internal unsafe ffi(c) fn System.C.c_size_t LLVMGetBufferSize(rawmutptr<System.C.c_void> memoryBuffer);
+internal unsafe ffi(c) fn void LLVMSetTarget(
+    rawmutptr<System.C.c_void> llvmModule,
+    rawptr<System.C.c_char> triple);
+internal unsafe ffi(c) fn void LLVMSetDataLayout(
+    rawmutptr<System.C.c_void> llvmModule,
+    rawptr<System.C.c_char> dataLayout);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMInt1TypeInContext(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMInt8TypeInContext(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMInt32TypeInContext(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMInt64TypeInContext(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMVoidTypeInContext(rawmutptr<System.C.c_void> context);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMPointerType(
+    rawmutptr<System.C.c_void> elementType,
+    System.C.c_uint addressSpace);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMFunctionType(
+    rawmutptr<System.C.c_void> returnType,
+    rawmutptr<rawmutptr<System.C.c_void>> parameterTypes,
+    System.C.c_uint parameterCount,
+    i32[min max] isVarArg);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMAddFunction(
+    rawmutptr<System.C.c_void> llvmModule,
+    rawptr<System.C.c_char> name,
+    rawmutptr<System.C.c_void> functionType);
+internal unsafe ffi(c) fn System.C.c_uint LLVMCountParams(rawmutptr<System.C.c_void> function);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMGetParam(
+    rawmutptr<System.C.c_void> function,
+    System.C.c_uint index);
+internal unsafe ffi(c) fn void LLVMSetFunctionCallConv(
+    rawmutptr<System.C.c_void> function,
+    System.C.c_uint callingConvention);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMAddGlobal(
+    rawmutptr<System.C.c_void> llvmModule,
+    rawmutptr<System.C.c_void> valueType,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMAddGlobalInAddressSpace(
+    rawmutptr<System.C.c_void> llvmModule,
+    rawmutptr<System.C.c_void> valueType,
+    rawptr<System.C.c_char> name,
+    System.C.c_uint addressSpace);
+internal unsafe ffi(c) fn void LLVMSetInitializer(
+    rawmutptr<System.C.c_void> global,
+    rawmutptr<System.C.c_void> constant);
+internal unsafe ffi(c) fn void LLVMSetGlobalConstant(
+    rawmutptr<System.C.c_void> global,
+    i32[min max] isConstant);
+internal unsafe ffi(c) fn void LLVMSetLinkage(
+    rawmutptr<System.C.c_void> global,
+    i32[min max] linkage);
+internal unsafe ffi(c) fn void LLVMSetVisibility(
+    rawmutptr<System.C.c_void> global,
+    i32[min max] visibility);
+internal unsafe ffi(c) fn void LLVMSetDLLStorageClass(
+    rawmutptr<System.C.c_void> global,
+    i32[min max] storageClass);
+internal unsafe ffi(c) fn void LLVMSetUnnamedAddress(
+    rawmutptr<System.C.c_void> global,
+    i32[min max] unnamedAddress);
+internal unsafe ffi(c) fn void LLVMSetAlignment(
+    rawmutptr<System.C.c_void> value,
+    System.C.c_uint bytes);
+internal unsafe ffi(c) fn void LLVMSetSection(
+    rawmutptr<System.C.c_void> global,
+    rawptr<System.C.c_char> section);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildAdd(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildNSWAdd(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildNUWAdd(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildSub(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildNSWSub(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildNUWSub(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildMul(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildNSWMul(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildNUWMul(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildUDiv(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildExactUDiv(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildSDiv(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildExactSDiv(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildURem(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildSRem(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildAnd(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildOr(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildXor(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildShl(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildLShr(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildAShr(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildICmp(
+    rawmutptr<System.C.c_void> builder,
+    i32[min max] predicate,
+    rawmutptr<System.C.c_void> left,
+    rawmutptr<System.C.c_void> right,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildSelect(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> condition,
+    rawmutptr<System.C.c_void> trueValue,
+    rawmutptr<System.C.c_void> falseValue,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildLoad2(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> llvmType,
+    rawmutptr<System.C.c_void> pointer,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildStore(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> value,
+    rawmutptr<System.C.c_void> pointer);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildGEP2(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> llvmType,
+    rawmutptr<System.C.c_void> pointer,
+    rawmutptr<rawmutptr<System.C.c_void>> indices,
+    System.C.c_uint indexCount,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildInBoundsGEP2(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> llvmType,
+    rawmutptr<System.C.c_void> pointer,
+    rawmutptr<rawmutptr<System.C.c_void>> indices,
+    System.C.c_uint indexCount,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildCall2(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> functionType,
+    rawmutptr<System.C.c_void> function,
+    rawmutptr<rawmutptr<System.C.c_void>> arguments,
+    System.C.c_uint argumentCount,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn void LLVMSetVolatile(
+    rawmutptr<System.C.c_void> memoryAccess,
+    i32[min max] isVolatile);
+internal unsafe ffi(c) fn void LLVMSetOrdering(
+    rawmutptr<System.C.c_void> memoryAccess,
+    i32[min max] ordering);
+internal unsafe ffi(c) fn void LLVMSetInstructionCallConv(
+    rawmutptr<System.C.c_void> instruction,
+    System.C.c_uint callingConvention);
+internal unsafe ffi(c) fn void LLVMSetTailCall(
+    rawmutptr<System.C.c_void> call,
+    i32[min max] isTailCall);
+internal unsafe ffi(c) fn System.C.c_uint LLVMGetEnumAttributeKindForName(
+    rawptr<System.C.c_char> name,
+    System.C.c_size_t length);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMCreateEnumAttribute(
+    rawmutptr<System.C.c_void> context,
+    System.C.c_uint kindId,
+    u64[0 max] value);
+internal unsafe ffi(c) fn void LLVMAddAttributeAtIndex(
+    rawmutptr<System.C.c_void> function,
+    System.C.c_uint index,
+    rawmutptr<System.C.c_void> attribute);
+internal unsafe ffi(c) fn void LLVMAddCallSiteAttribute(
+    rawmutptr<System.C.c_void> call,
+    System.C.c_uint index,
+    rawmutptr<System.C.c_void> attribute);
+internal unsafe ffi(c) fn System.C.c_uint LLVMGetMDKindIDInContext(
+    rawmutptr<System.C.c_void> context,
+    rawptr<System.C.c_char> name,
+    System.C.c_uint length);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMMDStringInContext2(
+    rawmutptr<System.C.c_void> context,
+    rawptr<System.C.c_char> text,
+    System.C.c_size_t length);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMMDNodeInContext2(
+    rawmutptr<System.C.c_void> context,
+    rawmutptr<rawmutptr<System.C.c_void>> operands,
+    System.C.c_size_t operandCount);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMMetadataAsValue(
+    rawmutptr<System.C.c_void> context,
+    rawmutptr<System.C.c_void> metadata);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMValueAsMetadata(rawmutptr<System.C.c_void> value);
+internal unsafe ffi(c) fn void LLVMSetMetadata(
+    rawmutptr<System.C.c_void> value,
+    System.C.c_uint kindId,
+    rawmutptr<System.C.c_void> metadataNode);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMAppendBasicBlockInContext(
+    rawmutptr<System.C.c_void> context,
+    rawmutptr<System.C.c_void> function,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn void LLVMPositionBuilderAtEnd(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> block);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildBr(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> destination);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildCondBr(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> condition,
+    rawmutptr<System.C.c_void> thenBlock,
+    rawmutptr<System.C.c_void> elseBlock);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildUnreachable(rawmutptr<System.C.c_void> builder);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildPhi(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> valueType,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn void LLVMAddIncoming(
+    rawmutptr<System.C.c_void> phi,
+    rawmutptr<rawmutptr<System.C.c_void>> incomingValues,
+    rawmutptr<rawmutptr<System.C.c_void>> incomingBlocks,
+    System.C.c_uint incomingCount);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMConstInt(
+    rawmutptr<System.C.c_void> integerType,
+    System.C.c_ulonglong value,
+    i32[min max] signExtend);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildRet(
+    rawmutptr<System.C.c_void> builder,
+    rawmutptr<System.C.c_void> value);
+internal unsafe ffi(c) fn rawmutptr<System.C.c_void> LLVMBuildRetVoid(rawmutptr<System.C.c_void> builder);

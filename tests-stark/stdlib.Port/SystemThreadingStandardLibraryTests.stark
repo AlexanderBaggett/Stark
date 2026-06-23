@@ -1096,15 +1096,12 @@ fn i32[min max] Run()
 // LinuxReleaseThreadReference, StartThread/JoinThread/DetachThread,
 // LinuxThreadEntryThunk, FutexWait, the @LinuxMunmapSyscallNumber/@LinuxFutexSyscallNumber
 // globals, LinuxSyscall1Handle/LinuxSyscall2Pointers, YieldThread/SleepThreadMilliseconds)
-// and the absence of pthread_*/ThreadEntryThunk/sched_yield/nanosleep. The
-// compile-only host bridge cannot read that repository source file nor override the
-// LLVM target triple to Linux (it lowers for the host architecture only), so the
-// Linux-specific clone-lifecycle symbols and the negative pthread checks cannot be
-// reproduced. This port compiles a program that imports System.Threading and
-// exercises the thread lifecycle/scheduler surface so the host stdlib pulls those
-// platform thread primitives in, reducing the assertion to a successful compile.
+// and the absence of pthread_*/ThreadEntryThunk/sched_yield/nanosleep. The host
+// bridge cannot read that repository source file directly, so this port
+// cross-targets a program that imports System.Threading and exercises the thread
+// lifecycle/scheduler surface.
 // The expected Linux IR symbols are retained verbatim as data rows below so the
-// intent stays documented even though only the host architecture can be exercised.
+// intent stays documented alongside the target-pinned compile.
 internal fn bool StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBackedSchedulerImpl()
 {
     stack ascii mapThreadRegion = "define i64 @LinuxMapThreadRegion(";
@@ -1130,7 +1127,7 @@ internal fn bool StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBacked
     stack ascii noSchedYield = "@sched_yield(";
     stack ascii noNanosleep = "@nanosleep(";
 
-    stack mut ProgramCompile c = CompileProgram("stdlib-linux-threading-raw-clone-lifecycle", raw"""
+    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-linux-threading-raw-clone-lifecycle", raw"""
 import System.Threading
 module Demo
 
@@ -1149,7 +1146,7 @@ export fn i32[min max] main()
     detached.Detach();
     return 0;
 }
-""");
+""", LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -1167,15 +1164,10 @@ export fn i32[min max] main()
 // WaitForSingleObject, GetExitCodeThread, CloseHandle, SwitchToThread, Sleep,
 // WaitOnAddress/WakeByAddressSingle/WakeByAddressAll), the ThreadEntryThunk and
 // StartThread/JoinThread/DetachThread/YieldThread/SleepThreadMilliseconds/FutexWait/FutexWake
-// definitions, and the absence of pthread_*. The compile-only host bridge cannot
-// read that repository source file nor override the LLVM target triple to Windows
-// (it lowers for the host architecture only), so the Win32-specific lifecycle
-// symbols and the negative pthread checks cannot be reproduced. This port compiles
-// a program that imports System.Threading and exercises the thread
-// lifecycle/scheduler surface so the host stdlib pulls those platform thread
-// primitives in, reducing the assertion to a successful compile. The expected Win32
-// IR symbols are retained verbatim as data rows below so the intent stays
-// documented even though only the host platform can be exercised.
+// definitions, and the absence of pthread_*. The host bridge cannot read that
+// repository source file directly, so this port cross-targets a program that
+// imports System.Threading and exercises the thread lifecycle/scheduler surface.
+// The expected Win32 IR symbols are retained verbatim as data rows below.
 internal fn bool StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCallsImpl()
 {
     stack ascii createThread = "declare win64cc ptr @CreateThread(";
@@ -1200,7 +1192,7 @@ internal fn bool StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCalls
     stack ascii noPthreadJoin = "@pthread_join(";
     stack ascii noPthreadDetach = "@pthread_detach(";
 
-    stack mut ProgramCompile c = CompileProgram("stdlib-windows-threading-win32-lifecycle", raw"""
+    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-windows-threading-win32-lifecycle", raw"""
 import System.Threading
 module Demo
 
@@ -1219,7 +1211,7 @@ export fn i32[min max] main()
     detached.Detach();
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;

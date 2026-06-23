@@ -31,20 +31,45 @@ views. It deliberately avoids a broad artifact-combination matrix for v1.
 | JSON package image | deterministic inspection/export format | no for the normal path | yes |
 | text package dump | deterministic readable summary | no | yes |
 
-The host compiler now emits and loads a binary `.starkpkg` container by default
-(STARKPKG magic, format version, Brotli-compressed canonical JSON payload), with
-`--package-image-json` as the opt-in JSON sidecar and `--inspect-pkg` rendering
-JSON/text from either form. Legacy `.starkpkg.json` artifacts still load during
-migration. The self-hosted compiler still owns the long-term sectioned byte-level
-encoding described below; the host container exists so the default artifact and
-tooling contracts are binary-first before the port.
+The host compiler now emits and loads a binary `.starkpkg` container by default:
+`STARKPKG` magic, exact format version, a fixed-width section directory, a
+required `STRS` string-table section, a required `PINF` package-facts section
+that stores package identity plus target/profile facts as typed indexes into
+`STRS`, and a required `MANF` section containing the Brotli-compressed canonical
+JSON package model. The loader cross-checks `PINF` against `MANF` before
+accepting the image, so binary compatibility facts cannot drift from the
+inspection payload. `--package-image-json` remains the opt-in JSON sidecar and
+`inspect-pkg` renders JSON/text from either form. Legacy `.starkpkg.json`
+artifacts and the earlier v1 non-sectioned binary wrapper still load during
+migration. The self-hosted compiler still owns the long-term typed compiler
+sections described below; the host container now fixes the binary-first section
+directory, string-table/index model, target/profile fact path, and compatibility
+diagnostics.
+
+The self-host MIR package-image leaf codec also has a `STARKPKG` v2 raw-section
+wrapper for self-host bootstrap work. Its current section IDs are `MINS`
+instructions, `MBLK` blocks, `MFUN` functions, `MGLB` globals, and optional
+`MASM` assembly metadata; the legacy `MIR1`/`MIR2` leaf images remain readable
+during the transition.
+
+The self-host package-image validator recognizes the host logical `STRS` /
+`PINF` / `MANF` container shape for cheap compatibility checks: it validates the
+section directory, string-table bounds and UTF-8 payloads, optional-string
+sentinels, target/profile fact indexes, and summary inspection without
+decompressing `MANF`. The self-host inspector streams root module, library file,
+build profile, target triple, data layout, CPU, relocation/code model, target
+features, C data model, and aggregate layout directly from `PINF`/`STRS`; full
+logical model loading from `MANF` and future typed compiler sections remains part
+of the package-image stack port.
 
 Conventional names can be decided with the artifact-layout work, but the
 intended split is:
 
 - `.starkpkg` for the binary load artifact
-- `stark inspect-pkg --format json` for deterministic JSON inspection/export
-- `stark inspect-pkg --format text` for deterministic text inspection/export
+- `stark inspect-pkg <path> --format json` for deterministic JSON inspection/export
+- `stark inspect-pkg <path> --format text` for deterministic text inspection/export
+- legacy `--inspect-pkg` and `--inspect-package` flag forms stay accepted only as
+  migration aliases
 
 ## 3. Logical Model
 
@@ -143,29 +168,29 @@ administrative cost worthwhile.
 
 - [x] Decide package-image format policy: binary for normal compiler loading,
       JSON/text through `stark inspect-pkg` for inspection/export.
-- [ ] Finalize the public package-image contract: canonical binary extension,
+- [x] Finalize the public package-image contract: canonical binary extension,
       `stark inspect-pkg --format json|text`, deterministic inspection output
       conventions, and bootstrap policy for the legacy `.starkpkg.json` path.
-- [ ] Design the durable binary format: header, magic, format version,
+- [x] Design the durable binary format: header, magic, format version,
       target/profile facts, section directory, stable section IDs, durable
       compiler-fact policy, string/name tables, and typed index tables that
       cooperate with the compiler interner model.
 - [ ] Implement the Stark package-image stack: binary writer/reader, logical
       models, builders, loaders, bridge code, shared codecs, and deterministic
       JSON/text inspection rendering from binary images.
-- [ ] Add package-image diagnostics and compatibility behavior for malformed
+- [x] Add package-image diagnostics and compatibility behavior for malformed
       headers, unknown required sections, bad offsets/lengths, format
       mismatches, target/profile mismatches, and any temporary legacy JSON load
       path.
 - [ ] Update tests so normal dependency loading uses binary images while
       golden/debug tests compare deterministic inspection output.
-- [~] Route package-image outputs into the accepted
+- [x] Route package-image outputs into the accepted
       `build/<profile>/<target-triple>/<stage>/pkg/` layout, with
       inspection views under `artifacts/` or an explicit caller output path.
-      Current project library builds route legacy JSON package images to
-      `pkg/<project>/` and preserve dependency linking through relative library
-      references. Binary package images and inspection views under `artifacts/`
-      remain open.
+      Project library builds route binary package images to `pkg/<project>/`,
+      preserve dependency linking through relative library references, and write
+      explicit `stark build --package-image-json` inspection views to
+      `artifacts/pkg/<project>/`.
 
 ## 9. Documentation Work
 

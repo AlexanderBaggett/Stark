@@ -1215,13 +1215,11 @@ internal fn bool StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizat
     // LLVM uses Windows separators (the "\\" / "/" / ";" string constants) and
     // that the separator and TryJoin helper bodies inline an `icmp eq i8`
     // comparison rather than calling the Windows platform separator predicate. The
-    // compile-only host bridge cannot stage an alternate source tree, feed a raw
-    // stdlib module, or select a non-host (Windows) target triple, and it exposes
-    // only whole-module LLVM text rather than per-function bodies. This is reduced
-    // to compiling a program that exercises the separator and TryJoin path helpers
-    // and asserting Succeeds plus the presence of an `icmp eq i8` separator
-    // comparison in the whole-module IR.
-    stack mut ProgramCompile c = CompileProgram("staged-windows-path-separators", raw"""
+    // host bridge cannot stage an alternate source tree, feed a raw stdlib module,
+    // or expose per-function bodies. This is reduced to cross-targeting a program
+    // that exercises the separator and TryJoin path helpers and asserting Succeeds
+    // plus the presence of an `icmp eq i8` separator comparison in the whole-module IR.
+    stack mut ProgramCompile c = CompileProgramForTarget("staged-windows-path-separators", raw"""
         import System.IO.Path
         import System.Text
         import System.Memory
@@ -1254,7 +1252,7 @@ internal fn bool StagedWindowsStdLibPathHelpersUseWindowsSeparatorsAndNormalizat
             stack mut System.Text.OwnedAscii normalized = new();
             return Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt"));
         }
-        """);
+        """, WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;

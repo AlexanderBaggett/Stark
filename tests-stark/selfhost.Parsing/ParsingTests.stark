@@ -171,6 +171,124 @@ fn bool MalformedImportIsError()
     }
 }
 
+[Fact]
+fn bool CompilationUnitFacadeBuildsHeaderAndDeclarations()
+{
+    stack ascii source = "import System.Text\nmodule Demo\nfn void f() { return; }\n";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var error):
+            return false;
+        case ParseResult<CompilationUnitSyntax>.Ok(var unit):
+            if (unit.HeaderCount() != 2 || unit.DeclarationCount() != 1)
+            {
+                return false;
+            }
+
+            stack DeclItem first = unit.DeclarationAt(0);
+            return first.Kind == DeclarationKind.Function
+                && unit.TokenKindAt(0) == TokenKind.Import;
+    }
+}
+
+[Fact]
+fn bool CompilationUnitFacadeReportsNoDiagnosticsForHeaderAndDeclaration()
+{
+    stack ascii source = "import System.Text\nmodule Demo\nfn void f() { return; }\n";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var error):
+            return false;
+        case ParseResult<CompilationUnitSyntax>.Ok(var unit):
+            return unit.Succeeded()
+                && unit.DiagnosticCount() == 0;
+    }
+}
+
+[Fact]
+fn bool CompilationUnitFacadeRecoversDeclarationNameText()
+{
+    stack ascii source = "fn void f() { return; }\n";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var error):
+            return false;
+        case ParseResult<CompilationUnitSyntax>.Ok(var unit):
+            if (!unit.Succeeded() || unit.DeclarationCount() != 1)
+            {
+                return false;
+            }
+
+            stack DeclItem first = unit.DeclarationAt(0);
+            return System.Text.Equals(unit.TokenTextAt(source, (u64[0 2 ** 63 - 1])first.NameToken), "f");
+    }
+}
+
+[Fact]
+fn bool CompilationUnitFacadeReportsInvalidTextLiteral()
+{
+    stack ascii source = "fn void f() { stack ascii s = \"\\q\"; }\n";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var error):
+            return false;
+        case ParseResult<CompilationUnitSyntax>.Ok(var unit):
+            return !unit.Succeeded()
+                && unit.DeclarationCount() == 1
+                && unit.DiagnosticCount() == 1
+                && unit.DiagnosticKindAt(0) == SyntaxDiagnosticKind.InvalidTextLiteral
+                && unit.DiagnosticCountOf(SyntaxDiagnosticKind.InvalidTextLiteral) == 1;
+    }
+}
+
+[Fact]
+fn bool CompilationUnitFacadeKeepsMalformedHeaderAsDiagnostic()
+{
+    stack ascii source = "import 123\nfn void f() { }\n";
+    switch (ParseCompilationUnit(source))
+    {
+        case ParseResult<CompilationUnitSyntax>.Err(var error):
+            return false;
+        case ParseResult<CompilationUnitSyntax>.Ok(var unit):
+            return !unit.Succeeded()
+                && unit.HeaderCount() == 0
+                && unit.DeclarationCount() == 0
+                && unit.DiagnosticCountOf(SyntaxDiagnosticKind.ExpectedName) == 1;
+    }
+}
+
+[Fact]
+fn bool ExpressionFacadeReportsTrailingText()
+{
+    stack ascii source = "a + b extra";
+    switch (ParseExpressionSyntax(source))
+    {
+        case ParseResult<ExpressionSyntax>.Err(var error):
+            return false;
+        case ParseResult<ExpressionSyntax>.Ok(var expr):
+            stack u32[0 max] root = expr.RootNode();
+            return !expr.Succeeded()
+                && expr.NodeKindAt(root) == ExprKind.Binary
+                && expr.DiagnosticCount() == 1
+                && expr.DiagnosticKindAt(0) == SyntaxDiagnosticKind.UnexpectedTextAfterExpression
+                && System.Text.Equals(expr.TokenTextAt(source, (u64[0 2 ** 63 - 1])expr.DiagnosticTokenAt(0)), "extra");
+    }
+}
+
+[Fact]
+fn bool ExpressionFacadeReportsEmptyExpression()
+{
+    switch (ParseExpressionSyntax(""))
+    {
+        case ParseResult<ExpressionSyntax>.Err(var error):
+            return false;
+        case ParseResult<ExpressionSyntax>.Ok(var expr):
+            return !expr.Succeeded()
+                && expr.RootNode() == 0
+                && expr.DiagnosticCountOf(SyntaxDiagnosticKind.ExpectedExpression) == 1;
+    }
+}
+
 // Lexes `source`, parses its header, then parses and binds the top-level
 // declaration list. Reports false on any lex/parse failure.
 fn bool ParseDeclsOk(ascii source, out DeclarationList decls)
@@ -548,6 +666,121 @@ fn bool EnumPayloadTypeHeadsAreExtracted()
 }
 
 [Fact]
+fn bool EnumPayloadTypeSpansAreCaptured()
+{
+    stack ascii source = "enum E { A(Bar), B { f: Baz }, C from Qux, D(u32[0 max]) }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem only = decls.ItemAt(0);
+    if (only.Kind != DeclarationKind.Enum)
+    {
+        return false;
+    }
+
+    switch (ParseEnumPayloadTypeSpans(stream, only.KeywordToken))
+    {
+        case ParseResult<TypeSpanList>.Err(var spanError):
+            return false;
+        case ParseResult<TypeSpanList>.Ok(var spans):
+            if (spans.Count() != 4)
+            {
+                return false;
+            }
+
+            stack ascii tupleStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])spans.StartTokenAt(0));
+            stack ascii namedStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])spans.StartTokenAt(1));
+            stack ascii fromStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])spans.StartTokenAt(2));
+            stack ascii builtinStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])spans.StartTokenAt(3));
+            return System.Text.Equals(tupleStart, "Bar")
+                && stream.KindAt((u64[0 2 ** 63 - 1])spans.EndTokenAt(0)) == TokenKind.RParen
+                && System.Text.Equals(namedStart, "Baz")
+                && stream.KindAt((u64[0 2 ** 63 - 1])spans.EndTokenAt(1)) == TokenKind.RBrace
+                && System.Text.Equals(fromStart, "Qux")
+                && stream.KindAt((u64[0 2 ** 63 - 1])spans.EndTokenAt(2)) == TokenKind.Comma
+                && System.Text.Equals(builtinStart, "u32")
+                && stream.KindAt((u64[0 2 ** 63 - 1])spans.EndTokenAt(3)) == TokenKind.RParen
+                && spans.HeadAt(3) == 0;
+    }
+}
+
+[Fact]
+fn bool StructAndEnumWhereConstraintHeadsAreExtracted()
+{
+    stack ascii source = "struct Box<T> where T: Drawable, Hashable { T Value; }\nenum Maybe<T> where T: Copyable { Some(T), None }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 2)
+    {
+        return false;
+    }
+
+    stack DeclItem structDecl = decls.ItemAt(0);
+    stack DeclItem enumDecl = decls.ItemAt(1);
+    if (structDecl.Kind != DeclarationKind.Struct || enumDecl.Kind != DeclarationKind.Enum)
+    {
+        return false;
+    }
+
+    switch (CollectWhereConstraintHeads(stream, structDecl.KeywordToken))
+    {
+        case ParseResult<TypeHeadList>.Err(var structError):
+            return false;
+        case ParseResult<TypeHeadList>.Ok(var structHeads):
+            if (structHeads.Count() != 2)
+            {
+                return false;
+            }
+
+            stack ascii firstStructHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])structHeads.HeadAt(0));
+            stack ascii secondStructHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])structHeads.HeadAt(1));
+            if (!System.Text.Equals(firstStructHead, "Drawable")
+                || !System.Text.Equals(secondStructHead, "Hashable"))
+            {
+                return false;
+            }
+    }
+
+    switch (CollectWhereConstraintHeads(stream, enumDecl.KeywordToken))
+    {
+        case ParseResult<TypeHeadList>.Err(var enumError):
+            return false;
+        case ParseResult<TypeHeadList>.Ok(var enumHeads):
+            if (enumHeads.Count() != 1)
+            {
+                return false;
+            }
+
+            stack ascii enumHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])enumHeads.HeadAt(0));
+            return System.Text.Equals(enumHead, "Copyable");
+    }
+}
+
+[Fact]
 fn bool ParsesStructFieldsSkippingMembers()
 {
     stack ascii source = "struct P { u32[0 max] X; u32[0 max] Y; P() { } fn void f() { } }";
@@ -740,6 +973,56 @@ fn bool MultiDeclaratorFieldsShareType()
 }
 
 [Fact]
+fn bool StructFieldTypeSpansAreCaptured()
+{
+    stack ascii source = "struct S { List<u32> x, y; u32[0 max] count; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem only = decls.ItemAt(0);
+    if (only.Kind != DeclarationKind.Struct)
+    {
+        return false;
+    }
+
+    switch (ParseStructFields(stream, only.KeywordToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldError):
+            return false;
+        case ParseResult<FieldList>.Ok(var fields):
+            if (fields.Count() != 3)
+            {
+                return false;
+            }
+
+            stack ascii firstStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeStartAt(0));
+            stack ascii secondStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeStartAt(1));
+            stack ascii thirdStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeStartAt(2));
+            return System.Text.Equals(firstStart, "List")
+                && System.Text.Equals(secondStart, "List")
+                && fields.TypeEndAt(0) == fields.NameTokenAt(0)
+                && fields.TypeEndAt(1) == fields.NameTokenAt(0)
+                && System.Text.Equals(thirdStart, "u32")
+                && fields.TypeEndAt(2) == fields.NameTokenAt(2)
+                && fields.TypeHeadAt(2) == 0;
+    }
+}
+
+[Fact]
 fn bool FieldStorageCapacityIsSkipped()
 {
     // `Bar x[N];` is a field `x` of type `Bar` with storage capacity `[N]` — the
@@ -850,6 +1133,60 @@ fn bool ParsesFunctionSignature()
             return System.Text.Equals(name, "compute")
                 && System.Text.Equals(p0, "a")
                 && System.Text.Equals(p2, "c");
+    }
+}
+
+[Fact]
+fn bool SignatureTypeSpansAreCaptured()
+{
+    stack ascii source = "fn List<u32> make(borrow Foo item, out u32[0 max] count) { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem only = decls.ItemAt(0);
+    if (only.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, only.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            if (signature.ParamCount() != 2)
+            {
+                return false;
+            }
+
+            stack ascii returnStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.ReturnTypeStartTokenAt());
+            stack ascii returnEnd = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.ReturnTypeEndTokenAt());
+            stack ascii p0Start = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.ParamTypeStartTokenAt(0));
+            stack ascii p0End = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.ParamTypeEndTokenAt(0));
+            stack ascii p1Start = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.ParamTypeStartTokenAt(1));
+            stack ascii p1End = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.ParamTypeEndTokenAt(1));
+            return System.Text.Equals(returnStart, "List")
+                && System.Text.Equals(returnEnd, "make")
+                && System.Text.Equals(p0Start, "borrow")
+                && System.Text.Equals(p0End, "item")
+                && System.Text.Equals(p1Start, "out")
+                && System.Text.Equals(p1End, "count")
+                && signature.ParamStartTokenAt(0) == signature.ParamTypeStartTokenAt(0)
+                && signature.ParamTypeEndTokenAt(0) == signature.ParamNameAt(0);
     }
 }
 
@@ -2134,6 +2471,62 @@ fn bool LocalDeclarationNamesAreExtracted()
 }
 
 [Fact]
+fn bool LocalTypeSpansAreCaptured()
+{
+    stack ascii source = "fn void f() { arena Foo value = new(); stack List<u32> items = new(); }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem only = decls.ItemAt(0);
+    if (only.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, only.KeywordToken))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var statements):
+            if (statements.Count() != 2)
+            {
+                return false;
+            }
+
+            stack StatementItem first = statements.ItemAt(0);
+            stack StatementItem second = statements.ItemAt(1);
+            stack ascii firstStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])first.TypeStartToken);
+            stack ascii firstEnd = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])first.TypeEndToken);
+            stack ascii secondStart = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])statements.TypeStartTokenAt(1));
+            stack ascii secondEnd = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])statements.TypeEndTokenAt(1));
+            stack ascii secondHead = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])second.TypeHead);
+            return first.Kind == StatementKind.Local
+                && System.Text.Equals(firstStart, "arena")
+                && System.Text.Equals(firstEnd, "value")
+                && first.TypeEndToken == first.NameToken
+                && second.Kind == StatementKind.Local
+                && System.Text.Equals(secondStart, "stack")
+                && System.Text.Equals(secondEnd, "items")
+                && System.Text.Equals(secondHead, "List")
+                && statements.TypeEndTokenAt(1) == second.NameToken;
+    }
+}
+
+[Fact]
 fn bool BracelessElseIfChainIsOneStatement()
 {
     // A fully brace-less `if/else-if/else` chain is one statement: each arm's
@@ -2521,8 +2914,8 @@ fn bool ForEachStatementParsesElementAndTraversalScopes()
 fn bool SwitchSubjectAndCaseVarBindingParse()
 {
     // `switch (v) { case Thing(var x): }` parses to the `Switch`@0 carrying the
-    // subject expression, the `Case` label@1, and the pattern's `var x` binding as
-    // a `Local`@2 in the section scope (a child of the switch body's scope).
+    // subject expression, the `Case` label@1, a `Thing` pattern reference@2, and
+    // the pattern's `var x` binding as a `Local` in the section scope.
     stack mut TokenStream stream = new();
     if (!LexOk(LexText("fn void f(i32 v) { switch (v) { case Thing(var x): } }"), stream))
     {
@@ -2557,12 +2950,78 @@ fn bool SwitchSubjectAndCaseVarBindingParse()
         case ParseResult<StatementList>.Err(var bodyError):
             return false;
         case ParseResult<StatementList>.Ok(var body):
-            // Statements: Switch@0 (subject `v`), Case@1, var-binding `x`@2.
-            return body.Count() == 3
+            // Statements: Switch@0 (subject `v`), Case@1, pattern ref `Thing`@2, var-binding `x`@3.
+            return body.Count() == 4
                 && body.ItemAt(0).Kind == StatementKind.Switch
                 && body.ExprRootAt(0) != 0
                 && body.ItemAt(1).Kind == StatementKind.Case
-                && body.ItemAt(2).Kind == StatementKind.PatternBinding
-                && body.ScopeIdAt(2) != body.ScopeIdAt(0);
+                && body.ItemAt(2).Kind == StatementKind.Expression
+                && body.ExprRootAt(2) != 0
+                && body.ItemAt(3).Kind == StatementKind.PatternBinding
+                && body.ScopeIdAt(3) != body.ScopeIdAt(0);
+    }
+}
+
+[Fact]
+fn bool SwitchCasePatternValueReferencesParse()
+{
+    stack ascii source = "fn void f(i32 v) { switch (v) { case Missing | Box { Field: Other } | [Third]: } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    stack mut bool foundFn = false;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    foundFn = true;
+                }
+            }
+    }
+
+    if (!foundFn)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            if (body.Count() != 6)
+            {
+                return false;
+            }
+
+            stack u32[0 max] missingRoot = body.ExprRootAt(2);
+            stack u32[0 max] boxRoot = body.ExprRootAt(3);
+            stack u32[0 max] otherRoot = body.ExprRootAt(4);
+            stack u32[0 max] thirdRoot = body.ExprRootAt(5);
+            stack ascii missing = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])body.ExprTokenAt(missingRoot));
+            stack ascii box = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])body.ExprTokenAt(boxRoot));
+            stack ascii other = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])body.ExprTokenAt(otherRoot));
+            stack ascii third = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])body.ExprTokenAt(thirdRoot));
+            return body.ItemAt(0).Kind == StatementKind.Switch
+                && body.ItemAt(1).Kind == StatementKind.Case
+                && body.ItemAt(2).Kind == StatementKind.Expression
+                && body.ItemAt(3).Kind == StatementKind.Expression
+                && body.ItemAt(4).Kind == StatementKind.Expression
+                && body.ItemAt(5).Kind == StatementKind.Expression
+                && System.Text.Equals(missing, "Missing")
+                && System.Text.Equals(box, "Box")
+                && System.Text.Equals(other, "Other")
+                && System.Text.Equals(third, "Third");
     }
 }

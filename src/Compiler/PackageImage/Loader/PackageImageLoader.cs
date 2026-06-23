@@ -6,27 +6,43 @@ internal static partial class PackageImageLoader
 {
     public static bool TryLoadManifest(string manifestPath, out StarkPackageManifest manifest)
     {
+        return TryLoadManifest(manifestPath, out manifest, out _);
+    }
+
+    public static bool TryLoadManifest(
+        string manifestPath,
+        out StarkPackageManifest manifest,
+        out IReadOnlyList<CompilerDiagnostic> diagnostics)
+    {
         manifest = default!;
 
         try
         {
             var bytes = File.ReadAllBytes(manifestPath);
-            if (PackageImageBinaryFormat.HasBinaryMagic(bytes))
+            if (PackageImageBinaryFormat.HasBinaryMagic(bytes)
+                || PackageImageBinaryFormat.HasBinaryFileName(manifestPath))
             {
-                return PackageImageBinaryFormat.TryDecode(bytes, out manifest);
+                return PackageImageBinaryFormat.TryDecode(bytes, manifestPath, out manifest, out diagnostics);
             }
 
-            var parsed = StarkPackageManifest.FromJson(System.Text.Encoding.UTF8.GetString(bytes));
-            if (parsed is null)
-            {
-                return false;
-            }
-
-            manifest = parsed;
-            return true;
+            return TryParseManifestJsonDocument(
+                System.Text.Encoding.UTF8.GetString(bytes),
+                manifestPath,
+                validate: false,
+                out manifest,
+                out diagnostics);
         }
-        catch
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            diagnostics =
+            [
+                new CompilerDiagnostic(
+                    Code: "STK7127",
+                    Severity: DiagnosticSeverity.Error,
+                    Message: $"Package image file could not be read: {exception.Message}",
+                    Stage: "package-image",
+                    Location: new SourceLocation(manifestPath, 1, 1))
+            ];
             return false;
         }
     }
@@ -37,8 +53,17 @@ internal static partial class PackageImageLoader
         out StarkPackageManifest manifest,
         out IReadOnlyList<CompilerDiagnostic> diagnostics)
     {
-        manifest = default!;
+        return TryParseManifestJsonDocument(json, manifestPath, validate: true, out manifest, out diagnostics);
+    }
 
+    private static bool TryParseManifestJsonDocument(
+        string json,
+        string? manifestPath,
+        bool validate,
+        out StarkPackageManifest manifest,
+        out IReadOnlyList<CompilerDiagnostic> diagnostics)
+    {
+        manifest = default!;
         try
         {
             var parsed = StarkPackageManifest.FromJson(json);
@@ -57,7 +82,7 @@ internal static partial class PackageImageLoader
             }
 
             manifest = parsed;
-            diagnostics = ValidateManifest(parsed, manifestPath);
+            diagnostics = validate ? ValidateManifest(parsed, manifestPath) : [];
             return diagnostics.All(static diagnostic => diagnostic.Severity != DiagnosticSeverity.Error);
         }
         catch (Exception exception)
@@ -147,6 +172,8 @@ internal static partial class PackageImageLoader
             "STK7115",
             diagnostics,
             manifestLocation);
+        TargetCompatibilityValidator.ValidateManifestTarget(manifest, manifestPath, diagnostics);
+        ValidateManifestBuildProfile(manifest.BuildProfile, diagnostics, manifestLocation);
 
         var moduleNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var module in manifest.Modules)
@@ -212,6 +239,39 @@ internal static partial class PackageImageLoader
         }
 
         return diagnostics;
+    }
+
+    private static void ValidateManifestBuildProfile(
+        StarkPackageBuildProfileManifest? profile,
+        List<CompilerDiagnostic> diagnostics,
+        SourceLocation location)
+    {
+        if (profile is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(profile.Name))
+        {
+            diagnostics.Add(new CompilerDiagnostic(
+                Code: "STK7128",
+                Severity: DiagnosticSeverity.Error,
+                Message: "Package image build profile name must not be empty when profile facts are present.",
+                Stage: "package-image",
+                Location: location));
+            return;
+        }
+
+        if (!string.Equals(profile.Name, "dev", StringComparison.Ordinal)
+            && !string.Equals(profile.Name, "release", StringComparison.Ordinal))
+        {
+            diagnostics.Add(new CompilerDiagnostic(
+                Code: "STK7129",
+                Severity: DiagnosticSeverity.Error,
+                Message: $"Package image build profile '{profile.Name}' is not supported. Expected dev or release.",
+                Stage: "package-image",
+                Location: location));
+        }
     }
 
     private static void ValidateNativeDependencyList(

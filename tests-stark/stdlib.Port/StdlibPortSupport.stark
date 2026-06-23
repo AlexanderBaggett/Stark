@@ -17,6 +17,9 @@ module StdlibPortSupport
 
 const HostTimeoutMilliseconds = 180000;
 
+public const LinuxX64TargetTriple = "x86_64-unknown-linux-gnu";
+public const WindowsX64MsvcTargetTriple = "x86_64-pc-windows-msvc";
+
 public struct ProgramCompile
 {
     HostCompileOutcome Outcome;
@@ -36,6 +39,44 @@ public fn ProgramCompile CompileProgram(ascii id, ascii source)
     unsafe
     {
         stack mut ProgramCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Same as CompileProgram, but pins the host-test request to a target triple so
+// artifact-only platform tests preserve target/backend facts through lowering.
+public fn ProgramCompile CompileProgramForTarget(ascii id, ascii source, ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompileForTargetWithSeed(id, source, "", "llvm", targetTriple, "");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Same as CompileProgramForTarget, but asks the host to emit imported inline
+// bodies reachable from one source function so artifact probes can inspect a
+// platform helper body without making it public source API.
+public fn ProgramCompile CompileProgramForTargetWithSeed(
+    ascii id,
+    ascii source,
+    ascii targetTriple,
+    ascii importedInlineCloneSeed)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled =
+            RunHostCompileForTargetWithSeed(id, source, "", "llvm", targetTriple, importedInlineCloneSeed);
         if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
         {
             compiled.Ok = false;
@@ -80,7 +121,7 @@ internal fn ProgramCompile RunHostCompile(ascii id, ascii source, ascii stopAfte
         stack mut bool transportOk = false;
         if (havePath)
         {
-            switch (CompileOnceArtifactIn(
+            switch (CompileOnceArtifactInUsingStarkPath(
                 compilerPath.View(),
                 id,
                 source,
@@ -89,6 +130,75 @@ internal fn ProgramCompile RunHostCompile(ascii id, ascii source, ascii stopAfte
                 "",
                 0,
                 HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn ProgramCompile RunHostCompileForTarget(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii targetTriple)
+{
+    return RunHostCompileForTargetWithSeed(id, source, stopAfterPassId, artifactName, targetTriple, "");
+}
+
+internal fn ProgramCompile RunHostCompileForTargetWithSeed(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii targetTriple,
+    ascii importedInlineCloneSeed)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInUsingStarkPathForTargetWithSeed(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds,
+                targetTriple,
+                "",
+                importedInlineCloneSeed))
             {
                 case HostResult<HostCompileOutcome>.Err(var error):
                     transportOk = false;

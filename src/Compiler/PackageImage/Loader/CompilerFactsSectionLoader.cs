@@ -534,7 +534,9 @@ internal static partial class PackageImageLoader
             loadedFunctionSemantics,
             loadedFunctionTemplates,
             loadedLinkage,
-            backendOptimizationMode);
+            backendOptimizationMode,
+            module.Manifest.Target,
+            module.Manifest.BuildProfile);
         return true;
     }
 

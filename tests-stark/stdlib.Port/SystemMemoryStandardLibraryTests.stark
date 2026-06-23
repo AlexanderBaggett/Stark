@@ -125,11 +125,10 @@ internal fn bool StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTarge
     // Contains/DoesNotContain to assert the emitted IR uses the Windows heap allocator
     // (GetProcessHeap/HeapAlloc/HeapReAlloc/HeapFree, the os_allocate/os_reallocate
     // shims, the realloc fallback blocks, the thread-local alloc bucket) and never
-    // references libc malloc/realloc/free or raw syscall asm. The compile-only host
-    // bridge cannot read the stdlib source off disk and cannot select a Windows
-    // target, so this reduces to compiling a program that imports System.Memory
-    // (transitively pulling in the host stdlib's Memory.stark) and asserting success.
-    stack mut ProgramCompile c = CompileProgram("stdlib-memory-windows-heap-allocator", raw"""
+    // references libc malloc/realloc/free or raw syscall asm. The host bridge cannot read
+    // the stdlib source off disk, so this cross-targets a program that imports
+    // System.Memory and asserts success.
+    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-memory-windows-heap-allocator", raw"""
         import System.Memory
         module Demo
 
@@ -146,7 +145,7 @@ internal fn bool StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTarge
             System.Memory.Free(allocation);
             return true;
         }
-        """);
+        """, WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;

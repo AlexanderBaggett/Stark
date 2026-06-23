@@ -1420,7 +1420,9 @@ public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> FunctionSemantics,
     IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> FunctionTemplates,
     PackageImageLinkageFacts? Linkage = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    StarkPackageTargetManifest? Target = null,
+    StarkPackageBuildProfileManifest? BuildProfile = null)
 {
     public bool HasPublishedFunctionSemantics => FunctionSemantics.Count > 0;
 

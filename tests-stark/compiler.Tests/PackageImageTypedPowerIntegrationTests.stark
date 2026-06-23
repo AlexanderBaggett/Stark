@@ -6,21 +6,8 @@ module PackageImageTypedPowerIntegrationTests
 internal fn bool ManifestBackedTypedPowerBodiesCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original drives the `--emit-lib -o` CLI path to build a
-        // Facade static library, asserts "Emitted static library:" stdout, the
-        // .a/.lib and .starkpkg files exist, loads the package-image manifest and
-        // verifies the generic template `Facade.Observe` has a TypedBody but no
-        // BodyText, rewrites the manifest to drop the source surface (typed-only),
-        // deletes the Facade source, then `--emit-exe` links a Demo program that
-        // imports the manifest-backed Facade without source, asserting
-        // "Emitted executable:" stdout, the output exists, and the linked program
-        // exits with code 81 (3 ** 4). The compile helpers cannot express CLI
-        // process output, file-system effects, package-image manifest bytes,
-        // typed-body-only generic templates, or the runtime exit code, so this is
-        // reduced to compiling the Demo root (which imports Facade and calls the
-        // generic `Facade.Observe`) together with the Facade library module through
-        // the LLVM pipeline and asserting it succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed power bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "pkg-image-typed-power-manifest-backed",
             raw"""
 import Facade
@@ -32,8 +19,7 @@ export fn i32[min max] main()
     return Facade.Observe(3, 4, tag);
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -41,7 +27,9 @@ public fn i32[min max] Observe<T>(i32[min max] value, i32[min max] exponent, T t
 {
     return value ** exponent;
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.Observe",
+            "",
+            81);
     }
 }

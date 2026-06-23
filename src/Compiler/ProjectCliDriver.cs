@@ -51,7 +51,7 @@ internal static class ProjectCliDriver
                 ProjectCommand.Build => await ExecuteBuildAsync(discovery!, options, userConfig, stdout, stderr),
                 ProjectCommand.Run => await ExecuteRunAsync(discovery!, options, userConfig, stdout, stderr),
                 ProjectCommand.Test => await ExecuteTestAsync(discovery!, options, userConfig, stdout, stderr),
-                ProjectCommand.Clean => await ExecuteCleanAsync(discovery!, options, stdout, stderr),
+                ProjectCommand.Clean => await ExecuteCleanAsync(discovery!, options, userConfig, stdout, stderr),
                 _ => 1
             };
         }
@@ -290,6 +290,7 @@ internal static class ProjectCliDriver
     private static async Task<int> ExecuteCleanAsync(
         DiscoveredManifest discovery,
         ProjectCommandOptions options,
+        UserConfig userConfig,
         TextWriter stdout,
         TextWriter stderr)
     {
@@ -298,7 +299,7 @@ internal static class ProjectCliDriver
             return 1;
         }
 
-        if (!TryCreateCleanSession(options, discovery.RootDirectory, scope, stdout, stderr, out var session))
+        if (!TryCreateCleanSession(options, discovery.RootDirectory, scope, userConfig, stdout, stderr, out var session))
         {
             return 1;
         }
@@ -326,21 +327,22 @@ internal static class ProjectCliDriver
         switch (command)
         {
             case ProjectCommand.Build:
-                await stdout.WriteLineAsync("Usage: stark build [target] [--dev|--release] [--target <triple>] [--stage stage0]");
+                await stdout.WriteLineAsync("Usage: stark build [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>] [--package-image-json]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build the current Stark project or solution.");
                 await stdout.WriteLineAsync("- In a project directory, `stark build` builds that project.");
                 await stdout.WriteLineAsync("- In a solution directory, `stark build` builds the default solution targets or all members.");
                 await stdout.WriteLineAsync("- `target` may be a solution alias, member path, or project name.");
                 await stdout.WriteLineAsync("- Outputs are routed under `build/<profile>/<target-triple>/<stage>/`.");
+                await stdout.WriteLineAsync("- `--package-image-json` writes explicit package inspection views under `artifacts/pkg/`.");
                 return;
             case ProjectCommand.Run:
-                await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release] [--target <triple>] [--stage stage0]");
+                await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build and run the current Stark executable project or solution run target.");
                 return;
             case ProjectCommand.Test:
-                await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release] [--target <triple>] [--stage stage0]");
+                await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build and run Stark test projects.");
                 await stdout.WriteLineAsync("- In a test project directory, `stark test` runs that project.");
@@ -350,7 +352,7 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("- `--list-collections` prints the project's collection names without running facts.");
                 return;
             case ProjectCommand.Clean:
-                await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0]");
+                await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Clean the formal `build/<profile>/<target-triple>/<stage>/` tree.");
                 await stdout.WriteLineAsync("- Default scope is `stage`.");
@@ -474,6 +476,11 @@ internal static class ProjectCliDriver
             : null;
         if (IsBuildUpToDate(stampPath, inputStamp, earlyOutputPath, project, session))
         {
+            if (!await EmitPackageImageJsonInspectionIfRequestedAsync(project, session))
+            {
+                return RememberFailure(project, session);
+            }
+
             var upToDate = new BuildResult(
                 true,
                 project,
@@ -517,6 +524,13 @@ internal static class ProjectCliDriver
 
         compileArgs.Add("--target");
         compileArgs.Add(session.TargetTriple);
+        compileArgs.Add("--package-profile");
+        compileArgs.Add(session.Profile == BuildProfile.Release ? "release" : "dev");
+        if (!string.IsNullOrWhiteSpace(session.ToolchainDirectory))
+        {
+            compileArgs.Add("--toolchain-dir");
+            compileArgs.Add(session.ToolchainDirectory);
+        }
 
         var intermediateDirectory = GetIntermediateDirectory(project, session);
         Directory.CreateDirectory(intermediateDirectory);
@@ -557,7 +571,12 @@ internal static class ProjectCliDriver
             compileArgs.Add(searchDirectory);
         }
 
-        var nativeArgsResult = BuildNativeArgs(project, session.UserConfig, session.Stderr);
+        var nativeArgsResult = BuildNativeArgs(
+            project,
+            bundledLibrarySearchPaths,
+            session.ManifestCache,
+            session.UserConfig,
+            session.Stderr);
         if (!nativeArgsResult.Success)
         {
             return RememberFailure(project, session);
@@ -591,6 +610,11 @@ internal static class ProjectCliDriver
             return RememberFailure(project, session);
         }
 
+        if (!await EmitPackageImageJsonInspectionIfRequestedAsync(project, session))
+        {
+            return RememberFailure(project, session);
+        }
+
         // PAINPOINTS #5: record the input stamp only after a clean build so the next
         // run can skip recompilation when nothing changed; a failed build leaves no
         // stamp, forcing a retry.
@@ -615,6 +639,46 @@ internal static class ProjectCliDriver
             inputStamp);
         session.BuildResults[project.ManifestPath] = success;
         return success;
+    }
+
+    private static async Task<bool> EmitPackageImageJsonInspectionIfRequestedAsync(ProjectManifest project, BuildSession session)
+    {
+        if (!session.EmitPackageImageJsonInspection || project.Kind != ProjectKind.Library)
+        {
+            return true;
+        }
+
+        var packageImagePath = GetPackageImagePath(project, session);
+        if (!PackageImageLoader.TryLoadManifest(packageImagePath, out var manifest, out var loadDiagnostics))
+        {
+            await session.Stderr.WriteLineAsync($"Could not render package image JSON inspection view for '{packageImagePath}'.");
+            await WriteProjectDiagnosticsAsync(session.Stderr, loadDiagnostics);
+            return false;
+        }
+
+        var validationDiagnostics = PackageImageLoader.ValidateManifest(manifest, packageImagePath);
+        if (validationDiagnostics.Count > 0)
+        {
+            await WriteProjectDiagnosticsAsync(session.Stderr, validationDiagnostics);
+            if (validationDiagnostics.Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            {
+                return false;
+            }
+        }
+
+        var jsonPath = GetPackageImageJsonInspectionPath(project, session);
+        Directory.CreateDirectory(Path.GetDirectoryName(jsonPath) ?? GetProjectInspectionPackageDirectory(project, session));
+        await File.WriteAllTextAsync(jsonPath, manifest.ToJson());
+        await session.Stdout.WriteLineAsync($"Emitted package image JSON: {jsonPath}");
+        return true;
+    }
+
+    private static async Task WriteProjectDiagnosticsAsync(TextWriter writer, IReadOnlyList<CompilerDiagnostic> diagnostics)
+    {
+        foreach (var diagnostic in diagnostics)
+        {
+            await writer.WriteLineAsync(diagnostic.ToString());
+        }
     }
 
     private static async Task<FileStream> AcquireBuildDirectoryLockAsync(string outputDirectory)
@@ -693,13 +757,17 @@ internal static class ProjectCliDriver
         return TestRunnerBuildResult.Generated(generatedPath);
     }
 
-    private static readonly System.Text.RegularExpressions.Regex TestModuleDeclarationPattern =
+    private static readonly Regex ModuleDeclarationPattern =
         new(@"^\s*module\s+([A-Za-z_][\w.]*)",
-            System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+            RegexOptions.Multiline | RegexOptions.Compiled);
 
-    private static readonly System.Text.RegularExpressions.Regex TestFactAttributePattern =
+    private static readonly Regex ImportDeclarationPattern =
+        new(@"^\s*(?:export\s+)?import\s+([A-Za-z_][\w.]*)\b",
+            RegexOptions.Multiline | RegexOptions.Compiled);
+
+    private static readonly Regex TestFactAttributePattern =
         new(@"^\s*\[\s*(Fact|Theory)\b",
-            System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+            RegexOptions.Multiline | RegexOptions.Compiled);
 
     // PAINPOINTS #6: the generated test runner collects [Fact]/[Theory] facts ONLY from
     // the [test] root compilation unit, and an imported module file must be named after
@@ -736,10 +804,7 @@ internal static class ProjectCliDriver
                 continue;
             }
 
-            var normalized = full.Replace('\\', '/');
-            if (normalized.Contains("/build/")
-                || normalized.Contains("/generated/")
-                || normalized.Contains("/.stark/"))
+            if (IsIgnoredProjectSourcePath(full))
             {
                 continue;
             }
@@ -766,7 +831,7 @@ internal static class ProjectCliDriver
             // facts. After blanking, only genuine top-level declarations remain.
             var scan = BlankLiteralsAndComments(text);
 
-            var moduleMatch = TestModuleDeclarationPattern.Match(scan);
+            var moduleMatch = ModuleDeclarationPattern.Match(scan);
             if (moduleMatch.Success)
             {
                 var moduleName = moduleMatch.Groups[1].Value;
@@ -1108,53 +1173,93 @@ internal static class ProjectCliDriver
         }
     }
 
-    private static NativeArgumentResult BuildNativeArgs(ProjectManifest project, UserConfig userConfig, TextWriter stderr)
+    private static NativeArgumentResult BuildNativeArgs(
+        ProjectManifest project,
+        IReadOnlyList<BundledLibrarySearchPath> bundledLibrarySearchPaths,
+        ManifestCache manifestCache,
+        UserConfig userConfig,
+        TextWriter stderr)
     {
-        if (project.Native is null)
+        var arguments = new List<string>();
+        if (!TryAppendNativeArgs(project.Name, project.DirectoryPath, project.Native, userConfig, stderr, arguments, out var failure))
         {
-            return NativeArgumentResult.FromArguments([]);
+            return failure;
         }
 
-        var arguments = new List<string>();
-        foreach (var source in project.Native.Sources)
+        foreach (var bundledProject in ResolveImportedBundledSourceNativeProjects(project, bundledLibrarySearchPaths, manifestCache))
+        {
+            if (!TryAppendNativeArgs(
+                    bundledProject.Name,
+                    bundledProject.DirectoryPath,
+                    bundledProject.Native,
+                    userConfig,
+                    stderr,
+                    arguments,
+                    out failure))
+            {
+                return failure;
+            }
+        }
+
+        return NativeArgumentResult.FromArguments(arguments);
+    }
+
+    private static bool TryAppendNativeArgs(
+        string projectName,
+        string baseDirectory,
+        NativeDependencyManifest? native,
+        UserConfig userConfig,
+        TextWriter stderr,
+        List<string> arguments,
+        out NativeArgumentResult failure)
+    {
+        failure = default!;
+        if (native is null)
+        {
+            return true;
+        }
+
+        foreach (var source in native.Sources)
         {
             arguments.Add("--native-source");
-            arguments.Add(Path.GetFullPath(Path.Combine(project.DirectoryPath, source)));
+            arguments.Add(Path.GetFullPath(Path.Combine(baseDirectory, source)));
         }
 
-        if (project.Native.PkgConfigPackages.Count != 0
-            && ArePkgConfigPackagesAvailable(project.Native.PkgConfigPackages))
+        if (native.PkgConfigPackages.Count != 0
+            && ArePkgConfigPackagesAvailable(native.PkgConfigPackages))
         {
-            foreach (var package in project.Native.PkgConfigPackages)
+            foreach (var package in native.PkgConfigPackages)
             {
                 arguments.Add("--native-pkg-config");
                 arguments.Add(package);
             }
 
-            return NativeArgumentResult.FromArguments(arguments);
+            return true;
         }
 
-        var fallback = project.Native.GetFallbackForCurrentPlatform();
+        var fallback = native.GetFallbackForCurrentPlatform();
         if (fallback is null)
         {
-            if (project.Native.PkgConfigPackages.Count == 0)
+            if (native.PkgConfigPackages.Count == 0)
             {
-                return NativeArgumentResult.FromArguments(arguments);
+                return true;
             }
 
-            return NativeArgumentResult.Fail(
+            failure = NativeArgumentResult.Fail(
                 stderr,
-                $"Project '{project.Name}' needs native package metadata that is available neither through pkg-config nor a platform fallback.");
+                $"Project '{projectName}' needs native package metadata that is available neither through pkg-config nor a platform fallback.");
+            return false;
         }
 
         foreach (var includeDirectory in fallback.IncludeDirectories)
         {
-            if (!TryResolveNativePath(includeDirectory, userConfig, project.DirectoryPath, out var resolved, out var missingKey))
+            if (!TryResolveNativePath(includeDirectory, userConfig, baseDirectory, out var resolved, out var missingKey))
             {
-                return NativeArgumentResult.Fail(
+                failure = NativeArgumentResult.Fail(
                     stderr,
-                    $"Project '{project.Name}' needs native path '{missingKey}' to build on this machine.",
+                    $"Project '{projectName}' needs native path '{missingKey}' to build on this machine.",
                     "Add it under [native.paths] in Stark.user.toml or ~/.config/stark/config.toml.");
+                return false;
             }
 
             arguments.Add("--native-include-dir");
@@ -1163,12 +1268,13 @@ internal static class ProjectCliDriver
 
         foreach (var libraryDirectory in fallback.LibraryDirectories)
         {
-            if (!TryResolveNativePath(libraryDirectory, userConfig, project.DirectoryPath, out var resolved, out var missingKey))
+            if (!TryResolveNativePath(libraryDirectory, userConfig, baseDirectory, out var resolved, out var missingKey))
             {
-                return NativeArgumentResult.Fail(
+                failure = NativeArgumentResult.Fail(
                     stderr,
-                    $"Project '{project.Name}' needs native path '{missingKey}' to build on this machine.",
+                    $"Project '{projectName}' needs native path '{missingKey}' to build on this machine.",
                     "Add it under [native.paths] in Stark.user.toml or ~/.config/stark/config.toml.");
+                return false;
             }
 
             arguments.Add("--native-library-dir");
@@ -1181,7 +1287,248 @@ internal static class ProjectCliDriver
             arguments.Add(library);
         }
 
-        return NativeArgumentResult.FromArguments(arguments);
+        return true;
+    }
+
+    private static IReadOnlyList<ProjectManifest> ResolveImportedBundledSourceNativeProjects(
+        ProjectManifest project,
+        IReadOnlyList<BundledLibrarySearchPath> bundledLibrarySearchPaths,
+        ManifestCache manifestCache)
+    {
+        var importedModules = CollectProjectImportedModules(project);
+        if (importedModules.Count == 0)
+        {
+            return [];
+        }
+
+        var packagedModulesByRoot = BuildBundledPackageModuleIndex(bundledLibrarySearchPaths);
+        var nativeProjects = new List<ProjectManifest>();
+        var seenManifests = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var searchPath in bundledLibrarySearchPaths)
+        {
+            if (!TryResolveBundledSourceManifestPath(searchPath, out var manifestPath)
+                || !seenManifests.Add(manifestPath))
+            {
+                continue;
+            }
+
+            var bundledProject = LoadProjectManifest(manifestPath, manifestCache);
+            if (bundledProject.Native is null
+                || !TryReadProjectRootModuleName(bundledProject, out var rootModule)
+                || !ImportsModuleOrChild(importedModules, rootModule))
+            {
+                continue;
+            }
+
+            if (packagedModulesByRoot.TryGetValue(searchPath.Root, out var packagedModules)
+                && PackageImageCoversModuleOrChild(packagedModules, rootModule))
+            {
+                continue;
+            }
+
+            nativeProjects.Add(bundledProject);
+        }
+
+        return nativeProjects;
+    }
+
+    private static Dictionary<BundledLibraryRoot, HashSet<string>> BuildBundledPackageModuleIndex(
+        IReadOnlyList<BundledLibrarySearchPath> bundledLibrarySearchPaths)
+    {
+        var modulesByRoot = new Dictionary<BundledLibraryRoot, HashSet<string>>();
+
+        foreach (var searchPath in bundledLibrarySearchPaths)
+        {
+            if (!searchPath.IncludeInCompilerSearch
+                || !string.Equals(searchPath.State, "package images", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var packageImagePath in EnumeratePackageImageFiles(searchPath.Path))
+            {
+                if (!PackageImageLoader.TryLoadManifest(packageImagePath, out var manifest))
+                {
+                    continue;
+                }
+
+                if (!modulesByRoot.TryGetValue(searchPath.Root, out var modules))
+                {
+                    modules = new HashSet<string>(StringComparer.Ordinal);
+                    modulesByRoot.Add(searchPath.Root, modules);
+                }
+
+                if (!string.IsNullOrWhiteSpace(manifest.RootModule))
+                {
+                    modules.Add(manifest.RootModule.Trim());
+                }
+
+                foreach (var module in manifest.Modules)
+                {
+                    if (!string.IsNullOrWhiteSpace(module.ModuleName))
+                    {
+                        modules.Add(module.ModuleName.Trim());
+                    }
+                }
+            }
+        }
+
+        return modulesByRoot;
+    }
+
+    private static IEnumerable<string> EnumeratePackageImageFiles(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            yield break;
+        }
+
+        IEnumerable<string> packageImages;
+        IEnumerable<string> jsonPackageImages;
+        try
+        {
+            packageImages = Directory.EnumerateFiles(directory, "*.starkpkg", SearchOption.AllDirectories)
+                .Where(static path => PackageImageBinaryFormat.HasBinaryFileName(path))
+                .ToArray();
+            jsonPackageImages = Directory.EnumerateFiles(directory, "*.starkpkg.json", SearchOption.AllDirectories)
+                .ToArray();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var path in packageImages.Concat(jsonPackageImages).OrderBy(static path => path, StringComparer.Ordinal))
+        {
+            yield return path;
+        }
+    }
+
+    private static bool TryResolveBundledSourceManifestPath(BundledLibrarySearchPath searchPath, out string manifestPath)
+    {
+        manifestPath = string.Empty;
+        if (!searchPath.IncludeInCompilerSearch
+            || !string.Equals(searchPath.State, "source tree", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rootDirectory = Directory.GetParent(searchPath.Path)?.FullName;
+        if (string.IsNullOrWhiteSpace(rootDirectory))
+        {
+            return false;
+        }
+
+        manifestPath = Path.GetFullPath(Path.Combine(rootDirectory, ProjectManifestFileName));
+        return File.Exists(manifestPath);
+    }
+
+    private static bool TryReadProjectRootModuleName(ProjectManifest project, out string moduleName)
+    {
+        moduleName = string.Empty;
+        var rootPath = Path.GetFullPath(Path.Combine(project.DirectoryPath, project.RootFile));
+        if (!File.Exists(rootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var scan = BlankLiteralsAndComments(File.ReadAllText(rootPath));
+            var moduleMatch = ModuleDeclarationPattern.Match(scan);
+            if (!moduleMatch.Success)
+            {
+                return false;
+            }
+
+            moduleName = moduleMatch.Groups[1].Value;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static HashSet<string> CollectProjectImportedModules(ProjectManifest project)
+    {
+        var modules = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var path in EnumerateProjectSourceFiles(project.DirectoryPath))
+        {
+            try
+            {
+                var scan = BlankLiteralsAndComments(File.ReadAllText(path));
+                foreach (Match match in ImportDeclarationPattern.Matches(scan))
+                {
+                    modules.Add(match.Groups[1].Value);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return modules;
+    }
+
+    private static IEnumerable<string> EnumerateProjectSourceFiles(string directory)
+    {
+        IEnumerable<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(directory, "*.stark", SearchOption.AllDirectories)
+                .ToArray();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var path in files.OrderBy(static path => path, StringComparer.Ordinal))
+        {
+            if (!IsIgnoredProjectSourcePath(path))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private static bool IsIgnoredProjectSourcePath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        return normalized.Contains("/build/")
+            || normalized.Contains("/generated/")
+            || normalized.Contains("/.stark/");
+    }
+
+    private static bool ImportsModuleOrChild(IReadOnlySet<string> importedModules, string moduleName)
+    {
+        foreach (var importedModule in importedModules)
+        {
+            if (string.Equals(importedModule, moduleName, StringComparison.Ordinal)
+                || importedModule.StartsWith($"{moduleName}.", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool PackageImageCoversModuleOrChild(IReadOnlySet<string> packageModules, string moduleName)
+    {
+        foreach (var packageModule in packageModules)
+        {
+            if (string.Equals(packageModule, moduleName, StringComparison.Ordinal)
+                || packageModule.StartsWith($"{moduleName}.", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryResolveNativePath(
@@ -1419,9 +1766,15 @@ internal static class ProjectCliDriver
             return false;
         }
 
+        var toolchainResolutionOptions = new NativeToolchainResolutionOptions(
+            CliToolchainDirectory: options.ToolchainDirectory,
+            UserConfigToolchainDirectory: userConfig.ToolchainDirectory);
+        var targetToolchain = NativeToolchain.Resolve(toolchainResolutionOptions);
+        var forwardedToolchainDirectory = ResolveForwardedToolchainDirectory(options, userConfig);
+
         var targetTriple = options.TargetTriple;
         if (string.IsNullOrWhiteSpace(targetTriple)
-            && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+            && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo, targetToolchain))
         {
             targetTriple = detectedTargetInfo.Triple;
         }
@@ -1437,6 +1790,8 @@ internal static class ProjectCliDriver
             BuildRootDirectory: buildRootDirectory,
             TargetTriple: targetTriple.Trim(),
             StageName: options.StageName,
+            ToolchainDirectory: forwardedToolchainDirectory,
+            EmitPackageImageJsonInspection: options.EmitPackageImageJsonInspection,
             UserConfig: userConfig,
             DefaultProfiles: defaultProfiles,
             TestFilters: options.TestFilters,
@@ -1447,10 +1802,26 @@ internal static class ProjectCliDriver
         return true;
     }
 
+    private static string? ResolveForwardedToolchainDirectory(ProjectCommandOptions options, UserConfig userConfig)
+    {
+        if (!string.IsNullOrWhiteSpace(options.ToolchainDirectory))
+        {
+            return options.ToolchainDirectory;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR")))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(userConfig.ToolchainDirectory) ? null : userConfig.ToolchainDirectory;
+    }
+
     private static bool TryCreateCleanSession(
         ProjectCommandOptions options,
         string buildRootDirectory,
         CleanScope scope,
+        UserConfig userConfig,
         TextWriter stdout,
         TextWriter stderr,
         out CleanSession session)
@@ -1461,8 +1832,11 @@ internal static class ProjectCliDriver
         if (scope.RequiresTargetTriple())
         {
             targetTriple = options.TargetTriple;
+            var targetToolchain = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+                CliToolchainDirectory: options.ToolchainDirectory,
+                UserConfigToolchainDirectory: userConfig.ToolchainDirectory));
             if (string.IsNullOrWhiteSpace(targetTriple)
-                && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+                && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo, targetToolchain))
             {
                 targetTriple = detectedTargetInfo.Triple;
             }
@@ -1513,6 +1887,22 @@ internal static class ProjectCliDriver
     private static string GetPackageImagePath(ProjectManifest project, BuildSession session)
     {
         return Path.Combine(GetPackageDirectory(project, session), GetPackageImageFileName(project));
+    }
+
+    private static string GetProjectInspectionPackageDirectory(ProjectManifest project, BuildSession session)
+    {
+        return Path.Combine(
+            GetStageRootDirectory(session),
+            "artifacts",
+            "pkg",
+            GetProjectArtifactDirectoryName(project, session));
+    }
+
+    private static string GetPackageImageJsonInspectionPath(ProjectManifest project, BuildSession session)
+    {
+        return Path.Combine(
+            GetProjectInspectionPackageDirectory(project, session),
+            PackageImageBinaryFormat.JsonSidecarPath(GetPackageImageFileName(project)));
     }
 
     private static string GetPackageImageFileName(ProjectManifest project)
@@ -1883,6 +2273,7 @@ internal static class ProjectCliDriver
     private static UserConfig LoadUserConfig(string startDirectory)
     {
         var nativePaths = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? toolchainDirectory = null;
 
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrWhiteSpace(userProfile))
@@ -1890,7 +2281,7 @@ internal static class ProjectCliDriver
             var globalConfigPath = Path.Combine(userProfile, ".config", "stark", "config.toml");
             if (File.Exists(globalConfigPath))
             {
-                MergeUserConfig(globalConfigPath, nativePaths);
+                MergeUserConfig(globalConfigPath, nativePaths, ref toolchainDirectory);
             }
         }
 
@@ -1914,16 +2305,27 @@ internal static class ProjectCliDriver
             var localConfigPath = Path.Combine(directory, LocalUserConfigFileName);
             if (File.Exists(localConfigPath))
             {
-                MergeUserConfig(localConfigPath, nativePaths);
+                MergeUserConfig(localConfigPath, nativePaths, ref toolchainDirectory);
             }
         }
 
-        return new UserConfig(nativePaths);
+        return new UserConfig(nativePaths, toolchainDirectory);
     }
 
-    private static void MergeUserConfig(string configPath, Dictionary<string, string> nativePaths)
+    private static void MergeUserConfig(
+        string configPath,
+        Dictionary<string, string> nativePaths,
+        ref string? toolchainDirectory)
     {
         var document = SimpleToml.ParseFile(configPath);
+        if (SimpleToml.TryGetTable(document, ["toolchain"], out var toolchainTable)
+            && toolchainTable.TryGetValue("dir", out var configuredToolchainDirectory)
+            && configuredToolchainDirectory is string toolchainDirectoryValue
+            && !string.IsNullOrWhiteSpace(toolchainDirectoryValue))
+        {
+            toolchainDirectory = ResolveUserConfigPath(configPath, toolchainDirectoryValue);
+        }
+
         if (!SimpleToml.TryGetTable(document, ["native", "paths"], out var nativePathTable))
         {
             return;
@@ -1936,6 +2338,15 @@ internal static class ProjectCliDriver
                 nativePaths[$"native.paths.{key}"] = textValue;
             }
         }
+    }
+
+    private static string ResolveUserConfigPath(string configPath, string configuredPath)
+    {
+        var expandedPath = Environment.ExpandEnvironmentVariables(configuredPath.Trim());
+        return Path.GetFullPath(
+            Path.IsPathRooted(expandedPath)
+                ? expandedPath
+                : Path.Combine(Path.GetDirectoryName(configPath) ?? Environment.CurrentDirectory, expandedPath));
     }
 
     private static ProjectManifest LoadProjectManifest(string manifestPath, ManifestCache? cache = null)
@@ -2159,7 +2570,7 @@ internal static class ProjectCliDriver
         string? Project,
         string? Solution);
 
-    private sealed record UserConfig(IReadOnlyDictionary<string, string> NativePaths);
+    private sealed record UserConfig(IReadOnlyDictionary<string, string> NativePaths, string? ToolchainDirectory);
 
     private static readonly IReadOnlyDictionary<BuildProfile, ProfileManifest> EmptyProfiles =
         new Dictionary<BuildProfile, ProfileManifest>();
@@ -2180,6 +2591,8 @@ internal static class ProjectCliDriver
         string BuildRootDirectory,
         string TargetTriple,
         string StageName,
+        string? ToolchainDirectory,
+        bool EmitPackageImageJsonInspection,
         UserConfig UserConfig,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> DefaultProfiles,
         IReadOnlyList<string> TestFilters,
@@ -2306,6 +2719,8 @@ internal static class ProjectCliDriver
         string? TargetName,
         string? TargetTriple,
         string StageName,
+        string? ToolchainDirectory,
+        bool EmitPackageImageJsonInspection,
         bool ShowHelp,
         IReadOnlyList<string> TestFilters,
         IReadOnlyList<string> TestCollections,
@@ -2316,7 +2731,9 @@ internal static class ProjectCliDriver
             var profile = BuildProfile.Dev;
             string? targetName = null;
             string? targetTriple = null;
+            string? toolchainDirectory = null;
             var stageName = "stage0";
+            var emitPackageImageJsonInspection = false;
             var showHelp = false;
             var testFilters = new List<string>();
             var testCollections = new List<string>();
@@ -2358,6 +2775,28 @@ internal static class ProjectCliDriver
                             return null;
                         }
 
+                        break;
+                    case "--toolchain-dir":
+                        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                        {
+                            stderr.WriteLine("--toolchain-dir requires a non-empty directory path.");
+                            return null;
+                        }
+
+                        if (!TryNormalizeToolchainDirectory(args[++index], stderr, out toolchainDirectory))
+                        {
+                            return null;
+                        }
+
+                        break;
+                    case "--package-image-json":
+                        if (command != ProjectCommand.Build)
+                        {
+                            stderr.WriteLine("--package-image-json is only valid for `stark build`.");
+                            return null;
+                        }
+
+                        emitPackageImageJsonInspection = true;
                         break;
                     case "--filter":
                         if (command != ProjectCommand.Test)
@@ -2429,6 +2868,16 @@ internal static class ProjectCliDriver
                             break;
                         }
 
+                        if (argument.StartsWith("--toolchain-dir=", StringComparison.Ordinal))
+                        {
+                            if (!TryNormalizeToolchainDirectory(argument["--toolchain-dir=".Length..], stderr, out toolchainDirectory))
+                            {
+                                return null;
+                            }
+
+                            break;
+                        }
+
                         if (argument.StartsWith("--filter=", StringComparison.Ordinal))
                         {
                             if (command != ProjectCommand.Test)
@@ -2465,7 +2914,37 @@ internal static class ProjectCliDriver
                 }
             }
 
-            return new ProjectCommandOptions(profile, targetName, targetTriple, stageName, showHelp, testFilters, testCollections, listTestCollections);
+            return new ProjectCommandOptions(
+                profile,
+                targetName,
+                targetTriple,
+                stageName,
+                toolchainDirectory,
+                emitPackageImageJsonInspection,
+                showHelp,
+                testFilters,
+                testCollections,
+                listTestCollections);
+        }
+
+        private static bool TryNormalizeToolchainDirectory(string value, TextWriter stderr, out string? toolchainDirectory)
+        {
+            toolchainDirectory = null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                stderr.WriteLine("--toolchain-dir requires a non-empty directory path.");
+                return false;
+            }
+
+            var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(value.Trim()));
+            if (!Directory.Exists(fullPath))
+            {
+                stderr.WriteLine($"Toolchain directory '{fullPath}' was not found.");
+                return false;
+            }
+
+            toolchainDirectory = fullPath;
+            return true;
         }
 
         private static bool TryParseStageName(string value, TextWriter stderr, out string stageName)

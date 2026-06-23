@@ -22,7 +22,7 @@ internal fn bool WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyL
 {
     stack mut LlvmCompile c = CompileLlvm(
         "raw-multiline-whitespace-only-lines",
-        "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"quote \" and \\d inside\"\"\";\n}");
+        "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"\n        first\n  \n        second\n        \"\"\";\n}");
     if (!Succeeds(c))
     {
         return false;

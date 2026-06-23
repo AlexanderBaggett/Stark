@@ -1,0 +1,965 @@
+import Compiler.Llvm
+import System.IO.File
+import System.IO.Path
+import System.Memory
+import System.Process
+import System.Text
+import System.Testing
+import System.Testing.HostCompiler
+module LlvmTests
+
+const LinkedLlvmSmokeSource = raw"""
+import Compiler.Llvm
+import System.C
+import System.Text
+module LinkedLlvmSmoke
+
+fn bool PrepareCStr(out System.C.OwnedCStr destination, ascii text)
+{
+    switch (System.C.FromAscii(text))
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return false;
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var value):
+            destination = value;
+            return true;
+    }
+}
+
+export fn i32[min max] main()
+{
+    unsafe
+    {
+        switch (ValidateLinkedLlvmVersion())
+        {
+            case LlvmResult<LlvmVersion>.Err(var versionError):
+                return 1;
+            case LlvmResult<LlvmVersion>.Ok(var version):
+        }
+
+        switch (InitializeNativeTargetSupport())
+        {
+            case LlvmStatus.Err(var initializeError):
+                return 2;
+            case LlvmStatus.Ok:
+        }
+
+        stack mut System.C.OwnedCStr moduleName = new();
+        stack mut System.C.OwnedCStr functionName = new();
+        stack mut System.C.OwnedCStr blockName = new();
+        stack mut System.C.OwnedCStr cpuText = new();
+        stack mut System.C.OwnedCStr featuresText = new();
+        if (!PrepareCStr(moduleName, "linked_llvm_smoke")
+            || !PrepareCStr(functionName, "stark_smoke")
+            || !PrepareCStr(blockName, "entry")
+            || !PrepareCStr(cpuText, "")
+            || !PrepareCStr(featuresText, ""))
+        {
+            return 3;
+        }
+
+        stack mut LlvmContext context = new();
+        switch (LlvmContext.Create())
+        {
+            case LlvmResult<LlvmContext>.Err(var contextError):
+                return 4;
+            case LlvmResult<LlvmContext>.Ok(var value):
+                context = value;
+        }
+
+        stack mut LlvmModule llvmModule = new();
+        stack System.C.CStr moduleNameView = moduleName.View();
+        switch (LlvmModule.Create(context, moduleNameView))
+        {
+            case LlvmResult<LlvmModule>.Err(var moduleError):
+                return 5;
+            case LlvmResult<LlvmModule>.Ok(var value):
+                llvmModule = value;
+        }
+
+        stack mut System.Text.OwnedAscii tripleText = new();
+        switch (GetDefaultTargetTripleAscii())
+        {
+            case LlvmResult<System.Text.OwnedAscii>.Err(var tripleError):
+                return 6;
+            case LlvmResult<System.Text.OwnedAscii>.Ok(var value):
+                tripleText = value;
+        }
+
+        stack mut System.C.OwnedCStr triple = new();
+        if (!PrepareCStr(triple, tripleText.View()))
+        {
+            return 7;
+        }
+
+        stack System.C.CStr tripleView = triple.View();
+        switch (SetModuleTarget(llvmModule, tripleView))
+        {
+            case LlvmStatus.Err(var targetError):
+                return 8;
+            case LlvmStatus.Ok:
+        }
+
+        stack mut LlvmTarget target = new();
+        switch (GetTargetFromTriple(tripleView))
+        {
+            case LlvmResult<LlvmTarget>.Err(var getTargetError):
+                return 9;
+            case LlvmResult<LlvmTarget>.Ok(var value):
+                target = value;
+        }
+
+        stack mut LlvmTargetMachine targetMachine = new();
+        stack System.C.CStr cpuView = cpuText.View();
+        stack System.C.CStr featuresView = featuresText.View();
+        switch (LlvmTargetMachine.Create(
+            target,
+            tripleView,
+            cpuView,
+            featuresView,
+            LlvmCodeGenOptLevel.Default,
+            LlvmRelocMode.PIC,
+            LlvmCodeModel.Default))
+        {
+            case LlvmResult<LlvmTargetMachine>.Err(var targetMachineError):
+                return 10;
+            case LlvmResult<LlvmTargetMachine>.Ok(var value):
+                targetMachine = value;
+        }
+
+        stack mut LlvmTargetData targetData = new();
+        switch (CreateTargetDataLayout(targetMachine))
+        {
+            case LlvmResult<LlvmTargetData>.Err(var targetDataError):
+                return 11;
+            case LlvmResult<LlvmTargetData>.Ok(var value):
+                targetData = value;
+        }
+
+        stack mut System.Text.OwnedAscii dataLayoutText = new();
+        switch (CopyTargetDataLayoutAscii(targetData))
+        {
+            case LlvmResult<System.Text.OwnedAscii>.Err(var dataLayoutError):
+                return 12;
+            case LlvmResult<System.Text.OwnedAscii>.Ok(var value):
+                dataLayoutText = value;
+        }
+
+        stack mut System.C.OwnedCStr dataLayout = new();
+        if (!PrepareCStr(dataLayout, dataLayoutText.View()))
+        {
+            return 13;
+        }
+
+        stack System.C.CStr dataLayoutView = dataLayout.View();
+        switch (SetModuleDataLayout(llvmModule, dataLayoutView))
+        {
+            case LlvmStatus.Err(var layoutError):
+                return 14;
+            case LlvmStatus.Ok:
+        }
+
+        stack mut LlvmType returnType = new();
+        switch (Int32Type(context))
+        {
+            case LlvmResult<LlvmType>.Err(var intTypeError):
+                return 15;
+            case LlvmResult<LlvmType>.Ok(var value):
+                returnType = value;
+        }
+
+        stack mut LlvmType functionType = new();
+        switch (FunctionTypeNoParams(returnType, false))
+        {
+            case LlvmResult<LlvmType>.Err(var functionTypeError):
+                return 16;
+            case LlvmResult<LlvmType>.Ok(var value):
+                functionType = value;
+        }
+
+        stack mut LlvmValue function = new();
+        stack System.C.CStr functionNameView = functionName.View();
+        switch (AddFunction(llvmModule, functionNameView, functionType))
+        {
+            case LlvmResult<LlvmValue>.Err(var functionError):
+                return 17;
+            case LlvmResult<LlvmValue>.Ok(var value):
+                function = value;
+        }
+
+        switch (SetFunctionCallingConvention(function, LlvmCallingConvention.C))
+        {
+            case LlvmStatus.Err(var callingConventionError):
+                return 18;
+            case LlvmStatus.Ok:
+        }
+
+        stack mut LlvmBasicBlock entryBlock = new();
+        stack System.C.CStr blockNameView = blockName.View();
+        switch (AppendBasicBlock(context, function, blockNameView))
+        {
+            case LlvmResult<LlvmBasicBlock>.Err(var blockError):
+                return 19;
+            case LlvmResult<LlvmBasicBlock>.Ok(var value):
+                entryBlock = value;
+        }
+
+        stack mut LlvmBuilder builder = new();
+        switch (LlvmBuilder.Create(context))
+        {
+            case LlvmResult<LlvmBuilder>.Err(var builderError):
+                return 20;
+            case LlvmResult<LlvmBuilder>.Ok(var value):
+                builder = value;
+        }
+
+        switch (PositionBuilderAtEnd(builder, entryBlock))
+        {
+            case LlvmStatus.Err(var positionError):
+                return 21;
+            case LlvmStatus.Ok:
+        }
+
+        stack mut LlvmValue constant = new();
+        switch (ConstInt(returnType, 7, false))
+        {
+            case LlvmResult<LlvmValue>.Err(var constError):
+                return 22;
+            case LlvmResult<LlvmValue>.Ok(var value):
+                constant = value;
+        }
+
+        switch (BuildReturnValue(builder, constant))
+        {
+            case LlvmResult<LlvmValue>.Err(var returnError):
+                return 23;
+            case LlvmResult<LlvmValue>.Ok(var instruction):
+        }
+
+        stack mut System.Text.OwnedAscii verifierText = new();
+        switch (VerifyModule(llvmModule, LlvmVerifierFailureAction.ReturnStatus))
+        {
+            case LlvmResult<System.Text.OwnedAscii>.Err(var verifierError):
+                return 24;
+            case LlvmResult<System.Text.OwnedAscii>.Ok(var value):
+                verifierText = value;
+        }
+
+        if (!verifierText.IsEmpty())
+        {
+            return 25;
+        }
+
+        stack mut System.Text.OwnedAscii printedModule = new();
+        switch (PrintModuleToAscii(llvmModule))
+        {
+            case LlvmResult<System.Text.OwnedAscii>.Err(var printError):
+                return 26;
+            case LlvmResult<System.Text.OwnedAscii>.Ok(var value):
+                printedModule = value;
+        }
+
+        if (!System.Text.Contains(printedModule.View(), "define i32 @stark_smoke()")
+            || !System.Text.Contains(printedModule.View(), "ret i32 7")
+            || !System.Text.Contains(printedModule.View(), "target datalayout"))
+        {
+            return 27;
+        }
+
+        stack mut LlvmMemoryBuffer objectBuffer = new();
+        switch (EmitObjectToMemoryBuffer(targetMachine, llvmModule))
+        {
+            case LlvmResult<LlvmMemoryBuffer>.Err(var objectError):
+                return 28;
+            case LlvmResult<LlvmMemoryBuffer>.Ok(var value):
+                objectBuffer = value;
+        }
+
+        if (objectBuffer.ByteLength() == 0)
+        {
+            return 29;
+        }
+
+        return 0;
+    }
+}
+""";
+
+fn bool MemoryStatusOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+fn bool IOStatusOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+            return true;
+    }
+}
+
+fn bool FileExistsOrFalse(ascii path)
+{
+    switch (System.IO.File.Exists(path))
+    {
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+        case System.IO.IOResult<bool>.Ok(var exists):
+            return exists;
+    }
+}
+
+fn bool AddProcessArgument(mut borrow System.Process.ProcessCommand command, ascii argument)
+{
+    switch (command.AddArgument(argument))
+    {
+        case System.Process.ProcessStatus.Err(var error):
+            return false;
+        case System.Process.ProcessStatus.Ok:
+            return true;
+    }
+}
+
+fn bool BuildRPathArgument(out System.Text.OwnedAscii argument, ascii llvmLibPath)
+    where overlap(argument, llvmLibPath)
+{
+    stack ascii directory = System.IO.Path.DirectoryName(llvmLibPath);
+    if (System.Text.AsciiLength(directory) <= 0)
+    {
+        return false;
+    }
+
+    stack mut System.Text.OwnedAscii builder = new();
+    if (!MemoryStatusOk(builder.AppendConstAscii("-Wl,-rpath,")))
+    {
+        return false;
+    }
+
+    if (!MemoryStatusOk(builder.AppendAscii(directory)))
+    {
+        return false;
+    }
+
+    argument = builder;
+    return true;
+}
+
+unsafe fn bool BuildLinkedLlvmSmokeExecutable(
+    ascii compilerPath,
+    ascii llvmLibPath,
+    ascii sourcePath,
+    ascii executablePath)
+{
+    stack mut System.Process.ProcessCommand command = new();
+    switch (System.Process.Command(compilerPath))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var value):
+            command = value;
+    }
+
+    if (!AddProcessArgument(command, sourcePath))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "--emit-exe"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "-I"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "../../selfhost"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "-I"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "../../stdlib"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "--llvm-lib"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, llvmLibPath))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "--native-library"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, llvmLibPath))
+    {
+        return false;
+    }
+
+    stack mut System.Text.OwnedAscii rpathArgument = new();
+    if (!BuildRPathArgument(rpathArgument, llvmLibPath))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "--native-link-arg"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, rpathArgument.View()))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, "-o"))
+    {
+        return false;
+    }
+
+    if (!AddProcessArgument(command, executablePath))
+    {
+        return false;
+    }
+
+    switch (System.Process.RunCaptureWithTimeout(command, 30000))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return !output.WasTimedOut() && output.ExitCode == 0;
+    }
+}
+
+unsafe fn bool RunLinkedLlvmSmokeExecutable(ascii executablePath)
+{
+    stack mut System.Process.ProcessCommand command = new();
+    switch (System.Process.Command(executablePath))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var value):
+            command = value;
+    }
+
+    switch (System.Process.RunCaptureWithTimeout(command, 10000))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return !output.WasTimedOut() && output.ExitCode == 0;
+    }
+}
+
+[Fact]
+[Collection("llvm-linked-smoke")]
+fn bool LinkedLlvmConstructsVerifiesPrintsAndEmitsObject()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii llvmLibPath = new();
+        switch (System.Process.GetEnvironment("STARK_LLVM_LIB"))
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+                return false;
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var value):
+                switch (value)
+                {
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.None:
+                        return true;
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.Some(var path):
+                        llvmLibPath = path;
+                }
+        }
+
+        if (!FileExistsOrFalse(llvmLibPath.View()))
+        {
+            return false;
+        }
+
+        stack mut System.Text.OwnedAscii compilerPath = new();
+        switch (System.Testing.HostCompiler.CompilerPathFromEnvironment())
+        {
+            case System.Testing.HostCompiler.HostResult<System.Text.OwnedAscii>.Err(var error):
+                return false;
+            case System.Testing.HostCompiler.HostResult<System.Text.OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut System.Testing.TempDirectory temp = new();
+        switch (System.Testing.CreateTempDirectory("stark-linked-llvm-smoke"))
+        {
+            case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+                return false;
+            case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+                temp = value;
+        }
+
+        if (!IOStatusOk(temp.WriteText("LinkedLlvmSmoke.stark", LinkedLlvmSmokeSource)))
+        {
+            return false;
+        }
+
+        stack mut System.Text.OwnedAscii sourcePath = new();
+        switch (temp.PathFor("LinkedLlvmSmoke.stark"))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return false;
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                sourcePath = value;
+        }
+
+        stack mut System.Text.OwnedAscii executablePath = new();
+        switch (temp.PathFor("linked-llvm-smoke.exe"))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return false;
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                executablePath = value;
+        }
+
+        if (!BuildLinkedLlvmSmokeExecutable(
+            compilerPath.View(),
+            llvmLibPath.View(),
+            sourcePath.View(),
+            executablePath.View()))
+        {
+            return false;
+        }
+
+        return RunLinkedLlvmSmokeExecutable(executablePath.View());
+    }
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool PinnedLlvmVersionMatchesReleasePolicy()
+{
+    stack LlvmVersion pinned = LlvmPinnedVersion();
+    stack LlvmVersion exact = new LlvmVersion()
+    {
+        Major = 22,
+        Minor = 1,
+        Patch = 8
+    };
+    stack LlvmVersion wrongPatch = new LlvmVersion()
+    {
+        Major = 22,
+        Minor = 1,
+        Patch = 9
+    };
+    return pinned.Equals(exact)
+        && LlvmVersionSupported(exact)
+        && !LlvmVersionSupported(wrongPatch);
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool RequiredLlvmSymbolTableIsDenseAndRecognizesBackendSlice()
+{
+    if (LlvmRequiredSymbolCount() != 99)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u32[0 max] index = 0; index < LlvmRequiredSymbolCount(); index += 1)
+    {
+        stack ascii symbol = LlvmRequiredSymbolAt(index);
+        if (System.Text.Equals(symbol, "") || !LlvmRequiredSymbolKnown(symbol))
+        {
+            return false;
+        }
+    }
+
+    return System.Text.Equals(LlvmRequiredSymbolAt(0), "LLVMGetVersion")
+        && System.Text.Equals(LlvmRequiredSymbolAt(17), "LLVMTargetMachineEmitToMemoryBuffer")
+        && System.Text.Equals(LlvmRequiredSymbolAt(30), "LLVMAddFunction")
+        && System.Text.Equals(LlvmRequiredSymbolAt(31), "LLVMAppendBasicBlockInContext")
+        && System.Text.Equals(LlvmRequiredSymbolAt(35), "LLVMBuildRetVoid")
+        && System.Text.Equals(LlvmRequiredSymbolAt(36), "LLVMAddGlobal")
+        && System.Text.Equals(LlvmRequiredSymbolAt(45), "LLVMSetSection")
+        && System.Text.Equals(LlvmRequiredSymbolAt(46), "LLVMBuildLoad2")
+        && System.Text.Equals(LlvmRequiredSymbolAt(54), "LLVMSetTailCall")
+        && System.Text.Equals(LlvmRequiredSymbolAt(64), "LLVMSetMetadata")
+        && System.Text.Equals(LlvmRequiredSymbolAt(65), "LLVMCountParams")
+        && System.Text.Equals(LlvmRequiredSymbolAt(72), "LLVMAddIncoming")
+        && System.Text.Equals(LlvmRequiredSymbolAt(74), "LLVMBuildNSWAdd")
+        && System.Text.Equals(LlvmRequiredSymbolAt(83), "LLVMBuildExactUDiv")
+        && System.Text.Equals(LlvmRequiredSymbolAt(94), "LLVMBuildICmp")
+        && System.Text.Equals(LlvmRequiredSymbolAt(95), "LLVMBuildSelect")
+        && System.Text.Equals(LlvmRequiredSymbolAt(96), "LLVMCreateTargetDataLayout")
+        && System.Text.Equals(LlvmRequiredSymbolAt(97), "LLVMCopyStringRepOfTargetData")
+        && System.Text.Equals(LlvmRequiredSymbolAt(98), "LLVMDisposeTargetData")
+        && !LlvmRequiredSymbolIndexKnown(99)
+        && !LlvmRequiredSymbolKnown("LLVMThisSymbolIsNotRequired");
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool CEnumMappingsMatchLlvmHeaders()
+{
+    return LlvmBoolValue(false) == 0
+        && LlvmBoolValue(true) == 1
+        && LlvmVerifierFailureActionValue(LlvmVerifierFailureAction.AbortProcess) == 0
+        && LlvmVerifierFailureActionValue(LlvmVerifierFailureAction.PrintMessage) == 1
+        && LlvmVerifierFailureActionValue(LlvmVerifierFailureAction.ReturnStatus) == 2
+        && LlvmCodeGenOptLevelValue(LlvmCodeGenOptLevel.None) == 0
+        && LlvmCodeGenOptLevelValue(LlvmCodeGenOptLevel.Aggressive) == 3
+        && LlvmRelocModeValue(LlvmRelocMode.PIC) == 2
+        && LlvmRelocModeValue(LlvmRelocMode.ROPIRWPI) == 6
+        && LlvmCodeModelValue(LlvmCodeModel.Small) == 3
+        && LlvmCodeModelValue(LlvmCodeModel.Large) == 6
+        && LlvmCodeGenFileTypeValue(LlvmCodeGenFileType.Assembly) == 0
+        && LlvmCodeGenFileTypeValue(LlvmCodeGenFileType.Object) == 1
+        && LlvmLinkageValue(LlvmLinkage.External) == 0
+        && LlvmLinkageValue(LlvmLinkage.LinkOnceOdr) == 3
+        && LlvmLinkageValue(LlvmLinkage.Internal) == 8
+        && LlvmLinkageValue(LlvmLinkage.Private) == 9
+        && LlvmLinkageValue(LlvmLinkage.ExternalWeak) == 12
+        && LlvmLinkageValue(LlvmLinkage.Common) == 14
+        && LlvmLinkageValue(LlvmLinkage.LinkerPrivateWeak) == 16
+        && LlvmVisibilityValue(LlvmVisibility.Default) == 0
+        && LlvmVisibilityValue(LlvmVisibility.Hidden) == 1
+        && LlvmVisibilityValue(LlvmVisibility.Protected) == 2
+        && LlvmDllStorageClassValue(LlvmDllStorageClass.Default) == 0
+        && LlvmDllStorageClassValue(LlvmDllStorageClass.DllImport) == 1
+        && LlvmDllStorageClassValue(LlvmDllStorageClass.DllExport) == 2
+        && LlvmUnnamedAddressValue(LlvmUnnamedAddress.None) == 0
+        && LlvmUnnamedAddressValue(LlvmUnnamedAddress.Local) == 1
+        && LlvmUnnamedAddressValue(LlvmUnnamedAddress.Global) == 2
+        && LlvmCallingConventionValue(LlvmCallingConvention.C) == 0
+        && LlvmCallingConventionValue(LlvmCallingConvention.Fast) == 8
+        && LlvmCallingConventionValue(LlvmCallingConvention.X86StdCall) == 64
+        && LlvmCallingConventionValue(LlvmCallingConvention.X8664SysV) == 78
+        && LlvmCallingConventionValue(LlvmCallingConvention.Win64) == 79
+        && LlvmCallingConventionValue(LlvmCallingConvention.X86VectorCall) == 80
+        && LlvmCallingConventionValue(LlvmCallingConvention.AmdGpuEs) == 96
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.NotAtomic) == 0
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.Unordered) == 1
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.Monotonic) == 2
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.Acquire) == 4
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.Release) == 5
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.AcquireRelease) == 6
+        && LlvmAtomicOrderingValue(LlvmAtomicOrdering.SequentiallyConsistent) == 7
+        && LlvmIntPredicateValue(LlvmIntPredicate.Equal) == 32
+        && LlvmIntPredicateValue(LlvmIntPredicate.NotEqual) == 33
+        && LlvmIntPredicateValue(LlvmIntPredicate.UnsignedGreaterThan) == 34
+        && LlvmIntPredicateValue(LlvmIntPredicate.UnsignedLessOrEqual) == 37
+        && LlvmIntPredicateValue(LlvmIntPredicate.SignedGreaterThan) == 38
+        && LlvmIntPredicateValue(LlvmIntPredicate.SignedLessOrEqual) == 41;
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool BackendFactValidationRejectsInvalidAttachmentInputs()
+{
+    return LlvmAlignmentBytesAreValid(1)
+        && LlvmAlignmentBytesAreValid(8)
+        && LlvmAlignmentBytesAreValid(4096)
+        && !LlvmAlignmentBytesAreValid(0)
+        && !LlvmAlignmentBytesAreValid(3)
+        && !LlvmAlignmentBytesAreValid(12)
+        && LlvmReturnAttributeIndex() == 0
+        && LlvmFunctionAttributeIndex() == 2 ** 32 - 1
+        && LlvmParameterAttributeIndex(0) == 1
+        && LlvmParameterAttributeIndex(7) == 8
+        && LlvmParameterAttributeIndexIsValid(2 ** 32 - 2)
+        && !LlvmParameterAttributeIndexIsValid(2 ** 32 - 1)
+        && LlvmParameterIndexIsInRange(0, 1)
+        && LlvmParameterIndexIsInRange(7, 8)
+        && !LlvmParameterIndexIsInRange(1, 1)
+        && !LlvmParameterIndexIsInRange(8, 8)
+        && LlvmPhiIncomingCountsMatch(0, 0)
+        && LlvmPhiIncomingCountsMatch(2, 2)
+        && !LlvmPhiIncomingCountsMatch(1, 2);
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool OpaqueRefOutSlotTakesBorrowedTargetWithoutCrossingHandleTypes()
+{
+    stack mut LlvmTargetRefOut targetOut = new();
+    if (targetOut.HasValue())
+    {
+        return false;
+    }
+
+    unsafe
+    {
+        targetOut.SetRawUnchecked((rawmutptr<System.C.c_void>)1);
+        stack LlvmTarget target = targetOut.Take();
+        return !target.IsNull()
+            && !targetOut.HasValue();
+    }
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool BackendOpaqueHandlesDefaultToNullWithoutTypeConfusion()
+{
+    stack LlvmTarget target = new();
+    stack LlvmType type = new();
+    stack LlvmValue value = new();
+    stack LlvmBasicBlock block = new();
+    stack LlvmAttribute attribute = new();
+    stack LlvmMetadata metadata = new();
+    stack LlvmTargetMachine targetMachine = new();
+    stack LlvmTargetData targetData = new();
+    stack LlvmMemoryBuffer buffer = new();
+    return target.IsNull()
+        && type.IsNull()
+        && value.IsNull()
+        && block.IsNull()
+        && attribute.IsNull()
+        && metadata.IsNull()
+        && targetMachine.IsNull()
+        && targetData.IsNull()
+        && buffer.IsNull();
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool LlvmStatusCarriesPlainBackendErrors()
+{
+    stack LlvmStatus ok = LlvmStatus.Ok;
+    stack LlvmStatus failed = LlvmStatus.Err(LlvmError.OperationFailed);
+    stack mut bool sawOk = false;
+    stack mut bool sawFailure = false;
+    switch (ok)
+    {
+        case LlvmStatus.Err(var error):
+            sawOk = false;
+        case LlvmStatus.Ok:
+            sawOk = true;
+    }
+
+    switch (failed)
+    {
+        case LlvmStatus.Err(var error):
+            sawFailure = true;
+        case LlvmStatus.Ok:
+            sawFailure = false;
+    }
+
+    return sawOk && sawFailure;
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool LlvmValueRefBufferSupportsReusableArgumentAndIndexLists()
+{
+    stack mut LlvmValueRefBuffer values = new();
+    if (values.Count() != 0)
+    {
+        return false;
+    }
+
+    switch (values.Reserve(2))
+    {
+        case LlvmStatus.Err(var reserveError):
+            return false;
+        case LlvmStatus.Ok:
+            values.Clear();
+    }
+
+    stack LlvmValue nullValue = new();
+    switch (values.Add(nullValue))
+    {
+        case LlvmStatus.Ok:
+            return false;
+        case LlvmStatus.Err(var addError):
+            switch (addError)
+            {
+                case LlvmError.NullHandle:
+                    return values.Count() == 0;
+                case LlvmError.CString(var cStringError):
+                    return false;
+                case LlvmError.Diagnostic(var text):
+                    return false;
+                case LlvmError.Memory(var memoryError):
+                    return false;
+                case LlvmError.VersionMismatch:
+                    return false;
+                case LlvmError.OperationFailed:
+                    return false;
+            }
+    }
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool LlvmMetadataRefBufferSupportsReusableOperandLists()
+{
+    stack mut LlvmMetadataRefBuffer metadata = new();
+    if (metadata.Count() != 0)
+    {
+        return false;
+    }
+
+    switch (metadata.Reserve(2))
+    {
+        case LlvmStatus.Err(var reserveError):
+            return false;
+        case LlvmStatus.Ok:
+            metadata.Clear();
+    }
+
+    stack LlvmMetadata nullMetadata = new();
+    switch (metadata.Add(nullMetadata))
+    {
+        case LlvmStatus.Ok:
+            return false;
+        case LlvmStatus.Err(var addError):
+            switch (addError)
+            {
+                case LlvmError.NullHandle:
+                    return metadata.Count() == 0;
+                case LlvmError.CString(var cStringError):
+                    return false;
+                case LlvmError.Diagnostic(var text):
+                    return false;
+                case LlvmError.Memory(var memoryError):
+                    return false;
+                case LlvmError.VersionMismatch:
+                    return false;
+                case LlvmError.OperationFailed:
+                    return false;
+            }
+    }
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool LlvmBasicBlockRefBufferSupportsReusableIncomingLists()
+{
+    stack mut LlvmBasicBlockRefBuffer blocks = new();
+    if (blocks.Count() != 0)
+    {
+        return false;
+    }
+
+    switch (blocks.Reserve(2))
+    {
+        case LlvmStatus.Err(var reserveError):
+            return false;
+        case LlvmStatus.Ok:
+            blocks.Clear();
+    }
+
+    stack LlvmBasicBlock nullBlock = new();
+    switch (blocks.Add(nullBlock))
+    {
+        case LlvmStatus.Ok:
+            return false;
+        case LlvmStatus.Err(var addError):
+            switch (addError)
+            {
+                case LlvmError.NullHandle:
+                    return blocks.Count() == 0;
+                case LlvmError.CString(var cStringError):
+                    return false;
+                case LlvmError.Diagnostic(var text):
+                    return false;
+                case LlvmError.Memory(var memoryError):
+                    return false;
+                case LlvmError.VersionMismatch:
+                    return false;
+                case LlvmError.OperationFailed:
+                    return false;
+            }
+    }
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool LlvmDiagnosticErrorsUsePropagatableResultShape()
+{
+    stack mut System.Text.OwnedAscii diagnostic = new();
+    stack LlvmResult<LlvmTarget> result =
+        LlvmResult<LlvmTarget>.Err(LlvmError.Diagnostic(diagnostic));
+    switch (result)
+    {
+        case LlvmResult<LlvmTarget>.Ok(var target):
+            return false;
+        case LlvmResult<LlvmTarget>.Err(var error):
+            switch (error)
+            {
+                case LlvmError.Diagnostic(var text):
+                    return true;
+                case LlvmError.NullHandle:
+                    return false;
+                case LlvmError.CString(var cStringError):
+                    return false;
+                case LlvmError.VersionMismatch:
+                    return false;
+                case LlvmError.Memory(var memoryError):
+                    return false;
+                case LlvmError.OperationFailed:
+                    return false;
+            }
+    }
+}
+
+[Fact]
+[Collection("llvm-bindings")]
+fn bool LlvmTypeRefBufferSupportsReusableParameterLists()
+{
+    stack mut LlvmTypeRefBuffer parameters = new();
+    if (parameters.Count() != 0)
+    {
+        return false;
+    }
+
+    switch (parameters.Reserve(2))
+    {
+        case LlvmStatus.Err(var reserveError):
+            return false;
+        case LlvmStatus.Ok:
+            parameters.Clear();
+    }
+
+    stack LlvmType nullType = new();
+    switch (parameters.Add(nullType))
+    {
+        case LlvmStatus.Ok:
+            return false;
+        case LlvmStatus.Err(var addError):
+            switch (addError)
+            {
+                case LlvmError.NullHandle:
+                    return parameters.Count() == 0;
+                case LlvmError.CString(var cStringError):
+                    return false;
+                case LlvmError.Diagnostic(var text):
+                    return false;
+                case LlvmError.Memory(var memoryError):
+                    return false;
+                case LlvmError.VersionMismatch:
+                    return false;
+                case LlvmError.OperationFailed:
+                    return false;
+            }
+    }
+}

@@ -6,17 +6,8 @@ module PackageImageTypedSwitchPatternIntegrationTests
 internal fn bool ManifestBackedTypedNestedAndLiteralSwitchPatternsCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original emits `Facade` as a static library via the
-        // `--emit-lib -o` CLI path, reloads the resulting `.starkpkg` manifest,
-        // strips it down to its typed compiler sections (no BodyText, only TypedBody
-        // for `Facade.ReadNestedCount`), deletes the `Facade.stark` source, then
-        // builds a `Demo` executable that imports the manifest-backed `Facade` and
-        // asserts the produced process exits with code 11. The compile helpers cannot
-        // express the CLI emit-lib build, manifest stripping / sourceless resolution,
-        // executable emission, or runtime exit-code checks, so this is reduced to
-        // compiling the same `Demo` root program with `Facade` available as a sibling
-        // source module through the full pipeline and asserting it succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed nested/literal switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "pkgimg-typed-nested-literal-switch",
             raw"""
 import Facade
@@ -33,8 +24,7 @@ export fn i32[min max] main()
     return Facade.ReadNestedCount(wrapped, tag);
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -63,8 +53,10 @@ public fn i32[min max] ReadNestedCount<T>(Wrapped<T> wrapped, T tag)
             return -1;
     }
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.ReadNestedCount",
+            "",
+            11);
     }
 }
 
@@ -72,17 +64,8 @@ public fn i32[min max] ReadNestedCount<T>(Wrapped<T> wrapped, T tag)
 internal fn bool ManifestBackedTypedRangeSwitchPatternsCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original emits `Facade` as a static library via the
-        // `--emit-lib -o` CLI path, reloads the `.starkpkg` manifest, asserts the
-        // typed body for `Facade.Classify` contains a "range" switch case, strips the
-        // manifest to its typed compiler sections, deletes the `Facade.stark` source,
-        // then builds a `Demo` executable importing the manifest-backed `Facade` and
-        // asserts the process exits with code 27. The compile helpers cannot express
-        // the CLI emit-lib build, manifest range-case inspection, sourceless
-        // resolution, executable emission, or runtime exit-code checks, so this is
-        // reduced to compiling the same `Demo` root program with `Facade` available as
-        // a sibling source module through the full pipeline and asserting it succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed range switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "pkgimg-typed-range-switch",
             raw"""
 import Facade
@@ -96,8 +79,7 @@ export fn i32[min max] main()
     return Facade.Classify(token, 12, tag);
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -128,8 +110,10 @@ public fn i32[min max] Classify<T>(Token<T> token, u8[0 20] code, T tag)
             return baseValue - 1;
     }
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.Classify",
+            "",
+            27);
     }
 }
 
@@ -137,17 +121,8 @@ public fn i32[min max] Classify<T>(Token<T> token, u8[0 20] code, T tag)
 internal fn bool ManifestBackedTypedAggregateWholeCapturePatternsCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original emits `Facade` as a static library via the
-        // `--emit-lib -o` CLI path, reloads the `.starkpkg` manifest, confirms the
-        // typed body for `Facade.ReadWhole` (no BodyText), strips the manifest to its
-        // typed compiler sections, deletes the `Facade.stark` source, then builds a
-        // `Demo` executable importing the manifest-backed `Facade` and asserts the
-        // process exits with code 12. The compile helpers cannot express the CLI
-        // emit-lib build, manifest stripping / sourceless resolution, executable
-        // emission, or runtime exit-code checks, so this is reduced to compiling the
-        // same `Demo` root program with `Facade` available as a sibling source module
-        // through the full pipeline and asserting it succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed aggregate whole-capture switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "pkgimg-typed-aggregate-whole-capture",
             raw"""
 import Facade
@@ -159,8 +134,7 @@ export fn i32[min max] main()
     return Facade.ReadWhole(new Facade.Counter(7, 11), tag);
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -176,8 +150,10 @@ public fn i32[min max] ReadWhole<T>(Counter counter, T tag)
             return capture.Count + 1;
     }
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.ReadWhole",
+            "",
+            12);
     }
 }
 
@@ -185,17 +161,8 @@ public fn i32[min max] ReadWhole<T>(Counter counter, T tag)
 internal fn bool ManifestBackedTypedEnumWholeCapturePatternsCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original emits `Facade` as a static library via the
-        // `--emit-lib -o` CLI path, reloads the `.starkpkg` manifest, confirms the
-        // typed body for `Facade.ReadEnumWhole` (no BodyText), strips the manifest to
-        // its typed compiler sections, deletes the `Facade.stark` source, then builds a
-        // `Demo` executable importing the manifest-backed `Facade` and asserts the
-        // process exits with code 5. The compile helpers cannot express the CLI
-        // emit-lib build, manifest stripping / sourceless resolution, executable
-        // emission, or runtime exit-code checks, so this is reduced to compiling the
-        // same `Demo` root program with `Facade` available as a sibling source module
-        // through the full pipeline and asserting it succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed enum whole-capture switch bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "pkgimg-typed-enum-whole-capture",
             raw"""
 import Facade
@@ -209,8 +176,7 @@ export fn i32[min max] main()
     return Facade.ReadEnumWhole(wrapped, tag);
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -230,7 +196,9 @@ public fn i32[min max] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag)
             return -2;
     }
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.ReadEnumWhole",
+            "",
+            5);
     }
 }

@@ -15,6 +15,9 @@ module CompilerTestSupport
 // tests/compiler.Tests shared Compile/AssertDiagnostic helpers.
 
 const HostTimeoutMilliseconds = 180000;
+const PackageHostTargetTriple = "x86_64-unknown-linux-gnu";
+const PackageHostTargetDataLayout = "e-p:64:64";
+const PackageRuntimeTargetDataLayout = "e-p:64:64";
 
 // One host compile attempt. `Ok` means the transport and protocol succeeded;
 // facts check `Outcome.CompileSucceeded()` separately where failure is the
@@ -162,6 +165,48 @@ public fn LlvmCompile CompileLlvmWithModule(
     }
 }
 
+// Compiles `source` against a dependency supplied only as a typed package image.
+// The producer source is written just long enough to run `--emit-lib
+// --package-typed-only`, then deleted before the consumer compile so the
+// resolver must import package facts rather than source text.
+public fn LlvmCompile CompileLlvmWithTypedOnlyPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    unsafe
+    {
+        return CompileWithPackage(id, source, "", "llvm", libModuleName, libModuleSource, true);
+    }
+}
+
+// Full CLI/runtime variant for manifest-backed typed-body ports: build the
+// producer as a typed-only package, verify emitted files/package JSON, delete
+// producer source, build a consumer executable against the package image, then
+// run it and check the expected exit code.
+public fn bool CompileAndRunTypedOnlyPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource,
+    ascii templateName0,
+    ascii templateName1,
+    i32[min max] expectedExitCode)
+{
+    unsafe
+    {
+        return CompileAndRunTypedOnlyPackageCore(
+            id,
+            source,
+            libModuleName,
+            libModuleSource,
+            templateName0,
+            templateName1,
+            expectedExitCode);
+    }
+}
+
 internal fn LlvmCompile RunWithModule(
     ascii id,
     ascii source,
@@ -221,6 +266,506 @@ internal fn LlvmCompile RunWithModule(
 
         stack bool cleaned = IOOk(DeleteTreeIfExists(root.View()));
         return compiled;
+    }
+}
+
+internal fn bool CompileAndRunTypedOnlyPackageCore(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource,
+    ascii templateName0,
+    ascii templateName1,
+    i32[min max] expectedExitCode)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut OwnedAscii sourceName = new();
+        if (!AppendAscii(sourceName, libModuleName)
+            || !AppendAscii(sourceName, ".stark"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        if (!AppendAscii(libraryName, "lib")
+            || !AppendAscii(libraryName, libModuleName)
+            || !AppendAscii(libraryName, ".a"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii packageName = new();
+        if (!AppendAscii(packageName, "lib")
+            || !AppendAscii(packageName, libModuleName)
+            || !AppendAscii(packageName, ".starkpkg"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii packageJsonName = new();
+        if (!AppendAscii(packageJsonName, packageName.View())
+            || !AppendAscii(packageJsonName, ".json"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii demoName = new();
+        if (!AppendAscii(demoName, "Demo.stark"))
+        {
+            return false;
+        }
+
+        stack mut OwnedAscii executableName = new();
+        if (!AppendAscii(executableName, "app"))
+        {
+            return false;
+        }
+
+        switch (System.Testing.CreateTempDirectory("compiler-host-pkg-runtime"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return false;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                if (!WriteTempText(tempDir, sourceName.View(), libModuleSource)
+                    || !WriteTempText(tempDir, demoName.View(), source))
+                {
+                    return false;
+                }
+
+                stack mut ProcessOutput libraryOutput = new();
+                if (!BuildTypedOnlyLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    libraryOutput))
+                {
+                    return false;
+                }
+
+                if (!ProcessStdoutContains(libraryOutput, "Emitted static library:")
+                    || !ProcessStderrEmpty(libraryOutput)
+                    || !TempFileExists(tempDir, libraryName.View())
+                    || !TempFileExists(tempDir, packageName.View())
+                    || !TempFileExists(tempDir, packageJsonName.View()))
+                {
+                    return false;
+                }
+
+                if (!PackageJsonHasTypedOnlyTemplate(tempDir, packageJsonName.View(), templateName0, templateName1))
+                {
+                    return false;
+                }
+
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return false;
+                    case IOStatus.Ok:
+                }
+
+                stack mut ProcessOutput compileOutput = new();
+                if (!BuildConsumerExecutable(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    demoName.View(),
+                    executableName.View(),
+                    compileOutput))
+                {
+                    return false;
+                }
+
+                if (!ProcessStdoutContains(compileOutput, "Emitted executable:")
+                    || !ProcessStderrEmpty(compileOutput)
+                    || !TempFileExists(tempDir, executableName.View()))
+                {
+                    return false;
+                }
+
+                stack mut ProcessOutput runOutput = new();
+                if (!RunTempExecutable(tempDir, executableName.View(), runOutput))
+                {
+                    return false;
+                }
+
+                return !runOutput.WasTimedOut()
+                    && ProcessOutputEqual(expectedExitCode, "", "", runOutput);
+        }
+    }
+}
+
+internal fn bool BuildTypedOnlyLibraryPackage(
+    ascii compilerPath,
+    ascii workingDirectory,
+    ascii sourceName,
+    ascii libraryName,
+    ascii packageName,
+    out ProcessOutput output)
+    where overlap(compilerPath, workingDirectory),
+          overlap(compilerPath, sourceName),
+          overlap(compilerPath, libraryName),
+          overlap(compilerPath, packageName),
+          overlap(compilerPath, output),
+          overlap(workingDirectory, sourceName),
+          overlap(workingDirectory, libraryName),
+          overlap(workingDirectory, packageName),
+          overlap(workingDirectory, output),
+          overlap(sourceName, libraryName),
+          overlap(sourceName, packageName),
+          overlap(sourceName, output),
+          overlap(libraryName, packageName),
+          overlap(libraryName, output),
+          overlap(packageName, output)
+{
+    unsafe
+    {
+        stack mut ProcessCommand command = new();
+        switch (Command(compilerPath))
+        {
+            case ProcessResult<ProcessCommand>.Err(var commandError):
+                return false;
+            case ProcessResult<ProcessCommand>.Ok(var created):
+                command = created;
+        }
+
+        if (!ProcessStatusOk(command.SetWorkingDirectory(workingDirectory))
+            || !ProcessStatusOk(command.AddArgument(sourceName))
+            || !ProcessStatusOk(command.AddArgument("--emit-lib"))
+            || !ProcessStatusOk(command.AddArgument("-o"))
+            || !ProcessStatusOk(command.AddArgument(libraryName))
+            || !ProcessStatusOk(command.AddArgument("--package-image-output"))
+            || !ProcessStatusOk(command.AddArgument(packageName))
+            || !ProcessStatusOk(command.AddArgument("--package-image-json"))
+            || !ProcessStatusOk(command.AddArgument("--package-typed-only"))
+            || !ProcessStatusOk(command.AddArgument("--target-data-layout"))
+            || !ProcessStatusOk(command.AddArgument(PackageRuntimeTargetDataLayout)))
+        {
+            return false;
+        }
+
+        switch (RunCaptureWithTimeout(command, HostTimeoutMilliseconds))
+        {
+            case ProcessResult<ProcessOutput>.Err(var error):
+                return false;
+            case ProcessResult<ProcessOutput>.Ok(var captured):
+                output = captured;
+        }
+
+        return !output.WasTimedOut() && output.ExitCode == 0;
+    }
+}
+
+internal fn bool BuildConsumerExecutable(
+    ascii compilerPath,
+    ascii workingDirectory,
+    ascii sourceName,
+    ascii executableName,
+    out ProcessOutput output)
+    where overlap(compilerPath, workingDirectory),
+          overlap(compilerPath, sourceName),
+          overlap(compilerPath, executableName),
+          overlap(compilerPath, output),
+          overlap(workingDirectory, sourceName),
+          overlap(workingDirectory, executableName),
+          overlap(workingDirectory, output),
+          overlap(sourceName, executableName),
+          overlap(sourceName, output),
+          overlap(executableName, output)
+{
+    unsafe
+    {
+        stack mut ProcessCommand command = new();
+        switch (Command(compilerPath))
+        {
+            case ProcessResult<ProcessCommand>.Err(var commandError):
+                return false;
+            case ProcessResult<ProcessCommand>.Ok(var created):
+                command = created;
+        }
+
+        if (!ProcessStatusOk(command.SetWorkingDirectory(workingDirectory))
+            || !ProcessStatusOk(command.AddArgument(sourceName))
+            || !ProcessStatusOk(command.AddArgument("--emit-exe"))
+            || !ProcessStatusOk(command.AddArgument("-o"))
+            || !ProcessStatusOk(command.AddArgument(executableName))
+            || !ProcessStatusOk(command.AddArgument("-I"))
+            || !ProcessStatusOk(command.AddArgument(workingDirectory))
+            || !ProcessStatusOk(command.AddArgument("--target-data-layout"))
+            || !ProcessStatusOk(command.AddArgument(PackageRuntimeTargetDataLayout)))
+        {
+            return false;
+        }
+
+        switch (RunCaptureWithTimeout(command, HostTimeoutMilliseconds))
+        {
+            case ProcessResult<ProcessOutput>.Err(var error):
+                return false;
+            case ProcessResult<ProcessOutput>.Ok(var captured):
+                output = captured;
+        }
+
+        return !output.WasTimedOut() && output.ExitCode == 0;
+    }
+}
+
+internal fn bool RunTempExecutable(
+    mut borrow System.Testing.TempDirectory tempDir,
+    ascii executableName,
+    out ProcessOutput output)
+    where overlap(tempDir, executableName),
+          overlap(tempDir, output),
+          overlap(executableName, output)
+{
+    unsafe
+    {
+        stack mut OwnedAscii executablePath = new();
+        switch (tempDir.PathFor(executableName))
+        {
+            case IOResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var path):
+                executablePath = path;
+        }
+
+        stack mut ProcessCommand command = new();
+        switch (Command(executablePath.View()))
+        {
+            case ProcessResult<ProcessCommand>.Err(var commandError):
+                return false;
+            case ProcessResult<ProcessCommand>.Ok(var created):
+                command = created;
+        }
+
+        switch (RunCaptureWithTimeout(command, HostTimeoutMilliseconds))
+        {
+            case ProcessResult<ProcessOutput>.Err(var error):
+                return false;
+            case ProcessResult<ProcessOutput>.Ok(var captured):
+                output = captured;
+        }
+
+        return true;
+    }
+}
+
+internal fn bool PackageJsonHasTypedOnlyTemplate(
+    mut borrow System.Testing.TempDirectory tempDir,
+    ascii packageJsonName,
+    ascii templateName0,
+    ascii templateName1)
+    where overlap(tempDir, packageJsonName),
+          overlap(tempDir, templateName0),
+          overlap(tempDir, templateName1),
+          overlap(packageJsonName, templateName0),
+          overlap(packageJsonName, templateName1),
+          overlap(templateName0, templateName1)
+{
+    unsafe
+    {
+        stack mut OwnedAscii packageJson = new();
+        switch (tempDir.ReadText(packageJsonName))
+        {
+            case IOResult<OwnedAscii>.Err(var readError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var text):
+                packageJson = text;
+        }
+
+        stack ascii json = packageJson.View();
+        if (!System.Testing.Contains(json, "\"GenericTemplates\"")
+            || !System.Testing.Contains(json, "\"TypedBody\"")
+            || System.Testing.Contains(json, "\"BodyText\"")
+            || !System.Testing.Contains(json, templateName0))
+        {
+            return false;
+        }
+
+        if (AsciiLength(templateName1) > 0
+            && !System.Testing.Contains(json, templateName1))
+        {
+            return false;
+        }
+
+        return true;
+    }
+}
+
+internal fn bool TempFileExists(mut borrow System.Testing.TempDirectory tempDir, ascii relativePath)
+    where overlap(tempDir, relativePath)
+{
+    unsafe
+    {
+        stack mut OwnedAscii path = new();
+        switch (tempDir.PathFor(relativePath))
+        {
+            case IOResult<OwnedAscii>.Err(var pathError):
+                return false;
+            case IOResult<OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        switch (System.IO.File.Exists(path.View()))
+        {
+            case IOResult<bool>.Err(var existsError):
+                return false;
+            case IOResult<bool>.Ok(var exists):
+                return exists;
+        }
+    }
+}
+
+internal finite law bool ProcessStatusOk(ProcessStatus status)
+{
+    switch (status)
+    {
+        case ProcessStatus.Err(var error):
+            return false;
+        case ProcessStatus.Ok:
+            return true;
+    }
+}
+
+internal fn bool WriteTempText(
+    mut borrow System.Testing.TempDirectory tempDir,
+    ascii relativePath,
+    ascii text)
+    where overlap(tempDir, relativePath),
+          overlap(tempDir, text),
+          overlap(relativePath, text)
+{
+    switch (tempDir.WriteText(relativePath, text))
+    {
+        case IOStatus.Err(var error):
+            return false;
+        case IOStatus.Ok:
+            return true;
+    }
+}
+
+internal fn LlvmCompile CompileWithPackage(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii libModuleName,
+    ascii libModuleSource,
+    bool typedOnlyPackage)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return failed;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut OwnedAscii sourceName = new();
+        if (!AppendAscii(sourceName, libModuleName)
+            || !AppendAscii(sourceName, ".stark"))
+        {
+            return failed;
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        if (!AppendAscii(libraryName, "lib")
+            || !AppendAscii(libraryName, libModuleName)
+            || !AppendAscii(libraryName, ".a"))
+        {
+            return failed;
+        }
+
+        stack mut OwnedAscii packageName = new();
+        if (!AppendAscii(packageName, "lib")
+            || !AppendAscii(packageName, libModuleName)
+            || !AppendAscii(packageName, ".starkpkg"))
+        {
+            return failed;
+        }
+
+        switch (System.Testing.CreateTempDirectory("compiler-host-pkg"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return failed;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                switch (tempDir.WriteText(sourceName.View(), libModuleSource))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                switch (BuildLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    PackageHostTargetTriple,
+                    PackageHostTargetDataLayout,
+                    typedOnlyPackage,
+                    HostTimeoutMilliseconds))
+                {
+                    case HostResult<bool>.Err(var buildError):
+                        return failed;
+                    case HostResult<bool>.Ok(var built):
+                }
+
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                stack mut LlvmCompile compiled =
+                    RunHostCompileInForTargetDataLayoutWithOverlappingInputs(
+                        id,
+                        source,
+                        stopAfterPassId,
+                        artifactName,
+                        tempDir.View(),
+                        0,
+                        PackageHostTargetTriple,
+                        PackageHostTargetDataLayout);
+                if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+                {
+                    compiled.Ok = false;
+                }
+
+                return compiled;
+        }
+    }
+}
+
+internal fn bool AppendAscii(mut borrow OwnedAscii destination, ascii value)
+{
+    unsafe
+    {
+        switch (destination.AppendAscii(value))
+        {
+            case MemoryStatus.Err(_):
+                return false;
+            case MemoryStatus.Ok:
+                return true;
+        }
     }
 }
 
@@ -385,6 +930,131 @@ internal fn LlvmCompile RunHostCompileIn(
                 searchDirectory,
                 maximumComptimeLoopIterations,
                 HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunHostCompileInForTargetDataLayoutWithOverlappingInputs(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations,
+    ascii targetTriple,
+    ascii targetDataLayout)
+    where overlap(id, source),
+          overlap(id, stopAfterPassId),
+          overlap(id, artifactName),
+          overlap(id, searchDirectory),
+          overlap(id, targetTriple),
+          overlap(id, targetDataLayout),
+          overlap(source, stopAfterPassId),
+          overlap(source, artifactName),
+          overlap(source, searchDirectory),
+          overlap(source, targetTriple),
+          overlap(source, targetDataLayout),
+          overlap(stopAfterPassId, artifactName),
+          overlap(stopAfterPassId, searchDirectory),
+          overlap(stopAfterPassId, targetTriple),
+          overlap(stopAfterPassId, targetDataLayout),
+          overlap(artifactName, searchDirectory),
+          overlap(artifactName, targetTriple),
+          overlap(artifactName, targetDataLayout),
+          overlap(searchDirectory, targetTriple),
+          overlap(searchDirectory, targetDataLayout),
+          overlap(targetTriple, targetDataLayout)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+        stack mut OwnedAscii idCopy = new();
+        stack mut OwnedAscii sourceCopy = new();
+        stack mut OwnedAscii stopCopy = new();
+        stack mut OwnedAscii artifactCopy = new();
+        stack mut OwnedAscii searchCopy = new();
+        stack mut OwnedAscii targetCopy = new();
+        stack mut OwnedAscii layoutCopy = new();
+
+        if (!AppendAscii(idCopy, id)
+            || !AppendAscii(sourceCopy, source)
+            || !AppendAscii(stopCopy, stopAfterPassId)
+            || !AppendAscii(artifactCopy, artifactName)
+            || !AppendAscii(searchCopy, searchDirectory)
+            || !AppendAscii(targetCopy, targetTriple)
+            || !AppendAscii(layoutCopy, targetDataLayout))
+        {
+            return failed;
+        }
+
+        return RunHostCompileInForTargetDataLayout(
+            idCopy.View(),
+            sourceCopy.View(),
+            stopCopy.View(),
+            artifactCopy.View(),
+            searchCopy.View(),
+            maximumComptimeLoopIterations,
+            targetCopy.View(),
+            layoutCopy.View());
+    }
+}
+
+internal fn LlvmCompile RunHostCompileInForTargetDataLayout(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations,
+    ascii targetTriple,
+    ascii targetDataLayout)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInForTargetWithDataLayout(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                searchDirectory,
+                maximumComptimeLoopIterations,
+                HostTimeoutMilliseconds,
+                targetTriple,
+                targetDataLayout))
             {
                 case HostResult<HostCompileOutcome>.Err(var error):
                     transportOk = false;

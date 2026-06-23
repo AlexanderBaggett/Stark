@@ -169,20 +169,37 @@ Add target/pass configuration through the C API:
       wrapper examples. Core `System.C` helpers, `%s` validation, and generic
       foreign-owned copy/dispose helpers have landed; LLVM binding-specific
       owner types remain with the binding layer.
-- [ ] Implement the LLVM FFI binding support needed by the initial backend
+- [x] Implement the LLVM FFI binding support needed by the initial backend
       integration:
       out-pointer usage patterns, `char**` error outputs, opaque-ref outputs,
       typed opaque-handle wrappers, deterministic dispose/drop wrappers for
-      owning LLVM resources, and C enum/bitflag constants Stark passes.
+      owning LLVM resources, C enum/bitflag constants Stark passes, and direct
+      function-body construction primitives.
 
 ### Backend Work
 
-- [ ] Add a narrow `System.Llvm` or compiler-internal LLVM C API binding layer,
+- [~] Add a narrow `System.Llvm` or compiler-internal LLVM C API binding layer,
       including libLLVM discovery through the toolchain resolver/release layout
-      and LLVM version diagnostics.
-- [ ] Add the direct LLVM C API backend path: module construction, object
+      and LLVM version diagnostics. The compiler-internal binding surface,
+      required-symbol table, version-check helpers, typed target-machine and
+      target-data setup, direct object-emission wrappers, reusable
+      function-parameter buffers, module print/verify wrappers, and LLVM-owned
+      diagnostic copying into `LlvmResult<T>` have landed; resolver loading
+      remains with the backend/toolchain work.
+- [~] Add the direct LLVM C API backend path: module construction, object
       emission, verifier/error handling, and optional module printing for
       textual LLVM debug/inspection artifacts.
+  - [x] Add typed C API wrappers for target lookup, target-machine creation,
+        module target/data-layout, reusable function declarations, object buffer
+        emission, verifier diagnostics, module printing, basic blocks, builder
+        positioning, integer constants, return terminators, global declarations,
+        global-object facts, memory/call construction, ABI/performance fact
+        attachments, function parameters, control flow, scalar integer ops,
+        compares, selects, and PHI incoming edges.
+  - [x] Add libLLVM-linked runtime smoke coverage for direct module
+        construction, verifier diagnostics, module printing, and object
+        emission.
+  - [ ] Wire MIR/SSA backend construction through those wrappers.
 - [ ] Keep final linking/toolchain execution through the native toolchain resolver.
 - [ ] Add the tests listed in §7 for bindings, diagnostics, direct object
       emission, inspection output, bundled toolchain behavior, and failure

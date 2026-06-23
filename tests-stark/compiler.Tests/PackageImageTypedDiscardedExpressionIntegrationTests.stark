@@ -6,20 +6,8 @@ module PackageImageTypedDiscardedExpressionIntegrationTests
 internal fn bool ManifestBackedTypedDiscardedExpressionBodiesCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original emits a static library + package image for the `Facade`
-        // module via `--emit-lib`, asserts CLI stdout ("Emitted static library:"), empty
-        // stderr, exit code 0, and the on-disk library/manifest existing. It then loads the
-        // manifest, asserts the `Facade.Observe` generic template has a null BodyText and a
-        // non-null TypedBody, rewrites the manifest to keep ONLY the typed/compiler sections
-        // (dropping source surface), deletes `Facade.stark`, then compiles the `Demo` consumer
-        // with `--emit-exe`, asserting "Emitted executable:", empty stderr, the executable
-        // existing, and that running it yields empty stdout/stderr and exit code 7. Package-image
-        // bytes, manifest round-tripping, typed-body/BodyText inspection, CLI process output,
-        // file-system effects and runtime stdout/exit-code are not expressible via the compile
-        // helpers, so this is reduced to compiling the `Demo` consumer (which imports `Facade`,
-        // calls the typed-discarded-expression generic `Facade.Observe`) together with the
-        // `Facade` dependency module through the LLVM pipeline and asserting it succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed discarded expression bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "manifest-backed-typed-discarded-expression-bodies",
             raw"""
 import Facade
@@ -31,8 +19,7 @@ export fn i32[min max] main()
     return Facade.Observe(7, tag);
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -41,7 +28,9 @@ public fn i32[min max] Observe<T>(i32[min max] value, T tag)
     value + 1;
     return value;
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.Observe",
+            "",
+            7);
     }
 }
