@@ -1838,7 +1838,7 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
 // Ported from LlvmIrEmissionTests.ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner.
 internal fn bool ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwnerImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmForTarget(
         "llvm-arena-dynamic-positive-alloc-direct",
         raw"""
 module Demo
@@ -1848,7 +1848,8 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
     stack mut dynamic u32[0 2 ** 31 - 1] values = new(arena, 4);
     return values.Capacity;
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
@@ -8217,7 +8218,7 @@ strictfp fn f64 Run(f32 small, f64 wide, i32[min max] integer)
 // Ported from LlvmIrEmissionTests.UnrecoverableUnreachablePathsLowerThroughColdTrapHelper.
 internal fn bool UnrecoverableUnreachablePathsLowerThroughColdTrapHelperImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmForTarget(
         "p6-unreachable-cold-trap-helper",
         raw"""
 module Demo
@@ -8233,7 +8234,8 @@ unsafe fn i32[min max] Run(Color c)
         case Color.Blue: return 3;
     }
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
@@ -8330,7 +8332,7 @@ unsafe fn i32[min max] Run()
 // Ported from LlvmIrEmissionTests.ArenaObjectCreationUsesFrameAllocatorLowering.
 internal fn bool ArenaObjectCreationUsesFrameAllocatorLoweringImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmForTarget(
         "p6-arena-object-allocator",
         raw"""
 module Demo
@@ -8348,7 +8350,8 @@ unsafe fn i32[min max] Run()
     };
     return box.Value;
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
@@ -11717,7 +11720,7 @@ public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawp
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "declare i64 @Syscall2")
-        && Contains(llvm, "call i64 @Syscall2(i64 2, ptr")
+        && Contains(llvm, "call i64 @Syscall2(i64 range(i64 2, 3) 2, ptr readonly")
         && DoesNotContain(llvm, "; imported asm definition: Syscall.Syscall2")
         && DoesNotContain(llvm, "define i64 @Syscall2");
 }
@@ -13106,7 +13109,7 @@ internal fn bool ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatD
     // C# supplied the imported `Facade` generic module via InMemoryModuleResolver;
     // staged here to a temp search directory so the linkonce_odr/comdat
     // specialization assertions are reproducible against the normalized LLVM.
-    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
+    stack mut LlvmCompile c = CompileLlvmWithModuleForTargetNormalized(
         "llvm-p9-imported-generic-linkonce-odr-comdat",
         raw"""
 import Facade
@@ -13125,7 +13128,8 @@ public unsafe fn T Identity<T>(T value)
 {
     return value;
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
@@ -14623,8 +14627,8 @@ unsafe fn i32[min max] Indirect(
     // strengthened call-site fragments; the header-scoped `DoesNotContain("nonnull")`
     // guard is dropped (the strengthened call sites legitimately carry `nonnull`).
     return Contains(llvm, "ptr noundef readonly captures(none) %arg_input")
-        && Contains(llvm, "call fastcc i32 @Touch(ptr nonnull dereferenceable(16) align 4 readonly captures(none) %arg_input, i8 range(i8 0, 11) %arg_count)")
-        && Contains(llvm, "call fastcc i32 %arg_op(ptr nonnull dereferenceable(16) align 4 readonly captures(address, read_provenance) %arg_input, i8 range(i8 0, 11) %arg_count)");
+        && Contains(llvm, "call fastcc i32 @Touch(ptr nonnull dereferenceable(16) align 4 readonly captures(none) %arg_input, i8 range(i8 4, 11) %arg_count)")
+        && Contains(llvm, "call fastcc i32 %arg_op(ptr nonnull dereferenceable(16) align 4 readonly captures(address, read_provenance) %arg_input, i8 range(i8 4, 11) %arg_count)");
 }
 
 // Ported from LlvmIrEmissionTests.BoundedRawPointerRegionFactsEmitInboundsGepForProvenParameterIndexes.

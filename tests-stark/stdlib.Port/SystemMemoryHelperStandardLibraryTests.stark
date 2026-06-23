@@ -75,112 +75,54 @@ fn MemoryStatus MoveBytes(
 // check that the runtime append/copy fast paths emit `icmp ule ptr` overlap
 // guards while the *Disjoint and *Infallible variants do not, that MoveBytes
 // delegates to MoveBytesInfallible, and that copy loops carry
-// llvm.loop.parallel_accesses. The compile-only bridge cannot read the on-disk
-// module nor scope a search to a single LLVM function body, so the System.Memory
-// helpers are driven through an embedded program that references each one
-// (forcing them to be emitted) and only whole-module signals that the runtime
-// fast paths were lowered are asserted (overlap guard present, infallible
-// delegation present, parallel-access metadata present). The per-function-body
-// presence/absence distinctions are reduced to whole-module presence checks.
+// llvm.loop.parallel_accesses. The Stark port compiles the same on-disk module
+// through the host-test bridge and scopes the checks to the same helper bodies.
+// The current backend lowers infallible moves directly to llvm.memmove, which is
+// the optimized overlap-safe path that replaced the old pointer-compare loop.
 internal fn bool StdLibSourceMemoryModuleLowersRuntimeDisjointAppendFastPathsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("stdlib-memory-runtime-disjoint-fastpaths", raw"""
-import System.Memory
-module Demo
-
-fn bool Ok(MemoryStatus status)
-{
-    switch (status)
-    {
-        case MemoryStatus.Ok:
-            return true;
-        case MemoryStatus.Err(var error):
-            return false;
-    }
-}
-
-export unsafe fn i32[min max] main()
-{
-    stack u64[0 2 ** 63 - 1] four = 4;
-    stack u64[0 2 ** 63 - 1] eight = 8;
-    stack mut i8[min max][4] byteSource =
-    {
-        1, 2, 3, 4
-    };
-    stack mut i32[min max][4] codePointSource =
-    {
-        65, 66, 67, 68
-    };
-
-    stack mut dynamic i8[min max] bytes = new();
-    if (!Ok(System.Memory.ReserveBytes(bytes, eight)))
-    {
-        return 1;
-    }
-
-    if (!Ok(System.Memory.AppendBytes(bytes, byteSource, four)))
-    {
-        return 2;
-    }
-
-    if (!Ok(System.Memory.AppendBytesDisjoint(bytes, byteSource, four)))
-    {
-        return 3;
-    }
-
-    stack mut dynamic i32[min max] codePoints = new();
-    if (!Ok(System.Memory.ReserveCodePoints(codePoints, eight)))
-    {
-        return 4;
-    }
-
-    if (!Ok(System.Memory.AppendCodePoints(codePoints, codePointSource, four)))
-    {
-        return 5;
-    }
-
-    if (!Ok(System.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, four)))
-    {
-        return 6;
-    }
-
-    if (!Ok(System.Memory.CopyBytes(bytes[0, four], bytes[four, four], four)))
-    {
-        return 7;
-    }
-
-    if (!Ok(System.Memory.CopyCodePoints(codePoints[0, four], codePoints[four, four], four)))
-    {
-        return 8;
-    }
-
-    if (!Ok(System.Memory.MoveBytes(bytes[0, four], bytes[four, four], four)))
-    {
-        return 9;
-    }
-
-    if (!Ok(System.Memory.MoveCodePoints(codePoints[0, four], codePoints[four, four], four)))
-    {
-        return 10;
-    }
-
-    System.Memory.MoveBytesInfallible(bytes[0, four], bytes[four, four], four);
-    System.Memory.MoveCodePointsInfallible(codePoints[0, four], codePoints[four, four], four);
-
-    return 0;
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "stdlib-memory-runtime-disjoint-fastpaths",
+        "../../stdlib/src/System/Memory.stark");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "icmp ule ptr")
-        && Contains(llvm, "@MoveBytesInfallible")
-        && Contains(llvm, "@MoveCodePointsInfallible")
-        && Contains(llvm, "icmp ult ptr")
-        && Contains(llvm, "!llvm.access.group")
+    stack ascii appendBytesBody = LlvmDefinitionBody(llvm, "AppendBytes");
+    stack ascii appendCodePointsBody = LlvmDefinitionBody(llvm, "AppendCodePoints");
+    stack ascii appendBytesDisjointBody = LlvmDefinitionBody(llvm, "AppendBytesDisjoint");
+    stack ascii appendCodePointsDisjointBody = LlvmDefinitionBody(llvm, "AppendCodePointsDisjoint");
+    stack ascii copyBytesBody = LlvmDefinitionBody(llvm, "CopyBytes");
+    stack ascii copyCodePointsBody = LlvmDefinitionBody(llvm, "CopyCodePoints");
+    stack ascii moveBytesBody = LlvmDefinitionBody(llvm, "MoveBytes");
+    stack ascii moveCodePointsBody = LlvmDefinitionBody(llvm, "MoveCodePoints");
+    stack ascii moveBytesInfallibleBody = LlvmDefinitionBody(llvm, "MoveBytesInfallible");
+    stack ascii moveCodePointsInfallibleBody = LlvmDefinitionBody(llvm, "MoveCodePointsInfallible");
+
+    return Contains(appendBytesBody, "icmp ule ptr")
+        && Contains(appendCodePointsBody, "icmp ule ptr")
+        && Contains(copyBytesBody, "icmp ule ptr")
+        && Contains(copyCodePointsBody, "icmp ule ptr")
+        && !Contains(appendBytesDisjointBody, "icmp ule ptr")
+        && !Contains(appendCodePointsDisjointBody, "icmp ule ptr")
+        && !Contains(moveBytesInfallibleBody, "icmp ule ptr")
+        && !Contains(moveCodePointsInfallibleBody, "icmp ule ptr")
+        && !Contains(appendBytesDisjointBody, "snapshot")
+        && !Contains(appendCodePointsDisjointBody, "snapshot")
+        && Contains(moveBytesBody, "@MoveBytesInfallible")
+        && Contains(moveCodePointsBody, "@MoveCodePointsInfallible")
+        && Contains(moveBytesInfallibleBody, "@llvm.memmove.p0.p0.i64")
+        && Contains(moveCodePointsInfallibleBody, "@llvm.memmove.p0.p0.i64")
+        && !Contains(moveBytesInfallibleBody, "__stark_runtime_alloc")
+        && !Contains(moveCodePointsInfallibleBody, "__stark_runtime_alloc")
+        && !Contains(moveBytesInfallibleBody, "__stark_runtime_try_realloc")
+        && !Contains(moveCodePointsInfallibleBody, "__stark_runtime_try_realloc")
+        && !Contains(moveBytesInfallibleBody, "__stark_dynamic_try_reserve")
+        && !Contains(moveCodePointsInfallibleBody, "__stark_dynamic_try_reserve")
+        && Contains(copyBytesBody, "!llvm.access.group")
+        && Contains(copyCodePointsBody, "!llvm.access.group")
         && Contains(llvm, "!\"llvm.loop.parallel_accesses\"");
 }
 
@@ -190,70 +132,35 @@ export unsafe fn i32[min max] main()
 // AppendCodePointsDisjoint / AppendFillBytes / InitializeBytesDisjoint /
 // InitializeCodePointsDisjoint / FillBytes, asserting each lowers its hot tail
 // to @llvm.memcpy / @llvm.memset and contains no `_phi = phi` scalar fallback.
-// The compile-only bridge cannot read the on-disk module nor scope a search to a
-// single LLVM function body, so the helpers are referenced through an embedded
-// program (forcing emission) and the whole-module presence of the memcpy/memset
-// intrinsics is asserted. The per-function-body absence-of-phi checks are
-// reduced to whole-module intrinsic-presence checks.
+// The Stark port compiles the same on-disk module through the host-test bridge
+// and scopes each assertion to the helper body.
 internal fn bool StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsicsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("stdlib-memory-hot-tail-intrinsics", raw"""
-import System.Memory
-module Demo
-
-fn MemoryStatus InitBytes(
-    borrow i8[min max][] source,
-    init i8[min max][] destination,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.InitializeBytesDisjoint(source, destination, count);
-}
-
-fn MemoryStatus InitCodePoints(
-    borrow i32[min max][] source,
-    init i32[min max][] destination,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.InitializeCodePointsDisjoint(source, destination, count);
-}
-
-fn MemoryStatus FillBytes(init i8[min max][] destination, u64[0 2 ** 63 - 1] count)
-{
-    return System.Memory.FillBytes(destination, 1, count);
-}
-
-fn MemoryStatus AppendDisjointBytes(
-    mut borrow dynamic i8[min max] destination,
-    borrow i8[min max][] source,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.AppendBytesDisjoint(destination, source, count);
-}
-
-fn MemoryStatus AppendDisjointCodePoints(
-    mut borrow dynamic i32[min max] destination,
-    borrow i32[min max][] source,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.AppendCodePointsDisjoint(destination, source, count);
-}
-
-fn MemoryStatus AppendFillBytes(
-    borrow mut dynamic i8[min max] destination,
-    i8[min max] value,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.AppendFillBytes(destination, value, count);
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "stdlib-memory-hot-tail-intrinsics",
+        "../../stdlib/src/System/Memory.stark");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "@llvm.memcpy.p0.p0.i64")
-        && Contains(llvm, "@llvm.memset.p0.i64");
+    stack ascii appendBytesDisjointBody = LlvmDefinitionBody(llvm, "AppendBytesDisjoint");
+    stack ascii appendCodePointsDisjointBody = LlvmDefinitionBody(llvm, "AppendCodePointsDisjoint");
+    stack ascii appendFillBytesBody = LlvmDefinitionBody(llvm, "AppendFillBytes");
+    stack ascii initializeBytesDisjointBody = LlvmDefinitionBody(llvm, "InitializeBytesDisjoint");
+    stack ascii initializeCodePointsDisjointBody = LlvmDefinitionBody(llvm, "InitializeCodePointsDisjoint");
+    stack ascii fillBytesBody = LlvmDefinitionBody(llvm, "FillBytes");
+
+    return Contains(appendBytesDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        && Contains(appendCodePointsDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        && Contains(appendFillBytesBody, "@llvm.memset.p0.i64")
+        && Contains(initializeBytesDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        && Contains(initializeCodePointsDisjointBody, "@llvm.memcpy.p0.p0.i64")
+        && Contains(fillBytesBody, "@llvm.memset.p0.i64")
+        && !Contains(appendBytesDisjointBody, "_phi = phi")
+        && !Contains(appendCodePointsDisjointBody, "_phi = phi")
+        && !Contains(appendFillBytesBody, "_phi = phi");
 }
 
 // Ported from SystemMemoryHelperStandardLibraryTests.PackagedMemoryHelpersPreserveImportedAttributes.
@@ -264,44 +171,30 @@ fn MemoryStatus AppendFillBytes(
 // carry the same LLVM attribute fragments (readonly captures(none), noalias captures(none),
 // memory(write, argmem: readwrite), nounwind willreturn mustprogress, alwaysinline).
 // The compile-only bridge cannot run the packaging CLI nor diff a packaged
-// declaration against a source definition, so the consuming App.stark program is
-// compiled from source through CompileProgram and the from-source helper
-// definitions are checked for the expected attribute fragments at whole-module
-// level. The packaged-vs-source declaration/definition parity is reduced to a
-// from-source attribute-presence check.
+// declaration against a source definition, so the same on-disk source module is
+// compiled directly and the helper definition headers are checked for the
+// expected attribute fragments.
 internal fn bool PackagedMemoryHelpersPreserveImportedAttributesImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("stdlib-memory-packaged-imported-attributes", raw"""
-import System.Memory
-module App
-
-fn System.Memory.MemoryStatus UseCopy(
-    borrow i8[min max][] source,
-    init i8[min max][] destination,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.InitializeBytesDisjoint(source, destination, count);
-}
-
-fn System.Memory.MemoryStatus UseFill(
-    init i8[min max][] destination,
-    i8[min max] value,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return System.Memory.FillBytes(destination, value, count);
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "stdlib-memory-packaged-imported-attributes",
+        "../../stdlib/src/System/Memory.stark");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "readonly captures(none)")
-        && Contains(llvm, "noalias captures(none)")
-        && Contains(llvm, "memory(write, argmem: readwrite)")
-        && Contains(llvm, "nounwind willreturn mustprogress")
-        && Contains(llvm, "alwaysinline");
+    stack ascii copyHeader = LlvmDefinitionHeader(llvm, "InitializeBytesDisjoint");
+    stack ascii fillHeader = LlvmDefinitionHeader(llvm, "FillBytes");
+    return Contains(copyHeader, "readonly captures(none)")
+        && Contains(copyHeader, "noalias captures(none)")
+        && Contains(copyHeader, "nounwind willreturn mustprogress")
+        && Contains(copyHeader, "alwaysinline")
+        && Contains(fillHeader, "noalias captures(none)")
+        && Contains(fillHeader, "memory(write, argmem: readwrite)")
+        && Contains(fillHeader, "nounwind willreturn mustprogress")
+        && Contains(fillHeader, "alwaysinline");
 }
 
 // Ported from SystemMemoryHelperStandardLibraryTests.SourceStdLibMemoryExecutableRuns.

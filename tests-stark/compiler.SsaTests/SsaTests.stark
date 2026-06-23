@@ -18,11 +18,9 @@ module SsaTests
 // (raw `lower-ssa`) or `optimized-ssa` artifact text. Requires
 // STARK_HOST_COMPILER to point at the host compiler executable.
 //
-// NOT ported (object-model facts): the bulk of SsaIrValidationTests.cs and the
-// SsaOptimizationTests.cs Cleanup*/ValueFacts*/AliasAware*/ScalarReplacement*
-// families build SsaFunction / SsaIrModule IR objects by hand and call the
-// validator/optimizer directly. The source-in / artifact-text-out host bridge
-// cannot construct those inputs, so they stay in C# until cutover.
+// Source-inexpressible SSA validator cases use named host-test
+// `validatorFixture` inputs. Remaining object-model optimizer families stay in
+// C# until an optimizer fixture path is added.
 
 // ---------------------------------------------------------------------------
 // SsaLoweringTests (source-driven, rendered-ssa-text)
@@ -1772,6 +1770,27 @@ fn bool MirOnlyTempLocalStorageFailsBeforeLlvmEmission()
 fn bool NonHeapDeallocationFailsBeforeLlvmEmission()
 {
     return NonHeapDeallocationFailsBeforeLlvmEmissionImpl();
+}
+
+[Fact]
+[Collection("ssa-ir")]
+fn bool ArenaFrameInstructionsAreAcceptedAroundArenaAllocation()
+{
+    return ArenaFrameInstructionsAreAcceptedAroundArenaAllocationImpl();
+}
+
+[Fact]
+[Collection("ssa-ir")]
+fn bool ArenaAllocationWithoutFrameScopeFailsBeforeLlvmEmission()
+{
+    return ArenaAllocationWithoutFrameScopeFailsBeforeLlvmEmissionImpl();
+}
+
+[Fact]
+[Collection("ssa-ir")]
+fn bool MisplacedArenaFrameInstructionsFailBeforeLlvmEmission()
+{
+    return MisplacedArenaFrameInstructionsFailBeforeLlvmEmissionImpl();
 }
 
 [Fact]

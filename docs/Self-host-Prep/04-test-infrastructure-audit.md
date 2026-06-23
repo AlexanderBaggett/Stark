@@ -55,6 +55,11 @@ only; it is not source syntax and is not a user-facing compiler input. Record
 explicit exclusions only for C#-host-internal object-shape tests that do not map
 to a self-hosted IR invariant.
 
+Current implementation: the host-test protocol accepts
+`validatorFixture.kind/name`; `ssa` fixtures are backed by the C# host catalog
+and MIR/package-artifact fixture catalogs can attach to the same transport when
+needed.
+
 ## Test Category Audit
 
 | Category | Source Files | System.Testing Needs | Harness / Runner Needs | Golden / Snapshot Needs | Portability |

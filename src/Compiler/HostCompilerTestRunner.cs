@@ -189,6 +189,14 @@ internal static class HostCompilerTestRunner
             var stopwatch = Stopwatch.StartNew();
             try
             {
+                if (request.ValidatorFixture is { } validatorFixture)
+                {
+                    return ExecuteValidatorFixture(
+                        request,
+                        validatorFixture,
+                        stopwatch);
+                }
+
                 if (!TryLoadSource(request, out var sourceText, out var filePath, out var sourceError))
                 {
                     stopwatch.Stop();
@@ -261,15 +269,17 @@ internal static class HostCompilerTestRunner
             string? filePath,
             IReadOnlyList<HostCompilerArtifactRequest> artifactRequests)
         {
+            var targetInfo = BuildEffectiveTargetInfo(request);
+
             return new CompilerOptions(
                 EmitLlvmIr: request.EmitLlvmIr
                     ?? artifactRequests.Any(static artifact =>
                         string.Equals(artifact.ArtifactName, CompilerArtifactKeys.LlvmIrModule.Name, StringComparison.Ordinal)
                         || string.Equals(artifact.ArtifactName, NormalizedLlvmArtifactName, StringComparison.Ordinal)),
                 ContinueAfterErrors: request.ContinueAfterErrors ?? false,
-                ModuleResolver: BuildModuleResolver(request, filePath),
+                ModuleResolver: BuildModuleResolver(request, filePath, targetInfo),
                 StopAfterPassId: string.IsNullOrWhiteSpace(request.StopAfterPassId) ? null : request.StopAfterPassId,
-                TargetInfo: BuildTargetInfo(request),
+                TargetInfo: targetInfo,
                 QualifyModuleSymbols: (request.QualifyModuleSymbols ?? false)
                     || HasArtifactFlag(artifactRequests, "qualify"),
                 InternalizeModulePrivate: (request.InternalizeModulePrivate ?? false)
@@ -283,7 +293,10 @@ internal static class HostCompilerTestRunner
                     : CompileTimeFunctionEvaluator.DefaultMaximumCompileTimeLoopIterations);
         }
 
-        private static IModuleResolver? BuildModuleResolver(HostCompilerTestCompileRequest request, string? filePath)
+        private static IModuleResolver? BuildModuleResolver(
+            HostCompilerTestCompileRequest request,
+            string? filePath,
+            LlvmTargetInfo? targetInfo)
         {
             var directories = new List<string>();
             if (!string.IsNullOrWhiteSpace(filePath))
@@ -316,25 +329,29 @@ internal static class HostCompilerTestRunner
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
 
-            // Resolve stdlib (System.*) modules the same way the CLI does: wrap the
-            // file-system resolver with the target-aware stdlib resolver, using the request
-            // target or the detected host default. Without this wrap the host-test server
-            // cannot resolve ANY stdlib import (the bare FileSystemModuleResolver only sees
-            // the request search directories), so every stdlib-dependent ported test failed
-            // at compile while plain `module Demo` tests passed.
-            var resolverTarget = BuildTargetInfo(request);
-            if (resolverTarget is null && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTarget))
-            {
-                resolverTarget = detectedTarget;
-            }
-
-            if (resolverTarget is not null)
+            // Resolve stdlib (System.*) modules the same way the CLI does. The
+            // target must also be present in CompilerOptions so package-image
+            // compatibility and LLVM lowering see the same backend facts.
+            if (targetInfo is not null)
             {
                 IModuleSourceResolver inner = new FileSystemModuleResolver(resolved);
-                return new TargetAwareStdLibModuleResolver(inner, resolved, resolverTarget);
+                return new TargetAwareStdLibModuleResolver(inner, resolved, targetInfo);
             }
 
             return resolved.Length == 0 ? null : new FileSystemModuleResolver(resolved);
+        }
+
+        private static LlvmTargetInfo? BuildEffectiveTargetInfo(HostCompilerTestCompileRequest request)
+        {
+            var targetInfo = BuildTargetInfo(request);
+            if (targetInfo is not null)
+            {
+                return targetInfo;
+            }
+
+            return NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTarget)
+                ? detectedTarget
+                : null;
         }
 
         private static LlvmTargetInfo? BuildTargetInfo(HostCompilerTestCompileRequest request)
@@ -640,6 +657,88 @@ internal static class HostCompilerTestRunner
                 execution.DiagnosticsAdded);
         }
 
+        private static HostCompilerTestCompileResponse ExecuteValidatorFixture(
+            HostCompilerTestCompileRequest request,
+            HostCompilerTestValidatorFixture validatorFixture,
+            Stopwatch stopwatch)
+        {
+            var kind = validatorFixture.Kind?.Trim();
+            if (string.IsNullOrWhiteSpace(kind))
+            {
+                stopwatch.Stop();
+                return HostCompilerTestCompileResponse.FromProtocolError(
+                    request.Id,
+                    "Validator fixture requests must provide validatorFixture.kind.",
+                    ToMicroseconds(stopwatch.Elapsed));
+            }
+
+            if (string.Equals(kind, "mir", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(kind, "package-artifact", StringComparison.OrdinalIgnoreCase))
+            {
+                stopwatch.Stop();
+                return HostCompilerTestCompileResponse.FromProtocolError(
+                    request.Id,
+                    $"Validator fixture kind '{kind}' is reserved but has no fixture catalog yet; supported kind: ssa.",
+                    ToMicroseconds(stopwatch.Elapsed));
+            }
+
+            if (!string.Equals(kind, "ssa", StringComparison.OrdinalIgnoreCase))
+            {
+                stopwatch.Stop();
+                return HostCompilerTestCompileResponse.FromProtocolError(
+                    request.Id,
+                    $"Unknown validator fixture kind '{kind}'; expected ssa, mir, or package-artifact.",
+                    ToMicroseconds(stopwatch.Elapsed));
+            }
+
+            if (!SsaValidatorFixtureCatalog.TryRun(validatorFixture.Name, out var run, out var error))
+            {
+                stopwatch.Stop();
+                return HostCompilerTestCompileResponse.FromProtocolError(
+                    request.Id,
+                    error,
+                    ToMicroseconds(stopwatch.Elapsed));
+            }
+
+            stopwatch.Stop();
+            return BuildValidatorFixtureResponse(request, run, ToMicroseconds(stopwatch.Elapsed));
+        }
+
+        private static HostCompilerTestCompileResponse BuildValidatorFixtureResponse(
+            HostCompilerTestCompileRequest request,
+            SsaValidatorFixtureRun run,
+            long durationMicroseconds)
+        {
+            var diagnostics = run.Diagnostics.Select(ToDiagnostic).ToArray();
+            List<string> outputErrors = run.Failure is null ? [] : [run.Failure];
+            var diagnosticsOutputPath = TryWriteDiagnostics(
+                request.DiagnosticsOutputPath,
+                SummarizeDiagnostics(run.Diagnostics),
+                diagnostics,
+                outputErrors);
+
+            return new HostCompilerTestCompileResponse(
+                request.Id,
+                Succeeded: run.Passed,
+                ProtocolError: null,
+                DurationMicroseconds: durationMicroseconds,
+                DiagnosticSummary: SummarizeDiagnostics(run.Diagnostics),
+                Diagnostics: diagnostics,
+                Logs: [],
+                Executions: [],
+                AvailableArtifacts: [],
+                ArtifactTexts: [],
+                ArtifactFiles: [],
+                MissingArtifacts: [],
+                UnsupportedArtifacts: [],
+                DiagnosticsOutputPath: diagnosticsOutputPath,
+                LogsOutputPath: null,
+                ExecutionsOutputPath: null,
+                OutputErrors: outputErrors,
+                RootModuleName: null,
+                LoadedModules: []);
+        }
+
         private static HostCompilerTestLocation? ToLocation(SourceLocation? location)
         {
             return location is null
@@ -719,6 +818,18 @@ internal static class HostCompilerTestRunner
                 return ArtifactRenderStatus.Rendered;
             }
 
+            if (string.Equals(artifactName, CompilerArtifactKeys.EnumLayoutModel.Name, StringComparison.Ordinal))
+            {
+                if (!result.Artifacts.TryGet(CompilerArtifactKeys.EnumLayoutModel, out EnumLayoutModel? enumLayout) || enumLayout is null)
+                {
+                    return ArtifactRenderStatus.Missing;
+                }
+
+                result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeModel);
+                text = ArtifactTextRenderer.Render(enumLayout, typeModel);
+                return ArtifactRenderStatus.Rendered;
+            }
+
             return result.Artifacts.Names.Contains(artifactName, StringComparer.Ordinal)
                 ? ArtifactRenderStatus.Unsupported
                 : ArtifactRenderStatus.Missing;
@@ -758,6 +869,7 @@ internal static class HostCompilerTestRunner
                 "mir" or "mir-text" => CompilerArtifactKeys.MidLevelIr.Name,
                 "ssa" or "ssa-text" => CompilerArtifactKeys.SsaIr.Name,
                 "optimized-ssa" or "optimized-ssa-text" or "opt-ssa" or "opt-ssa-text" => CompilerArtifactKeys.OptimizedSsaIr.Name,
+                "enum-layout" or "enum-layout-text" or "typing.enum-layout" => CompilerArtifactKeys.EnumLayoutModel.Name,
                 _ => baseName
             };
         }
@@ -867,6 +979,7 @@ internal static class HostCompilerTestRunner
         public bool? InternalizeModulePrivate { get; init; }
         public List<string>? ImportedInlineCloneSeedFunctions { get; init; }
         public int? MaximumCompileTimeLoopIterations { get; init; }
+        public HostCompilerTestValidatorFixture? ValidatorFixture { get; init; }
         public List<string>? Artifacts { get; init; }
         public bool? IncludeArtifactTexts { get; init; }
         public string? ArtifactOutputDirectory { get; init; }
@@ -875,6 +988,12 @@ internal static class HostCompilerTestRunner
         public string? ExecutionsOutputPath { get; init; }
         public bool? IncludeLogs { get; init; }
         public bool? IncludeExecutions { get; init; }
+    }
+
+    private sealed record HostCompilerTestValidatorFixture
+    {
+        public string? Kind { get; init; }
+        public string? Name { get; init; }
     }
 
     private sealed record HostCompilerTestDocumentResponse(

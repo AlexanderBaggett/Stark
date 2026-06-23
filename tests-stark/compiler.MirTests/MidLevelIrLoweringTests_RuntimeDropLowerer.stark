@@ -214,8 +214,8 @@ internal fn bool ReassigningADestructibleLocalLowersTheOldDropBeforeOverwriteImp
 // statement, and contains a statement whose value is a
 // MidLevelIrDynamicStorageFreeRValue (the backing-store free). The text helpers
 // cannot read the typed rvalue object, so the free check is reduced to the
-// rendered block labels plus the destructor `Bump` call and a "dynamic-free"
-// text marker for the backing-storage free.
+// rendered block labels plus the destructor `Bump` call and the dynamic-storage
+// free text `eval drop values`.
 internal fn bool DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorageImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -262,7 +262,7 @@ internal fn bool DynamicStorageDropsInitializedElementsBeforeFreeingBackingStora
 
     return MirContainsAll2(c, "dynamic_drop_cond", "dynamic_drop_body")
         && MirContains(c, "eval Bump(")
-        && MirContains(c, "dynamic-free");
+        && MirContains(c, "eval drop values");
 }
 
 // Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.EnumPayloadCaptureDropsMovedPayloadOnlyOnce.

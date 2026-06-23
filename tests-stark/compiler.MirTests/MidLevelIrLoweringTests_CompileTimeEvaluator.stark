@@ -5,9 +5,8 @@ module MidLevelIrLoweringTests_CompileTimeEvaluator
 // Ported from MidLevelIrLoweringTests.CompileTimeEvaluator.PureConstantArithmeticReturnsFoldedMirConstant.
 // PORT-NOTE: the C# test inspects the object model (single function/block, empty
 // statements, terminator value is a MidLevelIrIntegerConstantOperand == 9). Over
-// the rendered MIR text we assert the constant-folded return value 9 is present
-// and that no binary arithmetic operation survived (the block has no statements,
-// so no "_bin" fold-target renders).
+// the rendered MIR text plus compact return-value facts we assert the folded
+// return value 9 is present and no binary arithmetic operation survived.
 internal fn bool PureConstantArithmeticReturnsFoldedMirConstantImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -26,7 +25,7 @@ internal fn bool PureConstantArithmeticReturnsFoldedMirConstantImpl()
         return false;
     }
 
-    return MirContains(c, "return 9")
+    return MirContains(c, "value: int 9 i32")
         && MirDoesNotContain(c, "_bin");
 }
 
@@ -35,7 +34,7 @@ internal fn bool PureConstantArithmeticReturnsFoldedMirConstantImpl()
 // that exactly one GreaterThan comparison exists, and that its right operand is the
 // folded constant 2 ** 61 - 1 with a 64-bit type. Over the rendered MIR text we
 // assert the greater-than binary op is present, no exponent op (`_pow`) survived,
-// and the folded constant 2305843009213693951 (== 2 ** 61 - 1) appears.
+// and the folded right operand 2305843009213693951 has the expected 64-bit type.
 internal fn bool ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelectionImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -59,16 +58,16 @@ internal fn bool ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSele
         return false;
     }
 
-    return MirContains(c, "_bin = >")
+    return MirContains(c, "rvalue: binary GreaterThan bool")
         && MirDoesNotContain(c, "_pow")
-        && MirContains(c, "2305843009213693951");
+        && MirContains(c, "right:int 2305843009213693951 i64");
 }
 
 // Ported from MidLevelIrLoweringTests.CompileTimeEvaluator.ConstantLawCallsFoldToMirConstants.
 // PORT-NOTE: the C# test inspects the object model for the "Run" function (single
 // block, empty statements, terminator value is a folded integer constant == 7).
-// Over the rendered MIR text we assert the folded return value 7 is present in Run
-// and that no direct call to the constant-evaluated law `Adjust` survived.
+// Over the rendered MIR text plus compact return-value facts we assert the
+// folded return value 7 is present in Run and no direct call survived.
 internal fn bool ConstantLawCallsFoldToMirConstantsImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -98,7 +97,7 @@ internal fn bool ConstantLawCallsFoldToMirConstantsImpl()
         return false;
     }
 
-    return MirContains(c, "return 7")
+    return MirContains(c, "value: int 7 i32")
         && MirDoesNotContain(c, "= Adjust(4)");
 }
 
@@ -140,7 +139,7 @@ internal fn bool BackendOpaqueLawCallsDoNotFoldToMirConstantsImpl()
 // a MidLevelIrExtractIndexRValue with ElementIndex == 2 (the folded constant index
 // 1 + 1), and NO MidLevelIrBinaryRValue. Over the rendered MIR text we assert the
 // aggregate insert/extract index operations render, the folded element index 2 is
-// used by the extract, and no binary arithmetic op (`_bin`) survived.
+// used by the extract-index rvalue, and no binary arithmetic op survived.
 internal fn bool FixedArrayArithmeticIndexStillLowersToAggregateIndexOperationsImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -164,6 +163,6 @@ internal fn bool FixedArrayArithmeticIndexStillLowersToAggregateIndexOperationsI
     }
 
     return MirContains(c, "_insertindex")
-        && MirContains(c, "_extractindex = values[2]")
+        && MirContains(c, "rvalue: extract-index FixedArrayElement 2 i32")
         && MirDoesNotContain(c, "_bin");
 }

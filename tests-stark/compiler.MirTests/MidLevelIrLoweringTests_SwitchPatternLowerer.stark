@@ -75,9 +75,9 @@ unsafe fn i32[min max] Run(i32[min max] value)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirContains(c, "switch_exit")
+        && MirContains(c, "bb4_switch_exit")
         && MirContainsAll3(c, "switch_case_0", "switch_case_1", "switch_case_2")
-        && MirOccurrences(c, "goto ->") >= 3;
+        && MirOccurrences(c, "goto bb4") == 3;
 }
 
 // Ported from MidLevelIrLoweringTests.SwitchPatternLowerer.GuardedSwitchLowersToBranchBasedCfg.
@@ -109,7 +109,7 @@ unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
+        && MirLacksSwitchTerminator(c)
         && MirOccurrences(c, "branch ") >= 2;
 }
 
@@ -142,7 +142,7 @@ unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
+        && MirLacksSwitchTerminator(c)
         && MirContains(c, "branch allow");
 }
 
@@ -175,7 +175,7 @@ unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
+        && MirLacksSwitchTerminator(c)
         && MirContains(c, "switch_test_1")
         && MirContains(c, "branch allow")
         && MirOccurrences(c, "branch ") >= 2;
@@ -210,7 +210,7 @@ unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
+        && MirLacksSwitchTerminator(c)
         && MirContainsAll3(c, "switch_test_0", "switch_test_0_1", "switch_case_0");
 }
 
@@ -518,9 +518,8 @@ unsafe finite law i32[min max] Run(Outer value)
 
 // Ported from MidLevelIrLoweringTests.SwitchPatternLowerer.EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractions.
 // PORT-NOTE: the C# original asserts direct codegen, ExtractField rvalues for the
-// enum tag "$tag" and active payload fields "$Integer_0", "$Move_X", "$Move_Y",
-// and a switch_enum_match block. Over the rendered MIR text we assert direct
-// codegen, those tag/payload field names, and the switch_enum_match label.
+// enum tag and active payload fields, and a switch_enum_match block. The rendered
+// MIR exposes source-facing payload paths, so assert those paths plus the tag.
 internal fn bool EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractionsImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -560,7 +559,7 @@ unsafe fn i32[min max] Run(Token token)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirContainsAll4(c, "$tag", "$Integer_0", "$Move_X", "$Move_Y")
+        && MirContainsAll4(c, "$tag", "token.0", "token.X", "token.Y")
         && MirContains(c, "switch_enum_match");
 }
 
@@ -638,7 +637,7 @@ unsafe fn i32[min max] Run(ascii value, bool allow)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
+        && MirLacksSwitchTerminator(c)
         && MirContains(c, "textcmp_byte_0")
         && MirContains(c, "branch allow");
 }
@@ -696,8 +695,8 @@ unsafe fn i32[min max] Run(ascii value)
 
 // Ported from MidLevelIrLoweringTests.SwitchPatternLowerer.UnicodeTextLiteralSwitchLowersSuccessfully.
 // PORT-NOTE: the C# original asserts direct codegen and that no block has a Switch
-// terminator over a unicode condition. Over the rendered MIR text we assert the
-// program lowers cleanly with direct codegen (the closest available signal).
+// terminator over a unicode condition. The rendered MIR lowers through a length
+// switch plus codepoint branches, so assert the switch is over the length fact.
 internal fn bool UnicodeTextLiteralSwitchLowersSuccessfullyImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -723,7 +722,10 @@ unsafe fn i32[min max] Run(unicode value)
         return false;
     }
 
-    return MirContains(c, "direct-codegen: true");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "switch value.length default ->")
+        && MirContains(c, "switch value == \"π\":unit0")
+        && MirContains(c, "switch value == \"λ\":unit0");
 }
 
 // Ported from MidLevelIrLoweringTests.SwitchPatternLowerer.FloatLiteralSwitchLowersToBranchBasedCfg.
@@ -756,7 +758,7 @@ unsafe fn i32[min max] Run(f32 value, bool allow)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
+        && MirLacksSwitchTerminator(c)
         && MirOccurrences(c, "branch ") >= 2;
 }
 
@@ -789,8 +791,8 @@ unsafe fn i32[min max] Run(rawptr<i32[min max]> value)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "switch ")
-        && MirContains(c, "_bin = ==");
+        && MirLacksSwitchTerminator(c)
+        && MirContains(c, "switch value == null");
 }
 
 // Ported from MidLevelIrLoweringTests.SwitchPatternLowerer.AggregateSwitchPatternsCanMatchAndCaptureTextLeaves.
@@ -833,9 +835,8 @@ unsafe fn i32[min max] Run(Label value)
 
 // Ported from MidLevelIrLoweringTests.SwitchPatternLowerer.EnumSwitchPatternsCanMatchAndCaptureTextLeaves.
 // PORT-NOTE: the C# original asserts direct codegen, a local "word", ExtractField
-// rvalues for "$tag"/"$Text_Tag"/"$Text_Word", a switch_enum_match block, and a
-// textcmp_byte_0 block. Over the rendered MIR text we assert direct codegen, the
-// word local, those tag/payload field names, and the two relevant labels.
+// rvalues for the enum tag/Text payload fields, a switch_enum_match block, and a
+// textcmp_byte_0 block. The rendered MIR exposes source-facing payload paths.
 internal fn bool EnumSwitchPatternsCanMatchAndCaptureTextLeavesImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -875,6 +876,6 @@ unsafe fn i32[min max] Run(Token value)
 
     return MirContains(c, "direct-codegen: true")
         && MirContains(c, "word")
-        && MirContainsAll3(c, "$tag", "$Text_Tag", "$Text_Word")
+        && MirContainsAll3(c, "$tag", "value.Tag", "value.Word")
         && MirContainsAll2(c, "switch_enum_match", "textcmp_byte_0");
 }

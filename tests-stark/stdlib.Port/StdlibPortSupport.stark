@@ -48,6 +48,38 @@ public fn ProgramCompile CompileProgram(ascii id, ascii source)
     }
 }
 
+// Compiles an on-disk stdlib source file through the host protocol. Use for
+// artifact probes that need the stdlib module's own helper definitions.
+public fn ProgramCompile CompileSourceFile(ascii id, ascii sourcePath)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompileSourceFileForTarget(id, sourcePath, "llvm", "");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Same as CompileSourceFile, but pins the request to a target triple so
+// source-file platform probes preserve target-dependent backend facts.
+public fn ProgramCompile CompileSourceFileForTarget(ascii id, ascii sourcePath, ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompileSourceFileForTarget(id, sourcePath, "llvm", targetTriple);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
 // Same as CompileProgram, but pins the host-test request to a target triple so
 // artifact-only platform tests preserve target/backend facts through lowering.
 public fn ProgramCompile CompileProgramForTarget(ascii id, ascii source, ascii targetTriple)
@@ -99,6 +131,58 @@ public fn ascii Llvm(mut borrow ProgramCompile compiled)
     unsafe
     {
         return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+internal fn ProgramCompile RunHostCompileSourceFileForTarget(
+    ascii id,
+    ascii sourcePath,
+    ascii artifactName,
+    ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileSourcePathArtifactUsingStarkPathForTarget(
+                compilerPath.View(),
+                id,
+                sourcePath,
+                artifactName,
+                HostTimeoutMilliseconds,
+                targetTriple))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
     }
 }
 

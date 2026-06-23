@@ -161,9 +161,9 @@ unsafe finite law i8[min max] Run()
 """);
     // PORT-NOTE: original inspects the returned MidLevelIrIntegerConstantOperand
     // (wrapped value 44, 8-bit signed) and asserts no MidLevelIrConvertRValue;
-    // helpers only expose MIR text, so we match the folded wrapped constant and
-    // confirm no convert statement remains.
-    return MirContains(c, "return 44")
+    // helpers expose MIR text plus compact return-value facts, so we match the
+    // folded wrapped constant and confirm no convert statement remains.
+    return MirContains(c, "value: int 44 i8")
         && MirDoesNotContain(c, "_intcast");
 }
 
@@ -182,7 +182,7 @@ unsafe fn i32[min max] Run()
     return value;
 }
 """);
-    return MirContains(c, "_bin = ^")
+    return MirContains(c, "rvalue: binary BitwiseXor i32")
         && MirContains(c, "direct-codegen: true");
 }
 
@@ -263,10 +263,15 @@ strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 diviso
 }
 """);
     // PORT-NOTE: original asserts each float MidLevelIrBinaryRValue carries
-    // StarkTypeKind.Float; helpers only expose MIR text, so we match the rendered
-    // float binary operators produced by the chain.
+    // StarkTypeKind.Float; helpers expose compact rvalue facts, so we match the
+    // binary operators and their float result types.
     return MirContains(c, "direct-codegen: true")
-        && MirContainsAll4(c, "_bin = * f64", "_bin = / f64", "_bin = + f64", "_bin = - f64");
+        && MirContainsAll4(
+            c,
+            "rvalue: binary Multiply f64",
+            "rvalue: binary Divide f64",
+            "rvalue: binary Add f64",
+            "rvalue: binary Subtract f64");
 }
 
 // Ported from MidLevelIrLoweringTests.Core.ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstant.

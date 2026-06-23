@@ -8,44 +8,13 @@ module SystemIOFileRuntimeStandardLibraryTests
 // Ported from SystemIOFileRuntimeStandardLibraryTests.StdLibSourceLinuxFileSeekUsesLseekSyscallPath.
 internal fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl()
 {
-    // PORT-NOTE: the C# test reads the on-disk stdlib source
-    // stdlib/src/System/Runtime/Platform/Linux.stark and compiles it directly
-    // against a Linux target, then inspects the emitted LLVM IR for the
-    // lseek-syscall lowering of SeekFile. The host bridge cannot reach that
-    // repository file, so this cross-targets a minimal driver that exercises the
-    // public file Seek path and keeps the original IR substring assertions.
-    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-linux-file-seek-lseek", raw"""
-        import System
-        module App
-
-        fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
-        {
-            switch (result)
-            {
-                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
-                    return (i64[min max])value;
-                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
-                    return -1;
-            }
-        }
-
-        export unsafe fn i32[min max] main()
-        {
-            switch (System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read))
-            {
-                case System.IO.IOResult<System.IO.File.File>.Err(var error):
-                    return 1;
-                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
-                    stack mut System.IO.File.File read = value;
-                    if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2)
-                    {
-                        return 2;
-                    }
-
-                    return 0;
-            }
-        }
-        """, LinuxX64TargetTriple);
+    // PORT-NOTE: the C# test reads stdlib/src/System/Runtime/Platform/Linux.stark
+    // directly, targets x86_64-unknown-linux-gnu, and inspects the emitted LLVM
+    // for the lseek syscall path rather than a libc wrapper.
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "stdlib-linux-file-seek-lseek",
+        "../../stdlib/src/System/Runtime/Platform/Linux.stark",
+        LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -78,44 +47,13 @@ internal fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl()
 // Ported from SystemIOFileRuntimeStandardLibraryTests.StdLibSourceLinuxFileSyncUsesFsyncSyscallPath.
 internal fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl()
 {
-    // PORT-NOTE: the C# test reads the on-disk stdlib source
-    // stdlib/src/System/Runtime/Platform/Linux.stark and compiles it directly
-    // against a Linux target, then inspects the emitted LLVM IR for the
-    // fsync-syscall lowering of FlushFile. The host bridge cannot reach that
-    // repository file, so this cross-targets a minimal driver that exercises the
-    // public file Flush/SyncAll path and keeps the original IR substring assertions.
-    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-linux-file-sync-fsync", raw"""
-        import System
-        module App
-
-        fn bool StatusOk(System.IO.IOStatus status)
-        {
-            switch (status)
-            {
-                case System.IO.IOStatus.Ok:
-                    return true;
-                case System.IO.IOStatus.Err(var error):
-                    return false;
-            }
-        }
-
-        export unsafe fn i32[min max] main()
-        {
-            switch (System.IO.File.Open("sync.txt", System.IO.File.FileMode.Write))
-            {
-                case System.IO.IOResult<System.IO.File.File>.Err(var error):
-                    return 1;
-                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
-                    stack mut System.IO.File.File handle = value;
-                    if (!StatusOk(handle.SyncAll()))
-                    {
-                        return 2;
-                    }
-
-                    return 0;
-            }
-        }
-        """, LinuxX64TargetTriple);
+    // PORT-NOTE: the C# test reads stdlib/src/System/Runtime/Platform/Linux.stark
+    // directly, targets x86_64-unknown-linux-gnu, and inspects the emitted LLVM
+    // for the fsync syscall path.
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "stdlib-linux-file-sync-fsync",
+        "../../stdlib/src/System/Runtime/Platform/Linux.stark",
+        LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
