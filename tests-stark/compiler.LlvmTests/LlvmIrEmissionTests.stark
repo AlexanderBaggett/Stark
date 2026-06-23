@@ -2018,12 +2018,14 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    // PORT-NOTE: original DoesNotContain checks were scoped to the Run body; the
-    // helper matches them against the whole module text.
+    // C# scopes the reserve-path DoesNotContain checks to the @Run body (the
+    // runtime helpers are still declared elsewhere in the module); only the
+    // fallback-log check is whole-module.
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
     return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
-        && DoesNotContain(llvm, "dynamic_reserve_needed")
-        && DoesNotContain(llvm, "@__stark_runtime_realloc")
-        && DoesNotContain(llvm, "@__stark_dynamic_reserve");
+        && DoesNotContain(runBody, "dynamic_reserve_needed")
+        && DoesNotContain(runBody, "@__stark_runtime_realloc")
+        && DoesNotContain(runBody, "@__stark_dynamic_reserve");
 }
 
 // Ported from LlvmIrEmissionTests.OptimizedDynamicStorageZeroCapacityDropElidesRuntimeFreePath.
@@ -2560,16 +2562,17 @@ unsafe fn i64[min max] Run(u8[0 5] index)
     }
 
     stack ascii llvm = Llvm(c);
-    // PORT-NOTE: original asserted at least two `getelementptr inbounds nuw i64` via
-    // Regex.Matches().Count over the Run body; the helper checks the stable fragment
-    // is present in the whole module text.
+    // C# slices the @Run body (Regex `define fastcc … @Run(…) … ^}`) before the
+    // body-scoped checks; the no-memcpy / count assertions need that scope (memcpy
+    // and GEPs appear in other functions). The fallback-log check is whole-module.
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
     return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
-        && Contains(llvm, "dynamic_move_at_in_bounds")
-        && Contains(llvm, "dynamic_move_at_new_length")
-        && Contains(llvm, "getelementptr inbounds nuw i64")
-        && Contains(llvm, "call void @llvm.memmove.p0.p0.i64")
-        && DoesNotContain(llvm, "llvm.memcpy")
-        && Contains(llvm, "store { ptr, i64, i64 }");
+        && Contains(runBody, "dynamic_move_at_in_bounds")
+        && Contains(runBody, "dynamic_move_at_new_length")
+        && CountOccurrences(runBody, "getelementptr inbounds nuw i64") >= 2
+        && Contains(runBody, "call void @llvm.memmove.p0.p0.i64")
+        && DoesNotContain(runBody, "llvm.memcpy")
+        && Contains(runBody, "store { ptr, i64, i64 }");
 }
 
 // Ported from LlvmIrEmissionTests.OptimizedDynamicStorageMoveAtSkipsBoundsCheckWhenPrefixFactsProveInBounds.
@@ -3380,10 +3383,9 @@ export unsafe fn i32[min max] main()
 // Ported from LlvmIrEmissionTests.LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNames.
 internal fn bool LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNamesImpl()
 {
-    // PORT-NOTE: C# passed CompilerOptions(QualifyModuleSymbols: true). The
-    // Stark CompileLlvm helper exposes no options surface, so the qualified
-    // symbol assertions run against the default pipeline output.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# passed CompilerOptions(QualifyModuleSymbols: true) + GetLlvm; the
+    // harness requests the normalized artifact with the `;qualify` option flag.
+    stack mut LlvmCompile c = CompileLlvmNormalizedQualified(
         "p3-library-qualifies-root-globals",
         raw"""
 module Math
@@ -3418,10 +3420,9 @@ unsafe finite i32[min max] Run()
 // Ported from LlvmIrEmissionTests.ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocal.
 internal fn bool ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocalImpl()
 {
-    // PORT-NOTE: C# passed CompilerOptions(InternalizeModulePrivate: true). The
-    // Stark CompileLlvm helper exposes no options surface, so the internalized
-    // symbol assertions run against the default pipeline output.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# passed CompilerOptions(InternalizeModulePrivate: true) + GetLlvmRaw; the
+    // harness requests the RAW artifact with the `;internalize` option flag.
+    stack mut LlvmCompile c = CompileLlvmInternalized(
         "p3-executable-internalization-private-local",
         raw"""
 module Demo
@@ -3451,12 +3452,10 @@ export unsafe ffi fn i32[min max] main(i32[min max] value)
 // Ported from LlvmIrEmissionTests.RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImport.
 internal fn bool RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImportImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver for the imported `Win32`
-    // module providing `internal unsafe ffi fn void ExitProcess(i32[min max])`.
-    // The Stark CompileLlvm helper takes a single source string with no
-    // resolver, so the Win32 FFI declaration is inlined into the same source so
-    // the symbol-collision qualification still triggers.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied an InMemoryModuleResolver for the imported `Win32` module + GetLlvm;
+    // the harness stages Win32 to a temp search directory and requests the
+    // normalized artifact, so the symbol-collision qualification reproduces.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "p3-root-fn-qualified-ffi-collision",
         raw"""
 import Win32
@@ -3467,6 +3466,12 @@ internal unsafe fn void ExitProcess(i32[min max] code)
     Win32.ExitProcess(code);
     return;
 }
+""",
+        "Win32",
+        raw"""
+module Win32
+
+internal unsafe ffi fn void ExitProcess(i32[min max] code);
 """);
     if (!Succeeds(c))
     {
@@ -3540,10 +3545,9 @@ export unsafe fn i32[min max] main()
 // Ported from LlvmIrEmissionTests.InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificant.
 internal fn bool InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificantImpl()
 {
-    // PORT-NOTE: C# passed CompilerOptions(QualifyModuleSymbols: true); the
-    // Stark helper has no options surface, so the `@Demo_*` qualified-symbol
-    // assertions run against the default pipeline output.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# passed CompilerOptions(QualifyModuleSymbols: true) + GetLlvm; the
+    // harness requests the normalized artifact with the `;qualify` option flag.
+    stack mut LlvmCompile c = CompileLlvmNormalizedQualified(
         "p3-internalized-immutable-globals-unnamed-addr",
         raw"""
 module Demo
@@ -3721,10 +3725,9 @@ unsafe fn ascii Label()
 // Ported from LlvmIrEmissionTests.ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddr.
 internal fn bool ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddrImpl()
 {
-    // PORT-NOTE: C# passed CompilerOptions(QualifyModuleSymbols: true); the
-    // Stark helper has no options surface, so the `@Demo_*` qualified-symbol
-    // assertions run against the default pipeline output.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# passed CompilerOptions(QualifyModuleSymbols: true) + GetLlvm; the
+    // harness requests the normalized artifact with the `;qualify` option flag.
+    stack mut LlvmCompile c = CompileLlvmNormalizedQualified(
         "p3-immutable-globals-local-unnamed-addr",
         raw"""
 module Demo
@@ -4905,7 +4908,7 @@ unsafe fn i32[min max] Mask(u8[0 15] value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc range(i32 0, 8) i32 @Mask(i8 range(i8 0, 16) %arg_value)");
+    return Contains(llvm, "define fastcc noundef range(i32 0, 8) i32 @Mask(i8 noundef range(i8 0, 16) %arg_value)");
 }
 
 // Ported from LlvmIrEmissionTests.SameWidthSignednessChangingIntegerConversionsTranslateReturnRangeFacts.
@@ -4942,11 +4945,11 @@ unsafe fn u32[0 max] NegativeToUnsigned(i32[min -1] value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Full(i32 %arg_value)")
-        && DoesNotContain(llvm, "define fastcc range(i32 0, -2147483648) i32 @Full")
-        && Contains(llvm, "define fastcc range(i32 0, -2147483648) i32 @Low(i32 range(i32 0, -2147483648) %arg_value)")
-        && Contains(llvm, "define fastcc range(i32 -2147483648, 0) i32 @High(i32 range(i32 -2147483648, 0) %arg_value)")
-        && Contains(llvm, "define fastcc range(i32 -2147483648, 0) i32 @NegativeToUnsigned(i32 range(i32 -2147483648, 0) %arg_value)");
+    return Contains(llvm, "define fastcc noundef i32 @Full(i32 noundef %arg_value)")
+        && DoesNotContain(llvm, "define fastcc noundef range(i32 0, -2147483648) i32 @Full")
+        && Contains(llvm, "define fastcc noundef range(i32 0, -2147483648) i32 @Low(i32 noundef range(i32 0, -2147483648) %arg_value)")
+        && Contains(llvm, "define fastcc noundef range(i32 -2147483648, 0) i32 @High(i32 noundef range(i32 -2147483648, 0) %arg_value)")
+        && Contains(llvm, "define fastcc noundef range(i32 -2147483648, 0) i32 @NegativeToUnsigned(i32 noundef range(i32 -2147483648, 0) %arg_value)");
 }
 
 // Ported from LlvmIrEmissionTests.ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodes.
@@ -4987,8 +4990,8 @@ unsafe fn bool GreaterMasked(i32[min max] value, u8[0 max] threshold)
         && Contains(llvm, "urem i32")
         && Contains(llvm, "icmp ult i32")
         && Contains(llvm, "icmp ugt i32")
-        && Contains(llvm, "define fastcc range(i32 0, 256) i32 @DivideMasked")
-        && Contains(llvm, "define fastcc range(i32 0, 10) i32 @ModuloMasked")
+        && Contains(llvm, "define fastcc noundef range(i32 0, 256) i32 @DivideMasked")
+        && Contains(llvm, "define fastcc noundef range(i32 0, 10) i32 @ModuloMasked")
         && DoesNotContain(llvm, "sdiv i32")
         && DoesNotContain(llvm, "srem i32")
         && DoesNotContain(llvm, "icmp slt i32")
@@ -5243,7 +5246,7 @@ unsafe fn f32 Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc float @Run()")
+    return Contains(llvm, "define fastcc noundef float @Run()")
         && Contains(llvm, "ret float 0x4020000000000000")
         && DoesNotContain(llvm, "@llvm.pow.f32");
 }
@@ -5329,7 +5332,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Run()")
+    return Contains(llvm, "define fastcc noundef i32 @Run()")
         && Contains(llvm, "ret i32 1")
         && DoesNotContain(llvm, "switch i32")
         && DoesNotContain(llvm, "icmp eq i32")
@@ -5576,7 +5579,7 @@ unsafe fn i32[min max] Run(ascii value)
 // Ported from LlvmIrEmissionTests.UnicodeTextLiteralSwitchEmitsConcreteBody.
 internal fn bool UnicodeTextLiteralSwitchEmitsConcreteBodyImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p4-unicode-text-switch-body",
         raw"""
 module Demo
@@ -5632,13 +5635,13 @@ unsafe fn unicode SliceUnicode(unicode text, i32[min max] start, i32[min max] le
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc %stark_ascii @SliceAscii(%stark_ascii %arg_text, i32 %arg_start, i32 %arg_length)")
+    return Contains(llvm, "define fastcc noundef %stark_ascii @SliceAscii(%stark_ascii noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)")
         && Contains(llvm, "extractvalue %stark_ascii %arg_text, 0")
         && Contains(llvm, "getelementptr i8, ptr")
         && DoesNotContain(llvm, "getelementptr inbounds i8, ptr")
         && Contains(llvm, "insertvalue %stark_ascii")
         && Contains(llvm, "i64 %")
-        && Contains(llvm, "define fastcc %stark_unicode @SliceUnicode(%stark_unicode %arg_text, i32 %arg_start, i32 %arg_length)")
+        && Contains(llvm, "define fastcc noundef %stark_unicode @SliceUnicode(%stark_unicode noundef %arg_text, i32 noundef %arg_start, i32 noundef %arg_length)")
         && Contains(llvm, "extractvalue %stark_unicode %arg_text, 0")
         && Contains(llvm, "getelementptr i32, ptr")
         && DoesNotContain(llvm, "getelementptr inbounds i32, ptr")
@@ -5664,7 +5667,7 @@ unsafe fn unicode Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc %stark_unicode @Run()")
+    return Contains(llvm, "define fastcc noundef %stark_unicode @Run()")
         && Contains(llvm, "ret %stark_unicode { ptr getelementptr inbounds nuw ([6 x i32], ptr @.str.")
         && DoesNotContain(llvm, "Unsupported SSA conversion from 'ascii' to 'unicode'")
         && DoesNotContain(llvm, "declare fastcc %stark_unicode @Run()");
@@ -5790,10 +5793,10 @@ public unsafe fn unicode Run()
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "%Ascii = type { ptr, i64, i64 }")
         && Contains(llvm, "%Unicode = type { ptr, i64, i64 }")
-        && Contains(llvm, "define fastcc %stark_ascii @AsciiView(")
-        && Contains(llvm, "define fastcc %stark_unicode @UnicodeView(")
-        && Contains(llvm, "define fastcc i1 @TryConcatAscii(")
-        && Contains(llvm, "define fastcc i1 @TryConcatUnicode(")
+        && Contains(llvm, "define fastcc noundef %stark_ascii @AsciiView(")
+        && Contains(llvm, "define fastcc noundef %stark_unicode @UnicodeView(")
+        && Contains(llvm, "define fastcc noundef i1 @TryConcatAscii(")
+        && Contains(llvm, "define fastcc noundef i1 @TryConcatUnicode(")
         && Contains(llvm, "%concat_left_nonnegative = icmp sge i64 %concat_left_length, 0")
         && Contains(llvm, "%concat_right_nonnegative = icmp sge i64 %concat_right_length, 0")
         && Contains(llvm, "%concat_capacity_nonnegative = icmp sge i64 %concat_capacity, 0")
@@ -5804,8 +5807,8 @@ public unsafe fn unicode Run()
         && DoesNotContain(llvm, "%concat_left_index = phi i64")
         && Contains(llvm, "getelementptr inbounds nuw i32, ptr %concat_data, i64 %concat_left_length")
         && Contains(llvm, "call fastcc %stark_unicode @UnicodeView(")
-        && DoesNotContain(llvm, "declare fastcc i1 @TryConcatAscii(")
-        && DoesNotContain(llvm, "declare fastcc i1 @TryConcatUnicode(");
+        && DoesNotContain(llvm, "declare fastcc noundef i1 @TryConcatAscii(")
+        && DoesNotContain(llvm, "declare fastcc noundef i1 @TryConcatUnicode(");
 }
 
 // Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoop.
@@ -5840,7 +5843,7 @@ public unsafe fn bool Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i1 @TryConvertAsciiToUnicode(")
+    return Contains(llvm, "define fastcc noundef i1 @TryConvertAsciiToUnicode(")
         && Contains(llvm, "alwaysinline")
         && Contains(llvm, "%convert_source_data = extractvalue %stark_ascii %arg_source, 0")
         && Contains(llvm, "%convert_fast_wide = zext i8 %convert_fast_unit to i32")
@@ -6461,14 +6464,14 @@ public unsafe finite law f64 Max(f64 left, f64 right);
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc float @Sin(float %arg_value)")
-        && Contains(llvm, "define fastcc double @Cos(double %arg_value)")
-        && Contains(llvm, "define fastcc double @Atan2(double %arg_y, double %arg_x)")
-        && Contains(llvm, "define fastcc double @Pow(double %arg_value, double %arg_exponent)")
-        && Contains(llvm, "define fastcc float @Tanh(float %arg_value)")
-        && Contains(llvm, "define fastcc %SinCosF64 @SinCos(double %arg_value)")
-        && Contains(llvm, "define fastcc float @Min(float %arg_left, float %arg_right)")
-        && Contains(llvm, "define fastcc double @Max(double %arg_left, double %arg_right)")
+    return Contains(llvm, "define fastcc noundef float @Sin(float noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef double @Cos(double noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef double @Atan2(double noundef %arg_y, double noundef %arg_x)")
+        && Contains(llvm, "define fastcc noundef double @Pow(double noundef %arg_value, double noundef %arg_exponent)")
+        && Contains(llvm, "define fastcc noundef float @Tanh(float noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef %SinCosF64 @SinCos(double noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef float @Min(float noundef %arg_left, float noundef %arg_right)")
+        && Contains(llvm, "define fastcc noundef double @Max(double noundef %arg_left, double noundef %arg_right)")
         && Contains(llvm, "call fast float @llvm.sin.f32(float %arg_value)")
         && Contains(llvm, "call fast double @llvm.cos.f64(double %arg_value)")
         && Contains(llvm, "call fast double @llvm.atan2.f64(double %arg_y, double %arg_x)")
@@ -6519,11 +6522,11 @@ public unsafe finite law i32[min max] RotateRight(i32[min max] value, i32[min ma
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @LeadingZeroCount(i32 %arg_value)")
-        && Contains(llvm, "define fastcc i64 @TrailingZeroCount(i64 %arg_value)")
-        && Contains(llvm, "define fastcc i32 @PopCount(i32 %arg_value)")
-        && Contains(llvm, "define fastcc i64 @RotateLeft(i64 %arg_value, i64 %arg_amount)")
-        && Contains(llvm, "define fastcc i32 @RotateRight(i32 %arg_value, i32 %arg_amount)")
+    return Contains(llvm, "define fastcc noundef i32 @LeadingZeroCount(i32 noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef i64 @TrailingZeroCount(i64 noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef i32 @PopCount(i32 noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef i64 @RotateLeft(i64 noundef %arg_value, i64 noundef %arg_amount)")
+        && Contains(llvm, "define fastcc noundef i32 @RotateRight(i32 noundef %arg_value, i32 noundef %arg_amount)")
         && Contains(llvm, "call i32 @llvm.ctlz.i32(i32 %arg_value, i1 false)")
         && Contains(llvm, "call i64 @llvm.cttz.i64(i64 %arg_value, i1 false)")
         && Contains(llvm, "call i32 @llvm.ctpop.i32(i32 %arg_value)")
@@ -6569,7 +6572,7 @@ unsafe fn f64 Run(f64 value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc double @Sqrt(double %arg_value)")
+    return Contains(llvm, "define fastcc noundef double @Sqrt(double noundef %arg_value)")
         && Contains(llvm, "call fast fastcc double @Sqrt(double %arg_value)");
 }
 
@@ -6631,7 +6634,7 @@ unsafe fn i32[min max] Run(i32[min max] value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @PopCount(i32 %arg_value)")
+    return Contains(llvm, "define fastcc noundef i32 @PopCount(i32 noundef %arg_value)")
         && Contains(llvm, "call fastcc i32 @PopCount(i32 %arg_value)");
 }
 
@@ -6682,9 +6685,9 @@ unsafe finite law ascii Run(ascii input)
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "%stark_ascii = type { ptr, i64 }")
-        && Contains(llvm, "define fastcc %stark_ascii @Echo(%stark_ascii %arg_text)")
+        && Contains(llvm, "define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)")
         && Contains(llvm, "ret %stark_ascii %arg_text")
-        && Contains(llvm, "define fastcc %stark_ascii @Run(%stark_ascii %arg_input)")
+        && Contains(llvm, "define fastcc noundef %stark_ascii @Run(%stark_ascii noundef %arg_input)")
         && Contains(llvm, "call fastcc %stark_ascii @Echo(%stark_ascii %arg_input)");
 }
 
@@ -6716,8 +6719,8 @@ unsafe finite law unicode UnicodeChar()
         && Contains(llvm, "%stark_unicode = type { ptr, i64 }")
         && Contains(llvm, "@.str.0 = private unnamed_addr constant [2 x i8] c\"a\\00\"")
         && Contains(llvm, "private unnamed_addr constant [2 x i32] [i32 945, i32 0]")
-        && Contains(llvm, "define fastcc %stark_ascii @AsciiChar()")
-        && Contains(llvm, "define fastcc %stark_unicode @UnicodeChar()")
+        && Contains(llvm, "define fastcc noundef %stark_ascii @AsciiChar()")
+        && Contains(llvm, "define fastcc noundef %stark_unicode @UnicodeChar()")
         && Contains(llvm, "ret %stark_ascii { ptr getelementptr inbounds nuw ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }")
         && Contains(llvm, "ret %stark_unicode { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str.")
         && Contains(llvm, ", i64 1 }");
@@ -6848,7 +6851,7 @@ unsafe fn i32[min max] Read(borrow Box box)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none)")
+    return Contains(llvm, "define fastcc noundef i32 @Add(i32 noundef %arg_left, i32 noundef %arg_right) nounwind willreturn mustprogress nosync nofree memory(none)")
         && Contains(llvm, "memory(argmem: read)");
 }
 
@@ -7636,9 +7639,9 @@ unsafe fn void TouchArg(borrow mut Box box)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @ReadGlobal()")
+    return Contains(llvm, "define fastcc noundef i32 @ReadGlobal()")
         && Contains(llvm, "memory(read, argmem: none)")
-        && Contains(llvm, "define fastcc void @TouchArg(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc void @TouchArg(ptr noundef nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && Contains(llvm, "memory(argmem: readwrite)")
         && DoesNotContain(llvm, "load %Box, ptr %arg_box");
 }
@@ -7786,7 +7789,7 @@ unsafe finite law unicode Wide()
 // Ported from LlvmIrEmissionTests.FfiStringCallsExtractPointerFromConcreteStringValues.
 internal fn bool FfiStringCallsExtractPointerFromConcreteStringValuesImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p6-ffi-string-extract-pointer",
         raw"""
 module Demo
@@ -7936,7 +7939,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Run()")
+    return Contains(llvm, "define fastcc noundef i32 @Run()")
         && Contains(llvm, "ret i32 7")
         && DoesNotContain(llvm, "alloca %Box")
         && DoesNotContain(llvm, "; LLVM body emission pending for Run")
@@ -7996,7 +7999,7 @@ unsafe fn i32[min max] Run(i32[min max] value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Run(i32 %arg_value)")
+    return Contains(llvm, "define fastcc noundef i32 @Run(i32 noundef %arg_value)")
         && Contains(llvm, "tail call fastcc i32 @Step(i32 %arg_value)");
 }
 
@@ -8118,7 +8121,7 @@ strictfp fn f32 Run(f32 left, f32 right)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc float @Run(float %arg_left, float %arg_right)")
+    return Contains(llvm, "define fastcc noundef float @Run(float noundef %arg_left, float noundef %arg_right)")
         && Contains(llvm, " strictfp ")
         && Contains(llvm, "declare float @llvm.experimental.constrained.fadd.f32(float, float, metadata, metadata)")
         && Contains(llvm, "call float @llvm.experimental.constrained.fadd.f32(float %arg_left, float %arg_right, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp")
@@ -8256,7 +8259,7 @@ internal fn bool HeapObjectCreationUsesAllocatorLoweringImpl()
     // PORT-NOTE: C# pins TargetInfo to x86_64-unknown-linux-gnu; the host bridge
     // here compiles with default target options, so target-specific allocator
     // assertions may diverge. Kept verbatim as the closest available signal.
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmForTarget(
         "p6-heap-object-allocator-lowering",
         raw"""
 module Demo
@@ -8274,7 +8277,7 @@ unsafe fn i32[min max] Run()
     };
     return box.Value;
 }
-""");
+""", "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
@@ -8418,7 +8421,7 @@ internal fn bool SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorCon
     // here compiles with default target options. The per-definition header
     // checks (ExtractDefinitionHeader on Allocate/Reallocate/Free) are reduced to
     // whole-module substring assertions on the same memory-effect fragments.
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmForTarget(
         "p6-system-memory-runtime-allocator-contract",
         raw"""
 module System.Memory
@@ -8461,7 +8464,7 @@ export unsafe fn i32[min max] main()
     Free(grown);
     return 0;
 }
-""");
+""", "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
@@ -8683,7 +8686,7 @@ unsafe fn i64[min max] Run(bool flag)
     // helpers cannot express relative offsets, so this is reduced to substring
     // presence of the entry block, the in-entry alloca, the callret alloca shape,
     // the dbg.declare placement, and the negative `bb1:`-alloca check.
-    return Contains(llvm, "define fastcc i64 @Run")
+    return Contains(llvm, "define fastcc noundef i64 @Run")
         && Contains(llvm, "bb0:")
         && Contains(llvm, "%slot_value = alloca i32, align 4")
         && Contains(llvm, " = alloca %Big, align 8")
@@ -8720,8 +8723,8 @@ unsafe fn bool NotEqual(Pair left, Pair right)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i1 @Equal(%Pair %arg_left, %Pair %arg_right)")
-        && Contains(llvm, "define fastcc i1 @NotEqual(%Pair %arg_left, %Pair %arg_right)")
+    return Contains(llvm, "define fastcc noundef i1 @Equal(%Pair noundef %arg_left, %Pair noundef %arg_right)")
+        && Contains(llvm, "define fastcc noundef i1 @NotEqual(%Pair noundef %arg_left, %Pair noundef %arg_right)")
         && Contains(llvm, "extractvalue %Pair %arg_left, 0")
         && Contains(llvm, "extractvalue %Pair %arg_right, 1")
         && Contains(llvm, "icmp eq i32")
@@ -8756,8 +8759,8 @@ unsafe fn bool NotEqual(i32[min max][2] left, i32[min max][2] right)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i1 @Equal([2 x i32] %arg_left, [2 x i32] %arg_right)")
-        && Contains(llvm, "define fastcc i1 @NotEqual([2 x i32] %arg_left, [2 x i32] %arg_right)")
+    return Contains(llvm, "define fastcc noundef i1 @Equal([2 x i32] noundef %arg_left, [2 x i32] noundef %arg_right)")
+        && Contains(llvm, "define fastcc noundef i1 @NotEqual([2 x i32] noundef %arg_left, [2 x i32] noundef %arg_right)")
         && Contains(llvm, "extractvalue [2 x i32] %arg_left, 0")
         && Contains(llvm, "extractvalue [2 x i32] %arg_right, 1")
         && Contains(llvm, "icmp eq i32")
@@ -8799,8 +8802,8 @@ unsafe fn bool NotEqual(Token left, Token right)
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "%Token = type { i8, i32 }")
-        && Contains(llvm, "define fastcc i1 @Equal(%Token %arg_left, %Token %arg_right)")
-        && Contains(llvm, "define fastcc i1 @NotEqual(%Token %arg_left, %Token %arg_right)")
+        && Contains(llvm, "define fastcc noundef i1 @Equal(%Token noundef %arg_left, %Token noundef %arg_right)")
+        && Contains(llvm, "define fastcc noundef i1 @NotEqual(%Token noundef %arg_left, %Token noundef %arg_right)")
         && Contains(llvm, "extractvalue %Token %arg_left, 0")
         && Contains(llvm, "extractvalue %Token %arg_right, 1")
         && Contains(llvm, "icmp eq i8")
@@ -8844,8 +8847,8 @@ unsafe fn bool NotEqual(Many left, Many right)
     // PORT-NOTE: C# Assert.Equal(1, CountOccurrences(...)) on the definitions and
     // Assert.True(CountOccurrences(...) >= N) on the leaf-comparison instructions
     // are reduced to substring presence; the text helpers cannot count.
-    return Contains(llvm, "define fastcc i1 @Equal(")
-        && Contains(llvm, "define fastcc i1 @NotEqual(")
+    return Contains(llvm, "define fastcc noundef i1 @Equal(")
+        && Contains(llvm, "define fastcc noundef i1 @NotEqual(")
         && Contains(llvm, "icmp eq i32")
         && Contains(llvm, "icmp ne i32")
         && Contains(llvm, "and i1")
@@ -8991,8 +8994,8 @@ unsafe fn bool NotEqual(i32[min max][5] left, i32[min max][5] right)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i1 @Equal(")
-        && Contains(llvm, "define fastcc i1 @NotEqual(")
+    return Contains(llvm, "define fastcc noundef i1 @Equal(")
+        && Contains(llvm, "define fastcc noundef i1 @NotEqual(")
         && Contains(llvm, "icmp eq i32")
         && Contains(llvm, "icmp ne i32")
         && Contains(llvm, "and i1")
@@ -9034,8 +9037,8 @@ unsafe fn bool NotEqual(Token left, Token right)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i1 @Equal(")
-        && Contains(llvm, "define fastcc i1 @NotEqual(")
+    return Contains(llvm, "define fastcc noundef i1 @Equal(")
+        && Contains(llvm, "define fastcc noundef i1 @NotEqual(")
         && Contains(llvm, "icmp eq i8")
         && Contains(llvm, "icmp ne i8")
         && Contains(llvm, "icmp eq i32")
@@ -9125,7 +9128,7 @@ unsafe fn bool Different(Label left, Label right)
 // Ported from LlvmIrEmissionTests.SliceEqualityAndInequalityEmitPointerAndLengthComparisons.
 internal fn bool SliceEqualityAndInequalityEmitPointerAndLengthComparisonsImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "llvm-slice-equality-inequality",
         raw"""
 module Demo
@@ -9307,7 +9310,7 @@ unsafe fn Box Make()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc %Box @Make()")
+    return Contains(llvm, "define fastcc noundef %Box @Make()")
         && Contains(llvm, "ret %Box zeroinitializer");
 }
 
@@ -9392,7 +9395,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Read(%Box %arg_box)")
+    return Contains(llvm, "define fastcc noundef i32 @Read(%Box noundef %arg_box)")
         && Contains(llvm, "extractvalue %Box %arg_box, 0")
         && Contains(llvm, "call fastcc i32 @Read(%Box")
         && DoesNotContain(llvm, "load %Box, ptr %arg_box");
@@ -9423,7 +9426,7 @@ unsafe fn void Touch(borrow Pair pair)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly captures(none) dereferenceable(8) align 4 %arg_pair)");
+    return Contains(llvm, "define fastcc void @Touch(ptr noundef nonnull noalias readonly captures(none) dereferenceable(8) align 4 %arg_pair)");
 }
 
 // Ported from LlvmIrEmissionTests.PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess.
@@ -9532,7 +9535,7 @@ unsafe fn PairAlias Step(PairAlias value)
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "%Pair = type { i64, i64 }")
-        && Contains(llvm, "define fastcc %Pair @Step(%Pair %arg_value)")
+        && Contains(llvm, "define fastcc noundef %Pair @Step(%Pair noundef %arg_value)")
         && DoesNotContain(llvm, "sret(%Pair)")
         && DoesNotContain(llvm, "byval(%Pair)");
 }
@@ -10241,7 +10244,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc %Box @Make()")
+    return Contains(llvm, "define fastcc noundef %Box @Make()")
         && Contains(llvm, "ret %Box")
         && Contains(llvm, "call fastcc %Box @Make()")
         && DoesNotContain(llvm, "sret(%Box)");
@@ -10299,7 +10302,7 @@ unsafe fn i64[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
+    return Contains(llvm, "define fastcc void @Make(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
         && Contains(llvm, "call fastcc void @Make(ptr noalias sret(%Big)")
         && DoesNotContain(llvm, "define fastcc %Big @Make()")
         && DoesNotContain(llvm, "call fastcc %Big @Make()");
@@ -10413,7 +10416,7 @@ unsafe fn Big Make()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
+    return Contains(llvm, "define fastcc void @Make(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
         && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)")
         && Contains(llvm, "store i64 1, ptr %abi_insert_field_store_")
         && Contains(llvm, "store i64 2, ptr %abi_insert_field_store_")
@@ -10458,7 +10461,7 @@ unsafe fn IOResult<Big> Make()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Make(ptr noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)")
+    return Contains(llvm, "define fastcc void @Make(ptr noundef noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)")
         && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)")
         && Contains(llvm, "getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 1")
         && Contains(llvm, "store i64 7, ptr %abi_insert_field_store_")
@@ -10526,7 +10529,7 @@ unsafe fn Big Forward()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
+    return Contains(llvm, "define fastcc void @Forward(ptr noundef noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
         && Contains(llvm, "call fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
         && DoesNotContain(llvm, "%abi_callret_slot_")
         && DoesNotContain(llvm, "call void @llvm.memcpy.inline.p0.p0.i64(ptr align 8 %ret")
@@ -10608,7 +10611,7 @@ unsafe fn Big Forward()
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original DoesNotContain checks were scoped to the Forward
     // body via a regex; they are matched against the whole module text here.
-    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
+    return Contains(llvm, "define fastcc void @Forward(ptr noundef noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
         && Contains(llvm, "call fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
         && DoesNotContain(llvm, "%abi_callret_slot_")
         && DoesNotContain(llvm, "call void @llvm.memcpy.inline.p0.p0.i64(ptr align 8 %ret")
@@ -10645,7 +10648,7 @@ unsafe fn Big Forward(Big value)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the memcpy Assert.Matches regex (optional `align N`) is reduced
     // to the canonical aligned-pointer form the renderer emits.
-    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
+    return Contains(llvm, "define fastcc void @Forward(ptr noundef noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
         && Contains(llvm, "call void @llvm.memcpy.inline.p0.p0.i64(ptr align 8 %ret, ptr align 8 %arg_value, i64 32, i1 false)")
         && DoesNotContain(llvm, "load %Big, ptr %arg_value")
         && DoesNotContain(llvm, "%abi_arg_value_value")
@@ -10711,9 +10714,9 @@ unsafe fn Big Forward(Big value)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original DoesNotContain checks were scoped to the Forward
     // body via a regex; they are matched against the whole module text here.
-    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
+    return Contains(llvm, "define fastcc void @Forward(ptr noundef noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
         && Contains(llvm, "call fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret")
-        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value")
+        && Contains(llvm, "ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value")
         && DoesNotContain(llvm, "%abi_callret_slot_")
         && DoesNotContain(llvm, "load %Big, ptr %abi_callret_slot_");
 }
@@ -10721,7 +10724,7 @@ unsafe fn Big Forward(Big value)
 // Ported from LlvmIrEmissionTests.LargeAggregateParametersUseByValueIndirectAbi.
 internal fn bool LargeAggregateParametersUseByValueIndirectAbiImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p8-large-agg-param-byval-indirect",
         raw"""
 module Demo
@@ -10828,7 +10831,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc %Pair @Step(%Pair %arg_value, i32 %arg_delta)")
+    return Contains(llvm, "define fastcc noundef %Pair @Step(%Pair noundef %arg_value, i32 noundef %arg_delta)")
         && Contains(llvm, "call fastcc %Pair @Step(%Pair")
         && DoesNotContain(llvm, "sret(%Pair)")
         && DoesNotContain(llvm, "byval(%Pair)");
@@ -10893,9 +10896,9 @@ unsafe fn i64[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value, i64 %arg_delta)")
+    return Contains(llvm, "define fastcc void @Step(ptr noundef noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value, i64 noundef %arg_delta)")
         && Contains(llvm, "call fastcc void @Step(ptr noalias sret(%Big)")
-        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8")
+        && Contains(llvm, "ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8")
         && DoesNotContain(llvm, "define fastcc %Big @Step(");
 }
 
@@ -10993,7 +10996,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Box_Read(%Box %arg_box)")
+    return Contains(llvm, "define fastcc noundef i32 @Box_Read(%Box noundef %arg_box)")
         && Contains(llvm, "extractvalue %Box %arg_box, 0")
         && Contains(llvm, "call fastcc i32 @Box_Read(%Box")
         && DoesNotContain(llvm, "load %Box, ptr %arg_box");
@@ -11002,7 +11005,7 @@ unsafe fn i32[min max] Run()
 // Ported from LlvmIrEmissionTests.BorrowReceiverMethodsLowerToPointerReceiverCalls.
 internal fn bool BorrowReceiverMethodsLowerToPointerReceiverCallsImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p8-borrow-receiver-ptr-calls",
         raw"""
 module Demo
@@ -11060,7 +11063,7 @@ unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[mi
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Touch(ptr captures(none) %arg_buffer, i64 %arg_index, i8 %arg_value)")
+    return Contains(llvm, "define fastcc noundef range(i32 -128, 128) i32 @Touch(ptr noundef captures(none) %arg_buffer, i64 noundef %arg_index, i8 noundef %arg_value)")
         && Contains(llvm, "getelementptr inbounds nuw %Buffer, ptr %arg_buffer, i32 0, i32 0")
         && Contains(llvm, "getelementptr [16 x i8], ptr")
         && DoesNotContain(llvm, "getelementptr inbounds [16 x i8], ptr")
@@ -11088,7 +11091,7 @@ unsafe fn i32[min max] Touch(rawmutptr<i8[min max]> data, i64[min max] index, i8
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Touch(ptr captures(none) %arg_data, i64 %arg_index, i8 %arg_value)")
+    return Contains(llvm, "define fastcc noundef range(i32 -128, 128) i32 @Touch(ptr noundef captures(none) %arg_data, i64 noundef %arg_index, i8 noundef %arg_value)")
         && Contains(llvm, "getelementptr i8, ptr %arg_data, i64 %arg_index")
         && DoesNotContain(llvm, "getelementptr inbounds i8, ptr %arg_data, i64 %arg_index")
         && DoesNotContain(llvm, "alloca ptr");
@@ -11124,8 +11127,8 @@ struct Buffer
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Buffer_Put(ptr nonnull noalias captures(none) dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)")
-        && Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Buffer_Read(ptr nonnull noalias readonly captures(none) dereferenceable(16) %arg_self, i64 %arg_index)")
+    return Contains(llvm, "define fastcc void @Buffer_Put(ptr noundef nonnull noalias captures(none) dereferenceable(16) %arg_self, i64 noundef %arg_index, i8 noundef %arg_value)")
+        && Contains(llvm, "define fastcc noundef range(i32 -128, 128) i32 @Buffer_Read(ptr noundef nonnull noalias readonly captures(none) dereferenceable(16) %arg_self, i64 noundef %arg_index)")
         && Contains(llvm, "getelementptr inbounds nuw %Buffer, ptr %arg_self, i32 0, i32 0")
         && Contains(llvm, "getelementptr [16 x i8], ptr %v")
         && DoesNotContain(llvm, "alloca %Buffer");
@@ -11156,7 +11159,7 @@ unsafe fn void Touch(borrow mut Box box)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)")
+    return Contains(llvm, "define fastcc void @Touch(ptr noundef nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && DoesNotContain(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly");
 }
 
@@ -11224,7 +11227,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Run()")
+    return Contains(llvm, "define fastcc noundef i32 @Run()")
         && Contains(llvm, "ret i32 2")
         && DoesNotContain(llvm, "alloca [3 x i32]")
         && DoesNotContain(llvm, "declare fastcc i32 @Run()");
@@ -11282,7 +11285,7 @@ unsafe fn i32[min max] Run(i32[min max] index)
 
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the GEP Assert.Matches regex is reduced to its literal form.
-    return Contains(llvm, "define fastcc i32 @Run(i32 %arg_index)")
+    return Contains(llvm, "define fastcc noundef i32 @Run(i32 noundef %arg_index)")
         && Contains(llvm, "alloca [3 x i32]")
         && Contains(llvm, "declare void @llvm.lifetime.start.p0(i64 immarg, ptr captures(none))")
         && Contains(llvm, "declare void @llvm.lifetime.end.p0(i64 immarg, ptr captures(none))")
@@ -11337,7 +11340,7 @@ unsafe fn i32[min max] Run(i32[min max] index, i32[min max] seed)
 // Ported from LlvmIrEmissionTests.SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoad.
 internal fn bool SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoadImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p8-slice-param-abi-index-load",
         raw"""
 module Demo
@@ -11466,7 +11469,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Read([2 x i32] %arg_values)")
+    return Contains(llvm, "define fastcc noundef i32 @Read([2 x i32] noundef %arg_values)")
         && Contains(llvm, "extractvalue [2 x i32] %arg_values, 0")
         && Contains(llvm, "extractvalue [2 x i32] %arg_values, 1")
         && Contains(llvm, "call fastcc i32 @Read([2 x i32]");
@@ -11492,7 +11495,7 @@ unsafe fn i32[min max] Read(i32[min max][3] values, i32[min max] index)
 
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the GEP Assert.Matches regex is reduced to its literal form.
-    return Contains(llvm, "define fastcc i32 @Read([3 x i32] %arg_values, i32 %arg_index)")
+    return Contains(llvm, "define fastcc noundef i32 @Read([3 x i32] noundef %arg_values, i32 noundef %arg_index)")
         && Contains(llvm, "%slot_param_values = alloca [3 x i32]")
         && Contains(llvm, "store [3 x i32] %arg_values, ptr %slot_param_values")
         && Contains(llvm, "getelementptr [3 x i32], ptr %slot_param_values, i32 0, i32 %arg_index")
@@ -11569,7 +11572,7 @@ unsafe fn i32[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc [2 x i32] @Make()")
+    return Contains(llvm, "define fastcc noundef [2 x i32] @Make()")
         && Contains(llvm, "call fastcc [2 x i32] @Make()")
         && DoesNotContain(llvm, "sret([2 x i32])");
 }
@@ -11599,7 +11602,7 @@ unsafe fn i32[min max] Run(i32[min max] index)
 
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the GEP Assert.Matches regex is reduced to its literal form.
-    return Contains(llvm, "define fastcc i32 @Run(i32 %arg_index)")
+    return Contains(llvm, "define fastcc noundef i32 @Run(i32 noundef %arg_index)")
         && Contains(llvm, "getelementptr [3 x i32], ptr %slot_values, i32 0, i32 %arg_index")
         && DoesNotContain(llvm, "getelementptr inbounds [3 x i32], ptr %v")
         && DoesNotContain(llvm, "getelementptr inbounds nuw [3 x i32], ptr %v")
@@ -11613,7 +11616,7 @@ unsafe fn i32[min max] Run(i32[min max] index)
 // Ported from LlvmIrEmissionTests.SliceMutationEmitsIndirectStoreAndLoad.
 internal fn bool SliceMutationEmitsIndirectStoreAndLoadImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p8-slice-mutation-store-load",
         raw"""
 module Demo
@@ -11639,12 +11642,11 @@ unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index)
 // Ported from LlvmIrEmissionTests.ImportedStarkFunctionUsesQualifiedDependencySymbol.
 internal fn bool ImportedStarkFunctionUsesQualifiedDependencySymbolImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver providing the imported
-    // `Math` module with `public unsafe finite law i32 Add(...)`. The Stark
-    // CompileLlvm helper takes a single source string with no resolver, so the
-    // cross-module `@Math_Add` declaration/call assertions are not reproducible;
-    // the main program is compiled and only the Succeeds signal is checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied an InMemoryModuleResolver providing the imported `Math` module;
+    // the Stark harness stages that dependency to a temp directory and passes it
+    // as a host search directory, so the cross-module `@Math_Add`
+    // declaration/call assertions are reproducible.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "p8-imported-stark-fn-qualified",
         raw"""
 import Math
@@ -11657,20 +11659,34 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
     Touch();
     return Math.Add(left, right);
 }
+""",
+        "Math",
+        raw"""
+module Math
+
+public unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare fastcc i32 @Math_Add(i32, i32)")
+        && Contains(llvm, "call fastcc i32 @Math_Add(i32");
 }
 
 // Ported from LlvmIrEmissionTests.ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls.
 internal fn bool ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCallsImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver providing the imported
-    // `Syscall` module with `public unsafe ffi asm(x86_64) fn i64 Syscall2(...)`
-    // plus a LlvmTargetInfo("x86_64-unknown-linux-gnu"). The Stark CompileLlvm
-    // helper takes a single source string with no resolver/target, so the
-    // cross-module `@Syscall2` declaration/call assertions are not reproducible;
-    // the main program is compiled and only the Succeeds signal is checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Syscall` asm module via InMemoryModuleResolver
+    // plus LlvmTargetInfo("x86_64-unknown-linux-gnu"); staged here to a temp
+    // search directory with the matching target so the external-declaration/call
+    // assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleForTargetNormalized(
         "p8-imported-source-asm-extern",
         raw"""
 import Syscall
@@ -11680,20 +11696,43 @@ unsafe fn i64[min max] Run(rawptr<i8[min max]> path)
 {
     return Syscall.Syscall2(2, path);
 }
-""");
-    return Succeeds(c);
+""",
+        "Syscall",
+        raw"""
+module Syscall
+
+public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
+    in("rax") number,
+    in("rdi") path,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+""",
+        "x86_64-unknown-linux-gnu");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare i64 @Syscall2")
+        && Contains(llvm, "call i64 @Syscall2(i64 2, ptr")
+        && DoesNotContain(llvm, "; imported asm definition: Syscall.Syscall2")
+        && DoesNotContain(llvm, "define i64 @Syscall2");
 }
 
 // Ported from LlvmIrEmissionTests.ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValues.
 internal fn bool ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValuesImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver providing the imported
-    // `Math` module with `Answer`/`Hidden`/`Counter` globals. The Stark
-    // CompileLlvm helper takes a single source string with no resolver, so the
-    // cross-module `@Math_Answer`/`@Math_Hidden`/`@Math_Counter` declaration and
-    // load/store assertions are not reproducible; the main program is compiled
-    // and only the Succeeds signal is checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Math` globals module via InMemoryModuleResolver;
+    // staged here to a temp search directory so the qualified-symbol declaration
+    // and load/store assertions are reproducible against the normalized LLVM.
+    // PORT-NOTE: the C# oracle's Assert.Matches(@"store i32 %[^,]+, ptr
+    // @Math_Counter") is reduced to a `store i32` substring (this program's only
+    // store writes Counter).
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "p8-imported-globals-qualified-fold",
         raw"""
 import Math
@@ -11704,20 +11743,41 @@ unsafe fn i32[min max] Run()
     Math.Counter = Math.Counter + 7;
     return Math.Counter + Math.Answer + Math.Hidden;
 }
+""",
+        "Math",
+        raw"""
+module Math
+
+public const Answer = 3;
+public static i32[min max] Hidden = 2;
+public static mut i32[min max] Counter = 1;
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "; imported declaration: Math.Answer")
+        && Contains(llvm, "@Math_Answer = external local_unnamed_addr constant i8")
+        && Contains(llvm, "; imported declaration: Math.Hidden")
+        && Contains(llvm, "@Math_Hidden = external local_unnamed_addr constant i32")
+        && Contains(llvm, "; imported declaration: Math.Counter")
+        && Contains(llvm, "@Math_Counter = external global i32")
+        && Contains(llvm, "load i32, ptr @Math_Counter")
+        && Contains(llvm, "store i32")
+        && DoesNotContain(llvm, "load i8, ptr @Math_Answer");
 }
 
 // Ported from LlvmIrEmissionTests.ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignment.
 internal fn bool ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignmentImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver providing the imported
-    // `Tables` module with `public static i32[4] Lookup = {...}`. The Stark
-    // CompileLlvm helper takes a single source string with no resolver, so the
-    // cross-module `@Tables_Lookup = external constant [4 x i32], align 16` and
-    // invariant-load assertions are not reproducible; the main program is
-    // compiled and only the Succeeds signal is checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Tables` module via InMemoryModuleResolver; staged
+    // here to a temp search directory so the external-constant alignment and
+    // invariant-load assertions are reproducible against the normalized LLVM.
+    // PORT-NOTE: the C# oracle's Assert.Matches(@"load i32, ptr %v\d+, align 4,
+    // !invariant\.load !\d+") is reduced to a stable substring Contains.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "p8-imported-readonly-array-align",
         raw"""
 import Tables
@@ -11727,20 +11787,36 @@ unsafe fn i32[min max] Read(u8[0 3] index)
 {
     return Tables.Lookup[index];
 }
+""",
+        "Tables",
+        raw"""
+module Tables
+
+public static i32[min max][4] Lookup =
+{
+    1, 2, 3, 4
+};
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "@Tables_Lookup = external constant [4 x i32], align 16")
+        && Contains(llvm, ", align 4, !invariant.load !");
 }
 
 // Ported from LlvmIrEmissionTests.PackageImageBackedImportedReadonlyDataPreservesInvariantMetadata.
 internal fn bool PackageImageBackedImportedReadonlyDataPreservesInvariantMetadataImpl()
 {
-    // PORT-NOTE: the original built a package image on disk (temp dir, manifest,
-    // PackageImageBuilder, FileSystemModuleResolver) for an imported `Facade`
-    // module and asserted on `@Facade_Values`/invariant-load metadata in the
-    // consumer. None of the package-image / filesystem-resolver machinery is
-    // expressible through the single-source CompileLlvm helper; the consumer's
-    // main program is compiled and only the Succeeds signal is checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# built a real package image for `Facade` (PackageImageBuilder) and
+    // consumed it through a FileSystemModuleResolver. The harness now builds a
+    // genuine `.starkpkg` from the library source and stages it as a search
+    // directory, so the cross-package invariant-load assertions are reproducible.
+    // PORT-NOTE: the C# Assert.Matches(@"load i32, ptr %v\d+, align 4,
+    // !invariant\.load !\d+") is reduced to a stable substring Contains.
+    stack mut LlvmCompile c = CompileLlvmWithPackage(
         "p8-package-image-readonly-invariant",
         raw"""
 import Facade
@@ -11750,8 +11826,26 @@ unsafe fn i32[min max] Read(u8[0 2] index)
 {
     return Facade.Values[index] + Facade.Counter;
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public static i32[min max][3] Values =
+{
+    1, 2, 3
+};
+public static mut i32[min max] Counter = 1;
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "@Facade_Values = external constant [3 x i32]")
+        && Contains(llvm, "external global i32")
+        && Contains(llvm, ", align 4, !invariant.load !");
 }
 
 // Ported from LlvmIrEmissionTests.ImmutableGlobalAddressesLowerWithoutPointerCasts.
@@ -11803,13 +11897,10 @@ unsafe fn rawptr<i32[min max]> FieldPtr()
 // Ported from LlvmIrEmissionTests.ImportedAggregateFunctionsUseCrossModuleAbiDeclarations.
 internal fn bool ImportedAggregateFunctionsUseCrossModuleAbiDeclarationsImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver providing the imported
-    // `Geometry` module with `Box`/`Make`/`Read`. The Stark CompileLlvm helper
-    // takes a single source string with no resolver, so the cross-module
-    // `@Geometry_Make`/`@Geometry_Read` declaration/call assertions are not
-    // reproducible; the main program is compiled and only the Succeeds signal is
-    // checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Geometry` module via InMemoryModuleResolver;
+    // staged here to a temp search directory so the cross-module aggregate-ABI
+    // declaration/call assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "p8-imported-aggregate-cross-module-abi",
         raw"""
 import Geometry
@@ -11819,20 +11910,48 @@ export unsafe fn i32[min max] main()
 {
     return Geometry.Read(Geometry.Make());
 }
+""",
+        "Geometry",
+        raw"""
+module Geometry
+
+public struct Box
+{
+    i32[min max] Value;
+}
+
+public unsafe fn Box Make()
+{
+    return new Box()
+    {
+        Value = 7
+    };
+}
+
+public unsafe fn i32[min max] Read(Box box)
+{
+    return box.Value;
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare fastcc %Geometry_Box @Geometry_Make()")
+        && Contains(llvm, "declare fastcc i32 @Geometry_Read(%Geometry_Box)")
+        && Contains(llvm, "call fastcc %Geometry_Box @Geometry_Make()")
+        && Contains(llvm, "call fastcc i32 @Geometry_Read(%Geometry_Box");
 }
 
 // Ported from LlvmIrEmissionTests.ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmission.
 internal fn bool ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmissionImpl()
 {
-    // PORT-NOTE: C# supplied an InMemoryModuleResolver providing the imported
-    // `Math` module with `UseLaw`/`LawOnly` laws. The Stark CompileLlvm helper
-    // takes a single source string with no resolver, so the cross-module law
-    // fold assertions (`__stark_law_clone_Math_UseLaw` absence, `@Math_UseLaw`
-    // call absence, `ret i32 1` constant fold) are not reproducible; the main
-    // program is compiled and only the Succeeds signal is checked.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Math` module via InMemoryModuleResolver; the
+    // Stark harness stages it to a temp search directory so the cross-module law
+    // fold assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "p8-const-imported-law-fold",
         raw"""
 import Math
@@ -11842,8 +11961,30 @@ unsafe law i32[min max] Use()
 {
     return Math.UseLaw();
 }
+""",
+        "Math",
+        raw"""
+module Math
+
+unsafe law i32[min max] LawOnly()
+{
+    return 1;
+}
+
+public unsafe law i32[min max] UseLaw()
+{
+    return LawOnly();
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "__stark_law_clone_Math_UseLaw")
+        && DoesNotContain(llvm, "call fastcc i32 @Math_UseLaw()")
+        && Contains(llvm, "ret i32 1");
 }
 
 // PORT-NOTE conventions used across this file:
@@ -11864,10 +12005,10 @@ unsafe law i32[min max] Use()
 // Ported from LlvmIrEmissionTests.ConstantImportedLawCallsStillFoldInsideImpureCallers.
 internal fn bool ConstantImportedLawCallsStillFoldInsideImpureCallersImpl()
 {
-    // PORT-NOTE: the imported `Math` module (InMemoryModuleResolver) is not
-    // expressible through CompileLlvm; the embedded root program is compiled and
-    // reduced to Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Math` module via InMemoryModuleResolver; staged
+    // here to a temp search directory so the law-fold-inside-impure-caller
+    // assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-const-imported-law-fold-impure",
         raw"""
 import Math
@@ -11885,16 +12026,35 @@ unsafe fn i32[min max] UseDirect()
 }
 
 unsafe ffi fn void Touch();
+""",
+        "Math",
+        raw"""
+module Math
+
+public unsafe law i32[min max] UseLaw()
+{
+    return 1;
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "__stark_law_clone_Math_UseLaw")
+        && DoesNotContain(llvm, "call fastcc i32 @Math_UseLaw()")
+        && Contains(llvm, "call void @Touch()")
+        && Contains(llvm, "ret i32 1");
 }
 
 // Ported from LlvmIrEmissionTests.MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClones.
 internal fn bool MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClonesImpl()
 {
-    // PORT-NOTE: the imported `Math` doctrine module is not expressible through
-    // CompileLlvm; reduced to Succeeds over the embedded root program.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Math` doctrine module via InMemoryModuleResolver;
+    // staged here to a temp search directory so the selective-clone assertions
+    // are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-mixed-doctrine-law-clones",
         raw"""
 import Math
@@ -11912,16 +12072,37 @@ unsafe fn i32[min max] UseDirect(i32[min max] left, i32[min max] right)
 }
 
 unsafe ffi fn void Touch();
+""",
+        "Math",
+        raw"""
+module Math
+
+public doctrine Numbers
+{
+    unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+    {
+        return left + right;
+    }
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define internal dso_local fastcc i32 @__stark_law_clone_Math_Numbers_Add(")
+        && Contains(llvm, "call fastcc i32 @__stark_law_clone_Math_Numbers_Add(i32 %arg_left, i32 %arg_right)")
+        && Contains(llvm, "call fastcc i32 @Math_Numbers_Add(i32 %arg_left, i32 %arg_right)");
 }
 
 // Ported from LlvmIrEmissionTests.MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClones.
 internal fn bool MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClonesImpl()
 {
-    // PORT-NOTE: the imported top-level `Math.Add` law module is not expressible
-    // through CompileLlvm; reduced to Succeeds over the embedded root program.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported top-level `Math.Add` law module via
+    // InMemoryModuleResolver; staged here to a temp search directory so the
+    // selective-clone assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-mixed-toplevel-law-clones",
         raw"""
 import Math
@@ -11939,16 +12120,34 @@ unsafe fn i32[min max] UseDirect(i32[min max] left, i32[min max] right)
 }
 
 unsafe ffi fn void Touch();
+""",
+        "Math",
+        raw"""
+module Math
+
+public unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define internal dso_local fastcc i32 @__stark_law_clone_Math_Add(")
+        && Contains(llvm, "call fastcc i32 @__stark_law_clone_Math_Add(i32 %arg_left, i32 %arg_right)")
+        && Contains(llvm, "call fastcc i32 @Math_Add(i32 %arg_left, i32 %arg_right)");
 }
 
 // Ported from LlvmIrEmissionTests.ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvm.
 internal fn bool ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvmImpl()
 {
-    // PORT-NOTE: the imported `Math` module is not expressible through
-    // CompileLlvm; reduced to Succeeds over the embedded root program.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Math` module via InMemoryModuleResolver; staged
+    // here to a temp search directory so the no-clone-into-impure-root assertions
+    // are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-impure-root-no-clone-imported-law",
         raw"""
 import Math
@@ -11961,17 +12160,38 @@ unsafe fn i32[min max] Use(i32[min max] value)
 }
 
 unsafe ffi fn void Touch();
+""",
+        "Math",
+        raw"""
+module Math
+
+unsafe law i32[min max] LawOnly(i32[min max] value)
+{
+    return value + 1;
+}
+
+public unsafe law i32[min max] UseLaw(i32[min max] value)
+{
+    return LawOnly(value);
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "__stark_law_clone_Math_UseLaw")
+        && Contains(llvm, "call fastcc i32 @Math_UseLaw(i32 %arg_value)");
 }
 
 // Ported from LlvmIrEmissionTests.ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClones.
 internal fn bool ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClonesImpl()
 {
-    // PORT-NOTE: the imported inlinehint `Math.UseLaw` law module is not
-    // expressible through CompileLlvm; reduced to Succeeds over the embedded
-    // root program.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported inlinehint `Math.UseLaw` law via
+    // InMemoryModuleResolver; staged here to a temp search directory so the
+    // no-clone assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-imported-law-inlinehint-no-clone",
         raw"""
 import Math
@@ -11981,8 +12201,24 @@ unsafe law i32[min max] Use(i32[min max] value)
 {
     return Math.UseLaw(value);
 }
+""",
+        "Math",
+        raw"""
+module Math
+
+public inlinehint unsafe law i32[min max] UseLaw(i32[min max] value)
+{
+    return value + 1;
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "__stark_law_clone_Math_UseLaw")
+        && Contains(llvm, "call fastcc i32 @Math_UseLaw(i32 %arg_value)");
 }
 
 // Ported from LlvmIrEmissionTests.ClosedWorldModulePrivateLawHelpersEmitAlwaysInline.
@@ -12009,8 +12245,8 @@ unsafe law i32[min max] Use()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline")
-        && Contains(llvm, "define fastcc i32 @Use() nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline")
+    return Contains(llvm, "define fastcc noundef i32 @Add(i32 noundef %arg_left, i32 noundef %arg_right) nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline")
+        && Contains(llvm, "define fastcc noundef i32 @Use() nounwind willreturn mustprogress nosync nofree memory(none) alwaysinline")
         && DoesNotContain(llvm, "call fastcc i32 @Add(i32 1, i32 2)")
         && Contains(llvm, "ret i32 3");
 }
@@ -12018,7 +12254,7 @@ unsafe law i32[min max] Use()
 // Ported from LlvmIrEmissionTests.ModulePrivateDirectCallForwardersEmitAlwaysInline.
 internal fn bool ModulePrivateDirectCallForwardersEmitAlwaysInlineImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "llvm-p9-private-direct-call-forwarder-alwaysinline",
         raw"""
 module Demo
@@ -12542,7 +12778,7 @@ hot unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Add(i32 %arg_left, i32 %arg_right)")
+    return Contains(llvm, "define fastcc noundef i32 @Add(i32 noundef %arg_left, i32 noundef %arg_right)")
         && Contains(llvm, " hot ");
 }
 
@@ -12587,7 +12823,7 @@ unsafe fn i32[min max] Helper()
 // Ported from LlvmIrEmissionTests.SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbols.
 internal fn bool SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "llvm-p9-source-backed-generic-inline-small-mono",
         raw"""
 module Demo
@@ -12617,7 +12853,7 @@ unsafe fn i32[min max] Run(i32[min max] value)
 // Ported from LlvmIrEmissionTests.BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphization.
 internal fn bool BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphizationImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "llvm-p9-backend-opaque-generic-fn-boundary",
         raw"""
 module Demo
@@ -12639,11 +12875,10 @@ unsafe fn i32[min max] Run(i32[min max] value)
     }
 
     stack ascii llvm = Llvm(c);
-    // PORT-NOTE: ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Identity__i32")
-    // scoping is reduced to whole-module substring checks.
-    return Contains(llvm, "optnone")
-        && Contains(llvm, "noinline")
-        && DoesNotContain(llvm, "alwaysinline")
+    stack ascii specializationHeader = LlvmDefinitionHeader(llvm, "__stark_mono_fn_Demo__Identity__i32");
+    return Contains(specializationHeader, "optnone")
+        && Contains(specializationHeader, "noinline")
+        && DoesNotContain(specializationHeader, "alwaysinline")
         && Contains(llvm, "call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(");
 }
 
@@ -12824,7 +13059,7 @@ unsafe fn i32[min max] Run(i32[min max] value)
 // Ported from LlvmIrEmissionTests.NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbols.
 internal fn bool NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "llvm-p9-nested-source-backed-generic-inline-transitive",
         raw"""
 module Demo
@@ -12861,9 +13096,10 @@ unsafe fn i32[min max] Run(i32[min max] value)
 // Ported from LlvmIrEmissionTests.ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCalls.
 internal fn bool ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCallsImpl()
 {
-    // PORT-NOTE: the imported `Facade` generic module is not expressible through
-    // CompileLlvm; the embedded root program is compiled and reduced to Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Facade` generic module via InMemoryModuleResolver;
+    // staged here to a temp search directory so the linkonce_odr/comdat
+    // specialization assertions are reproducible against the normalized LLVM.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-imported-generic-linkonce-odr-comdat",
         raw"""
 import Facade
@@ -12873,17 +13109,40 @@ unsafe fn i32[min max] Run(i32[min max] value)
 {
     return Facade.Identity(value);
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public unsafe fn T Identity<T>(T value)
+{
+    return value;
+}
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii specializationHeader = LlvmDefinitionHeader(llvm, "__stark_mono_fn_Facade__Facade_Identity__i32");
+    return Contains(llvm, "$__stark_mono_fn_Facade__Facade_Identity__i32 = comdat any")
+        && Contains(specializationHeader, "define linkonce_odr dso_local fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(")
+        && Contains(specializationHeader, "local_unnamed_addr")
+        && Contains(specializationHeader, "comdat")
+        && DoesNotContain(llvm, "call fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(")
+        && DoesNotContain(llvm, "define internal dso_local fastcc i32 @__stark_mono_fn_Facade__Facade_Identity__i32(");
 }
 
 // Ported from LlvmIrEmissionTests.ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccess.
 internal fn bool ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccessImpl()
 {
-    // PORT-NOTE: the imported `Facade.Box<T>` generic module is not expressible
-    // through CompileLlvm; the embedded root program is compiled and reduced to
-    // Succeeds (the header-scoped `argmem: none` absence check is dropped).
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# supplied the imported `Facade.Box<T>` generic module via
+    // InMemoryModuleResolver; staged here to a temp search directory so the
+    // header-scoped `argmem: none` absence check is reproducible against the
+    // normalized LLVM. The C# oracle finds the Box_Store specialization define
+    // line by predicate; the mangled symbol is __stark_mono_fn_Facade__Facade_Box_Store__i32.
+    stack mut LlvmCompile c = CompileLlvmWithModuleNormalized(
         "llvm-p9-imported-mutable-borrow-generic-argmem",
         raw"""
 import Facade
@@ -12898,18 +13157,43 @@ unsafe fn void Run()
     box.Store(2);
     return;
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public struct Box<T>
+{
+    T Value;
+
+    public unsafe fn void Store(mut borrow Box<T> self, T value)
+    {
+        TouchOther();
+        self.Value = value;
+        return;
+    }
+}
+
+public unsafe ffi fn void TouchOther();
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii specializationHeader = LlvmDefinitionHeader(llvm, "__stark_mono_fn_Facade__Facade_Box_Store__i32");
+    return DoesNotContain(specializationHeader, "argmem: none");
 }
 
 // Ported from LlvmIrEmissionTests.ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates.
 internal fn bool ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl()
 {
-    // PORT-NOTE: the original builds a typed-only package image for `Facade` via
-    // PackageImageBuilder and consumes it through FileSystemModuleResolver. The
-    // helper models neither package images nor a module resolver, so the consumer
-    // program is compiled and reduced to Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# built a package image for `Facade` and consumed it via
+    // FileSystemModuleResolver; the harness builds a real `.starkpkg` and stages
+    // it as a search directory so the package-template inline-specialization
+    // assertions reproduce.
+    stack mut LlvmCompile c = CompileLlvmWithPackageNormalized(
         "llvm-p9-manifest-generic-inline-small-mono",
         raw"""
 import Facade
@@ -12919,7 +13203,23 @@ unsafe fn i32[min max] Run(i32[min max] value)
 {
     return Facade.Identity(value);
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public unsafe fn T Identity<T>(T value)
+{
+    return value;
+}
 """);
+    // PORT-NOTE: the C# oracle uses a TYPED-ONLY manifest (function bodies
+    // stripped via WithEffectiveLegacyCompilerSectionCopies) so the CONSUMER
+    // materializes `@__stark_mono_fn_Demo__…` as `internal`. The CLI `--emit-lib`
+    // package is a FULL image, so the consumer reuses the library's
+    // `@__stark_mono_fn_Facade__…` `linkonce_odr` specialization — a different,
+    // equally valid strategy. Typed-only package building isn't exposed by the CLI
+    // (PAINPOINTS #4), so only the package build + cross-package compile is checked.
     return Succeeds(c);
 }
 
@@ -12930,7 +13230,7 @@ internal fn bool ManifestBackedGenericInlineClosureCallSpecializesFromPackageIma
     // (closure template) and inspects the typed body kinds plus the consumer's
     // Run body; the helper models neither package images nor body scoping, so the
     // consumer program is compiled and reduced to Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmWithPackageNormalized(
         "llvm-p9-manifest-generic-inline-closure-specializes",
         raw"""
 import Facade
@@ -12946,18 +13246,29 @@ fn i32[min max] Run(i32[min max] offset)
 {
     return LocalApply(capture(copy offset) (i32[min max] value) => value + offset);
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public inline fn T Apply<T>(T value, inline closure<fn T(T)> op)
+{
+    return op(value);
+}
 """);
+    // PORT-NOTE: typed-only manifest closure-body specialization isn't reproducible
+    // via the full `--emit-lib` package (PAINPOINTS #4); only the package build +
+    // cross-package compile is checked.
     return Succeeds(c);
 }
 
 // Ported from LlvmIrEmissionTests.ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates.
 internal fn bool ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl()
 {
-    // PORT-NOTE: the original builds a typed-only package image for `Facade`
-    // (Identity + Forward) and consumes it through FileSystemModuleResolver; the
-    // helper models neither, so the consumer program is compiled and reduced to
-    // Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# built a package image for `Facade` (Identity + Forward) and consumed it
+    // via FileSystemModuleResolver; the harness builds a real `.starkpkg` so the
+    // transitive inline-specialization assertions reproduce.
+    stack mut LlvmCompile c = CompileLlvmWithPackageNormalized(
         "llvm-p9-manifest-nested-generic-inline-transitive",
         raw"""
 import Facade
@@ -12967,19 +13278,37 @@ unsafe fn i32[min max] Run(i32[min max] value)
 {
     return Facade.Forward(value);
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public unsafe fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public unsafe fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
 """);
+    // PORT-NOTE: typed-only manifest specialization (Demo__ internal) is not
+    // reproducible via the full `--emit-lib` package (gives Facade__ linkonce_odr);
+    // typed-only package building isn't CLI-exposed (PAINPOINTS #4). Only the
+    // package build + cross-package compile is checked.
     return Succeeds(c);
 }
 
 // Ported from LlvmIrEmissionTests.RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmission.
 internal fn bool RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmissionImpl()
 {
-    // PORT-NOTE: the original builds a typed-only package image for `Facade`
-    // (Identity + Forward) and consumes it through FileSystemModuleResolver, then
-    // asserts dedup/occurrence counts over the emitted module; the helper models
-    // neither package images nor a resolver, so the consumer program is compiled
-    // and reduced to Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    // C# built a package image for `Facade` (Identity + Forward) and consumed it
+    // via FileSystemModuleResolver, then asserted the repeated calls dedup to a
+    // single internal specialization. The harness builds a real `.starkpkg`.
+    // PORT-NOTE: the C# Assert.Matches(@"define internal[^\n]*@…__i32\(") are
+    // reduced to a sliced-header Contains; CountOccurrences(...)==0 → DoesNotContain.
+    stack mut LlvmCompile c = CompileLlvmWithPackageNormalized(
         "llvm-p9-repeated-manifest-nested-generic-dedup",
         raw"""
 import Facade
@@ -12991,7 +13320,26 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
     stack i32[min max] second = Facade.Forward(right);
     return first + second;
 }
+""",
+        "Facade",
+        raw"""
+module Facade
+
+public unsafe fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public unsafe fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
 """);
+    // PORT-NOTE: typed-only manifest dedup/internalization (Demo__ internal) is not
+    // reproducible via the full `--emit-lib` package (gives Facade__ linkonce_odr);
+    // typed-only package building isn't CLI-exposed (PAINPOINTS #4). Only the
+    // package build + cross-package compile is checked.
+    return Succeeds(c);
     return Succeeds(c);
 }
 
@@ -13080,7 +13428,7 @@ unsafe fn i32[min max] Run()
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define fastcc void @Fill(ptr")
-        && Contains(llvm, "define fastcc i32 @Read(ptr")
+        && Contains(llvm, "define fastcc noundef i32 @Read(ptr")
         && Contains(llvm, "call fastcc void @Fill(ptr")
         && Contains(llvm, "call fastcc i32 @Read(ptr");
 }
@@ -13118,8 +13466,8 @@ unsafe fn void Forward(borrow Box box)
     // PORT-NOTE: the `Assert.Matches(@"call fastcc void @Touch\(ptr [^\n]*%arg_box\)")`
     // is reduced to a substring on the de-parameterized call prefix; the alias
     // slot being promoted away is checked by the two `DoesNotContain` guards.
-    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
-        && Contains(llvm, "define fastcc void @Forward(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
+    return Contains(llvm, "define fastcc void @Touch(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc void @Forward(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && Contains(llvm, "call fastcc void @Touch(ptr")
         && DoesNotContain(llvm, "abi_borrow_ptr_load")
         && DoesNotContain(llvm, "callarg_box");
@@ -13159,8 +13507,8 @@ struct Counter
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the `Assert.Matches(@"call fastcc void @Counter_Reset\(ptr [^\n]*%arg_self\)")`
     // is reduced to a substring on the de-parameterized call prefix.
-    return Contains(llvm, "define fastcc void @Counter_Reset(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self)")
-        && Contains(llvm, "define fastcc void @Counter_ResetThenAdd(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self, i32 %arg_value)")
+    return Contains(llvm, "define fastcc void @Counter_Reset(ptr noundef nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self)")
+        && Contains(llvm, "define fastcc void @Counter_ResetThenAdd(ptr noundef nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self, i32 noundef %arg_value)")
         && Contains(llvm, "call fastcc void @Counter_Reset(ptr")
         && DoesNotContain(llvm, "callarg_self");
 }
@@ -13168,7 +13516,7 @@ struct Counter
 // Ported from LlvmIrEmissionTests.MutableBorrowFieldReceiverUsesOriginalFieldAddress.
 internal fn bool MutableBorrowFieldReceiverUsesOriginalFieldAddressImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p10-mut-borrow-field-receiver",
         raw"""
 module Demo
@@ -13385,7 +13733,7 @@ unsafe fn void Run()
 // Ported from LlvmIrEmissionTests.DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures.
 internal fn bool DoctrineLawCallsEmitDirectReadonlyNoCaptureSignaturesImpl()
 {
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalized(
         "p10-doctrine-law-readonly-nocapture",
         raw"""
 module Demo
@@ -13435,13 +13783,13 @@ unsafe finite law i32[min max] Run(borrow mut Box box)
 // Ported from LlvmIrEmissionTests.ConfiguredTargetInfoIsEmittedInHeader.
 internal fn bool ConfiguredTargetInfoIsEmittedInHeaderImpl()
 {
-    // PORT-NOTE: the original passed a CompilerOptions(TargetInfo: LlvmTargetInfo(
-    // "test-triple", "e-test-layout")) so the module header carried the configured
-    // datalayout/triple. The helper offers no target-info configuration surface, so
-    // the program is compiled with the default target and only the presence of the
-    // datalayout/triple header lines is checked (the specific configured values are
-    // dropped).
-    stack mut LlvmCompile c = CompileLlvm(
+    // PORT-NOTE: the original passed CompilerOptions(TargetInfo: LlvmTargetInfo(
+    // "test-triple", "e-test-layout")) and asserted the module header carried those
+    // exact configured values. CompileLlvmForTargetWithDataLayout now pins both the
+    // triple and the data layout through the host-test request (PAINPOINTS #10/#3 —
+    // the bridge reads `targetTriple`/`targetDataLayout`), so the specific configured
+    // values are restored and asserted verbatim instead of presence-only.
+    stack mut LlvmCompile c = CompileLlvmForTargetWithDataLayout(
         "p10-configured-target-info-header",
         raw"""
 module Demo
@@ -13450,15 +13798,94 @@ unsafe fn i32[min max] Run()
 {
     return 1;
 }
-""");
+""",
+        "test-triple",
+        "e-test-layout");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "target datalayout = \"")
-        && Contains(llvm, "target triple = \"");
+    return Contains(llvm, "target datalayout = \"e-test-layout\"")
+        && Contains(llvm, "target triple = \"test-triple\"");
+}
+
+// Verifies the host-test request's `importedInlineCloneSeedFunctions` field
+// (PAINPOINTS #3) reaches CompilerOptions.ImportedInlineCloneSeedFunctions and
+// narrows owned function-definition emission. The emitter restricts strong owned
+// definitions to the seed-reachable closure
+// (LlvmIrEmitter.BuildOwnedFunctionDefinitionFilter); non-reachable bodies fall
+// back to weak `weak_odr` definitions. Without a seed the filter is null, every
+// owned definition stays strong, and `weak_odr` is absent; seeding `EntryFn`
+// prunes the non-reachable `UnrelatedFn`/`HelperFn` bodies to `weak_odr`. The
+// toggle proves the seed array flows end-to-end through the Stark request writer.
+internal fn bool ImportedInlineCloneSeedFunctionsNarrowOwnedEmissionSurfaceImpl()
+{
+    // Baseline: no seed → filter is null → every owned definition stays strong,
+    // so the module carries no `weak_odr` linkage.
+    stack mut LlvmCompile baseline = CompileLlvm(
+        "p3-seed-baseline",
+        raw"""
+module SeedProbe
+
+export finite law i32[min max] EntryFn(i32[min max] x)
+{
+    return HelperFn(x) + 1;
+}
+
+finite law i32[min max] HelperFn(i32[min max] x)
+{
+    return x * 2;
+}
+
+export finite law i32[min max] UnrelatedFn(i32[min max] x)
+{
+    return x - 7;
+}
+""");
+    if (!Succeeds(baseline))
+    {
+        return false;
+    }
+
+    stack ascii baselineLlvm = Llvm(baseline);
+    if (!Contains(baselineLlvm, "@UnrelatedFn") || !DoesNotContain(baselineLlvm, "weak_odr"))
+    {
+        return false;
+    }
+
+    // Seeded with `EntryFn`: only its reachable closure keeps strong linkage; the
+    // non-reachable owned bodies are pruned to weak `weak_odr` definitions.
+    stack mut LlvmCompile seeded = CompileLlvmWithSeeds(
+        "p3-seed-narrowed",
+        raw"""
+module SeedProbe
+
+export finite law i32[min max] EntryFn(i32[min max] x)
+{
+    return HelperFn(x) + 1;
+}
+
+finite law i32[min max] HelperFn(i32[min max] x)
+{
+    return x * 2;
+}
+
+export finite law i32[min max] UnrelatedFn(i32[min max] x)
+{
+    return x - 7;
+}
+""",
+        "EntryFn");
+    if (!Succeeds(seeded))
+    {
+        return false;
+    }
+
+    stack ascii seededLlvm = Llvm(seeded);
+    return Contains(seededLlvm, "@UnrelatedFn")
+        && Contains(seededLlvm, "weak_odr");
 }
 
 // Ported from LlvmIrEmissionTests.ShortCircuitAndTernaryEmitBranchesAndPhi.
@@ -15529,11 +15956,11 @@ fn i32[min max] Run(i32[min max] value)
     }
 
     stack ascii llvm = Llvm(c);
-    // PORT-NOTE: ExtractDefinitionBody(llvm, "Run") scoping reduced to
-    // whole-module Contains; the mul-by-6 Assert.Matches regex is reduced to a
-    // literal Contains on the folded multiply.
-    return Contains(llvm, "mul i32 %arg_value, 6")
-        && DoesNotContain(llvm, " add ");
+    // C# slices the Run body (ExtractDefinitionBody) before the no-add check; the
+    // mul-by-6 Assert.Matches regex (which permits flags) matches `mul nsw`.
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+    return Contains(runBody, "mul nsw i32 %arg_value, 6")
+        && DoesNotContain(runBody, " add ");
 }
 
 // Ported from LlvmIrEmissionTests.IntegerArithmeticFoldEmitsMultiplySubtractForRepeatedSubtractionChains.
@@ -15555,12 +15982,12 @@ fn i16[min max] Run(i16[-8000 8000] x, i16[-3000 3000] y)
     }
 
     stack ascii llvm = Llvm(c);
-    // PORT-NOTE: ExtractDefinitionBody(llvm, "Run") scoping reduced to
-    // whole-module Contains; the two mul Assert.Matches regexes are reduced to
-    // literal Contains on the folded multiplies.
-    return Contains(llvm, "mul i16 %arg_x, 3")
-        && Contains(llvm, "mul i16 %arg_y, 2")
-        && Contains(llvm, " sub ");
+    // C# slices the Run body (ExtractDefinitionBody); the two mul Assert.Matches
+    // regexes (which permit flags) match `mul nsw`.
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+    return Contains(runBody, "mul nsw i16 %arg_x, 3")
+        && Contains(runBody, "mul nsw i16 %arg_y, 2")
+        && Contains(runBody, " sub ");
 }
 
 // Ported from LlvmIrEmissionTests.IntegerArithmeticFoldLowersRepeatedProductRunsWithoutPowHelper.

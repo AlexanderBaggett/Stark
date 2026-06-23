@@ -67,6 +67,29 @@ public fn SsaCompile CompileSsaAfter(ascii id, ascii source, ascii stopAfterPass
     }
 }
 
+// Compiles `source` stopping after a named SSA pass and requests the textual
+// `optimized-ssa` artifact (the host's `lowering.ssa.optimized` artifact). Use
+// this for the optimization passes (e.g. `arithmetic-fold-ssa`) whose rewrite
+// lands in the optimized-SSA artifact: the terse `ssa` (lowering.ssa) renderer
+// prints binary ops as `vN = <op> @ loc` WITHOUT operands/coefficients, while
+// the optimized renderer prints the folded operands (`vN_mul_K = arg_value * 3`),
+// so a post-fold assertion on a coefficient/exponent must read `optimized-ssa`
+// at the pass stop point — the C# oracle navigates the same post-pass module.
+// `Ok` additionally requires the compile itself to succeed.
+public fn SsaCompile CompileSsaAfterOptimized(ascii id, ascii source, ascii stopAfterPassId)
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = RunHostCompileSsa(id, source, stopAfterPassId, "optimized-ssa");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
 // Compiles `source` through the full pipeline and requests the textual
 // `optimized-ssa` artifact (the host's `lowering.ssa.optimized` artifact, the
 // same one the C# GetOptimizedSsa helper reads). `Ok` additionally requires the
@@ -203,6 +226,44 @@ public fn bool OptimizedSsaContainsButNot(mut borrow SsaCompile compiled, ascii 
 
         stack ascii text = compiled.Outcome.ArtifactText("optimized-ssa");
         return System.Testing.Contains(text, present) && !System.Testing.Contains(text, absent);
+    }
+}
+
+// True when the compile succeeded and the optimized-SSA body of `functionName`
+// does NOT contain `fragment`. Scopes a "no surviving call/load" assertion to a
+// single function (matching the C# SSA oracle's single-SsaFunction navigation),
+// so a callee's own surviving `fn <callee>(` definition header elsewhere in the
+// module is not matched. Used by the inline-ssa ports (the inlined call is gone
+// from `Run` but the callee definition still prints its `fn <callee>(` header).
+public fn bool OptimizedSsaFunctionLacks(mut borrow SsaCompile compiled, ascii functionName, ascii fragment)
+{
+    unsafe
+    {
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii text = compiled.Outcome.ArtifactText("optimized-ssa");
+        stack ascii body = System.Testing.SsaFunctionBody(text, functionName);
+        return !System.Testing.Contains(body, fragment);
+    }
+}
+
+// True when the compile succeeded and the optimized-SSA body of `functionName`
+// contains `fragment` (the positive companion to OptimizedSsaFunctionLacks).
+public fn bool OptimizedSsaFunctionContains(mut borrow SsaCompile compiled, ascii functionName, ascii fragment)
+{
+    unsafe
+    {
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii text = compiled.Outcome.ArtifactText("optimized-ssa");
+        stack ascii body = System.Testing.SsaFunctionBody(text, functionName);
+        return System.Testing.Contains(body, fragment);
     }
 }
 

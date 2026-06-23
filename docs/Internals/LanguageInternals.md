@@ -37,6 +37,17 @@ In practice this means each layer has a narrow responsibility:
 - SSA, optimization, ABI lowering, LLVM emission, package-image lowering, and
   imported-template lowering must preserve the same accepted-program contract
 
+The SSA pipeline exposes two rendered artifacts at different layers: `lowering.ssa`
+is the pre-optimization SSA, printed tersely (each instruction as `vN = <op> @
+line:col`, operator and source location only, without operands), and
+`lowering.ssa.optimized` is the post-optimization SSA the optimization passes
+write into, printed with fold-synthesized operands and coefficients (`v1_mul_1 =
+arg_value * 3`, `arg_value ** 3`, constant-folded terminators like `return 0`).
+Both artifacts are produced even when compilation stops after an early
+optimization pass, so a golden test inspecting a fold/cleanup/inline/memory-opt
+result reads `lowering.ssa.optimized` at that stop point. See
+`docs/Internals/HostCompilerTestProtocol.md` for the test-harness surface.
+
 Lowering invariant violations are compiler bugs, not user diagnostics. They are
 still useful guardrails, but every invariant that can be reached by
 grammatically valid invalid source should also have an earlier diagnostic test.
@@ -200,7 +211,7 @@ Explicit `where disjoint(...)` remains useful for subregions and computed memory
 
 Memory relations are not transitive. `same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
 
-Call-site validation uses the proof facts the compiler can see directly: default parameter facts, explicit memory-contract clauses, runtime `if disjoint(...)` branch facts, scoped `unsafe assume disjoint(...)` facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, and compiler-visible text slice ranges. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges are rejected for default non-overlap obligations unless a specific scoped proof covers that relation.
+Call-site validation uses the proof facts the compiler can see directly: default parameter facts, explicit memory-contract clauses, runtime `if disjoint(...)` branch facts, scoped `unsafe assume disjoint(...)` facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, compiler-visible text slice ranges, and read-only constant arguments. A read-only constant argument lives in independent const storage that can never be the writer in an aliasing hazard, so it is disjoint from every other argument: a direct string literal has always qualified, and a conditional/ternary whose branches are all read-only constants (including nested conditionals, and a local bound to such an expression) qualifies as well — `cond ? "llvm" : "llvm-normalized"` carries an independent-storage memory root through `EvaluateConditionalExpression`. A conditional with at least one non-constant branch is not treated as constant storage and still requires an ordinary proof. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges are rejected for default non-overlap obligations unless a specific scoped proof covers that relation.
 
 For function parameters, proven non-overlap gives the compiler these backend facts:
 

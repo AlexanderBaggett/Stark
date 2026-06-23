@@ -107,6 +107,11 @@ control flow visible and exhaustively checkable.
 
 Use explicit ops tables only when the implementation set is open at runtime.
 This pattern is allowed because it makes the dynamic dispatch visible.
+Ops tables should be `const` by convention when the operation set is fixed and
+the table has no runtime/platform initialization needs. Use `static` only when
+initialization depends on runtime/platform state, stack/local tables only for
+tests or scoped customization, and mutable ops tables only with a concrete
+reason.
 
 Example:
 
@@ -611,9 +616,10 @@ trees into compiler state still use typed handles.
 Add it later only if a concrete non-IR use case proves that arena/table ownership
 is the wrong fit.
 
-The `arena` storage class does not have to become executable source syntax before
-the compiler can use this model. A library/compiler-owned arena or table API is
-enough if it provides explicit ownership, fast dense storage, and bulk release.
+The `arena` storage class is valid executable source syntax. Compiler IR
+arena/table storage may use source-level `arena` directly or compiler-owned table
+helpers when that gives explicit ownership, fast dense storage, and bulk release;
+the model is not dependent on a stdlib arena abstraction.
 
 Backend and optimization facts are first-class compiler data, not comments or
 loose metadata. Facts attach to typed handles through dense side tables or typed

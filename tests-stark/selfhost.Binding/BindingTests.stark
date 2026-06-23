@@ -145,6 +145,55 @@ fn bool StaticDeclarationsUseDeclaredVariableName()
 }
 
 [Fact]
+fn bool ValidAsmDeclarationBindsCleanly()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("unsafe ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8[min max]> path) in(\"rax\") number, in(\"rdi\") path, out(\"rax\") return, clobber(\"rcx\", \"r11\") { \"syscall\" }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.Count() == 0;
+}
+
+[Fact]
+fn bool AsmDiagnosticsRejectUnknownArchitectureAndRegister()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("unsafe ffi asm(z80) fn i64 Bad(i64 number) in(\"notareg\") number, out(\"rax\") return { \"nop\" }\nunsafe ffi asm(x86_64) fn i64 AlsoBad(i64 number) in(\"notareg\") number, out(\"rax\") return { \"nop\" }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.AsmUnknownArchitecture) == 1
+        && diags.CountOf(BindDiagnosticCode.AsmInvalidRegister) == 1;
+}
+
+[Fact]
+fn bool AsmDiagnosticsRequireValidOperandBindings()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("unsafe ffi asm(x86_64) fn i64 Bad(i64 number) in(\"rax\") missing { \"nop\" }\nunsafe ffi asm(x86_64) fn void VoidReturn(i64 number) in(\"rax\") number, out(\"rax\") return { \"nop\" }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.AsmInvalidOperandBinding) == 3;
+}
+
+[Fact]
+fn bool AsmDiagnosticsRejectDuplicateAndOverlappingClobbers()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("unsafe ffi asm(x86_64) fn i64 Bad(i64 number) in(\"rax\") number, out(\"rax\") return, clobber(\"rax\", \"rcx\", \"RCX\") { \"nop\" }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.AsmInvalidClobber) == 2;
+}
+
+[Fact]
 fn bool ValidLinkNameOnImportedFfiHasNoDiagnostic()
 {
     stack mut BindDiagnosticList diags = new();

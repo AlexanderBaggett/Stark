@@ -187,9 +187,10 @@ validation before facts enter compiler tables.
 - Do not serialize every transient MIR/SSA fact through package images.
 - Do not make hash-table iteration define fact, package-image, diagnostic, or
   golden output order.
-- Do not require the `arena` storage class to exist before the compiler can use
-  arena/table style data structures. A library-owned arena/table API is enough
-  if it satisfies the ownership and performance requirements.
+- Do not make compiler IR arena/table storage depend on a stdlib arena
+  abstraction. `arena` is valid source storage; compiler-owned tables can use
+  source-level `arena` directly or purpose-built table helpers when they satisfy
+  the ownership and performance requirements.
 
 ## 9. Work Items
 

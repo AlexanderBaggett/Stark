@@ -3,10 +3,26 @@
 Track the work to ship Stark as a self-contained compiler distribution with a bundled Clang/LLD/LLVM toolchain. The goal is that a user can download a Stark release, put it on `PATH`, and compile ordinary Stark programs without separately installing LLVM.
 
 Scope note: this roadmap tracks the minimum useful packaging work for a small
-team. Prefer one clear release script, human-readable diagnostics, and a small
+team. Prefer one clear release workflow, human-readable diagnostics, and a small
 smoke checklist over a broad release matrix or machine-readable publishing
 system. Add heavier release hardening only after the basic release archive is
 working and the need is concrete.
+
+Distribution decision: releases are downloadable, relocatable archives produced
+by a manually triggered GitHub workflow (or equivalent repository-hosted release
+automation) for macOS, Windows, and Linux. Each archive contains the compiled
+compiler, any files it needs to operate, the standard library, the vendor
+library, required licenses, and install instructions. Package managers are not
+part of the roadmap now or later.
+
+Library-source decision: release archives include standard library source by
+default, plus the official vendor library source and generated artifacts. The
+vendor library is Stark's curated bindings/library tree for common external
+software, similar in role to Odin's vendor library; its implementation may live
+on another branch until merged, but packaging should treat it as a first-class
+release component. Ordinary builds should prefer bundled binary package images
+and native artifacts; source is included for reference, debugging, rebuilds, and
+bootstrap investigation.
 
 ## Goals
 
@@ -14,6 +30,8 @@ working and the need is concrete.
 - [ ] Bundle a pinned libLLVM plus Clang/LLD/LLVM toolchain for each supported release platform.
 - [ ] Make the compiler prefer its bundled toolchain while still allowing explicit overrides.
 - [ ] Bundle or generate the standard library package artifacts needed by ordinary executable and library builds.
+- [ ] Bundle the vendor library needed by ordinary Stark development.
+- [ ] Provide a manual release workflow that creates macOS, Windows, and Linux archives.
 - [ ] Provide diagnostics that clearly explain missing platform SDK pieces when a fully bundled path is impossible.
 - [ ] Add a small release smoke check that proves a clean machine/container can compile and run basic Stark programs from the archive alone.
 
@@ -23,6 +41,8 @@ working and the need is concrete.
 - [ ] Do not statically link libLLVM into the compiler executable in the first implementation unless a later packaging decision explicitly chooses it.
 - [ ] Do not hide platform SDK requirements that cannot legally or practically be bundled.
 - [ ] Do not remove existing `--linker`, `--archiver`, `--target`, or native dependency override paths.
+- [ ] Do not add package-manager distribution to the roadmap. Homebrew, Scoop,
+      apt, npm, and similar package managers are explicitly out of scope.
 
 ## Phase 1: Distribution Shape
 
@@ -35,8 +55,13 @@ working and the need is concrete.
       bin/
         stark
       stdlib/
+        src/
         libSystem.a
         System.starkpkg
+      vendor/
+        src/
+        dist/
+          ...
       toolchain/
         bin/
           clang
@@ -50,11 +75,19 @@ working and the need is concrete.
           libLLVM.*
           clang/
       licenses/
+      INSTALL.md
+      RELEASE.txt
     ```
 
   - [ ] Decide whether `stark` lives at archive root or under `bin/`; provide a root launcher only if it improves ergonomics.
-  - [ ] Decide whether standard library source files are bundled for debugging, reference, and package rebuild scenarios.
+  - [x] Include standard library source files by default for debugging,
+        reference, and package rebuild scenarios.
+  - [ ] Define vendor library layout and required package/image artifacts.
+        The release must include the official vendor library source plus any
+        generated artifacts needed for normal builds.
   - [ ] Document which files are required at runtime versus developer/reference extras.
+  - [ ] Include OS-specific install instructions covering `PATH` and any Stark
+        environment variables.
 
 - [ ] Define supported release IDs for v1.
   - [ ] Linux x64.
@@ -64,9 +97,33 @@ working and the need is concrete.
   - [ ] Linux arm64 if needed.
 
 - [ ] Define minimum host expectations per platform.
-  - [ ] Linux libc and startup files expectations.
+  - [x] Linux target/runtime policy.
+        Decision: the first Linux release is syscall-backed and no-libc for
+        Stark-owned runtime and standard-library code. Ordinary Stark programs
+        must not require glibc, musl, libc development packages, or libc wrapper
+        calls. If the compiler uses an LLVM target triple such as
+        `x86_64-unknown-linux-gnu`, treat that as LLVM target spelling only, not
+        a glibc dependency or a promise of separate glibc/musl variants. libc,
+        pkg-config, or system library diagnostics apply only when a user-chosen
+        native/vendor dependency explicitly requires them.
+  - [x] Windows linker-driver policy.
+        Decision: use the same Windows executable-generation path for the
+        compiler release that Stark uses for ordinary compiled Windows
+        programs. In the current host compiler, that means the Clang driver is
+        the default executable linker driver unless the user supplies
+        `--linker`; `lld-link` remains bundled for ThinLTO, explicit overrides,
+        and Clang-driver backend use. Do not create a separate compiler-only
+        Windows linking policy.
   - [ ] Windows CRT/SDK expectations.
-  - [ ] macOS Xcode Command Line Tools or SDK expectations.
+  - [x] macOS SDK and Command Line Tools policy.
+        Decision: macOS release archives bundle Stark's LLVM/toolchain pieces,
+        but do not bundle Apple SDKs or Xcode/Command Line Tools content. The
+        first macOS release requires a locally installed Apple SDK supplied by
+        Xcode or Command Line Tools for SDK headers, platform libraries, and
+        linking. Resolution should match current compiler behavior: honor
+        `SDKROOT`, check common CLT/Xcode SDK paths, then fall back to
+        `xcrun --sdk macosx --show-sdk-path`. `stark doctor` must diagnose a
+        missing macOS SDK/CLT installation with a direct remediation message.
   - [ ] Explicitly document what the bundled LLVM toolchain replaces and what it does not replace.
 
 ## Phase 2: Self-Contained Compiler Publish
@@ -78,11 +135,15 @@ working and the need is concrete.
   - [ ] Optional `osx-x64`.
   - [ ] Optional `linux-arm64`.
 
-- [ ] Choose publish mode.
-  - [ ] Evaluate framework-dependent versus self-contained.
-  - [ ] Evaluate single-file versus normal directory publish.
+- [x] Choose publish mode.
+  - Decision: ship relocatable per-platform archives containing a compiled
+    compiler binary plus any runtime files it needs. Archives must not require a
+    separate .NET runtime install. For the current C# Stage0 compiler this means
+    runtime-specific self-contained publish output; after cutover this means the
+    native self-hosted compiler binary and its required support files.
+  - [ ] Evaluate single-file versus normal directory publish only as an
+        implementation detail; prefer the simpler reliable shape.
   - [ ] Evaluate trimming only if it does not risk reflection/resource breakage.
-  - [ ] Record final choice and rationale in this document.
 
 - [ ] Ensure generated parser/runtime assets are included.
   - [ ] Verify ANTLR runtime dependency is present in published output.
@@ -97,15 +158,30 @@ working and the need is concrete.
 
 ## Phase 3: Bundled libLLVM And LLVM Toolchain Acquisition
 
-- [ ] Choose the pinned LLVM version.
-  - [ ] Record exact LLVM version.
+- [x] Choose the pinned LLVM version.
+  - Decision: the first bundled release targets the LLVM 22.1.x line, pinned to
+    LLVM 22.1.8 unless the release branch deliberately updates the pin before
+    checksums/artifacts are recorded. Do not track LLVM trunk or LLVM 23
+    prereleases for the first bundled release; treat later LLVM updates as
+    intentional toolchain-upgrade work.
+    Post-self-host follow-up: once the self-hosted compiler is online, migrate
+    the bundled toolchain to the latest stable LLVM 23.1.x release so Stark can
+    pick up new backend features promptly without destabilizing bootstrap.
+  - [x] Record exact LLVM version: 22.1.8.
   - [ ] Record required LLVM C API symbols for the supported backend slice.
   - [ ] Record source for each platform artifact.
   - [ ] Record checksums.
   - [ ] Record license files to include.
 
-- [ ] Decide acquisition model.
-  - [ ] Use official LLVM release archives where suitable.
+- [x] Decide acquisition model.
+  - Decision: use official LLVM release archives for the first bundled release.
+    Copy only the required files into Stark's release archive, and record the
+    source archive/asset plus checksum for each platform. Do not make Stark
+    maintain custom LLVM build infrastructure during self-hosting. Build custom
+    trimmed LLVM toolchains later only if official packages are missing required
+    pieces, are inconsistent across target platforms, or create a concrete
+    archive-size problem.
+  - [x] Use official LLVM release archives where suitable.
   - [ ] Build custom trimmed LLVM toolchains where official archives are too large or inconsistent.
   - [ ] Prefer reproducible scripted acquisition over manual downloads.
 
@@ -114,7 +190,8 @@ working and the need is concrete.
   - [ ] `clang` for native C/shim compilation.
   - [ ] `clang++` only if needed for native dependencies.
   - [ ] `ld.lld` for ELF linking and ThinLTO.
-  - [ ] `lld-link` for Windows linking and ThinLTO.
+  - [ ] `lld-link` for Windows ThinLTO, explicit linker overrides, and any
+        Clang-driver link path that needs the bundled Windows LLD backend.
   - [ ] `llvm-ar` for static library creation on Unix-like platforms.
   - [ ] `llvm-lib` for static library creation on Windows.
   - [ ] `llvm-ranlib` only if needed by archive workflows.
@@ -143,6 +220,11 @@ working and the need is concrete.
   - [ ] Explicit CLI overrides: `--linker`, `--archiver`, and any future tool override flags.
   - [ ] Explicit libLLVM override when provided.
   - [ ] `--toolchain-dir <dir>`.
+        Decision: `--toolchain-dir` names a Stark toolchain root, not only an
+        LLVM directory. It applies to bundled/override LLVM tools, libLLVM, and
+        Stark-shipped helper tools resolved from that root. It does not replace
+        external platform SDKs, CRTs, or Command Line Tools; those remain
+        platform requirements diagnosed separately by `stark doctor`.
   - [ ] `STARK_TOOLCHAIN_DIR`.
   - [ ] Bundled toolchain beside the compiler executable.
   - [ ] `PATH` fallback.
@@ -176,15 +258,23 @@ working and the need is concrete.
   - [ ] Missing platform SDK or system linker inputs.
   - [ ] Native package dependency still requires `pkg-config` or explicit paths.
 
-## Phase 5: Standard Library Bundling
+## Phase 5: Standard And Vendor Library Bundling
 
 - [ ] Define standard library release contents.
   - [ ] Static library artifact.
   - [ ] Binary package image artifact for compiler loading.
   - [ ] Inspector support to generate deterministic JSON/text package-image views
         on demand.
-  - [ ] Optional source tree for reference/debugging.
+  - [x] Source tree for reference/debugging/rebuilds.
   - [ ] Optional generated docs/signature metadata.
+
+- [ ] Define vendor library release contents.
+  - [ ] Official vendor library source tree.
+  - [ ] Binary package image artifacts for compiler loading where applicable.
+  - [ ] Native/static library artifacts or metadata required by bundled bindings.
+  - [ ] License files for bundled bindings and redistributed native pieces.
+  - [ ] Deterministic generated metadata, if the vendor library needs compiler
+        inspection without reparsing source.
 
 - [ ] Make ordinary builds discover bundled stdlib artifacts.
   - [ ] Add a dedicated stdlib discovery resolver with explicit inputs for target triple, profile, compiler stage, current project root, repo root, build root, compiler distribution root, and user config.
@@ -215,15 +305,19 @@ working and the need is concrete.
 
 ## Phase 6: Minimal Release Assembly
 
-- [ ] Add one release assembly script.
+- [ ] Add one release assembly script/workflow.
+  - [ ] Add a manually triggered GitHub Actions workflow (or equivalent) that
+        creates release archives for macOS, Windows, and Linux.
   - [ ] Publish the compiler for each runtime ID.
   - [ ] Acquire or locate the pinned LLVM toolchain.
   - [ ] Copy selected toolchain files.
   - [ ] Build standard library package artifacts.
+  - [ ] Build or copy vendor library artifacts.
   - [ ] Copy licenses.
+  - [ ] Copy `INSTALL.md` with per-OS setup instructions.
   - [ ] Create compressed release archives.
   - [ ] Emit a simple `RELEASE.txt` with compiler version, commit SHA, runtime
-        ID, LLVM version, and included stdlib/toolchain paths.
+        ID, LLVM version, and included stdlib/vendor/toolchain paths.
   - [ ] Emit archive checksums if the archive is published outside the repo.
 
 - [ ] Keep script modes minimal.
@@ -234,6 +328,8 @@ working and the need is concrete.
 ## Phase 7: Doctor And Diagnostics
 
 - [ ] Add `stark doctor`.
+  - Decision: `stark doctor` is a top-level compiler command, not a project-only
+    subcommand.
   - [ ] Print compiler version and runtime ID.
   - [ ] Print toolchain resolution source.
   - [ ] Print resolved `clang`, linker, and archiver paths.
@@ -249,7 +345,8 @@ concrete.
 - [ ] Add targeted recommendations.
   - [ ] Missing bundled toolchain.
   - [ ] Missing macOS Command Line Tools.
-  - [ ] Missing Linux libc development files.
+  - [ ] Missing Linux native dependency inputs when a selected vendor/native
+        library requires libc, pkg-config, or system libraries.
   - [ ] Missing Windows SDK/CRT pieces.
   - [ ] Native dependency package not found.
 
@@ -290,12 +387,14 @@ concrete.
 - [ ] Update user installation docs.
   - [ ] Download archive.
   - [ ] Add `bin` to `PATH`.
+  - [ ] Document any supported Stark environment variables.
   - [ ] Run `stark doctor`.
   - [ ] Compile hello world.
   - [ ] Explain platform SDK expectations.
 
 - [ ] Update contributor docs.
   - [ ] How to build release archives.
+  - [ ] How to run the manual release workflow.
   - [ ] How to update bundled LLVM.
   - [ ] How to run the release smoke check.
 
@@ -308,14 +407,6 @@ concrete.
 
 ## Open Decisions
 
-- [ ] Which LLVM version should be pinned for the first bundled release?
-- [ ] Should official LLVM binaries be used initially, or should Stark build trimmed LLVM toolchains?
-- [ ] Should the release include standard library source files by default?
-- [ ] Should `--toolchain-dir` apply only to LLVM tools, or also to platform-native helper tools?
-- [ ] Should `stark doctor` be a project command or a compiler mode?
-- [ ] Should Linux releases target glibc first, musl first, or both?
-- [ ] Should Windows releases prefer `lld-link` directly or `clang` as the linker driver?
-- [ ] Should macOS releases bundle LLVM but require Command Line Tools for SDK/linking, or attempt a deeper bundled story?
 
 ## Acceptance Criteria
 
@@ -324,4 +415,5 @@ concrete.
 - [ ] The compiler uses the bundled Clang/LLD/LLVM tools by default from the release archive.
 - [ ] Explicit user overrides still work for linker, archiver, target triple, and native dependency paths.
 - [ ] `stark doctor` identifies the active toolchain and explains missing platform requirements.
-- [ ] The release smoke checklist verifies archive behavior for each platform being published, automated when practical.
+- [ ] The release workflow verifies archive behavior for each platform being
+      published, automated when practical.

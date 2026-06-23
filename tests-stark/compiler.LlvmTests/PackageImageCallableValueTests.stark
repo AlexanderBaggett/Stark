@@ -66,7 +66,7 @@ finite law i32[min max] Apply(Facade.StrictTransform transform, i32[min max] val
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "call fastcc i32 %arg_transform(")
+    return Contains(llvm, "call fastcc i32 noundef %arg_transform(")
         && Contains(llvm, "willreturn")
         && Contains(llvm, "mustprogress")
         && Contains(llvm, "nosync")
@@ -121,7 +121,7 @@ fn i32[min max] Run(i32[min max] value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "call fastcc i32 %arg_transform(")
+    return Contains(llvm, "call fastcc i32 noundef %arg_transform(")
         && Contains(llvm, "willreturn")
         && Contains(llvm, "mustprogress")
         && Contains(llvm, "nosync")
