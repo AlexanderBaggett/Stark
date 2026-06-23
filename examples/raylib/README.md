@@ -18,7 +18,26 @@ The binding uses `[LinkName("...")]`, `[StructLayout(C)]`, and `ffi(c)` for
 direct calls, including small by-value structs such as `Vector2`, `Rectangle`,
 and `Color`. No Raylib-specific C shim is required for these aggregate carriers.
 
-Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. Callback typedefs are exposed as raw callback pointers until Stark has a dedicated C-callable callback ABI. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
+Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. The standalone example binding still exposes older raw callback aliases, while the bundled `Vendor.Raylib` binding uses typed `fnptr<unsafe ffi(c)>` callback carriers everywhere the C ABI is expressible. `TraceLogCallback` remains an explicit raw edge because Raylib uses `va_list`. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
+
+## Vendor Safe API Example
+
+`VendorRaylibSafeApis.stark` demonstrates the preferred bundled binding style:
+safe slices for file/data/audio payloads, Raylib-owned byte/text result owners,
+typed enum/flag carriers, `raymath` value helpers, `rlgl` wrappers, and a
+C-callable audio callback edge.
+
+Check it against the source tree:
+
+```bash
+./stark examples/raylib/VendorRaylibSafeApis.stark --check --no-stark-path -I vendor/src -I stdlib/src
+```
+
+Check it against the distributed Vendor package image:
+
+```bash
+./stark examples/raylib/VendorRaylibSafeApis.stark --check --no-stark-path -I vendor/dist -I stdlib/src
+```
 
 ## Headless Geometry Example
 

@@ -2156,6 +2156,75 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FfiFunctionBodiesPromoteToNativeCallbackFunctionPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+            unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+            {
+                return;
+            }
+
+            unsafe ffi(c) fn void Register(AudioCallback callback);
+
+            fn void Store(AudioCallback callback)
+            {
+                return;
+            }
+
+            unsafe fn void Run()
+            {
+                Register(FillAudio);
+                Store(FillAudio);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotions = typeCheckModel.FunctionPointerPromotions
+            .Where(static promotion => promotion.Signature.Name == "FillAudio")
+            .ToArray();
+        Assert.Equal(2, promotions.Length);
+        Assert.All(
+            promotions,
+            static promotion =>
+            {
+                Assert.Equal(StarkFfiAbi.C, promotion.Signature.FfiAbi ?? StarkFfiAbi.C);
+                Assert.True(promotion.TargetType.FunctionPointerIsUnsafe);
+                Assert.Equal(StarkFfiAbi.C, promotion.TargetType.FunctionPointerAbi);
+            });
+        var addressTaken = Assert.Single(typeCheckModel.AddressTakenFunctions);
+        Assert.Equal("FillAudio", addressTaken.Signature.Name);
+        Assert.Equal(StarkFfiAbi.C, addressTaken.Signature.FfiAbi ?? StarkFfiAbi.C);
+
+        var missingUnsafe = Compile(
+            """
+            module Demo
+
+            alias BadCallback = fnptr<ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+            fn void Register(BadCallback callback)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(missingUnsafe.Succeeded);
+        Assert.Contains(
+            missingUnsafe.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("uses raw pointer types and must be declared 'unsafe'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositions()
     {
         var result = Compile(
@@ -2299,6 +2368,52 @@ public sealed class TypeCheckingTests
                         }
                         """,
                         "Lib/Foundation.stark")
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void ImportedSourceConstantAliasesResolveInDeclaringModuleScope()
+    {
+        var result = Compile(
+            """
+            import Lib.Facade
+            module Demo
+
+            fn i32[min max] Run()
+            {
+                return Use();
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib.Facade", "Lib/Facade.stark"),
+                        """
+                        import Lib.Native
+                        module Lib.Facade
+
+                        public fn i32[min max] Use()
+                        {
+                            return 1;
+                        }
+                        """,
+                        "Lib/Facade.stark"
+                    ),
+                    (
+                        new ResolvedModuleReference("Lib.Native", "Lib/Native.stark"),
+                        """
+                        module Lib.Native
+
+                        public const Base = 15;
+                        public const Alias = Base;
+                        public const Next = Alias + 1;
+                        """,
+                        "Lib/Native.stark"
+                    )
                 ])));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

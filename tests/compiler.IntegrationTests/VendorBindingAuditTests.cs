@@ -410,6 +410,50 @@ public sealed partial class VendorBindingAuditTests
     }
 
     [Fact]
+    public void RaylibBundledHeadersMatchRecordedVersionAndInventory()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var nativeRaylibRoot = Path.Combine(repositoryRoot, "vendor", "dist", CheckedInRaylibTargetTriple, "native", "raylib");
+        var raylibHeader = File.ReadAllText(Path.Combine(nativeRaylibRoot, "raylib.h"));
+        var raymathHeader = File.ReadAllText(Path.Combine(nativeRaylibRoot, "raymath.h"));
+        var rlglHeader = File.ReadAllText(Path.Combine(nativeRaylibRoot, "rlgl.h"));
+        var bindingText = string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib"), "*.stark")
+                .OrderBy(static path => path, StringComparer.Ordinal)
+                .Select(File.ReadAllText));
+        bindingText += Environment.NewLine + File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib.stark"));
+
+        Assert.Contains("#define RAYLIB_VERSION  \"6.0\"", raylibHeader, StringComparison.Ordinal);
+        Assert.Contains("public const ascii RAYLIB_VERSION = \"6.0\";", bindingText, StringComparison.Ordinal);
+
+        var coreFunctions = ExtractRlapiFunctionNames(raylibHeader);
+        var raymathFunctions = ExtractRaymathFunctionNames(raymathHeader);
+        var rlglFunctions = ExtractRlapiFunctionNames(rlglHeader)
+            .Where(static name => name.StartsWith("rl", StringComparison.Ordinal))
+            .ToHashSet(StringComparer.Ordinal);
+        var coreStructs = ExtractTypedefStructNames(raylibHeader);
+        var enumValues = ExtractEnumValueNames(raylibHeader);
+        var callbacks = ExtractCallbackTypedefNames(raylibHeader);
+        var linkNames = LinkNameRegex().Matches(bindingText).Select(static match => match.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+        var directFfiNames = DirectFfiNameRegex().Matches(bindingText).Select(static match => match.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+        var boundNativeNames = new HashSet<string>(linkNames, StringComparer.Ordinal);
+        boundNativeNames.UnionWith(directFfiNames);
+
+        Assert.Equal(599, coreFunctions.Count);
+        Assert.Equal(35, coreStructs.Count);
+        Assert.Equal(303, enumValues.Count);
+        Assert.Equal(6, callbacks.Count);
+        Assert.Equal(146, raymathFunctions.Count);
+        Assert.Equal(163, rlglFunctions.Count);
+
+        Assert.Empty(coreFunctions.Except(boundNativeNames, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Empty(coreStructs.Except(ExtractPublicStructNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Empty(enumValues.Except(ExtractPublicConstNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Empty(callbacks.Except(ExtractPublicAliasNames(bindingText), StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+    }
+
+    [Fact]
     public void RaylibSixAllocatingTextFunctionsUseOwnedWrappersAndStaleModelPointSymbolsAreGone()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -425,7 +469,8 @@ public sealed partial class VendorBindingAuditTests
 
         Assert.Contains("public struct RaylibOwnedText", textBinding, StringComparison.Ordinal);
         Assert.Contains("mut drop", textBinding, StringComparison.Ordinal);
-        Assert.Contains("stark_raylib_Text_MemFree", textBinding, StringComparison.Ordinal);
+        Assert.Contains("stark_raylib_MemFree(self.Data)", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("stark_raylib_Text_MemFree", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("TextReplaceAlloc", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("TextInsertAlloc", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("TextReplaceBetweenAlloc", textBinding, StringComparison.Ordinal);
@@ -433,8 +478,347 @@ public sealed partial class VendorBindingAuditTests
         Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextReplace", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextInsert", textBinding, StringComparison.Ordinal);
         Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextReplaceBetween", textBinding, StringComparison.Ordinal);
-        Assert.DoesNotContain("DrawModelPoints", modelBinding, StringComparison.Ordinal);
-        Assert.DoesNotContain("DrawModelPointsEx", modelBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void DrawModelPoints(Model model, Vector3 position, f32 scale, Color tint)", modelBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void DrawModelPointsEx(Model model, Vector3 position, Vector3 rotationAxis, f32 rotationAngle, Vector3 scale, Color tint)", modelBinding, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaylibCallbacksUseTypedNativeFunctionPointersWhereAbiIsExpressible()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var raylibRoot = Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib");
+        var typesBinding = File.ReadAllText(Path.Combine(raylibRoot, "Types.stark"));
+        var coreBinding = File.ReadAllText(Path.Combine(raylibRoot, "Core.stark"));
+        var audioBinding = File.ReadAllText(Path.Combine(raylibRoot, "Audio.stark"));
+
+        Assert.Contains("public alias LoadFileDataCallback = fnptr<unsafe ffi(c) fn rawmutptr<u8[0 max]>(ascii, rawmutptr<i32[min max]>)>;", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("public alias SaveFileDataCallback = fnptr<unsafe ffi(c) fn bool(ascii, rawmutptr<i8[min max]>, i32[min max])>;", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("public alias SaveFileTextCallback = fnptr<unsafe ffi(c) fn bool(ascii, ascii)>;", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("public alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("Raylib's trace-log callback takes a C va_list", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("public alias TraceLogCallback = rawptr<i8[min max]>;", typesBinding, StringComparison.Ordinal);
+
+        foreach (var name in new[]
+        {
+            "SetLoadFileDataCallback",
+            "SetSaveFileDataCallback",
+            "SetLoadFileTextCallback",
+            "SetSaveFileTextCallback"
+        })
+        {
+            Assert.Contains($@"[LinkName(""{name}"")]", coreBinding, StringComparison.Ordinal);
+            Assert.Contains($"public fn void {name}(", coreBinding, StringComparison.Ordinal);
+            Assert.Contains($"public fn void Clear{name["Set".Length..]}()", coreBinding, StringComparison.Ordinal);
+            Assert.DoesNotContain($"public unsafe ffi fn void {name}", coreBinding, StringComparison.Ordinal);
+        }
+
+        foreach (var name in new[]
+        {
+            "SetAudioStreamCallback",
+            "AttachAudioStreamProcessor",
+            "DetachAudioStreamProcessor",
+            "AttachAudioMixedProcessor",
+            "DetachAudioMixedProcessor"
+        })
+        {
+            Assert.Contains($@"[LinkName(""{name}"")]", audioBinding, StringComparison.Ordinal);
+            Assert.Contains($"public fn void {name}(", audioBinding, StringComparison.Ordinal);
+            Assert.DoesNotContain($"public unsafe fn void {name}", audioBinding, StringComparison.Ordinal);
+            Assert.DoesNotContain($"public unsafe ffi fn void {name}", audioBinding, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("public fn void ClearAudioStreamCallback(AudioStream stream)", audioBinding, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaylibEnumFamiliesUseZeroCostTypedCarriersAndOverloads()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var raylibRoot = Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib");
+        var typesBinding = File.ReadAllText(Path.Combine(raylibRoot, "Types.stark"));
+        var coreBinding = File.ReadAllText(Path.Combine(raylibRoot, "Core.stark"));
+        var texturesBinding = File.ReadAllText(Path.Combine(raylibRoot, "Textures.stark"));
+        var textBinding = File.ReadAllText(Path.Combine(raylibRoot, "Text.stark"));
+        var modelsBinding = File.ReadAllText(Path.Combine(raylibRoot, "Models.stark"));
+
+        foreach (var carrier in new[]
+        {
+            "ConfigFlags",
+            "TraceLogLevel",
+            "KeyboardKey",
+            "MouseButton",
+            "MouseCursor",
+            "GamepadButton",
+            "GamepadAxis",
+            "MaterialMapIndex",
+            "ShaderLocationIndex",
+            "ShaderUniformDataType",
+            "ShaderAttributeDataType",
+            "PixelFormat",
+            "TextureFilter",
+            "TextureWrap",
+            "CubemapLayout",
+            "FontType",
+            "BlendMode",
+            "Gesture",
+            "CameraMode",
+            "CameraProjection",
+            "NPatchLayout"
+        })
+        {
+            Assert.Contains($"public struct {carrier}", typesBinding, StringComparison.Ordinal);
+            Assert.Contains($"public finite law {carrier} {carrier}FromNative", typesBinding, StringComparison.Ordinal);
+            Assert.Contains($"{carrier}Native({carrier} value)", typesBinding, StringComparison.Ordinal);
+        }
+
+        foreach (var valueFactory in new[]
+        {
+            "ConfigFlagVsyncHint",
+            "TraceLogWarning",
+            "KeyA",
+            "MouseButtonLeft",
+            "MouseCursorArrow",
+            "GamepadButtonLeftFaceUp",
+            "GamepadAxisLeftX",
+            "MaterialMapAlbedo",
+            "ShaderLocationMatrixMvp",
+            "ShaderUniformVec4",
+            "ShaderAttributeVec3",
+            "PixelFormatUncompressedR8g8b8a8",
+            "TextureFilterBilinear",
+            "TextureWrapRepeat",
+            "CubemapLayoutAutoDetect",
+            "FontTypeSdf",
+            "BlendAlpha",
+            "GestureTap",
+            "CameraModeFree",
+            "CameraProjectionPerspective",
+            "NPatchLayoutNinePatch"
+        })
+        {
+            Assert.Matches($@"public finite law \w+ {valueFactory}\(\)", typesBinding);
+        }
+
+        Assert.Contains("public fn bool IsKeyDown(KeyboardKey key)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void SetExitKey(KeyboardKey key)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn bool IsMouseButtonPressed(MouseButton button)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void SetMouseCursor(MouseCursor cursor)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn bool IsGamepadButtonPressed(i32[min max] gamepad, GamepadButton button)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn f32 GetGamepadAxisMovement(i32[min max] gamepad, GamepadAxis axis)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void SetConfigFlags(ConfigFlags flags)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void BeginBlendMode(BlendMode mode)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn Camera UpdateCamera(Camera camera, CameraMode mode)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void SetShaderValueMatrix(Shader shader, ShaderLocationIndex locIndex, Matrix mat)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus SetShaderValue(Shader shader, ShaderLocationIndex locIndex, borrow i8[min max][] value, ShaderUniformDataType uniformType)", coreBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus SetShaderValueV(Shader shader, ShaderLocationIndex locIndex, borrow i8[min max][] value, ShaderUniformDataType uniformType, i32[min max] count)", coreBinding, StringComparison.Ordinal);
+
+        Assert.Contains("public fn Image ImageFormat(Image image, PixelFormat newFormat)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn TextureCubemap LoadTextureCubemap(Image image, CubemapLayout layout)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void SetTextureFilter(Texture2D texture, TextureFilter filter)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn void SetTextureWrap(Texture2D texture, TextureWrap wrap)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn Color GetPixelColor(borrow i8[min max][] source, PixelFormat format)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus SetPixelColor(borrow mut i8[min max][] destination, Color color, PixelFormat format)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn i32[min max] GetPixelDataSize(i32[min max] width, i32[min max] height, PixelFormat format)", texturesBinding, StringComparison.Ordinal);
+
+        Assert.Contains("public unsafe ffi fn rawmutptr<GlyphInfo> LoadFontData", textBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn Material SetMaterialTexture(Material material, MaterialMapIndex mapType, Texture2D texture)", modelsBinding, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaylibLegacyRawSurfaceIsLimitedToDocumentedAdvancedEdges()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var raylibRoot = Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib");
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Core.stark:public unsafe ffi fn rawmutptr<i8[min max]> GetWindowHandle();",
+            "Core.stark:public unsafe ffi varargs fn void TraceLog(i32[min max] logLevel, ascii text);",
+            "Core.stark:public unsafe ffi fn void SetTraceLogCallback(TraceLogCallback callback);",
+            "Text.stark:public unsafe ffi fn rawmutptr<GlyphInfo> LoadFontData(rawptr<u8[0 max]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount, i32[min max] type);",
+            "Text.stark:public unsafe fn Image GenImageFontAtlas(rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod) {",
+            "Text.stark:public unsafe ffi fn void UnloadFontData(rawmutptr<GlyphInfo> glyphs, i32[min max] glyphCount);",
+            "Text.stark:public unsafe ffi fn rawmutptr<rawmutptr<i8[min max]>> LoadTextLines(ascii text, rawmutptr<i32[min max]> count);",
+            "Text.stark:public unsafe ffi fn void UnloadTextLines(rawmutptr<rawmutptr<i8[min max]>> text, i32[min max] lineCount);",
+            "Text.stark:public ffi varargs unsafe fn rawptr<i8[min max]> TextFormat(ascii text);",
+            "Text.stark:public unsafe ffi fn rawptr<i8[min max]> TextJoin(rawptr<rawptr<i8[min max]>> textList, i32[min max] count, ascii delimiter);",
+            "Text.stark:public unsafe ffi fn rawptr<rawptr<i8[min max]>> TextSplit(ascii text, i8[min max] delimiter, rawmutptr<i32[min max]> count);",
+            "Text.stark:public unsafe ffi fn void TextAppend(rawmutptr<i8[min max]> text, ascii append, rawmutptr<i32[min max]> position);",
+            "Types.stark:public alias ModelAnimPose = rawmutptr<Transform>;",
+            "Types.stark:public alias TraceLogCallback = rawptr<i8[min max]>;",
+            "Types.stark:public alias LoadFileDataCallback = fnptr<unsafe ffi(c) fn rawmutptr<u8[0 max]>(ascii, rawmutptr<i32[min max]>)>;",
+            "Types.stark:public alias SaveFileDataCallback = fnptr<unsafe ffi(c) fn bool(ascii, rawmutptr<i8[min max]>, i32[min max])>;",
+            "Types.stark:public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;",
+            "Types.stark:public alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;"
+        };
+
+        var actual = Directory.EnumerateFiles(raylibRoot, "*.stark")
+            .SelectMany(path => File.ReadLines(path).Select(line => (FileName: Path.GetFileName(path), Line: line.TrimStart())))
+            .Where(static entry => entry.Line.StartsWith("public unsafe", StringComparison.Ordinal)
+                || entry.Line.StartsWith("public ffi varargs unsafe", StringComparison.Ordinal)
+                || PublicRawPointerRegex().IsMatch(entry.Line))
+            .Select(static entry => $"{entry.FileName}:{entry.Line}")
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(actual.Except(allowed, StringComparer.Ordinal).OrderBy(static line => line, StringComparer.Ordinal));
+        Assert.Empty(allowed.Except(actual, StringComparer.Ordinal).OrderBy(static line => line, StringComparer.Ordinal));
+
+        var coreBinding = File.ReadAllText(Path.Combine(raylibRoot, "Core.stark"));
+        var texturesBinding = File.ReadAllText(Path.Combine(raylibRoot, "Textures.stark"));
+        var textBinding = File.ReadAllText(Path.Combine(raylibRoot, "Text.stark"));
+        var modelsBinding = File.ReadAllText(Path.Combine(raylibRoot, "Models.stark"));
+        var audioBinding = File.ReadAllText(Path.Combine(raylibRoot, "Audio.stark"));
+        var ownersBinding = File.ReadAllText(Path.Combine(raylibRoot, "Owners.stark"));
+
+        foreach (var safeSignature in new[]
+        {
+            "public fn RaylibBytesResult LoadFileData(ascii fileName)",
+            "public fn bool SaveFileData(ascii fileName, borrow u8[0 max][] data)",
+            "public fn System.Memory.MemoryResult<System.Text.OwnedAscii> GetFileName(ascii filePath)",
+            "public fn RaylibBytesResult CompressData(borrow u8[0 max][] data)",
+            "public fn bool ComputeSHA256(borrow u8[0 max][] data, out u32[0 max][8] hash)"
+        })
+        {
+            Assert.Contains(safeSignature, coreBinding, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("public fn Image LoadImageFromMemory(ascii fileType, borrow u8[0 max][] fileData)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibColorsResult LoadImageColors(Image image)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus UpdateTexture(Texture2D texture, borrow i8[min max][] pixels)", texturesBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn Wave LoadWaveFromMemory(ascii fileType, borrow u8[0 max][] fileData)", audioBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibWaveSamplesResult LoadWaveSamples(Wave wave)", audioBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibTextResult LoadUTF8(borrow i32[min max][] codepoints)", textBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibCodepointsResult LoadCodepoints(ascii text)", textBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus DrawTextCodepoints(Font font, borrow i32[min max][] codepoints", textBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus UpdateMeshBuffer(Mesh mesh, i32[min max] index, borrow i8[min max][] data", modelsBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn RaylibStatus DrawMeshInstanced(Mesh mesh, Material material, borrow Matrix[] transforms)", modelsBinding, StringComparison.Ordinal);
+        Assert.Contains("public struct OwnedMaterials", ownersBinding, StringComparison.Ordinal);
+        Assert.Contains("public fn OwnedMaterials LoadOwnedMaterials(ascii fileName)", ownersBinding, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaylibResourceOwnersCoverUnloadFamiliesWithoutPublicRawSurface()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var raylibRoot = Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib");
+        var rootBinding = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib.stark"));
+        var ownersBinding = File.ReadAllText(Path.Combine(raylibRoot, "Owners.stark"));
+
+        Assert.Contains("export import Vendor.Raylib.Owners", rootBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", ownersBinding, StringComparison.Ordinal);
+        Assert.Empty(PublicRawPointerRegex().Matches(ownersBinding).Select(static match => match.Value).ToArray());
+
+        foreach (var owner in new[]
+        {
+            "OwnedImage",
+            "OwnedTexture2D",
+            "OwnedRenderTexture2D",
+            "OwnedFont",
+            "OwnedShader",
+            "OwnedMesh",
+            "OwnedMaterial",
+            "OwnedMaterials",
+            "OwnedModel",
+            "OwnedModelAnimations",
+            "OwnedWave",
+            "OwnedSound",
+            "OwnedSoundAlias",
+            "OwnedMusic",
+            "OwnedAudioStream",
+            "OwnedVrStereoConfig",
+            "OwnedDirectoryFiles",
+            "OwnedDroppedFiles",
+            "OwnedAutomationEventList"
+        })
+        {
+            Assert.Contains($"public struct {owner}", ownersBinding, StringComparison.Ordinal);
+            Assert.Contains("public inline finite law", ownersBinding.AsSpan(
+                ownersBinding.IndexOf($"public struct {owner}", StringComparison.Ordinal)).ToString(),
+                StringComparison.Ordinal);
+            Assert.Contains("public fn void Close(mut borrow", ownersBinding.AsSpan(
+                ownersBinding.IndexOf($"public struct {owner}", StringComparison.Ordinal)).ToString(),
+                StringComparison.Ordinal);
+            Assert.Contains("mut drop", ownersBinding.AsSpan(
+                ownersBinding.IndexOf($"public struct {owner}", StringComparison.Ordinal)).ToString(),
+                StringComparison.Ordinal);
+        }
+
+        foreach (var factory in new[]
+        {
+            "OwnImage",
+            "LoadOwnedImage",
+            "OwnTexture2D",
+            "LoadOwnedTexture",
+            "LoadOwnedTextureFromImage",
+            "OwnRenderTexture2D",
+            "LoadOwnedRenderTexture",
+            "OwnFont",
+            "LoadOwnedFont",
+            "LoadOwnedFontFromImage",
+            "OwnShader",
+            "LoadOwnedShader",
+            "LoadOwnedShaderFromMemory",
+            "OwnMesh",
+            "OwnMaterial",
+            "LoadOwnedMaterialDefault",
+            "LoadOwnedMaterials",
+            "OwnModel",
+            "LoadOwnedModel",
+            "LoadOwnedModelFromMesh",
+            "LoadOwnedModelAnimations",
+            "OwnWave",
+            "LoadOwnedWave",
+            "OwnSound",
+            "LoadOwnedSound",
+            "LoadOwnedSoundFromWave",
+            "OwnSoundAlias",
+            "LoadOwnedSoundAlias",
+            "OwnMusic",
+            "LoadOwnedMusicStream",
+            "OwnAudioStream",
+            "LoadOwnedAudioStream",
+            "OwnVrStereoConfig",
+            "LoadOwnedVrStereoConfig",
+            "OwnDirectoryFiles",
+            "LoadOwnedDirectoryFiles",
+            "LoadOwnedDirectoryFilesEx",
+            "OwnDroppedFiles",
+            "LoadOwnedDroppedFiles",
+            "OwnAutomationEventList",
+            "LoadOwnedAutomationEventList"
+        })
+        {
+            Assert.Matches($@"public fn\s+[A-Za-z0-9_<>\[\]\s\*\- ]+\s+{Regex.Escape(factory)}\(", ownersBinding);
+        }
+
+        foreach (var unload in new[]
+        {
+            "UnloadImage",
+            "UnloadTexture",
+            "UnloadRenderTexture",
+            "UnloadFont",
+            "UnloadShader",
+            "UnloadMesh",
+            "UnloadMaterial",
+            "UnloadModel",
+            "UnloadModelAnimations",
+            "UnloadWave",
+            "UnloadSound",
+            "UnloadSoundAlias",
+            "UnloadMusicStream",
+            "UnloadAudioStream",
+            "UnloadVrStereoConfig",
+            "UnloadDirectoryFiles",
+            "UnloadDroppedFiles",
+            "UnloadAutomationEventList"
+        })
+        {
+            Assert.Contains($"{unload}(", ownersBinding, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("public fn bool TryGet(borrow OwnedModelAnimations self", ownersBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn OwnedModelAnimations", ownersBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("DataPointer", ownersBinding, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -538,11 +922,108 @@ public sealed partial class VendorBindingAuditTests
             .ToHashSet(StringComparer.Ordinal);
     }
 
+    private static HashSet<string> ExtractRlapiFunctionNames(string headerText)
+    {
+        return RlapiFunctionRegex().Matches(headerText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractRaymathFunctionNames(string headerText)
+    {
+        return RaymathFunctionRegex().Matches(headerText)
+            .Select(static match => match.Groups[1].Value)
+            .Where(static name => char.IsUpper(name[0]))
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractTypedefStructNames(string headerText)
+    {
+        return TypedefStructRegex().Matches(headerText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractEnumValueNames(string headerText)
+    {
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match block in TypedefEnumBlockRegex().Matches(headerText))
+        {
+            foreach (Match value in EnumValueRegex().Matches(block.Groups[1].Value))
+            {
+                values.Add(value.Groups[1].Value);
+            }
+        }
+
+        return values;
+    }
+
+    private static HashSet<string> ExtractCallbackTypedefNames(string headerText)
+    {
+        return CallbackTypedefRegex().Matches(headerText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractPublicStructNames(string sourceText)
+    {
+        return PublicStructRegex().Matches(sourceText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractPublicConstNames(string sourceText)
+    {
+        return PublicConstRegex().Matches(sourceText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractPublicAliasNames(string sourceText)
+    {
+        return PublicAliasRegex().Matches(sourceText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
     [GeneratedRegex(@"^\s*public\s+(?:inline\s+)?(?:finite\s+law\s+|finite\s+|law\s+|fn\s+)?[^{;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex PublicFunctionNameRegex();
 
     [GeneratedRegex(@"\[LinkName\(""((?:rl|rlgl)[A-Za-z0-9_]*)""\)\]\s*\r?\n\s*internal\s+unsafe\s+ffi\s+fn", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex RlglLinkNameRegex();
+
+    [GeneratedRegex(@"^\s*RLAPI\s+[^;\r\n]*?[*\s]+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex RlapiFunctionRegex();
+
+    [GeneratedRegex(@"^\s*(?:RMAPI|RAYMATHAPI|RAYMATH_INLINE|static\s+inline)\s+[^;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex RaymathFunctionRegex();
+
+    [GeneratedRegex(@"typedef\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{", RegexOptions.CultureInvariant)]
+    private static partial Regex TypedefStructRegex();
+
+    [GeneratedRegex(@"typedef\s+enum(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*\{(?<body>.*?)\}\s*[A-Za-z_][A-Za-z0-9_]*\s*;", RegexOptions.Singleline | RegexOptions.CultureInvariant)]
+    private static partial Regex TypedefEnumBlockRegex();
+
+    [GeneratedRegex(@"^\s*([A-Z][A-Z0-9_]+)\s*(?:=|,|//)", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex EnumValueRegex();
+
+    [GeneratedRegex(@"typedef\s+[^;\r\n]*\(\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex CallbackTypedefRegex();
+
+    [GeneratedRegex(@"\[LinkName\(""([^""]+)""\)\]", RegexOptions.CultureInvariant)]
+    private static partial Regex LinkNameRegex();
+
+    [GeneratedRegex(@"^\s*(?:public|internal)\s+(?=[^;\r\n]*\bffi\b)(?=[^;\r\n]*\bfn\b)[^;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex DirectFfiNameRegex();
+
+    [GeneratedRegex(@"^\s*public\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex PublicStructRegex();
+
+    [GeneratedRegex(@"^\s*public\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex PublicConstRegex();
+
+    [GeneratedRegex(@"^\s*public\s+alias\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex PublicAliasRegex();
 
     private sealed record VendorBinding(
         string Name,

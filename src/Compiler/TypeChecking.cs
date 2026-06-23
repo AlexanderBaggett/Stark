@@ -2538,7 +2538,9 @@ internal sealed class TypeChecker
                         parameters.Add(CreateTypedParameterSymbol(parameter, parameterType, rawPointerElementCountExpression));
                     }
 
-                    if (!isUnsafe && (ContainsRawPointer(returnType) || parameters.Any(static parameter => ContainsRawPointer(parameter.Type))))
+                    if (!isUnsafe
+                        && (ContainsRawPointerRequiringUnsafeFunctionSurface(returnType)
+                            || parameters.Any(static parameter => ContainsRawPointerRequiringUnsafeFunctionSurface(parameter.Type))))
                     {
                         ReportError(
                             "STK3024",
@@ -3987,17 +3989,29 @@ internal sealed class TypeChecker
                             "a global constant type",
                             currentModuleName: module.SyntaxModel.ModuleName,
                             validateInitializer: false);
-                        _globals[QualifyName(module, declarator.Identifier().GetText())] = new VariableSymbol(
-                            QualifyName(module, declarator.Identifier().GetText()),
+                        var qualifiedName = QualifyName(module, declarator.Identifier().GetText());
+                        var moduleScope = Scope.CreateRoot(_globals);
+                        var constantValue = TryEvaluateCompileTimeConstant(
+                            declarator.variableInitializer(),
+                            moduleScope,
+                            declaredType,
+                            out var evaluatedConstant,
+                            currentModuleName: module.SyntaxModel.ModuleName)
+                            ? evaluatedConstant
+                            : (CompileTimeConstant?)null;
+                        _globals[qualifiedName] = new VariableSymbol(
+                            qualifiedName,
                             declaredType,
                             IsMutable: false,
                             IsConstant: true,
                             BindingKind: GlobalBindingKind.Const,
+                            ConstantValue: constantValue,
                             ConstantInitializer: TryBuildTypedConstantInitializer(
                                 declarator.variableInitializer(),
                                 declaredType,
-                                Scope.CreateRoot(_globals),
-                                out var constantInitializer)
+                                moduleScope,
+                                out var constantInitializer,
+                                currentModuleName: module.SyntaxModel.ModuleName)
                                 ? constantInitializer
                                 : null);
                     }
@@ -10316,7 +10330,8 @@ internal sealed class TypeChecker
                 declarator,
                 scope,
                 usage,
-                validateInitializer);
+                validateInitializer,
+                currentModuleName);
         }
 
         if (typeContext is not null)
@@ -10339,7 +10354,12 @@ internal sealed class TypeChecker
                 CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
             }
 
-            if (TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), scope, out var constantType, out var constant))
+            if (TryInferCompileTimeConstantStorageType(
+                    declarator.variableInitializer(),
+                    scope,
+                    out var constantType,
+                    out var constant,
+                    currentModuleName))
             {
                 if (constantType.Kind is StarkTypeKind.Integer or StarkTypeKind.Float)
                 {
@@ -10361,7 +10381,7 @@ internal sealed class TypeChecker
             return declaredType;
         }
 
-        var inferredType = InferConstantDeclarationType(declarator, scope, usage);
+        var inferredType = InferConstantDeclarationType(declarator, scope, usage, currentModuleName);
         return ValidateRuntimeValueType(inferredType, declarator, usage);
     }
 
@@ -10370,10 +10390,16 @@ internal sealed class TypeChecker
         StarkParser.ConstantDeclaratorContext declarator,
         Scope scope,
         string usage,
-        bool validateInitializer)
+        bool validateInitializer,
+        string? currentModuleName = null)
     {
         var declaredType = ResolveConstIntegerStorageType(integerTypeToken);
-        if (!TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), scope, out var constantType, out var constant)
+        if (!TryInferCompileTimeConstantStorageType(
+                declarator.variableInitializer(),
+                scope,
+                out var constantType,
+                out var constant,
+                currentModuleName)
             || constantType.Kind != StarkTypeKind.Integer)
         {
             if (validateInitializer)
@@ -10506,10 +10532,11 @@ internal sealed class TypeChecker
     private StarkTypeSymbol InferConstantDeclarationType(
         StarkParser.ConstantDeclaratorContext declarator,
         Scope scope,
-        string usage)
+        string usage,
+        string? currentModuleName = null)
     {
         var initializer = declarator.variableInitializer();
-        if (TryInferCompileTimeConstantStorageType(initializer, scope, out var constantType))
+        if (TryInferCompileTimeConstantStorageType(initializer, scope, out var constantType, currentModuleName))
         {
             return constantType;
         }
@@ -10529,21 +10556,23 @@ internal sealed class TypeChecker
     private bool TryInferCompileTimeConstantStorageType(
         StarkParser.VariableInitializerContext initializer,
         Scope scope,
-        out StarkTypeSymbol type)
+        out StarkTypeSymbol type,
+        string? currentModuleName = null)
     {
-        return TryInferCompileTimeConstantStorageType(initializer, scope, out type, out _);
+        return TryInferCompileTimeConstantStorageType(initializer, scope, out type, out _, currentModuleName);
     }
 
     private bool TryInferCompileTimeConstantStorageType(
         StarkParser.VariableInitializerContext initializer,
         Scope scope,
         out StarkTypeSymbol type,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         type = StarkTypeSymbols.Error;
         constant = default;
 
-        if (!TryEvaluateCompileTimeConstant(initializer, scope, targetType: null, out constant))
+        if (!TryEvaluateCompileTimeConstant(initializer, scope, targetType: null, out constant, currentModuleName))
         {
             return false;
         }
@@ -10567,23 +10596,25 @@ internal sealed class TypeChecker
         StarkParser.VariableInitializerContext initializer,
         Scope scope,
         StarkTypeSymbol? targetType,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         constant = default;
         if (initializer.expression() is { } expression)
         {
+            var evaluationModuleName = currentModuleName ?? CurrentFunctionModuleName;
             var resolver = (TryResolveCompileTimeIdentifier)((string name, out CompileTimeConstant value) =>
-                TryResolveCompileTimeConstant(scope, name, out value));
+                TryResolveCompileTimeConstant(scope, name, out value, evaluationModuleName));
             var evaluated = IsComptimeBlockExpression(expression, out var block)
                 ? CompileTimeEvaluator.TryEvaluateBlock(
                     block,
-                    CurrentFunctionModuleName,
+                    evaluationModuleName,
                     targetType,
                     out constant,
                     resolver)
                 : CompileTimeEvaluator.TryEvaluateExpression(
                     expression,
-                    CurrentFunctionModuleName,
+                    evaluationModuleName,
                     state: null,
                     activeCalls: null,
                     out constant,
@@ -11240,12 +11271,13 @@ internal sealed class TypeChecker
         StarkParser.VariableInitializerContext initializer,
         StarkTypeSymbol targetType,
         Scope scope,
-        out TypedConstantInitializer typedInitializer)
+        out TypedConstantInitializer typedInitializer,
+        string? currentModuleName = null)
     {
         typedInitializer = default!;
 
         if (initializer.expression() is not null
-            && TryEvaluateCompileTimeConstant(initializer, scope, targetType, out var constant)
+            && TryEvaluateCompileTimeConstant(initializer, scope, targetType, out var constant, currentModuleName)
             && TryBuildTypedConstantInitializer(constant, targetType, out typedInitializer))
         {
             return true;
@@ -11267,7 +11299,8 @@ internal sealed class TypeChecker
                     arrayInitializer.variableInitializer(index),
                     elementType,
                     scope,
-                    out var elementInitializer))
+                    out var elementInitializer,
+                    currentModuleName))
             {
                 typedInitializer = default!;
                 return false;
@@ -11419,9 +11452,9 @@ internal sealed class TypeChecker
     {
         return new CompileTimeEvaluationServices(
             TryResolveIdentifier: (string name, out CompileTimeConstant constant) =>
-                TryResolveCompileTimeConstant(scope, name, out constant),
+                TryResolveCompileTimeConstant(scope, name, out constant, CurrentFunctionModuleName),
             TryEvaluatePostfixExpression: (StarkParser.PostfixExpressionContext expression, CompileTimeEvaluationServices _, out CompileTimeConstant constant) =>
-                TryResolveCompileTimePostfixConstant(scope, expression, out constant),
+                TryResolveCompileTimePostfixConstant(scope, expression, out constant, CurrentFunctionModuleName),
             TryEvaluateTypeLayoutExpression: (StarkParser.PrimaryExpressionContext expression, out CompileTimeConstant constant) =>
             {
                 var kind = expression.ALIGNOF() is not null
@@ -11448,7 +11481,8 @@ internal sealed class TypeChecker
     private bool TryResolveCompileTimePostfixConstant(
         Scope scope,
         StarkParser.PostfixExpressionContext expression,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         constant = default;
 
@@ -11487,7 +11521,7 @@ internal sealed class TypeChecker
                 continue;
             }
 
-            if (TryResolveCompileTimeConstant(scope, string.Join(".", parts), out var resolved)
+            if (TryResolveCompileTimeConstant(scope, string.Join(".", parts), out var resolved, currentModuleName)
                 && TryGetCompileTimeNamedAggregateField(resolved, memberName, out var projected))
             {
                 current = projected;
@@ -11504,7 +11538,7 @@ internal sealed class TypeChecker
             return true;
         }
 
-        return TryResolveCompileTimeConstant(scope, string.Join(".", parts), out constant);
+        return TryResolveCompileTimeConstant(scope, string.Join(".", parts), out constant, currentModuleName);
     }
 
     private bool TryGetCompileTimeNamedAggregateField(
@@ -11552,10 +11586,11 @@ internal sealed class TypeChecker
         return true;
     }
 
-    private static bool TryResolveCompileTimeConstant(
+    private bool TryResolveCompileTimeConstant(
         Scope scope,
         string name,
-        out CompileTimeConstant constant)
+        out CompileTimeConstant constant,
+        string? currentModuleName = null)
     {
         if (scope.TryLookup(name, out var symbol)
             && symbol.BindingKind is null or GlobalBindingKind.Const
@@ -11563,6 +11598,30 @@ internal sealed class TypeChecker
         {
             constant = value;
             return true;
+        }
+
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(currentModuleName))
+        {
+            if (scope.TryLookup($"{currentModuleName}.{name}", out symbol!)
+                && symbol.BindingKind is null or GlobalBindingKind.Const
+                && symbol.ConstantValue is { } moduleValue)
+            {
+                constant = moduleValue;
+                return true;
+            }
+
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, name))
+            {
+                if (scope.TryLookup(candidateName, out symbol!)
+                    && symbol.BindingKind is null or GlobalBindingKind.Const
+                    && symbol.ConstantValue is { } importedValue
+                    && IsGlobalCandidateAccessibleFrom(currentModuleName, candidateName))
+                {
+                    constant = importedValue;
+                    return true;
+                }
+            }
         }
 
         constant = default;
@@ -23239,6 +23298,27 @@ internal sealed class TypeChecker
             || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsRawPointer);
     }
 
+    private static bool ContainsRawPointerRequiringUnsafeFunctionSurface(StarkTypeSymbol type)
+    {
+        if (type.Kind == StarkTypeKind.RawPointer)
+        {
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.FunctionPointer
+            && type.FunctionPointerIsUnsafe)
+        {
+            return false;
+        }
+
+        return type.ElementType is not null && ContainsRawPointerRequiringUnsafeFunctionSurface(type.ElementType)
+            || type.FunctionPointerParameterTypes is { Count: > 0 } && type.FunctionPointerParameterTypes.Any(ContainsRawPointerRequiringUnsafeFunctionSurface)
+            || type.FunctionPointerReturnType is not null && ContainsRawPointerRequiringUnsafeFunctionSurface(type.FunctionPointerReturnType)
+            || type.ClosureParameterTypes is { Count: > 0 } && type.ClosureParameterTypes.Any(ContainsRawPointerRequiringUnsafeFunctionSurface)
+            || type.ClosureReturnType is not null && ContainsRawPointerRequiringUnsafeFunctionSurface(type.ClosureReturnType)
+            || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsRawPointerRequiringUnsafeFunctionSurface);
+    }
+
     private static string GetExplicitConversionHint(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
@@ -25292,17 +25372,39 @@ internal sealed class TypeChecker
     // within a single whole-package build.
     private bool IsModuleMemberAccessible(string? declaringModuleName, StarkVisibility visibility)
     {
+        return IsModuleMemberAccessibleFrom(CurrentFunctionModuleName, declaringModuleName, visibility);
+    }
+
+    private bool IsModuleMemberAccessibleFrom(
+        string fromModuleName,
+        string? declaringModuleName,
+        StarkVisibility visibility)
+    {
         return visibility switch
         {
             StarkVisibility.Module =>
                 declaringModuleName is null
-                || string.Equals(declaringModuleName, CurrentFunctionModuleName, StringComparison.Ordinal),
+                || string.Equals(declaringModuleName, fromModuleName, StringComparison.Ordinal),
             StarkVisibility.Internal =>
                 declaringModuleName is null || IsSameSourcePackageModule(declaringModuleName),
             StarkVisibility.Public => true,
             StarkVisibility.Export => true,
             _ => false
         };
+    }
+
+    private bool IsGlobalCandidateAccessibleFrom(string fromModuleName, string qualifiedName)
+    {
+        var declaringModuleName = DeclaringModuleOfQualifiedKey(qualifiedName);
+        if (declaringModuleName is null
+            || !IsLoadedModuleName(declaringModuleName))
+        {
+            return true;
+        }
+
+        var localName = qualifiedName[(declaringModuleName.Length + 1)..];
+        return !TryGetGlobalVisibility(declaringModuleName, localName, out var visibility)
+            || IsModuleMemberAccessibleFrom(fromModuleName, declaringModuleName, visibility);
     }
 
     private bool IsSameSourcePackageModule(string declaringModuleName)

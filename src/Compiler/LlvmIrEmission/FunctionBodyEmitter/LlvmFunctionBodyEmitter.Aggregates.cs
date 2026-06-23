@@ -1003,6 +1003,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return true;
         }
 
+        if (IsUnmaterializedIndirectParameterReference(reference))
+        {
+            return false;
+        }
+
         if (!visitedValueNames.Add(reference.Name))
         {
             return false;
@@ -1041,6 +1046,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         return !CanDeferAddressForwardedAggregateValueInstruction(reference.Name, definition);
+    }
+
+    private bool IsUnmaterializedIndirectParameterReference(SsaValueReference reference)
+    {
+        return !_materializedParameters.ContainsKey(reference.Name)
+            && _abiFunction.UserParameters.Any(parameter =>
+                parameter.Kind == AbiParameterKind.IndirectIn
+                && NormalizeAggregateType(parameter.SourceType) == NormalizeAggregateType(reference.Type)
+                && (string.Equals(parameter.LlvmName, reference.Name, StringComparison.Ordinal)
+                    || string.Equals(parameter.SourceName, reference.Name, StringComparison.Ordinal)));
     }
 
     private bool CanAliasLocalToFreshIndirectAggregateSource(SsaValue value, StarkTypeSymbol localType)

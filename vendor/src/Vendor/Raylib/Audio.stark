@@ -2,6 +2,110 @@ import Vendor.Raylib.Types
 export import Vendor.Raylib.Types
 module Vendor.Raylib.Audio
 
+public enum RaylibWaveSamplesResult
+{
+    [Ok] Ok(RaylibOwnedWaveSamples),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedWaveSamples
+{
+    internal rawmutptr<f32> Data;
+    internal u64[0 2 ** 63 - 1] Count;
+
+    RaylibOwnedWaveSamples()
+    {
+        self.Data = null;
+        self.Count = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedWaveSamples self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow RaylibOwnedWaveSamples self, u64[0 2 ** 63 - 1] index, out f32 value)
+    {
+        value = 0.0f;
+        if (index >= self.Count || self.Data == null)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            value = *(&self.Data[index]);
+        }
+
+        return true;
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedWaveSamples self, borrow mut f32[] destination)
+    {
+        if (destination.Length < self.Count)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < self.Count)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    public fn void Close(mut borrow RaylibOwnedWaveSamples self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_UnloadWaveSamples(self.Data);
+                self.Data = null;
+                self.Count = 0;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal unsafe inline finite law rawptr<u8[0 max]> ReadU8OrNull(borrow u8[0 max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawptr<i8[min max]> ReadI8OrNull(borrow i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
+
 [LinkName("InitAudioDevice")]
 internal unsafe ffi fn void stark_raylib_InitAudioDevice();
 public fn void InitAudioDevice() {
@@ -50,9 +154,14 @@ public fn Wave LoadWave(ascii fileName) {
 
 [LinkName("LoadWaveFromMemory")]
 internal unsafe ffi fn Wave stark_raylib_LoadWaveFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize);
-public unsafe fn Wave LoadWaveFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize) {
+public fn Wave LoadWaveFromMemory(ascii fileType, borrow u8[0 max][] fileData) {
+    if (TooManyForI32(fileData.Length))
+    {
+        return DefaultWave();
+    }
+
     unsafe {
-        return stark_raylib_LoadWaveFromMemory(fileType, fileData, dataSize);
+        return stark_raylib_LoadWaveFromMemory(fileType, ReadU8OrNull(fileData), (i32[min max])fileData.Length);
     }
 }
 
@@ -98,11 +207,17 @@ public fn bool IsSoundValid(Sound sound) {
 
 [LinkName("UpdateSound")]
 internal unsafe ffi fn void stark_raylib_UpdateSound(Sound sound, rawptr<i8[min max]> data, i32[min max] sampleCount);
-public unsafe fn void UpdateSound(Sound sound, rawptr<i8[min max]> data, i32[min max] sampleCount) {
-    unsafe {
-        stark_raylib_UpdateSound(sound, data, sampleCount);
+public fn RaylibStatus UpdateSound(Sound sound, borrow i8[min max][] data, i32[min max] sampleCount) {
+    if (data.Length == 0 || sampleCount < 0)
+    {
+        return RaylibStatus.InvalidArgument;
     }
-    return;
+
+    unsafe {
+        stark_raylib_UpdateSound(sound, ReadI8OrNull(data), sampleCount);
+    }
+
+    return RaylibStatus.Ok;
 }
 
 [LinkName("UnloadWave")]
@@ -249,13 +364,25 @@ public fn Wave WaveFormat(Wave wave, i32[min max] sampleRate, i32[min max] sampl
 
 [LinkName("LoadWaveSamples")]
 internal unsafe ffi fn rawmutptr<f32> stark_raylib_LoadWaveSamples(Wave wave);
-public unsafe fn rawmutptr<f32> LoadWaveSamples(Wave wave) {
+public fn RaylibWaveSamplesResult LoadWaveSamples(Wave wave) {
     unsafe {
-        return stark_raylib_LoadWaveSamples(wave);
+        stack rawmutptr<f32> samples = stark_raylib_LoadWaveSamples(wave);
+        if (samples == null)
+        {
+            return RaylibWaveSamplesResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])wave.FrameCount * (u64[0 2 ** 63 - 1])wave.Channels;
+        return RaylibWaveSamplesResult.Ok(new RaylibOwnedWaveSamples()
+        {
+            Data = samples,
+            Count = count
+        });
     }
 }
 
-public unsafe ffi fn void UnloadWaveSamples(rawmutptr<f32> samples);
+[LinkName("UnloadWaveSamples")]
+internal unsafe ffi fn void stark_raylib_UnloadWaveSamples(rawmutptr<f32> samples);
 [LinkName("LoadMusicStream")]
 internal unsafe ffi fn Music stark_raylib_LoadMusicStream(ascii fileName);
 public fn Music LoadMusicStream(ascii fileName) {
@@ -266,9 +393,14 @@ public fn Music LoadMusicStream(ascii fileName) {
 
 [LinkName("LoadMusicStreamFromMemory")]
 internal unsafe ffi fn Music stark_raylib_LoadMusicStreamFromMemory(ascii fileType, rawptr<u8[0 max]> data, i32[min max] dataSize);
-public unsafe fn Music LoadMusicStreamFromMemory(ascii fileType, rawptr<u8[0 max]> data, i32[min max] dataSize) {
+public fn Music LoadMusicStreamFromMemory(ascii fileType, borrow u8[0 max][] data) {
+    if (TooManyForI32(data.Length))
+    {
+        return DefaultMusic();
+    }
+
     unsafe {
-        return stark_raylib_LoadMusicStreamFromMemory(fileType, data, dataSize);
+        return stark_raylib_LoadMusicStreamFromMemory(fileType, ReadU8OrNull(data), (i32[min max])data.Length);
     }
 }
 
@@ -421,11 +553,17 @@ public fn void UnloadAudioStream(AudioStream stream) {
 
 [LinkName("UpdateAudioStream")]
 internal unsafe ffi fn void stark_raylib_UpdateAudioStream(AudioStream stream, rawptr<i8[min max]> data, i32[min max] frameCount);
-public unsafe fn void UpdateAudioStream(AudioStream stream, rawptr<i8[min max]> data, i32[min max] frameCount) {
-    unsafe {
-        stark_raylib_UpdateAudioStream(stream, data, frameCount);
+public fn RaylibStatus UpdateAudioStream(AudioStream stream, borrow i8[min max][] data, i32[min max] frameCount) {
+    if (data.Length == 0 || frameCount < 0)
+    {
+        return RaylibStatus.InvalidArgument;
     }
-    return;
+
+    unsafe {
+        stark_raylib_UpdateAudioStream(stream, ReadI8OrNull(data), frameCount);
+    }
+
+    return RaylibStatus.Ok;
 }
 
 [LinkName("IsAudioStreamProcessed")]
@@ -516,31 +654,53 @@ public fn void SetAudioStreamBufferSizeDefault(i32[min max] size) {
     return;
 }
 [LinkName("SetAudioStreamCallback")]
-internal unsafe ffi fn void stark_raylib_SetAudioStreamCallback(AudioStream stream, AudioCallback callback);
-public unsafe fn void SetAudioStreamCallback(AudioStream stream, AudioCallback callback) {
+internal unsafe ffi fn void stark_raylib_SetAudioStreamCallback(AudioStream stream, rawptr<i8[min max]> callback);
+public fn void SetAudioStreamCallback(AudioStream stream, AudioCallback callback) {
     unsafe {
-        stark_raylib_SetAudioStreamCallback(stream, callback);
+        stark_raylib_SetAudioStreamCallback(stream, (rawptr<i8[min max]>)callback);
+    }
+    return;
+}
+
+public fn void ClearAudioStreamCallback(AudioStream stream) {
+    unsafe {
+        stark_raylib_SetAudioStreamCallback(stream, null);
     }
     return;
 }
 
 [LinkName("AttachAudioStreamProcessor")]
-internal unsafe ffi fn void stark_raylib_AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor);
-public unsafe fn void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
+internal unsafe ffi fn void stark_raylib_AttachAudioStreamProcessor(AudioStream stream, rawptr<i8[min max]> processor);
+public fn void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
     unsafe {
-        stark_raylib_AttachAudioStreamProcessor(stream, processor);
+        stark_raylib_AttachAudioStreamProcessor(stream, (rawptr<i8[min max]>)processor);
     }
     return;
 }
 
 [LinkName("DetachAudioStreamProcessor")]
-internal unsafe ffi fn void stark_raylib_DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor);
-public unsafe fn void DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
+internal unsafe ffi fn void stark_raylib_DetachAudioStreamProcessor(AudioStream stream, rawptr<i8[min max]> processor);
+public fn void DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
     unsafe {
-        stark_raylib_DetachAudioStreamProcessor(stream, processor);
+        stark_raylib_DetachAudioStreamProcessor(stream, (rawptr<i8[min max]>)processor);
     }
     return;
 }
 
-public unsafe ffi fn void AttachAudioMixedProcessor(AudioCallback processor);
-public unsafe ffi fn void DetachAudioMixedProcessor(AudioCallback processor);
+[LinkName("AttachAudioMixedProcessor")]
+internal unsafe ffi fn void stark_raylib_AttachAudioMixedProcessor(rawptr<i8[min max]> processor);
+public fn void AttachAudioMixedProcessor(AudioCallback processor) {
+    unsafe {
+        stark_raylib_AttachAudioMixedProcessor((rawptr<i8[min max]>)processor);
+    }
+    return;
+}
+
+[LinkName("DetachAudioMixedProcessor")]
+internal unsafe ffi fn void stark_raylib_DetachAudioMixedProcessor(rawptr<i8[min max]> processor);
+public fn void DetachAudioMixedProcessor(AudioCallback processor) {
+    unsafe {
+        stark_raylib_DetachAudioMixedProcessor((rawptr<i8[min max]>)processor);
+    }
+    return;
+}

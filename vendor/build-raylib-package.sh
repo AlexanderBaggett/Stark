@@ -61,7 +61,9 @@ if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
     exit 1
   fi
 
-  if [[ ! -f "${RAYLIB_SRC_DIR}/raylib.h" ]]; then
+  raylib_src_dir="$(cd "${RAYLIB_SRC_DIR}" && pwd)"
+
+  if [[ ! -f "${raylib_src_dir}/raylib.h" ]]; then
     echo "RAYLIB_SRC_DIR does not look like a Raylib src directory because raylib.h was not found." >&2
     echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash vendor/build-raylib-package.sh" >&2
     exit 1
@@ -70,19 +72,29 @@ if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
   packaged_raylib_dir="${target_dist}/native/raylib"
   mkdir -p "${packaged_raylib_dir}"
 
-  if [[ -f "${RAYLIB_SRC_DIR}/libraylib.a" ]]; then
-    cp -f "${RAYLIB_SRC_DIR}/libraylib.a" "${packaged_raylib_dir}/libraylib.a"
-  elif [[ -f "${RAYLIB_SRC_DIR}/libraylib.so" ]]; then
-    cp -f "${RAYLIB_SRC_DIR}/libraylib.so" "${packaged_raylib_dir}/libraylib.so"
+  if [[ -f "${raylib_src_dir}/libraylib.a" ]]; then
+    if [[ "${raylib_src_dir}/libraylib.a" != "${packaged_raylib_dir}/libraylib.a" ]]; then
+      cp -f "${raylib_src_dir}/libraylib.a" "${packaged_raylib_dir}/libraylib.a"
+    fi
+  elif [[ -f "${raylib_src_dir}/libraylib.so" ]]; then
+    if [[ "${raylib_src_dir}/libraylib.so" != "${packaged_raylib_dir}/libraylib.so" ]]; then
+      cp -f "${raylib_src_dir}/libraylib.so" "${packaged_raylib_dir}/libraylib.so"
+    fi
   else
     echo "RAYLIB_SRC_DIR must contain a built Raylib library (libraylib.a or libraylib.so)." >&2
     echo "Build Raylib first, then rerun: RAYLIB_SRC_DIR=${RAYLIB_SRC_DIR} bash vendor/build-raylib-package.sh" >&2
     exit 1
   fi
 
-  cp -f "${RAYLIB_SRC_DIR}/raylib.h" "${packaged_raylib_dir}/raylib.h"
-  cp -f "${RAYLIB_SRC_DIR}/raymath.h" "${packaged_raylib_dir}/raymath.h"
-  cp -f "${RAYLIB_SRC_DIR}/rlgl.h" "${packaged_raylib_dir}/rlgl.h"
+  if [[ "${raylib_src_dir}/raylib.h" != "${packaged_raylib_dir}/raylib.h" ]]; then
+    cp -f "${raylib_src_dir}/raylib.h" "${packaged_raylib_dir}/raylib.h"
+  fi
+  if [[ "${raylib_src_dir}/raymath.h" != "${packaged_raylib_dir}/raymath.h" ]]; then
+    cp -f "${raylib_src_dir}/raymath.h" "${packaged_raylib_dir}/raymath.h"
+  fi
+  if [[ "${raylib_src_dir}/rlgl.h" != "${packaged_raylib_dir}/rlgl.h" ]]; then
+    cp -f "${raylib_src_dir}/rlgl.h" "${packaged_raylib_dir}/rlgl.h"
+  fi
 
   native_args=(
     --native-include-dir "${packaged_raylib_dir}"

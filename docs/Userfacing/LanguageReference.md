@@ -637,6 +637,38 @@ fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])>
 
 An ordinary `fnptr<fn ...>` (and `fnptr<ffi(c) fn ...>` without `unsafe`) is a safe callable pointer, and an unsafe function item cannot be promoted into it, because that would hide the unsafe requirement from later calls. To carry an unsafe foreign callback, write the `unsafe` keyword inside the `fnptr` type (`fnptr<unsafe ffi(c) fn ...>`) and promote inside an unsafe context; calling it still requires unsafe (see 13.3). Otherwise, call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
 
+Native callback registration uses the same thin function-pointer model. A
+non-capturing Stark function with a matching `unsafe ffi(abi)` signature can be
+passed to a foreign API that expects a function pointer:
+
+```stark
+alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+{
+    return;
+}
+
+unsafe ffi(c) fn void RegisterAudio(AudioCallback callback);
+
+unsafe fn void Install()
+{
+    RegisterAudio(FillAudio);
+    return;
+}
+```
+
+The callback body lowers as a C-ABI function, and the registration call passes
+its address directly. `export` is only needed when foreign code looks up the
+callback by symbol name; it is not required when Stark passes the function
+pointer value. Capturing lambdas and closures are not valid thin native
+callbacks because C receives no closure storage. A safe wrapper may accept or
+store a `fnptr<unsafe ffi(...) fn ...>` callback without becoming `unsafe`
+itself; creating that callback from an unsafe function item and invoking it both
+still require an unsafe context. C callback shapes that include target-specific
+types not yet modeled by Stark, such as `va_list`, require a dedicated ABI
+carrier or a real native adapter.
+
 ### 5.6 Lambdas and Capture Modes
 
 Lambda syntax follows the C# arrow form:
