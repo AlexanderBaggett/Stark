@@ -39,6 +39,249 @@ fn bool BindSource(ascii source, out BindDiagnosticList diags)
     }
 }
 
+fn bool BuildGenericFacts(ascii source, out TokenStream stream, out GenericUseSiteTable facts)
+{
+    stream = new();
+    facts = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    switch (BuildGenericUseSiteSyntaxFacts(parsedStream))
+    {
+        case BindResult<GenericUseSiteTable>.Err(var error):
+            return false;
+        case BindResult<GenericUseSiteTable>.Ok(var value):
+            stream = parsedStream;
+            facts = value;
+            return true;
+    }
+}
+
+fn bool FunctionKeywordByNameForBinding(ascii source, borrow TokenStream stream, borrow DeclarationList decls, ascii name, out u32[0 max] fnKeyword)
+{
+    fnKeyword = 0;
+    stack mut bool found = false;
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (!found && item.Kind == DeclarationKind.Function)
+        {
+            stack ascii itemName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])item.NameToken);
+            if (System.Text.Equals(itemName, name))
+            {
+                fnKeyword = item.KeywordToken;
+                found = true;
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool BuildCallableFactsForFunction(ascii source, ascii functionName, out TokenStream stream, out CallableCandidateSetTable facts)
+{
+    stream = new();
+    facts = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, parsedStream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var builtTable):
+            table = builtTable;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordByNameForBinding(source, parsedStream, decls, functionName, fnKeyword))
+    {
+        return false;
+    }
+
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(parsedStream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(parsedStream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    stack mut FunctionScope scope = new();
+    switch (BuildFunctionScope(signature, body))
+    {
+        case BindResult<FunctionScope>.Err(var scopeError):
+            return false;
+        case BindResult<FunctionScope>.Ok(var builtScope):
+            scope = builtScope;
+    }
+
+    stack mut ReferenceTable refs = new();
+    switch (ResolveReferences(scope, table, source, parsedStream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var refError):
+            return false;
+        case BindResult<ReferenceTable>.Ok(var builtRefs):
+            refs = builtRefs;
+    }
+
+    switch (BuildCallableCandidateSets(table, source, parsedStream, refs, scope, body))
+    {
+        case BindResult<CallableCandidateSetTable>.Err(var callableError):
+            return false;
+        case BindResult<CallableCandidateSetTable>.Ok(var builtFacts):
+            stream = parsedStream;
+            facts = builtFacts;
+            return true;
+    }
+}
+
+fn u32[0 max] CallableSetIndexByName(borrow CallableCandidateSetTable facts, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool BuildReceiverFactsForFunction(ascii source, ascii functionName, out TokenStream stream, out ReceiverCandidateSetTable facts)
+{
+    stream = new();
+    facts = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, parsedStream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var builtTable):
+            table = builtTable;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordByNameForBinding(source, parsedStream, decls, functionName, fnKeyword))
+    {
+        return false;
+    }
+
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(parsedStream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(parsedStream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    stack mut FunctionScope scope = new();
+    switch (BuildFunctionScope(signature, body))
+    {
+        case BindResult<FunctionScope>.Err(var scopeError):
+            return false;
+        case BindResult<FunctionScope>.Ok(var builtScope):
+            scope = builtScope;
+    }
+
+    stack mut ReferenceTable refs = new();
+    switch (ResolveReferences(scope, table, source, parsedStream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var refError):
+            return false;
+        case BindResult<ReferenceTable>.Ok(var builtRefs):
+            refs = builtRefs;
+    }
+
+    switch (BuildReceiverCandidateSets(table, source, parsedStream, refs, scope, body))
+    {
+        case BindResult<ReceiverCandidateSetTable>.Err(var receiverError):
+            return false;
+        case BindResult<ReceiverCandidateSetTable>.Ok(var builtFacts):
+            stream = parsedStream;
+            facts = builtFacts;
+            return true;
+    }
+}
+
+fn u32[0 max] ReceiverSetIndexByName(borrow ReceiverCandidateSetTable facts, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
 fn bool MemoryOk(System.Memory.MemoryStatus status)
 {
     switch (status)
@@ -69,6 +312,292 @@ fn bool ParseHeaderForBinding(ascii source, out TokenStream stream, out Compilat
             header = value;
             return true;
     }
+}
+
+fn u32[0 max] DeclarationStartFromHeader(borrow CompilationUnitHeader header)
+{
+    stack u64[0 2 ** 63 - 1] count = header.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack HeaderItem item = header.ItemAt(index);
+        if (item.Kind == SyntaxKind.ModuleDeclaration)
+        {
+            return (u32[0 max])(item.NameStart + item.NameTokenCount);
+        }
+    }
+
+    return 0;
+}
+
+fn bool BuildTypedModuleSymbolsForSource(ascii source, out TokenStream stream, out TypedModuleSymbolTable symbols)
+{
+    stream = new();
+    symbols = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderForBinding(source, parsedStream, header))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(parsedStream, DeclarationStartFromHeader(header)))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    switch (BuildTypedModuleSymbols(source, parsedStream, header, decls, ModuleOrigin.Source, 9))
+    {
+        case BindResult<TypedModuleSymbolTable>.Err(var symbolError):
+            return false;
+        case BindResult<TypedModuleSymbolTable>.Ok(var built):
+            stream = parsedStream;
+            symbols = built;
+            return true;
+    }
+}
+
+fn bool BuildTypedDeclarationSymbolsForSource(ascii source, out TokenStream stream, out TypedDeclarationSymbolTable declarations)
+{
+    stream = new();
+    declarations = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderForBinding(source, parsedStream, header))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(parsedStream, DeclarationStartFromHeader(header)))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut TypedModuleSymbolTable moduleSymbols = new();
+    switch (BuildTypedModuleSymbols(source, parsedStream, header, decls, ModuleOrigin.Source, 9))
+    {
+        case BindResult<TypedModuleSymbolTable>.Err(var symbolError):
+            return false;
+        case BindResult<TypedModuleSymbolTable>.Ok(var builtSymbols):
+            moduleSymbols = builtSymbols;
+    }
+
+    switch (BuildTypedDeclarationSymbols(source, parsedStream, decls, moduleSymbols))
+    {
+        case BindResult<TypedDeclarationSymbolTable>.Err(var declSymbolError):
+            return false;
+        case BindResult<TypedDeclarationSymbolTable>.Ok(var builtDeclarations):
+            stream = parsedStream;
+            declarations = builtDeclarations;
+            return true;
+    }
+}
+
+fn bool BuildTypedMemberSymbolsForSource(ascii source, out TokenStream stream, out TypedMemberSymbolTable members)
+{
+    stream = new();
+    members = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
+    {
+        return false;
+    }
+
+    switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            stream = parsedStream;
+            members = builtMembers;
+            return true;
+    }
+}
+
+fn bool BuildTypedLocalSymbolsForSource(ascii source, out TokenStream stream, out TypedLocalSymbolTable locals)
+{
+    stream = new();
+    locals = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
+    {
+        return false;
+    }
+
+    stack mut TypedMemberSymbolTable members = new();
+    switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            members = builtMembers;
+    }
+
+    switch (BuildTypedLocalAndParameterSymbols(source, parsedStream, declarations, members))
+    {
+        case BindResult<TypedLocalSymbolTable>.Err(var localError):
+            return false;
+        case BindResult<TypedLocalSymbolTable>.Ok(var builtLocals):
+            stream = parsedStream;
+            locals = builtLocals;
+            return true;
+    }
+}
+
+fn bool BuildTypedGenericSymbolsForSource(ascii source, out TokenStream stream, out TypedGenericParameterSymbolTable generics)
+{
+    stream = new();
+    generics = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
+    {
+        return false;
+    }
+
+    stack mut TypedMemberSymbolTable members = new();
+    switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            members = builtMembers;
+    }
+
+    switch (BuildTypedGenericParameterSymbols(source, parsedStream, declarations, members))
+    {
+        case BindResult<TypedGenericParameterSymbolTable>.Err(var genericError):
+            return false;
+        case BindResult<TypedGenericParameterSymbolTable>.Ok(var builtGenerics):
+            stream = parsedStream;
+            generics = builtGenerics;
+            return true;
+    }
+}
+
+fn u32[0 max] TypedModuleSymbolIndexByName(mut borrow TypedModuleSymbolTable symbols, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = symbols.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedDeclarationSymbolIndexByName(borrow TypedDeclarationSymbolTable symbols, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = symbols.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedMemberSymbolIndexByOwnerAndName(
+    borrow TypedMemberSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    ascii ownerName,
+    ascii memberName,
+    TypedMemberSymbolKind memberKind)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = symbols.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && symbols.KindAt(index) == memberKind)
+        {
+            stack ascii actualOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.OwnerNameTokenAt(index));
+            stack ascii actualMember = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index));
+            if (System.Text.Equals(actualOwner, ownerName) && System.Text.Equals(actualMember, memberName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedLocalSymbolIndexByOwnerAndName(
+    borrow TypedLocalSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    ascii ownerName,
+    ascii symbolName,
+    TypedLocalSymbolKind symbolKind)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = symbols.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && symbols.KindAt(index) == symbolKind)
+        {
+            stack ascii actualOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.OwnerNameTokenAt(index));
+            stack ascii actualSymbol = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index));
+            if (System.Text.Equals(actualOwner, ownerName) && System.Text.Equals(actualSymbol, symbolName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedGenericParameterSymbolIndexByOwnerAndName(
+    borrow TypedGenericParameterSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    ascii ownerName,
+    ascii symbolName,
+    TypedGenericParameterKind symbolKind)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = symbols.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && symbols.KindAt(index) == symbolKind)
+        {
+            stack ascii actualOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.OwnerNameTokenAt(index));
+            stack ascii actualSymbol = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index));
+            if (System.Text.Equals(actualOwner, ownerName) && System.Text.Equals(actualSymbol, symbolName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
 }
 
 [Fact]
@@ -174,6 +703,586 @@ fn bool StaticDeclarationsUseDeclaredVariableName()
     return table.Count() == 1
         && LookupDeclaration(table, source, stream, "Global") != 0
         && LookupDeclaration(table, source, stream, "Widget") == 0;
+}
+
+[Fact]
+fn bool TypedModuleSymbolsCaptureModuleAndVisibilityFacts()
+{
+    stack ascii source = raw"""
+    import Vendor.Raylib
+    module App.Main
+    struct PrivateType { }
+    internal struct InternalType { }
+    public fn void PublicFn() { }
+    export fn void ExportedFn() { }
+    const Limit = 5;
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedModuleSymbolTable symbols = new();
+    if (!BuildTypedModuleSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] privateSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "PrivateType");
+    stack u32[0 max] internalSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "InternalType");
+    stack u32[0 max] publicSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "PublicFn");
+    stack u32[0 max] exportSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "ExportedFn");
+    stack u32[0 max] constSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "Limit");
+
+    return symbols.Count() == 5
+        && symbols.HasModuleName()
+        && symbols.ModuleNameEquals("App.Main")
+        && symbols.ModuleOriginKind() == ModuleOrigin.Source
+        && symbols.ModuleOriginIndex() == 9
+        && privateSlot != 0
+        && internalSlot != 0
+        && publicSlot != 0
+        && exportSlot != 0
+        && constSlot != 0
+        && symbols.KindAt((u64[0 2 ** 63 - 1])(privateSlot - 1)) == DeclarationKind.Struct
+        && symbols.KindAt((u64[0 2 ** 63 - 1])(publicSlot - 1)) == DeclarationKind.Function
+        && symbols.KindAt((u64[0 2 ** 63 - 1])(constSlot - 1)) == DeclarationKind.Const
+        && symbols.VisibilityAt((u64[0 2 ** 63 - 1])(privateSlot - 1)) == TypedModuleSymbolVisibility.ModulePrivate
+        && symbols.VisibilityAt((u64[0 2 ** 63 - 1])(internalSlot - 1)) == TypedModuleSymbolVisibility.Internal
+        && symbols.VisibilityAt((u64[0 2 ** 63 - 1])(publicSlot - 1)) == TypedModuleSymbolVisibility.Public
+        && symbols.VisibilityAt((u64[0 2 ** 63 - 1])(exportSlot - 1)) == TypedModuleSymbolVisibility.Export
+        && symbols.VisibilityAt((u64[0 2 ** 63 - 1])(constSlot - 1)) == TypedModuleSymbolVisibility.ModulePrivate;
+}
+
+[Fact]
+fn bool TypedModuleSymbolsPreserveQualifiedNames()
+{
+    stack ascii source = "module Tools.Math\npublic fn void Add() { }\ninternal struct Accumulator { }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedModuleSymbolTable symbols = new();
+    if (!BuildTypedModuleSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] addSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "Add");
+    stack u32[0 max] accumulatorSlot = TypedModuleSymbolIndexByName(symbols, source, stream, "Accumulator");
+
+    return symbols.Count() == 2
+        && addSlot != 0
+        && accumulatorSlot != 0
+        && symbols.QualifiedNameEqualsAt((u64[0 2 ** 63 - 1])(addSlot - 1), "Tools.Math.Add")
+        && symbols.QualifiedNameEqualsAt((u64[0 2 ** 63 - 1])(accumulatorSlot - 1), "Tools.Math.Accumulator");
+}
+
+[Fact]
+fn bool TypedDeclarationSymbolsCaptureFunctionBackendFacts()
+{
+    stack ascii source = raw"""
+    module App.Native
+    [LinkName("native_symbol")]
+    export unsafe ffi(c) varargs fn i32[min max] Native(rawptr<i8[min max]> data);
+    tail finite law inline hot fn i32[min max] Fast(i32[min max] value) { return value; }
+    unsafe ffi asm(x86_64) fn i64[min max] Syscall(i64[min max] number) in("rax") number, out("rax") return, clobber("rcx") { "syscall" }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedDeclarationSymbolTable symbols = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] nativeSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "Native");
+    stack u32[0 max] fastSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "Fast");
+    stack u32[0 max] syscallSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "Syscall");
+    if (nativeSlot == 0 || fastSlot == 0 || syscallSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] nativeIndex = (u64[0 2 ** 63 - 1])(nativeSlot - 1);
+    stack u64[0 2 ** 63 - 1] fastIndex = (u64[0 2 ** 63 - 1])(fastSlot - 1);
+    stack u64[0 2 ** 63 - 1] syscallIndex = (u64[0 2 ** 63 - 1])(syscallSlot - 1);
+
+    return symbols.Count() == 3
+        && symbols.FunctionCount() == 3
+        && symbols.ExportCount() == 1
+        && symbols.FfiCount() == 2
+        && symbols.ClassAt(nativeIndex) == TypedDeclarationSymbolClass.Function
+        && symbols.VisibilityAt(nativeIndex) == TypedModuleSymbolVisibility.Export
+        && symbols.FunctionKindAt(nativeIndex) == TypedDeclarationFunctionKind.Fn
+        && symbols.ParamCountAt(nativeIndex) == 1
+        && symbols.IsExternalAt(nativeIndex)
+        && symbols.IsUnsafeAt(nativeIndex)
+        && symbols.IsFfiAt(nativeIndex)
+        && symbols.IsVarargsAt(nativeIndex)
+        && symbols.IsCAbiAt(nativeIndex)
+        && symbols.HasLinkNameAt(nativeIndex)
+        && symbols.LinkNameValueTokenAt(nativeIndex) != 0
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.AbiNameTokenAt(nativeIndex)), "c")
+        && symbols.FunctionKindAt(fastIndex) == TypedDeclarationFunctionKind.FiniteLaw
+        && symbols.IsTailCallableAt(fastIndex)
+        && symbols.IsInlineAt(fastIndex)
+        && symbols.IsHotAt(fastIndex)
+        && !symbols.IsExternalAt(fastIndex)
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(fastIndex)) == TokenKind.IntegerType
+        && symbols.IsAsmAt(syscallIndex)
+        && symbols.IsFfiAt(syscallIndex)
+        && !symbols.IsCAbiAt(syscallIndex)
+        && symbols.AsmInputCountAt(syscallIndex) == 1
+        && symbols.AsmOutputCountAt(syscallIndex) == 1
+        && symbols.AsmClobberCountAt(syscallIndex) == 1
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.AsmArchitectureTokenAt(syscallIndex)), "x86_64");
+}
+
+[Fact]
+fn bool TypedDeclarationSymbolsCaptureValueAndAliasTypeAnchors()
+{
+    stack ascii source = raw"""
+    module App.Config
+    struct Widget { }
+    const i32[min max] Limit = 7;
+    static mut Widget Global;
+    heap Widget HeapGlobal;
+    arena Widget ArenaGlobal;
+    alias TextAlias = System.Text.OwnedAscii;
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedDeclarationSymbolTable symbols = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] widgetSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "Widget");
+    stack u32[0 max] limitSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "Limit");
+    stack u32[0 max] globalSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "Global");
+    stack u32[0 max] heapSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "HeapGlobal");
+    stack u32[0 max] arenaSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "ArenaGlobal");
+    stack u32[0 max] aliasSlot = TypedDeclarationSymbolIndexByName(symbols, source, stream, "TextAlias");
+    if (widgetSlot == 0 || limitSlot == 0 || globalSlot == 0 || heapSlot == 0 || arenaSlot == 0 || aliasSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] widgetIndex = (u64[0 2 ** 63 - 1])(widgetSlot - 1);
+    stack u64[0 2 ** 63 - 1] limitIndex = (u64[0 2 ** 63 - 1])(limitSlot - 1);
+    stack u64[0 2 ** 63 - 1] globalIndex = (u64[0 2 ** 63 - 1])(globalSlot - 1);
+    stack u64[0 2 ** 63 - 1] heapIndex = (u64[0 2 ** 63 - 1])(heapSlot - 1);
+    stack u64[0 2 ** 63 - 1] arenaIndex = (u64[0 2 ** 63 - 1])(arenaSlot - 1);
+    stack u64[0 2 ** 63 - 1] aliasIndex = (u64[0 2 ** 63 - 1])(aliasSlot - 1);
+
+    return symbols.Count() == 6
+        && symbols.ClassAt(widgetIndex) == TypedDeclarationSymbolClass.Type
+        && symbols.TypePrimaryTokenAt(widgetIndex) == symbols.NameTokenAt(widgetIndex)
+        && symbols.ClassAt(limitIndex) == TypedDeclarationSymbolClass.Value
+        && symbols.StorageKindAt(limitIndex) == TypedDeclarationStorageKind.Const
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(limitIndex)) == TokenKind.IntegerType
+        && symbols.TypeHeadTokenAt(limitIndex) == 0
+        && symbols.StorageKindAt(globalIndex) == TypedDeclarationStorageKind.Static
+        && symbols.IsMutableStorageAt(globalIndex)
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.TypeHeadTokenAt(globalIndex)), "Widget")
+        && symbols.StorageKindAt(heapIndex) == TypedDeclarationStorageKind.Heap
+        && symbols.StorageKindAt(arenaIndex) == TypedDeclarationStorageKind.Arena
+        && symbols.ClassAt(aliasIndex) == TypedDeclarationSymbolClass.Alias
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.TypeHeadTokenAt(aliasIndex)), "OwnedAscii")
+        && symbols.TypeStartTokenAt(aliasIndex) < symbols.TypeEndTokenAt(aliasIndex);
+}
+
+[Fact]
+fn bool TypedMemberSymbolsCaptureFieldsRecordFieldsAndMethodFacts()
+{
+    stack ascii source = raw"""
+    module App.Model
+    public struct Counter
+    {
+        [FieldOffset(0)] public i32[min max] Value;
+        internal static fn Counter Create() { return new Counter(); }
+        tail finite law inline hot fn i32[min max] Read(borrow Counter self) { return self.Value; }
+    }
+
+    record Pair(i32[min max] Left, Counter Right)
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedMemberSymbolTable symbols = new();
+    if (!BuildTypedMemberSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] valueSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Counter", "Value", TypedMemberSymbolKind.Field);
+    stack u32[0 max] createSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Counter", "Create", TypedMemberSymbolKind.Method);
+    stack u32[0 max] readSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Counter", "Read", TypedMemberSymbolKind.Method);
+    stack u32[0 max] leftSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Pair", "Left", TypedMemberSymbolKind.Field);
+    stack u32[0 max] rightSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Pair", "Right", TypedMemberSymbolKind.Field);
+    if (valueSlot == 0 || createSlot == 0 || readSlot == 0 || leftSlot == 0 || rightSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] valueIndex = (u64[0 2 ** 63 - 1])(valueSlot - 1);
+    stack u64[0 2 ** 63 - 1] createIndex = (u64[0 2 ** 63 - 1])(createSlot - 1);
+    stack u64[0 2 ** 63 - 1] readIndex = (u64[0 2 ** 63 - 1])(readSlot - 1);
+    stack u64[0 2 ** 63 - 1] leftIndex = (u64[0 2 ** 63 - 1])(leftSlot - 1);
+    stack u64[0 2 ** 63 - 1] rightIndex = (u64[0 2 ** 63 - 1])(rightSlot - 1);
+
+    return symbols.Count() == 5
+        && symbols.FieldCount() == 3
+        && symbols.MethodCount() == 2
+        && symbols.OwnerDeclarationKindAt(valueIndex) == DeclarationKind.Struct
+        && symbols.OwnerDeclarationKindAt(leftIndex) == DeclarationKind.Record
+        && symbols.VisibilityAt(valueIndex) == TypedModuleSymbolVisibility.Public
+        && symbols.HasFieldOffsetAt(valueIndex)
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(valueIndex)) == TokenKind.IntegerType
+        && symbols.VisibilityAt(createIndex) == TypedModuleSymbolVisibility.Internal
+        && symbols.IsStaticAt(createIndex)
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.TypeHeadTokenAt(createIndex)), "Counter")
+        && symbols.FunctionKindAt(readIndex) == TypedDeclarationFunctionKind.FiniteLaw
+        && symbols.IsTailCallableAt(readIndex)
+        && symbols.IsInlineAt(readIndex)
+        && symbols.IsHotAt(readIndex)
+        && symbols.ParamCountAt(readIndex) == 1
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(leftIndex)) == TokenKind.IntegerType
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.TypeHeadTokenAt(rightIndex)), "Counter");
+}
+
+[Fact]
+fn bool TypedMemberSymbolsCaptureEnumVariantsAndAssociatedAliases()
+{
+    stack ascii source = raw"""
+    module App.Contracts
+    public trait Reader
+    {
+        alias Item;
+        public finite law Self.Item Read(borrow Self self);
+    }
+
+    struct IOError { }
+
+    struct Counter : Reader
+    {
+        alias Item = i32[min max];
+    }
+
+    enum LoadResult
+    {
+        [Ok] Done(i32[min max]),
+        [Err] Failed from IOError,
+        Move { X: i32[min max], Y: i32[min max] },
+        End,
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedMemberSymbolTable symbols = new();
+    if (!BuildTypedMemberSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] requiredAliasSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Reader", "Item", TypedMemberSymbolKind.AssociatedAlias);
+    stack u32[0 max] readSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Reader", "Read", TypedMemberSymbolKind.Method);
+    stack u32[0 max] concreteAliasSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "Counter", "Item", TypedMemberSymbolKind.AssociatedAlias);
+    stack u32[0 max] doneSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "LoadResult", "Done", TypedMemberSymbolKind.EnumVariant);
+    stack u32[0 max] failedSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "LoadResult", "Failed", TypedMemberSymbolKind.EnumVariant);
+    stack u32[0 max] moveSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "LoadResult", "Move", TypedMemberSymbolKind.EnumVariant);
+    stack u32[0 max] endSlot = TypedMemberSymbolIndexByOwnerAndName(symbols, source, stream, "LoadResult", "End", TypedMemberSymbolKind.EnumVariant);
+    if (requiredAliasSlot == 0 || readSlot == 0 || concreteAliasSlot == 0 || doneSlot == 0 || failedSlot == 0 || moveSlot == 0 || endSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] requiredAliasIndex = (u64[0 2 ** 63 - 1])(requiredAliasSlot - 1);
+    stack u64[0 2 ** 63 - 1] readIndex = (u64[0 2 ** 63 - 1])(readSlot - 1);
+    stack u64[0 2 ** 63 - 1] concreteAliasIndex = (u64[0 2 ** 63 - 1])(concreteAliasSlot - 1);
+    stack u64[0 2 ** 63 - 1] doneIndex = (u64[0 2 ** 63 - 1])(doneSlot - 1);
+    stack u64[0 2 ** 63 - 1] failedIndex = (u64[0 2 ** 63 - 1])(failedSlot - 1);
+    stack u64[0 2 ** 63 - 1] moveIndex = (u64[0 2 ** 63 - 1])(moveSlot - 1);
+    stack u64[0 2 ** 63 - 1] endIndex = (u64[0 2 ** 63 - 1])(endSlot - 1);
+
+    return symbols.Count() == 7
+        && symbols.AssociatedAliasCount() == 2
+        && symbols.MethodCount() == 1
+        && symbols.EnumVariantCount() == 4
+        && symbols.TypeStartTokenAt(requiredAliasIndex) == 0
+        && symbols.VisibilityAt(readIndex) == TypedModuleSymbolVisibility.Public
+        && symbols.FunctionKindAt(readIndex) == TypedDeclarationFunctionKind.FiniteLaw
+        && symbols.ParamCountAt(readIndex) == 1
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(concreteAliasIndex)) == TokenKind.IntegerType
+        && symbols.IsOkRoleAt(doneIndex)
+        && symbols.PayloadCountAt(doneIndex) == 1
+        && symbols.IsErrRoleAt(failedIndex)
+        && symbols.IsErrorFunnelAt(failedIndex)
+        && symbols.PayloadCountAt(failedIndex) == 1
+        && symbols.PayloadCountAt(moveIndex) == 2
+        && symbols.PayloadCountAt(endIndex) == 0;
+}
+
+[Fact]
+fn bool TypedLocalSymbolsCaptureTopLevelParametersLocalsAndPatternBindings()
+{
+    stack ascii source = raw"""
+    module App.Locals
+    struct Widget { }
+
+    unsafe finite fn bool Write(
+        out u32[0 max] value,
+        rawmutptr<i8[min max]> buffer,
+        fnptr<tail fn bool(out u32[0 max]) where dead_on_return(arg0)> callback)
+        where dead_on_return(buffer)
+    {
+        stack mut i32[min max] total = 0;
+        arena Widget item = new Widget();
+        for willexit (stack u32[0 max] index = 0; index < 4; index += 1)
+        {
+            stack i32[min max] inner = total;
+        }
+
+        switch (total)
+        {
+            case var found:
+                return true;
+            default:
+                return false;
+        }
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedLocalSymbolTable symbols = new();
+    if (!BuildTypedLocalSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] valueSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "value", TypedLocalSymbolKind.Parameter);
+    stack u32[0 max] bufferSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "buffer", TypedLocalSymbolKind.Parameter);
+    stack u32[0 max] callbackSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "callback", TypedLocalSymbolKind.Parameter);
+    stack u32[0 max] totalSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "total", TypedLocalSymbolKind.Local);
+    stack u32[0 max] itemSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "item", TypedLocalSymbolKind.Local);
+    stack u32[0 max] indexSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "index", TypedLocalSymbolKind.Local);
+    stack u32[0 max] innerSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "inner", TypedLocalSymbolKind.Local);
+    stack u32[0 max] foundSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Write", "found", TypedLocalSymbolKind.PatternBinding);
+    if (valueSlot == 0 || bufferSlot == 0 || callbackSlot == 0 || totalSlot == 0
+        || itemSlot == 0 || indexSlot == 0 || innerSlot == 0 || foundSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] valueIndex = (u64[0 2 ** 63 - 1])(valueSlot - 1);
+    stack u64[0 2 ** 63 - 1] bufferIndex = (u64[0 2 ** 63 - 1])(bufferSlot - 1);
+    stack u64[0 2 ** 63 - 1] callbackIndex = (u64[0 2 ** 63 - 1])(callbackSlot - 1);
+    stack u64[0 2 ** 63 - 1] totalIndex = (u64[0 2 ** 63 - 1])(totalSlot - 1);
+    stack u64[0 2 ** 63 - 1] itemIndex = (u64[0 2 ** 63 - 1])(itemSlot - 1);
+    stack u64[0 2 ** 63 - 1] indexIndex = (u64[0 2 ** 63 - 1])(indexSlot - 1);
+    stack u64[0 2 ** 63 - 1] innerIndex = (u64[0 2 ** 63 - 1])(innerSlot - 1);
+    stack u64[0 2 ** 63 - 1] foundIndex = (u64[0 2 ** 63 - 1])(foundSlot - 1);
+
+    return symbols.Count() == 8
+        && symbols.ParameterCount() == 3
+        && symbols.LocalCount() == 4
+        && symbols.PatternBindingCount() == 1
+        && symbols.OwnerKindAt(valueIndex) == TypedLocalOwnerKind.DeclarationFunction
+        && symbols.OwnerDeclarationSymbolIndexPlusOneAt(valueIndex) != 0
+        && symbols.OwnerMemberSymbolIndexPlusOneAt(valueIndex) == 0
+        && symbols.IsOutAt(valueIndex)
+        && symbols.IsMemoryBackedAt(valueIndex)
+        && symbols.ParamOrdinalAt(valueIndex) == 0
+        && symbols.IsRawPointerAt(bufferIndex)
+        && symbols.IsRawMutablePointerAt(bufferIndex)
+        && symbols.IsDeadOnReturnAt(bufferIndex)
+        && symbols.IsTailCallableTypeAt(callbackIndex)
+        && symbols.HasCallableTypeDeadOnReturnAt(callbackIndex)
+        && symbols.StorageKindAt(totalIndex) == TypedDeclarationStorageKind.Stack
+        && symbols.IsMutableAt(totalIndex)
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(totalIndex)) == TokenKind.IntegerType
+        && symbols.StorageKindAt(itemIndex) == TypedDeclarationStorageKind.Arena
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.TypeHeadTokenAt(itemIndex)), "Widget")
+        && symbols.StorageKindAt(indexIndex) == TypedDeclarationStorageKind.Stack
+        && symbols.StatementIndexPlusOneAt(indexIndex) != 0
+        && symbols.ScopeIdAt(innerIndex) != symbols.ScopeIdAt(totalIndex)
+        && symbols.TypeStartTokenAt(foundIndex) == 0
+        && symbols.StorageKindAt(foundIndex) == TypedDeclarationStorageKind.None;
+}
+
+[Fact]
+fn bool TypedLocalSymbolsCaptureMemberMethodOwnersAndParameterFacts()
+{
+    stack ascii source = raw"""
+    module App.MethodLocals
+    struct Counter
+    {
+        i32[min max] Value;
+
+        tail finite law fn i32[min max] Read(borrow Counter self, init i32[min max][] output)
+            where dead_on_return(output)
+        {
+            stack mut i32[min max] current = self.Value;
+            return current;
+        }
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedLocalSymbolTable symbols = new();
+    if (!BuildTypedLocalSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] selfSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Read", "self", TypedLocalSymbolKind.Parameter);
+    stack u32[0 max] outputSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Read", "output", TypedLocalSymbolKind.Parameter);
+    stack u32[0 max] currentSlot = TypedLocalSymbolIndexByOwnerAndName(symbols, source, stream, "Read", "current", TypedLocalSymbolKind.Local);
+    if (selfSlot == 0 || outputSlot == 0 || currentSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] selfIndex = (u64[0 2 ** 63 - 1])(selfSlot - 1);
+    stack u64[0 2 ** 63 - 1] outputIndex = (u64[0 2 ** 63 - 1])(outputSlot - 1);
+    stack u64[0 2 ** 63 - 1] currentIndex = (u64[0 2 ** 63 - 1])(currentSlot - 1);
+
+    return symbols.Count() == 3
+        && symbols.ParameterCount() == 2
+        && symbols.LocalCount() == 1
+        && symbols.OwnerKindAt(selfIndex) == TypedLocalOwnerKind.MemberMethod
+        && symbols.OwnerDeclarationSymbolIndexPlusOneAt(selfIndex) != 0
+        && symbols.OwnerMemberSymbolIndexPlusOneAt(selfIndex) != 0
+        && symbols.IsBorrowAt(selfIndex)
+        && System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.TypeHeadTokenAt(selfIndex)), "Counter")
+        && symbols.IsInitAt(outputIndex)
+        && symbols.IsMemoryBackedAt(outputIndex)
+        && symbols.IsDeadOnReturnAt(outputIndex)
+        && symbols.ParamOrdinalAt(outputIndex) == 1
+        && symbols.StorageKindAt(currentIndex) == TypedDeclarationStorageKind.Stack
+        && symbols.IsMutableAt(currentIndex)
+        && symbols.StatementIndexPlusOneAt(currentIndex) != 0;
+}
+
+[Fact]
+fn bool TypedGenericParameterSymbolsCaptureDeclarationGenerics()
+{
+    stack ascii source = raw"""
+    module App.Generics
+    trait Drawable { }
+    trait Hashable { }
+
+    struct Buffer<T, comptime u8[1 8] N> where T: Drawable, Hashable
+    {
+        T Value;
+    }
+
+    enum Result<T, E>
+    {
+        Ok(T),
+        Err(E),
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedGenericParameterSymbolTable symbols = new();
+    if (!BuildTypedGenericSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] bufferTSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Buffer", "T", TypedGenericParameterKind.Type);
+    stack u32[0 max] bufferNSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Buffer", "N", TypedGenericParameterKind.ComptimeValue);
+    stack u32[0 max] resultTSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Result", "T", TypedGenericParameterKind.Type);
+    stack u32[0 max] resultESlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Result", "E", TypedGenericParameterKind.Type);
+    if (bufferTSlot == 0 || bufferNSlot == 0 || resultTSlot == 0 || resultESlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] bufferTIndex = (u64[0 2 ** 63 - 1])(bufferTSlot - 1);
+    stack u64[0 2 ** 63 - 1] bufferNIndex = (u64[0 2 ** 63 - 1])(bufferNSlot - 1);
+    stack u64[0 2 ** 63 - 1] resultEIndex = (u64[0 2 ** 63 - 1])(resultESlot - 1);
+
+    return symbols.Count() == 4
+        && symbols.TypeParameterCount() == 3
+        && symbols.ComptimeValueParameterCount() == 1
+        && symbols.OwnerKindAt(bufferTIndex) == TypedGenericOwnerKind.Declaration
+        && symbols.OwnerDeclarationSymbolIndexPlusOneAt(bufferTIndex) != 0
+        && symbols.OwnerMemberSymbolIndexPlusOneAt(bufferTIndex) == 0
+        && symbols.ParamOrdinalAt(bufferTIndex) == 0
+        && symbols.TypeOrdinalAt(bufferTIndex) == 0
+        && symbols.ConstraintCountAt(bufferTIndex) == 2
+        && symbols.HasConstraintsAt(bufferTIndex)
+        && symbols.ParamOrdinalAt(bufferNIndex) == 1
+        && symbols.ComptimeOrdinalAt(bufferNIndex) == 0
+        && symbols.IsComptimeValueAt(bufferNIndex)
+        && symbols.IsIntegerTypeAt(bufferNIndex)
+        && symbols.HasRangeBoundsAt(bufferNIndex)
+        && symbols.RangeStartTokenAt(bufferNIndex) != 0
+        && symbols.RangeEndTokenAt(bufferNIndex) != 0
+        && stream.KindAt((u64[0 2 ** 63 - 1])symbols.TypePrimaryTokenAt(bufferNIndex)) == TokenKind.IntegerType
+        && symbols.ParamOrdinalAt(resultEIndex) == 1
+        && symbols.TypeOrdinalAt(resultEIndex) == 1;
+}
+
+[Fact]
+fn bool TypedGenericParameterSymbolsCaptureFunctionAndMethodGenerics()
+{
+    stack ascii source = raw"""
+    module App.GenericMethods
+    trait Drawable { }
+
+    struct Mapper<T>
+    {
+        fn U Map<U, comptime u8[1 4] Count>(borrow Mapper<T> self, U value)
+        {
+            return value;
+        }
+    }
+
+    fn T Pick<T, comptime u8[1 8] N>(T value) where T: Drawable
+    {
+        return value;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedGenericParameterSymbolTable symbols = new();
+    if (!BuildTypedGenericSymbolsForSource(source, stream, symbols))
+    {
+        return false;
+    }
+
+    stack u32[0 max] mapperTSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Mapper", "T", TypedGenericParameterKind.Type);
+    stack u32[0 max] mapUSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Map", "U", TypedGenericParameterKind.Type);
+    stack u32[0 max] mapCountSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Map", "Count", TypedGenericParameterKind.ComptimeValue);
+    stack u32[0 max] pickTSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Pick", "T", TypedGenericParameterKind.Type);
+    stack u32[0 max] pickNSlot = TypedGenericParameterSymbolIndexByOwnerAndName(symbols, source, stream, "Pick", "N", TypedGenericParameterKind.ComptimeValue);
+    if (mapperTSlot == 0 || mapUSlot == 0 || mapCountSlot == 0 || pickTSlot == 0 || pickNSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] mapperTIndex = (u64[0 2 ** 63 - 1])(mapperTSlot - 1);
+    stack u64[0 2 ** 63 - 1] mapUIndex = (u64[0 2 ** 63 - 1])(mapUSlot - 1);
+    stack u64[0 2 ** 63 - 1] mapCountIndex = (u64[0 2 ** 63 - 1])(mapCountSlot - 1);
+    stack u64[0 2 ** 63 - 1] pickTIndex = (u64[0 2 ** 63 - 1])(pickTSlot - 1);
+    stack u64[0 2 ** 63 - 1] pickNIndex = (u64[0 2 ** 63 - 1])(pickNSlot - 1);
+
+    return symbols.Count() == 5
+        && symbols.TypeParameterCount() == 3
+        && symbols.ComptimeValueParameterCount() == 2
+        && symbols.OwnerKindAt(mapperTIndex) == TypedGenericOwnerKind.Declaration
+        && symbols.OwnerKindAt(mapUIndex) == TypedGenericOwnerKind.MemberMethod
+        && symbols.OwnerDeclarationSymbolIndexPlusOneAt(mapUIndex) != 0
+        && symbols.OwnerMemberSymbolIndexPlusOneAt(mapUIndex) != 0
+        && symbols.ParamOrdinalAt(mapUIndex) == 0
+        && symbols.TypeOrdinalAt(mapUIndex) == 0
+        && symbols.ParamOrdinalAt(mapCountIndex) == 1
+        && symbols.ComptimeOrdinalAt(mapCountIndex) == 0
+        && symbols.IsComptimeValueAt(mapCountIndex)
+        && symbols.HasRangeBoundsAt(mapCountIndex)
+        && symbols.ConstraintCountAt(pickTIndex) == 1
+        && symbols.HasConstraintsAt(pickTIndex)
+        && symbols.IsComptimeValueAt(pickNIndex)
+        && symbols.IsIntegerTypeAt(pickNIndex)
+        && symbols.HasRangeBoundsAt(pickNIndex);
 }
 
 [Fact]
@@ -3049,6 +4158,144 @@ fn bool DirectRecursiveReturnCallReferencesFunctionDeclaration()
 }
 
 [Fact]
+fn bool CallableCandidateSetsCaptureDirectFunctionAndCallbackCalls()
+{
+    stack ascii source = "fn i32[min max] id(i32[min max] x) { return x; }\nfn void caller(fnptr<fn i32[min max](i32[min max])> cb, i32[min max] v) { id(v); cb(v); missing(v); }\n";
+    stack mut TokenStream stream = new();
+    stack mut CallableCandidateSetTable facts = new();
+    if (!BuildCallableFactsForFunction(source, "caller", stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] idSite = CallableSetIndexByName(facts, source, stream, "id");
+    stack u32[0 max] cbSite = CallableSetIndexByName(facts, source, stream, "cb");
+    stack u32[0 max] missingSite = CallableSetIndexByName(facts, source, stream, "missing");
+    if (idSite == 0 || cbSite == 0 || missingSite == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] idSlot = (u64[0 2 ** 63 - 1])(idSite - 1);
+    stack u64[0 2 ** 63 - 1] cbSlot = (u64[0 2 ** 63 - 1])(cbSite - 1);
+    stack u64[0 2 ** 63 - 1] missingSlot = (u64[0 2 ** 63 - 1])(missingSite - 1);
+    return facts.Count() == 3
+        && facts.TotalCandidateCount() == 2
+        && facts.ArgumentCountAt(idSlot) == 1
+        && facts.CandidateCountAt(idSlot) == 1
+        && facts.DeclarationCandidateCountAt(idSlot) == 1
+        && facts.CandidateKindAt(idSlot, 0) == CallableCandidateKind.Declaration
+        && facts.CandidateTargetAt(idSlot, 0) == 1
+        && facts.ArgumentCountAt(cbSlot) == 1
+        && facts.CandidateCountAt(cbSlot) == 1
+        && facts.ScopeSymbolCandidateCountAt(cbSlot) == 1
+        && facts.CandidateKindAt(cbSlot, 0) == CallableCandidateKind.ScopeSymbol
+        && facts.CandidateTargetAt(cbSlot, 0) == 1
+        && facts.ArgumentCountAt(missingSlot) == 1
+        && facts.CandidateCountAt(missingSlot) == 0;
+}
+
+[Fact]
+fn bool CallableCandidateSetsKeepSameNameFunctionDeclarations()
+{
+    stack ascii source = "fn void overload(i32[min max] x) { }\nfn void overload(bool x) { }\nfn void caller() { overload(1); }\n";
+    stack mut TokenStream stream = new();
+    stack mut CallableCandidateSetTable facts = new();
+    if (!BuildCallableFactsForFunction(source, "caller", stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] overloadSite = CallableSetIndexByName(facts, source, stream, "overload");
+    if (overloadSite == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(overloadSite - 1);
+    return facts.Count() == 1
+        && facts.TotalCandidateCount() == 2
+        && facts.CandidateCountAt(slot) == 2
+        && facts.DeclarationCandidateCountAt(slot) == 2
+        && facts.CandidateKindAt(slot, 0) == CallableCandidateKind.Declaration
+        && facts.CandidateKindAt(slot, 1) == CallableCandidateKind.Declaration
+        && facts.CandidateTargetAt(slot, 0) == 1
+        && facts.CandidateTargetAt(slot, 1) == 2;
+}
+
+[Fact]
+fn bool ReceiverCandidateSetsCaptureFieldAndInstanceMethodMembers()
+{
+    stack ascii source = "struct Counter { i32[min max] Value; fn i32[min max] Get(borrow Counter self) { return self.Value; } }\nfn void caller(Counter c) { c.Value; c.Get(); c.Missing(); }\n";
+    stack mut TokenStream stream = new();
+    stack mut ReceiverCandidateSetTable facts = new();
+    if (!BuildReceiverFactsForFunction(source, "caller", stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] valueSite = ReceiverSetIndexByName(facts, source, stream, "Value");
+    stack u32[0 max] getSite = ReceiverSetIndexByName(facts, source, stream, "Get");
+    stack u32[0 max] missingSite = ReceiverSetIndexByName(facts, source, stream, "Missing");
+    if (valueSite == 0 || getSite == 0 || missingSite == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] valueSlot = (u64[0 2 ** 63 - 1])(valueSite - 1);
+    stack u64[0 2 ** 63 - 1] getSlot = (u64[0 2 ** 63 - 1])(getSite - 1);
+    stack u64[0 2 ** 63 - 1] missingSlot = (u64[0 2 ** 63 - 1])(missingSite - 1);
+    return facts.Count() == 3
+        && facts.TotalCandidateCount() == 2
+        && facts.SiteKindAt(valueSlot) == ReceiverCandidateSiteKind.Value
+        && facts.CallNodeAt(valueSlot) == 0
+        && facts.ArgumentCountAt(valueSlot) == 0
+        && facts.CandidateCountAt(valueSlot) == 1
+        && facts.FieldCandidateCountAt(valueSlot) == 1
+        && facts.CandidateKindAt(valueSlot, 0) == ReceiverCandidateKind.Field
+        && facts.SiteKindAt(getSlot) == ReceiverCandidateSiteKind.Value
+        && facts.CallNodeAt(getSlot) != 0
+        && facts.ArgumentCountAt(getSlot) == 0
+        && facts.CandidateCountAt(getSlot) == 1
+        && facts.InstanceMethodCandidateCountAt(getSlot) == 1
+        && facts.CandidateKindAt(getSlot, 0) == ReceiverCandidateKind.InstanceMethod
+        && facts.SiteKindAt(missingSlot) == ReceiverCandidateSiteKind.Value
+        && facts.CandidateCountAt(missingSlot) == 0;
+}
+
+[Fact]
+fn bool ReceiverCandidateSetsCaptureStaticMethodMembers()
+{
+    stack ascii source = "struct Counter { static fn Counter Create() { return new Counter(); } fn i32[min max] Get(borrow Counter self) { return 0; } }\nfn void caller() { Counter.Create(); Counter.Get(); }\n";
+    stack mut TokenStream stream = new();
+    stack mut ReceiverCandidateSetTable facts = new();
+    if (!BuildReceiverFactsForFunction(source, "caller", stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] createSite = ReceiverSetIndexByName(facts, source, stream, "Create");
+    stack u32[0 max] getSite = ReceiverSetIndexByName(facts, source, stream, "Get");
+    if (createSite == 0 || getSite == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] createSlot = (u64[0 2 ** 63 - 1])(createSite - 1);
+    stack u64[0 2 ** 63 - 1] getSlot = (u64[0 2 ** 63 - 1])(getSite - 1);
+    return facts.Count() == 2
+        && facts.TotalCandidateCount() == 1
+        && facts.SiteKindAt(createSlot) == ReceiverCandidateSiteKind.Static
+        && facts.CallNodeAt(createSlot) != 0
+        && facts.ArgumentCountAt(createSlot) == 0
+        && facts.CandidateCountAt(createSlot) == 1
+        && facts.StaticMethodCandidateCountAt(createSlot) == 1
+        && facts.CandidateKindAt(createSlot, 0) == ReceiverCandidateKind.StaticMethod
+        && facts.SiteKindAt(getSlot) == ReceiverCandidateSiteKind.Static
+        && facts.CandidateCountAt(getSlot) == 0;
+}
+
+[Fact]
 fn bool DirectRuntimeRecursionCollectsWarningCode()
 {
     stack mut BindDiagnosticList diags = new();
@@ -3659,6 +4906,51 @@ fn bool GenericEnumPayloadParameterIsNotUnresolved()
             return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
                 && diags.Count() == 1;
     }
+}
+
+[Fact]
+fn bool GenericUseSiteFactsCaptureNestedTypeAndComptimeArguments()
+{
+    stack ascii source = "struct Box<T> { }\nstruct Pair<T, comptime u8[1 8] N> { }\nfn Pair<Box<i32[min max]>, comptime N> make<T, comptime u8[1 8] N>(Box<T> input, Pair<T, comptime N> other) where T: Box<i32[min max]> { stack Pair<T, comptime N> local; }\n";
+    stack mut TokenStream stream = new();
+    stack mut GenericUseSiteTable facts = new();
+    if (!BuildGenericFacts(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack ascii firstOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.OwnerTokenAt(0));
+    stack ascii secondOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.OwnerTokenAt(1));
+    return facts.Count() == 6
+        && facts.TotalTypeArgumentCount() == 6
+        && facts.TotalComptimeValueArgumentCount() == 3
+        && facts.ArgumentCountAt(0) == 2
+        && facts.TypeArgumentCountAt(0) == 1
+        && facts.ComptimeValueArgumentCountAt(0) == 1
+        && facts.ArgumentKindAt(0, 0) == GenericUseSiteArgumentKind.Type
+        && facts.ArgumentKindAt(0, 1) == GenericUseSiteArgumentKind.ComptimeValue
+        && System.Text.Equals(firstOwner, "Pair")
+        && System.Text.Equals(secondOwner, "Box");
+}
+
+[Fact]
+fn bool GenericUseSiteFactsClassifySignedIntegerValueArgument()
+{
+    stack ascii source = "struct Fixed<comptime i32[min max] N> { }\nfn Fixed<-1> f() { }\n";
+    stack mut TokenStream stream = new();
+    stack mut GenericUseSiteTable facts = new();
+    if (!BuildGenericFacts(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] valueStart = facts.ArgumentStartTokenAt(0, 0);
+    return facts.Count() == 1
+        && facts.ArgumentCountAt(0) == 1
+        && facts.TypeArgumentCountAt(0) == 0
+        && facts.ComptimeValueArgumentCountAt(0) == 1
+        && facts.ArgumentKindAt(0, 0) == GenericUseSiteArgumentKind.ComptimeValue
+        && stream.KindAt((u64[0 2 ** 63 - 1])valueStart) == TokenKind.Minus;
 }
 
 [Fact]

@@ -63,31 +63,31 @@ Execution constraints:
     - [x] Resolve function `where` constraints.
     - [x] Resolve nested generic argument types and complete type compatibility facts.
     - [x] Implement module resolution and imported-package/source lookup.
-    - [ ] Build callable candidate sets.
-    - [ ] Build receiver candidate sets.
-    - [ ] Build generic use-site syntax facts.
+    - [x] Build callable candidate sets.
+    - [x] Build receiver candidate sets.
+    - [x] Build generic use-site syntax facts.
   - [~] Implement type checking and semantic validation.
     - [x] Diagnose non-boolean conditions.
     - [x] Diagnose invalid logical operands.
     - [x] Diagnose void-return mismatches.
     - [x] Diagnose duplicate enum variants.
     - [x] Diagnose invalid break and continue use.
-    - [ ] Build typed module symbols.
-    - [ ] Build typed declaration symbols.
-    - [ ] Build typed member and method symbols.
-    - [ ] Build typed local and parameter symbols.
-    - [ ] Build typed generic parameter symbols.
-    - [ ] Type function signatures.
-    - [ ] Type global declarations.
-    - [ ] Type struct and record fields.
-    - [ ] Type enum payloads.
-    - [ ] Type local declarations.
-    - [ ] Type explicit storage selectors.
-    - [ ] Type literal expressions.
-    - [ ] Type identifier expressions.
-    - [ ] Type call expressions.
-    - [ ] Type member-chain expressions.
-    - [ ] Type indexing and slicing expressions.
+    - [x] Build typed module symbols.
+    - [x] Build typed declaration symbols.
+    - [x] Build typed member and method symbols.
+    - [x] Build typed local and parameter symbols.
+    - [x] Build typed generic parameter symbols.
+    - [x] Type function signatures.
+    - [x] Type global declarations.
+    - [x] Type struct and record fields.
+    - [x] Type enum payloads.
+    - [x] Type local declarations.
+    - [x] Type explicit storage selectors.
+    - [x] Type literal expressions.
+    - [x] Type identifier expressions.
+    - [x] Type call expressions.
+    - [x] Type member-chain expressions.
+    - [x] Type indexing and slicing expressions.
     - [ ] Type assignment expressions.
     - [ ] Type return expressions.
     - [ ] Type conversions and coercions.

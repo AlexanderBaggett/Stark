@@ -5324,6 +5324,8 @@ public enum ExprKind
 {
     IntLiteral,
     FloatLiteral,
+    StringLiteral,
+    CharacterLiteral,
     BoolLiteral,
     NullLiteral,
     Identifier,
@@ -5331,8 +5333,8 @@ public enum ExprKind
     Binary,
     // Postfix: `Member` carries the member-name token and the receiver in
     // `Left`; `Call` carries the `(` token and the callee in `Left`; `Index`
-    // carries the `[` token, the receiver in `Left`, and the index expression in
-    // `Right`.
+    // carries the `[` token, the receiver in `Left`, the index/start expression
+    // in `Right`, and an optional slice length expression in `Aux`.
     Member,
     Call,
     Index,
@@ -5363,8 +5365,8 @@ public struct ExprTree
     internal dynamic u32[0 max] Lefts;
     internal dynamic u32[0 max] Rights;
     // Per-node auxiliary slot: for `Call` and `New` nodes it holds the argument
-    // count; for `Conditional` it holds the else-branch node; unused (0) for
-    // other kinds.
+    // count; for `Conditional` it holds the else-branch node; for slice `Index`
+    // nodes it holds the length expression; unused (0) for other kinds.
     internal dynamic u32[0 max] Aux;
     // Flat argument list: a `Call` or `New` node's `Right` is the 1-based index
     // of its first argument node here, and `Aux` is how many it spans.
@@ -5914,6 +5916,16 @@ fn ExprParse ParsePrimaryExpr(borrow TokenStream stream, mut borrow ExprTree tre
         result.Node = tree.AddNode(ExprKind.FloatLiteral, pos, 0, 0);
         result.Pos = (u32[0 max])(pos + 1);
     }
+    else if (kind == TokenKind.StringLiteral)
+    {
+        result.Node = tree.AddNode(ExprKind.StringLiteral, pos, 0, 0);
+        result.Pos = (u32[0 max])(pos + 1);
+    }
+    else if (kind == TokenKind.CharacterLiteral)
+    {
+        result.Node = tree.AddNode(ExprKind.CharacterLiteral, pos, 0, 0);
+        result.Pos = (u32[0 max])(pos + 1);
+    }
     else if (kind == TokenKind.True || kind == TokenKind.False)
     {
         result.Node = tree.AddNode(ExprKind.BoolLiteral, pos, 0, 0);
@@ -5956,7 +5968,7 @@ fn ExprParse ParsePrimaryExpr(borrow TokenStream stream, mut borrow ExprTree tre
 
 // Parses a primary expression followed by any chain of postfix operations:
 // member access (`.name`), calls (`(...)`, arguments skipped by bracket
-// balancing in this slice), and indexing (`[expr]`).
+// balancing in this slice), indexing (`[expr]`), and slicing (`[start, length]`).
 fn ExprParse ParsePostfixExpr(borrow TokenStream stream, mut borrow ExprTree tree, u32[0 max] pos)
 {
     stack ExprParse base = ParsePrimaryExpr(stream, tree, pos);
@@ -5981,9 +5993,18 @@ fn ExprParse ParsePostfixExpr(borrow TokenStream stream, mut borrow ExprTree tre
         }
         else if (kind == TokenKind.LBrack)
         {
-            stack ExprParse inner = ParseBinaryExpr(stream, tree, (u32[0 max])(cursor + 1), 1);
-            node = tree.AddNode(ExprKind.Index, cursor, node, inner.Node);
-            cursor = inner.Pos;
+            stack ExprParse start = ParseBinaryExpr(stream, tree, (u32[0 max])(cursor + 1), 1);
+            stack mut u32[0 max] lengthNode = 0;
+            stack mut u32[0 max] after = start.Pos;
+            if (stream.KindAt((u64[0 2 ** 63 - 1])after) == TokenKind.Comma)
+            {
+                stack ExprParse length = ParseBinaryExpr(stream, tree, (u32[0 max])(after + 1), 1);
+                lengthNode = length.Node;
+                after = length.Pos;
+            }
+
+            node = tree.AddRaw(ExprKind.Index, cursor, node, start.Node, lengthNode);
+            cursor = after;
             if (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.RBrack)
             {
                 cursor = (u32[0 max])(cursor + 1);
