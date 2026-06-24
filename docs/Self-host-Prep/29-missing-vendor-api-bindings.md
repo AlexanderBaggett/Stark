@@ -19,7 +19,7 @@ unless a compatibility need is explicit.
 | `Vendor.Miniaudio` | miniaudio `0.11.25` `miniaudio.h` | Incomplete; safe decode/playback helper only, with encoding/generation/resource-manager/node-graph/engine disabled in the native build |
 | `Vendor.Cgltf` | cgltf `v1.15` `cgltf.h`, plus upstream-but-not-vendored `cgltf_write.h` | Incomplete; safe asset-summary wrapper only, no raw data graph, accessor payload reads, transform helpers, extensions/extras, custom options, or writer API |
 | `Vendor.GLFW` | GLFW `3.4` `GLFW/glfw3.h`, `GLFW/glfw3native.h` | Incomplete; minimal window/context/input/Vulkan helper only, no monitors, cursors, clipboard, joystick/gamepad, gamma, full window attributes, full callbacks, native access, init/platform options, or complete constants |
-| `Vendor.SQLite` | SQLite `3.53.2` official C interface, `sqlite3.h`, and `sqlite3ext.h` | Incomplete; safe open/prepare/step/basic bind/basic column wrapper plus prepared-statement metadata, database introspection, limits, status counters, blob bind/result helpers, incremental blob I/O, backup, serialization/deserialization, WAL checkpoint helpers, no-callback utility/introspection APIs, UTF-16 text copies, column metadata, scalar custom functions, and value/result helpers; no snapshots, hooks, collations, virtual tables, VFS, raw config/file-control surface, extension API, or complete constants |
+| `Vendor.SQLite` | SQLite `3.53.2` official C interface, `sqlite3.h`, and `sqlite3ext.h` | Incomplete; safe open/prepare/step/basic bind/basic column wrapper plus prepared-statement metadata, database introspection, limits, status counters, blob bind/result helpers, incremental blob I/O, backup, serialization/deserialization, WAL checkpoint helpers, no-callback utility/introspection APIs, UTF-16 text copies, column metadata, scalar custom functions, value/result helpers, extended result-code constants, authorizer/action/access/trace/lock/conflict constants, and global/database config constants; no snapshots, hooks, collations, virtual tables, VFS, raw config/file-control surface, extension API, or complete constants |
 | `Vendor.SDL3` | SDL `3.4.10` public symbol index and local `SDL3/SDL*.h` headers | Incomplete; init/window/renderer/event/audio-stream convenience wrapper only, no complete raw SDL3 surface, GPU, surfaces/textures, input devices, filesystem/storage, threading/sync, properties, dialogs, clipboard, platform, Vulkan/OpenGL/EGL/Metal, or complete constants/types |
 
 ## `Vendor.STB.Image`
@@ -3386,7 +3386,7 @@ These are the public `GLFW_*` macros from `glfw3.h`. Statuses describe whether t
 - Local native helper: `vendor/SQLiteTextBinding.c`
 - Build script: `vendor/build-sqlite-package.sh`
 
-The official SQLite `3.53.2` C reference lists 304 public function entries, 495 constants, and 29 public object/type entries. The current Stark binding covers 185 official function names, 144 official constants, 4 owning handles directly (`sqlite3`, `sqlite3_stmt`, `sqlite3_blob`, and `sqlite3_backup`), and 2 callback/value opaque carriers (`sqlite3_context` and `sqlite3_value`), with the integer typedefs represented by native Stark integer types rather than named aliases. The missing surface is 119 functions, 351 constants, and 19 object/table types.
+The official SQLite `3.53.2` C reference lists 304 public function entries, 495 constants, and 29 public object/type entries. The current Stark binding covers 185 official function names, 331 official constants, 4 owning handles directly (`sqlite3`, `sqlite3_stmt`, `sqlite3_blob`, and `sqlite3_backup`), and 2 callback/value opaque carriers (`sqlite3_context` and `sqlite3_value`), with the integer typedefs represented by native Stark integer types rather than named aliases. The missing surface is 119 functions, 164 constants, and 19 object/table types.
 
 The official function inventory was extracted from the SQLite function list with:
 
@@ -3407,7 +3407,7 @@ The public Stark API currently exposes:
 
 - owning `Database`, `Statement`, `Blob`, `Backup`, `SQLiteOwnedBytes`, and `SQLiteOwnedValue` structs that close/finalize/free in `drop`
 - primary result/status and column-type enums
-- primary result-code constants, function-property constants, basic column type constants, limit codes, transaction-state codes, global/db/statement/scan-status counters, prepare flags, UTF text encoding constants, checkpoint/serialization flags, and the complete current `SQLITE_OPEN_*` flag set
+- primary and extended result-code constants, authorizer/action/access/trace/lock/conflict constants, global and database config constants, function-property constants, basic column type constants, limit codes, transaction-state codes, global/db/statement/scan-status counters, prepare flags, UTF text encoding constants, checkpoint/serialization flags, and the complete current `SQLITE_OPEN_*` flag set
 - library version/source-id/thread-safety helpers
 - compile-option, keyword, SQL-complete, string compare/glob/like, randomness, sleep, memory high-water, global release-memory, and soft/hard heap-limit helpers
 - `Open`, `OpenDefault`, `OpenUtf16Ascii`, `OpenUtf16Unicode`, `OpenReadOnly`, `OpenReadWrite`, `OpenReadWriteCreate`, and `OpenInMemory`
@@ -3768,28 +3768,28 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 ### Complete SQLite Constant Inventory
 
 - `SQLITE_ABORT` - covered
-- `SQLITE_ABORT_ROLLBACK` - missing
-- `SQLITE_ACCESS_EXISTS` - missing
-- `SQLITE_ACCESS_READ` - missing
-- `SQLITE_ACCESS_READWRITE` - missing
-- `SQLITE_ALTER_TABLE` - missing
-- `SQLITE_ANALYZE` - missing
+- `SQLITE_ABORT_ROLLBACK` - covered
+- `SQLITE_ACCESS_EXISTS` - covered
+- `SQLITE_ACCESS_READ` - covered
+- `SQLITE_ACCESS_READWRITE` - covered
+- `SQLITE_ALTER_TABLE` - covered
+- `SQLITE_ANALYZE` - covered
 - `SQLITE_ANY` - missing
-- `SQLITE_ATTACH` - missing
+- `SQLITE_ATTACH` - covered
 - `SQLITE_AUTH` - covered
-- `SQLITE_AUTH_USER` - missing
+- `SQLITE_AUTH_USER` - covered
 - `SQLITE_BLOB` - covered
 - `SQLITE_BUSY` - covered
-- `SQLITE_BUSY_RECOVERY` - missing
-- `SQLITE_BUSY_SNAPSHOT` - missing
-- `SQLITE_BUSY_TIMEOUT` - missing
+- `SQLITE_BUSY_RECOVERY` - covered
+- `SQLITE_BUSY_SNAPSHOT` - covered
+- `SQLITE_BUSY_TIMEOUT` - covered
 - `SQLITE_CANTOPEN` - covered
-- `SQLITE_CANTOPEN_CONVPATH` - missing
-- `SQLITE_CANTOPEN_DIRTYWAL` - missing
-- `SQLITE_CANTOPEN_FULLPATH` - missing
-- `SQLITE_CANTOPEN_ISDIR` - missing
-- `SQLITE_CANTOPEN_NOTEMPDIR` - missing
-- `SQLITE_CANTOPEN_SYMLINK` - missing
+- `SQLITE_CANTOPEN_CONVPATH` - covered
+- `SQLITE_CANTOPEN_DIRTYWAL` - covered
+- `SQLITE_CANTOPEN_FULLPATH` - covered
+- `SQLITE_CANTOPEN_ISDIR` - covered
+- `SQLITE_CANTOPEN_NOTEMPDIR` - covered
+- `SQLITE_CANTOPEN_SYMLINK` - covered
 - `SQLITE_CARRAY_BLOB` - missing
 - `SQLITE_CARRAY_DOUBLE` - missing
 - `SQLITE_CARRAY_INT32` - missing
@@ -3800,87 +3800,87 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_CHECKPOINT_PASSIVE` - covered
 - `SQLITE_CHECKPOINT_RESTART` - covered
 - `SQLITE_CHECKPOINT_TRUNCATE` - covered
-- `SQLITE_CONFIG_COVERING_INDEX_SCAN` - missing
-- `SQLITE_CONFIG_GETMALLOC` - missing
-- `SQLITE_CONFIG_GETMUTEX` - missing
-- `SQLITE_CONFIG_GETPCACHE` - missing
-- `SQLITE_CONFIG_GETPCACHE2` - missing
-- `SQLITE_CONFIG_HEAP` - missing
-- `SQLITE_CONFIG_LOG` - missing
-- `SQLITE_CONFIG_LOOKASIDE` - missing
-- `SQLITE_CONFIG_MALLOC` - missing
-- `SQLITE_CONFIG_MEMDB_MAXSIZE` - missing
-- `SQLITE_CONFIG_MEMSTATUS` - missing
-- `SQLITE_CONFIG_MMAP_SIZE` - missing
-- `SQLITE_CONFIG_MULTITHREAD` - missing
-- `SQLITE_CONFIG_MUTEX` - missing
-- `SQLITE_CONFIG_PAGECACHE` - missing
-- `SQLITE_CONFIG_PCACHE` - missing
-- `SQLITE_CONFIG_PCACHE2` - missing
-- `SQLITE_CONFIG_PCACHE_HDRSZ` - missing
-- `SQLITE_CONFIG_PMASZ` - missing
-- `SQLITE_CONFIG_ROWID_IN_VIEW` - missing
-- `SQLITE_CONFIG_SCRATCH` - missing
-- `SQLITE_CONFIG_SERIALIZED` - missing
-- `SQLITE_CONFIG_SINGLETHREAD` - missing
-- `SQLITE_CONFIG_SMALL_MALLOC` - missing
-- `SQLITE_CONFIG_SORTERREF_SIZE` - missing
-- `SQLITE_CONFIG_SQLLOG` - missing
-- `SQLITE_CONFIG_STMTJRNL_SPILL` - missing
-- `SQLITE_CONFIG_URI` - missing
-- `SQLITE_CONFIG_WIN32_HEAPSIZE` - missing
+- `SQLITE_CONFIG_COVERING_INDEX_SCAN` - covered
+- `SQLITE_CONFIG_GETMALLOC` - covered
+- `SQLITE_CONFIG_GETMUTEX` - covered
+- `SQLITE_CONFIG_GETPCACHE` - covered
+- `SQLITE_CONFIG_GETPCACHE2` - covered
+- `SQLITE_CONFIG_HEAP` - covered
+- `SQLITE_CONFIG_LOG` - covered
+- `SQLITE_CONFIG_LOOKASIDE` - covered
+- `SQLITE_CONFIG_MALLOC` - covered
+- `SQLITE_CONFIG_MEMDB_MAXSIZE` - covered
+- `SQLITE_CONFIG_MEMSTATUS` - covered
+- `SQLITE_CONFIG_MMAP_SIZE` - covered
+- `SQLITE_CONFIG_MULTITHREAD` - covered
+- `SQLITE_CONFIG_MUTEX` - covered
+- `SQLITE_CONFIG_PAGECACHE` - covered
+- `SQLITE_CONFIG_PCACHE` - covered
+- `SQLITE_CONFIG_PCACHE2` - covered
+- `SQLITE_CONFIG_PCACHE_HDRSZ` - covered
+- `SQLITE_CONFIG_PMASZ` - covered
+- `SQLITE_CONFIG_ROWID_IN_VIEW` - covered
+- `SQLITE_CONFIG_SCRATCH` - covered
+- `SQLITE_CONFIG_SERIALIZED` - covered
+- `SQLITE_CONFIG_SINGLETHREAD` - covered
+- `SQLITE_CONFIG_SMALL_MALLOC` - covered
+- `SQLITE_CONFIG_SORTERREF_SIZE` - covered
+- `SQLITE_CONFIG_SQLLOG` - covered
+- `SQLITE_CONFIG_STMTJRNL_SPILL` - covered
+- `SQLITE_CONFIG_URI` - covered
+- `SQLITE_CONFIG_WIN32_HEAPSIZE` - covered
 - `SQLITE_CONSTRAINT` - covered
-- `SQLITE_CONSTRAINT_CHECK` - missing
-- `SQLITE_CONSTRAINT_COMMITHOOK` - missing
-- `SQLITE_CONSTRAINT_DATATYPE` - missing
-- `SQLITE_CONSTRAINT_FOREIGNKEY` - missing
-- `SQLITE_CONSTRAINT_FUNCTION` - missing
-- `SQLITE_CONSTRAINT_NOTNULL` - missing
-- `SQLITE_CONSTRAINT_PINNED` - missing
-- `SQLITE_CONSTRAINT_PRIMARYKEY` - missing
-- `SQLITE_CONSTRAINT_ROWID` - missing
-- `SQLITE_CONSTRAINT_TRIGGER` - missing
-- `SQLITE_CONSTRAINT_UNIQUE` - missing
-- `SQLITE_CONSTRAINT_VTAB` - missing
-- `SQLITE_COPY` - missing
+- `SQLITE_CONSTRAINT_CHECK` - covered
+- `SQLITE_CONSTRAINT_COMMITHOOK` - covered
+- `SQLITE_CONSTRAINT_DATATYPE` - covered
+- `SQLITE_CONSTRAINT_FOREIGNKEY` - covered
+- `SQLITE_CONSTRAINT_FUNCTION` - covered
+- `SQLITE_CONSTRAINT_NOTNULL` - covered
+- `SQLITE_CONSTRAINT_PINNED` - covered
+- `SQLITE_CONSTRAINT_PRIMARYKEY` - covered
+- `SQLITE_CONSTRAINT_ROWID` - covered
+- `SQLITE_CONSTRAINT_TRIGGER` - covered
+- `SQLITE_CONSTRAINT_UNIQUE` - covered
+- `SQLITE_CONSTRAINT_VTAB` - covered
+- `SQLITE_COPY` - covered
 - `SQLITE_CORRUPT` - covered
-- `SQLITE_CORRUPT_INDEX` - missing
-- `SQLITE_CORRUPT_SEQUENCE` - missing
-- `SQLITE_CORRUPT_VTAB` - missing
-- `SQLITE_CREATE_INDEX` - missing
-- `SQLITE_CREATE_TABLE` - missing
-- `SQLITE_CREATE_TEMP_INDEX` - missing
-- `SQLITE_CREATE_TEMP_TABLE` - missing
-- `SQLITE_CREATE_TEMP_TRIGGER` - missing
-- `SQLITE_CREATE_TEMP_VIEW` - missing
-- `SQLITE_CREATE_TRIGGER` - missing
-- `SQLITE_CREATE_VIEW` - missing
-- `SQLITE_CREATE_VTABLE` - missing
-- `SQLITE_DBCONFIG_DEFENSIVE` - missing
-- `SQLITE_DBCONFIG_DQS_DDL` - missing
-- `SQLITE_DBCONFIG_DQS_DML` - missing
-- `SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE` - missing
-- `SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE` - missing
-- `SQLITE_DBCONFIG_ENABLE_COMMENTS` - missing
-- `SQLITE_DBCONFIG_ENABLE_FKEY` - missing
-- `SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER` - missing
-- `SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION` - missing
-- `SQLITE_DBCONFIG_ENABLE_QPSG` - missing
-- `SQLITE_DBCONFIG_ENABLE_TRIGGER` - missing
-- `SQLITE_DBCONFIG_ENABLE_VIEW` - missing
-- `SQLITE_DBCONFIG_FP_DIGITS` - missing
-- `SQLITE_DBCONFIG_LEGACY_ALTER_TABLE` - missing
-- `SQLITE_DBCONFIG_LEGACY_FILE_FORMAT` - missing
-- `SQLITE_DBCONFIG_LOOKASIDE` - missing
-- `SQLITE_DBCONFIG_MAINDBNAME` - missing
-- `SQLITE_DBCONFIG_MAX` - missing
-- `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` - missing
-- `SQLITE_DBCONFIG_RESET_DATABASE` - missing
-- `SQLITE_DBCONFIG_REVERSE_SCANORDER` - missing
-- `SQLITE_DBCONFIG_STMT_SCANSTATUS` - missing
-- `SQLITE_DBCONFIG_TRIGGER_EQP` - missing
-- `SQLITE_DBCONFIG_TRUSTED_SCHEMA` - missing
-- `SQLITE_DBCONFIG_WRITABLE_SCHEMA` - missing
+- `SQLITE_CORRUPT_INDEX` - covered
+- `SQLITE_CORRUPT_SEQUENCE` - covered
+- `SQLITE_CORRUPT_VTAB` - covered
+- `SQLITE_CREATE_INDEX` - covered
+- `SQLITE_CREATE_TABLE` - covered
+- `SQLITE_CREATE_TEMP_INDEX` - covered
+- `SQLITE_CREATE_TEMP_TABLE` - covered
+- `SQLITE_CREATE_TEMP_TRIGGER` - covered
+- `SQLITE_CREATE_TEMP_VIEW` - covered
+- `SQLITE_CREATE_TRIGGER` - covered
+- `SQLITE_CREATE_VIEW` - covered
+- `SQLITE_CREATE_VTABLE` - covered
+- `SQLITE_DBCONFIG_DEFENSIVE` - covered
+- `SQLITE_DBCONFIG_DQS_DDL` - covered
+- `SQLITE_DBCONFIG_DQS_DML` - covered
+- `SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE` - covered
+- `SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE` - covered
+- `SQLITE_DBCONFIG_ENABLE_COMMENTS` - covered
+- `SQLITE_DBCONFIG_ENABLE_FKEY` - covered
+- `SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER` - covered
+- `SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION` - covered
+- `SQLITE_DBCONFIG_ENABLE_QPSG` - covered
+- `SQLITE_DBCONFIG_ENABLE_TRIGGER` - covered
+- `SQLITE_DBCONFIG_ENABLE_VIEW` - covered
+- `SQLITE_DBCONFIG_FP_DIGITS` - covered
+- `SQLITE_DBCONFIG_LEGACY_ALTER_TABLE` - covered
+- `SQLITE_DBCONFIG_LEGACY_FILE_FORMAT` - covered
+- `SQLITE_DBCONFIG_LOOKASIDE` - covered
+- `SQLITE_DBCONFIG_MAINDBNAME` - covered
+- `SQLITE_DBCONFIG_MAX` - covered
+- `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` - covered
+- `SQLITE_DBCONFIG_RESET_DATABASE` - covered
+- `SQLITE_DBCONFIG_REVERSE_SCANORDER` - covered
+- `SQLITE_DBCONFIG_STMT_SCANSTATUS` - covered
+- `SQLITE_DBCONFIG_TRIGGER_EQP` - covered
+- `SQLITE_DBCONFIG_TRUSTED_SCHEMA` - covered
+- `SQLITE_DBCONFIG_WRITABLE_SCHEMA` - covered
 - `SQLITE_DBSTATUS` - missing
 - `SQLITE_DBSTATUS_CACHE_HIT` - covered
 - `SQLITE_DBSTATUS_CACHE_MISS` - covered
@@ -3897,33 +3897,33 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_DBSTATUS_SCHEMA_USED` - covered
 - `SQLITE_DBSTATUS_STMT_USED` - covered
 - `SQLITE_DBSTATUS_TEMPBUF_SPILL` - covered
-- `SQLITE_DELETE` - missing
-- `SQLITE_DENY` - missing
+- `SQLITE_DELETE` - covered
+- `SQLITE_DENY` - covered
 - `SQLITE_DESERIALIZE_FREEONCLOSE` - covered
 - `SQLITE_DESERIALIZE_READONLY` - covered
 - `SQLITE_DESERIALIZE_RESIZEABLE` - covered
-- `SQLITE_DETACH` - missing
+- `SQLITE_DETACH` - covered
 - `SQLITE_DETERMINISTIC` - covered
 - `SQLITE_DIRECTONLY` - covered
 - `SQLITE_DONE` - covered
-- `SQLITE_DROP_INDEX` - missing
-- `SQLITE_DROP_TABLE` - missing
-- `SQLITE_DROP_TEMP_INDEX` - missing
-- `SQLITE_DROP_TEMP_TABLE` - missing
-- `SQLITE_DROP_TEMP_TRIGGER` - missing
-- `SQLITE_DROP_TEMP_VIEW` - missing
-- `SQLITE_DROP_TRIGGER` - missing
-- `SQLITE_DROP_VIEW` - missing
-- `SQLITE_DROP_VTABLE` - missing
+- `SQLITE_DROP_INDEX` - covered
+- `SQLITE_DROP_TABLE` - covered
+- `SQLITE_DROP_TEMP_INDEX` - covered
+- `SQLITE_DROP_TEMP_TABLE` - covered
+- `SQLITE_DROP_TEMP_TRIGGER` - covered
+- `SQLITE_DROP_TEMP_VIEW` - covered
+- `SQLITE_DROP_TRIGGER` - covered
+- `SQLITE_DROP_VIEW` - covered
+- `SQLITE_DROP_VTABLE` - covered
 - `SQLITE_EMPTY` - covered
 - `SQLITE_ERROR` - covered
-- `SQLITE_ERROR_KEY` - missing
-- `SQLITE_ERROR_MISSING_COLLSEQ` - missing
-- `SQLITE_ERROR_RESERVESIZE` - missing
-- `SQLITE_ERROR_RETRY` - missing
-- `SQLITE_ERROR_SNAPSHOT` - missing
-- `SQLITE_ERROR_UNABLE` - missing
-- `SQLITE_FAIL` - missing
+- `SQLITE_ERROR_KEY` - covered
+- `SQLITE_ERROR_MISSING_COLLSEQ` - covered
+- `SQLITE_ERROR_RESERVESIZE` - covered
+- `SQLITE_ERROR_RETRY` - covered
+- `SQLITE_ERROR_SNAPSHOT` - covered
+- `SQLITE_ERROR_UNABLE` - covered
+- `SQLITE_FAIL` - covered
 - `SQLITE_FCNTL_BEGIN_ATOMIC_WRITE` - missing
 - `SQLITE_FCNTL_BLOCK_ON_CONNECT` - missing
 - `SQLITE_FCNTL_BUSYHANDLER` - missing
@@ -3971,8 +3971,8 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_FLOAT` - covered
 - `SQLITE_FORMAT` - covered
 - `SQLITE_FULL` - covered
-- `SQLITE_FUNCTION` - missing
-- `SQLITE_IGNORE` - missing
+- `SQLITE_FUNCTION` - covered
+- `SQLITE_IGNORE` - covered
 - `SQLITE_INDEX_CONSTRAINT_EQ` - missing
 - `SQLITE_INDEX_CONSTRAINT_FUNCTION` - missing
 - `SQLITE_INDEX_CONSTRAINT_GE` - missing
@@ -3993,7 +3993,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_INDEX_SCAN_HEX` - missing
 - `SQLITE_INDEX_SCAN_UNIQUE` - missing
 - `SQLITE_INNOCUOUS` - covered
-- `SQLITE_INSERT` - missing
+- `SQLITE_INSERT` - covered
 - `SQLITE_INTEGER` - covered
 - `SQLITE_INTERNAL` - covered
 - `SQLITE_INTERRUPT` - covered
@@ -4014,42 +4014,42 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_IOCAP_SUBPAGE_READ` - missing
 - `SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN` - missing
 - `SQLITE_IOERR` - covered
-- `SQLITE_IOERR_ACCESS` - missing
-- `SQLITE_IOERR_AUTH` - missing
-- `SQLITE_IOERR_BADKEY` - missing
-- `SQLITE_IOERR_BEGIN_ATOMIC` - missing
-- `SQLITE_IOERR_BLOCKED` - missing
-- `SQLITE_IOERR_CHECKRESERVEDLOCK` - missing
-- `SQLITE_IOERR_CLOSE` - missing
-- `SQLITE_IOERR_CODEC` - missing
-- `SQLITE_IOERR_COMMIT_ATOMIC` - missing
-- `SQLITE_IOERR_CONVPATH` - missing
-- `SQLITE_IOERR_CORRUPTFS` - missing
-- `SQLITE_IOERR_DATA` - missing
-- `SQLITE_IOERR_DELETE` - missing
-- `SQLITE_IOERR_DELETE_NOENT` - missing
-- `SQLITE_IOERR_DIR_CLOSE` - missing
-- `SQLITE_IOERR_DIR_FSYNC` - missing
-- `SQLITE_IOERR_FSTAT` - missing
-- `SQLITE_IOERR_FSYNC` - missing
-- `SQLITE_IOERR_GETTEMPPATH` - missing
-- `SQLITE_IOERR_IN_PAGE` - missing
-- `SQLITE_IOERR_LOCK` - missing
-- `SQLITE_IOERR_MMAP` - missing
-- `SQLITE_IOERR_NOMEM` - missing
-- `SQLITE_IOERR_RDLOCK` - missing
-- `SQLITE_IOERR_READ` - missing
-- `SQLITE_IOERR_ROLLBACK_ATOMIC` - missing
-- `SQLITE_IOERR_SEEK` - missing
-- `SQLITE_IOERR_SHMLOCK` - missing
-- `SQLITE_IOERR_SHMMAP` - missing
-- `SQLITE_IOERR_SHMOPEN` - missing
-- `SQLITE_IOERR_SHMSIZE` - missing
-- `SQLITE_IOERR_SHORT_READ` - missing
-- `SQLITE_IOERR_TRUNCATE` - missing
-- `SQLITE_IOERR_UNLOCK` - missing
-- `SQLITE_IOERR_VNODE` - missing
-- `SQLITE_IOERR_WRITE` - missing
+- `SQLITE_IOERR_ACCESS` - covered
+- `SQLITE_IOERR_AUTH` - covered
+- `SQLITE_IOERR_BADKEY` - covered
+- `SQLITE_IOERR_BEGIN_ATOMIC` - covered
+- `SQLITE_IOERR_BLOCKED` - covered
+- `SQLITE_IOERR_CHECKRESERVEDLOCK` - covered
+- `SQLITE_IOERR_CLOSE` - covered
+- `SQLITE_IOERR_CODEC` - covered
+- `SQLITE_IOERR_COMMIT_ATOMIC` - covered
+- `SQLITE_IOERR_CONVPATH` - covered
+- `SQLITE_IOERR_CORRUPTFS` - covered
+- `SQLITE_IOERR_DATA` - covered
+- `SQLITE_IOERR_DELETE` - covered
+- `SQLITE_IOERR_DELETE_NOENT` - covered
+- `SQLITE_IOERR_DIR_CLOSE` - covered
+- `SQLITE_IOERR_DIR_FSYNC` - covered
+- `SQLITE_IOERR_FSTAT` - covered
+- `SQLITE_IOERR_FSYNC` - covered
+- `SQLITE_IOERR_GETTEMPPATH` - covered
+- `SQLITE_IOERR_IN_PAGE` - covered
+- `SQLITE_IOERR_LOCK` - covered
+- `SQLITE_IOERR_MMAP` - covered
+- `SQLITE_IOERR_NOMEM` - covered
+- `SQLITE_IOERR_RDLOCK` - covered
+- `SQLITE_IOERR_READ` - covered
+- `SQLITE_IOERR_ROLLBACK_ATOMIC` - covered
+- `SQLITE_IOERR_SEEK` - covered
+- `SQLITE_IOERR_SHMLOCK` - covered
+- `SQLITE_IOERR_SHMMAP` - covered
+- `SQLITE_IOERR_SHMOPEN` - covered
+- `SQLITE_IOERR_SHMSIZE` - covered
+- `SQLITE_IOERR_SHORT_READ` - covered
+- `SQLITE_IOERR_TRUNCATE` - covered
+- `SQLITE_IOERR_UNLOCK` - covered
+- `SQLITE_IOERR_VNODE` - covered
+- `SQLITE_IOERR_WRITE` - covered
 - `SQLITE_LIMIT_ATTACHED` - covered
 - `SQLITE_LIMIT_COLUMN` - covered
 - `SQLITE_LIMIT_COMPOUND_SELECT` - covered
@@ -4064,13 +4064,13 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_LIMIT_VDBE_OP` - covered
 - `SQLITE_LIMIT_WORKER_THREADS` - covered
 - `SQLITE_LOCKED` - covered
-- `SQLITE_LOCKED_SHAREDCACHE` - missing
-- `SQLITE_LOCKED_VTAB` - missing
-- `SQLITE_LOCK_EXCLUSIVE` - missing
-- `SQLITE_LOCK_NONE` - missing
-- `SQLITE_LOCK_PENDING` - missing
-- `SQLITE_LOCK_RESERVED` - missing
-- `SQLITE_LOCK_SHARED` - missing
+- `SQLITE_LOCKED_SHAREDCACHE` - covered
+- `SQLITE_LOCKED_VTAB` - covered
+- `SQLITE_LOCK_EXCLUSIVE` - covered
+- `SQLITE_LOCK_NONE` - covered
+- `SQLITE_LOCK_PENDING` - covered
+- `SQLITE_LOCK_RESERVED` - covered
+- `SQLITE_LOCK_SHARED` - covered
 - `SQLITE_MISMATCH` - covered
 - `SQLITE_MISUSE` - covered
 - `SQLITE_MUTEX_FAST` - missing
@@ -4094,13 +4094,13 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_NOTADB` - covered
 - `SQLITE_NOTFOUND` - covered
 - `SQLITE_NOTICE` - covered
-- `SQLITE_NOTICE_RBU` - missing
-- `SQLITE_NOTICE_RECOVER_ROLLBACK` - missing
-- `SQLITE_NOTICE_RECOVER_WAL` - missing
+- `SQLITE_NOTICE_RBU` - covered
+- `SQLITE_NOTICE_RECOVER_ROLLBACK` - covered
+- `SQLITE_NOTICE_RECOVER_WAL` - covered
 - `SQLITE_NULL` - covered
 - `SQLITE_OK` - covered
-- `SQLITE_OK_LOAD_PERMANENTLY` - missing
-- `SQLITE_OK_SYMLINK` - missing
+- `SQLITE_OK_LOAD_PERMANENTLY` - covered
+- `SQLITE_OK_SYMLINK` - covered
 - `SQLITE_OPEN_AUTOPROXY` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_OPEN_CREATE` - covered
 - `SQLITE_OPEN_DELETEONCLOSE` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -4124,7 +4124,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_OPEN_URI` - covered
 - `SQLITE_OPEN_WAL` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_PERM` - covered
-- `SQLITE_PRAGMA` - missing
+- `SQLITE_PRAGMA` - covered
 - `SQLITE_PREPARE_DONT_LOG` - covered
 - `SQLITE_PREPARE_FROM_DDL` - covered
 - `SQLITE_PREPARE_NORMALIZE` - covered
@@ -4132,21 +4132,21 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_PREPARE_PERSISTENT` - covered
 - `SQLITE_PROTOCOL` - covered
 - `SQLITE_RANGE` - covered
-- `SQLITE_READ` - missing
+- `SQLITE_READ` - covered
 - `SQLITE_READONLY` - covered
-- `SQLITE_READONLY_CANTINIT` - missing
-- `SQLITE_READONLY_CANTLOCK` - missing
-- `SQLITE_READONLY_DBMOVED` - missing
-- `SQLITE_READONLY_DIRECTORY` - missing
-- `SQLITE_READONLY_RECOVERY` - missing
-- `SQLITE_READONLY_ROLLBACK` - missing
-- `SQLITE_RECURSIVE` - missing
-- `SQLITE_REINDEX` - missing
-- `SQLITE_REPLACE` - missing
+- `SQLITE_READONLY_CANTINIT` - covered
+- `SQLITE_READONLY_CANTLOCK` - covered
+- `SQLITE_READONLY_DBMOVED` - covered
+- `SQLITE_READONLY_DIRECTORY` - covered
+- `SQLITE_READONLY_RECOVERY` - covered
+- `SQLITE_READONLY_ROLLBACK` - covered
+- `SQLITE_RECURSIVE` - covered
+- `SQLITE_REINDEX` - covered
+- `SQLITE_REPLACE` - covered
 - `SQLITE_RESULT_SUBTYPE` - covered
-- `SQLITE_ROLLBACK` - missing
+- `SQLITE_ROLLBACK` - covered
 - `SQLITE_ROW` - covered
-- `SQLITE_SAVEPOINT` - missing
+- `SQLITE_SAVEPOINT` - covered
 - `SQLITE_SCANSTAT_COMPLEX` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_SCANSTAT_EST` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_SCANSTAT_EXPLAIN` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -4160,7 +4160,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_SCM_BRANCH` - missing
 - `SQLITE_SCM_DATETIME` - missing
 - `SQLITE_SCM_TAGS` - missing
-- `SQLITE_SELECT` - missing
+- `SQLITE_SELECT` - covered
 - `SQLITE_SELFORDER1` - covered
 - `SQLITE_SERIALIZE_NOCOPY` - covered
 - `SQLITE_SETLK_BLOCK_ON_CONNECT` - missing
@@ -4236,16 +4236,16 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_TEXT` - covered
 - `SQLITE_TOOBIG` - covered
 - `SQLITE_TRACE` - missing
-- `SQLITE_TRACE_CLOSE` - missing
-- `SQLITE_TRACE_PROFILE` - missing
-- `SQLITE_TRACE_ROW` - missing
-- `SQLITE_TRACE_STMT` - missing
-- `SQLITE_TRANSACTION` - missing
+- `SQLITE_TRACE_CLOSE` - covered
+- `SQLITE_TRACE_PROFILE` - covered
+- `SQLITE_TRACE_ROW` - covered
+- `SQLITE_TRACE_STMT` - covered
+- `SQLITE_TRANSACTION` - covered
 - `SQLITE_TRANSIENT` - covered
 - `SQLITE_TXN_NONE` - covered
 - `SQLITE_TXN_READ` - covered
 - `SQLITE_TXN_WRITE` - covered
-- `SQLITE_UPDATE` - missing
+- `SQLITE_UPDATE` - covered
 - `SQLITE_UTF16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_UTF16BE` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_UTF16LE` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -4259,7 +4259,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_VTAB_INNOCUOUS` - missing
 - `SQLITE_VTAB_USES_ALL_SCHEMAS` - missing
 - `SQLITE_WARNING` - covered
-- `SQLITE_WARNING_AUTOINDEX` - missing
+- `SQLITE_WARNING_AUTOINDEX` - covered
 - `SQLITE_WIN32_DATA_DIRECTORY_TYPE` - missing
 - `SQLITE_WIN32_TEMP_DIRECTORY_TYPE` - missing
 
@@ -4267,14 +4267,14 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 
 - Connection lifecycle and configuration: database config, file control, shared-cache controls, 32-bit db-status compatibility wrapper, database-file object access, and the VFS-only filename construction/database-file helpers that are not safe through an ordinary `Database` owner.
 - Statement preparation and introspection: normalized SQL when enabled and scan-status APIs where the linked SQLite build exports them.
-- Binding and column value coverage: pointer/value binding, `sqlite3_value_*` accessors, `sqlite3_result_*` APIs, and callback-facing result/value lifetimes.
+- Binding and column value coverage: pointer binding and zero-copy borrowed value/column text/blob views once statement-step and callback lifetimes can be expressed in source. `sqlite3_value_*` copy/read helpers and `sqlite3_result_*` writers are covered.
 - Snapshot and WAL hook coverage: snapshot APIs and `sqlite3_wal_hook`.
-- Custom SQL extension points: scalar/aggregate/window function registration, aggregate context, user data, aux data, result APIs, value APIs, collations, authorizer, overload function, auto-extension registration, load-extension controls, and `sqlite3_api_routines`.
+- Custom SQL extension points: aggregate/window function registration, aggregate context, collations, authorizer, overload function, auto-extension registration, load-extension controls, and `sqlite3_api_routines`. Scalar function registration, user data, aux data, result APIs, and value APIs are covered.
 - Hooks and callbacks: busy handler/timeout, progress handler, commit/rollback/update hooks, trace v2, preupdate hooks, unlock notify, log callback, autovacuum pages callback, clientdata, and custom error-message hooks.
 - Virtual tables and VFS: `sqlite3_module`, `sqlite3_vtab`, `sqlite3_vtab_cursor`, `sqlite3_index_info`, vtab config/helper APIs, VFS registration/find/unregister, `sqlite3_file`, `sqlite3_io_methods`, VFS-owned file-name APIs, and database-file object access.
 - Memory, mutex, and page-cache customization: global config, allocator APIs, legacy soft-heap-limit compatibility, mutex object/method APIs, pcache method/page types, and string-builder APIs.
 - Introspection/utilities: `sqlite3_version` variable exposure if Stark gains safe imported-data support, mprintf/snprintf families, string-builder APIs, `sqlite3_get_table` compatibility helpers, and deprecated compatibility APIs not already wrapped.
-- Constants: almost all extended result codes, config codes, db-config codes, file-control opcodes, IO capability flags, function flags, sync/locking/access/delete/version constants, authorizer action codes, trace flags, test controls, virtual-table constraint/operator flags, and Windows-specific constants are missing.
+- Constants: file-control opcodes, IO capability flags, sync/shared-memory/version constants, test controls, virtual-table constraint/operator flags, and Windows-specific constants are missing.
 
 ### Design Notes
 
