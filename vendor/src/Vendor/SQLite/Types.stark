@@ -12,8 +12,39 @@ internal struct SQLite3StatementNative
     i8[min max] Opaque;
 }
 
+internal struct SQLite3BlobNative
+{
+    i8[min max] Opaque;
+}
+
+internal struct SQLite3BackupNative
+{
+    i8[min max] Opaque;
+}
+
+public struct SQLite3ContextNative
+{
+    internal i8[min max] Opaque;
+}
+
+public struct SQLite3ValueNative
+{
+    internal i8[min max] Opaque;
+}
+
+public alias SQLiteFunctionContext = rawmutptr<i8[min max]>;
+public alias SQLiteFunctionArguments = rawmutptr<i8[min max]>;
+public alias SQLiteScalarCallback = fnptr<unsafe ffi(c) fn void(
+    SQLiteFunctionContext,
+    i32[min max],
+    SQLiteFunctionArguments)>;
+
 internal unsafe ffi(c) fn System.C.c_int sqlite3_close_v2(rawmutptr<SQLite3Native> database);
 internal unsafe ffi(c) fn System.C.c_int sqlite3_finalize(rawmutptr<SQLite3StatementNative> statement);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_blob_close(rawmutptr<SQLite3BlobNative> blob);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_backup_finish(rawmutptr<SQLite3BackupNative> backup);
+internal unsafe ffi(c) fn void sqlite3_free(rawmutptr<System.C.c_void> memory);
+internal unsafe ffi(c) fn void sqlite3_value_free(rawmutptr<SQLite3ValueNative> value);
 
 public struct Database
 {
@@ -56,6 +87,156 @@ public struct Statement
                 self.Handle = null;
             }
         }
+    }
+}
+
+public struct Blob
+{
+    internal rawmutptr<SQLite3BlobNative> Handle;
+
+    Blob()
+    {
+        self.Handle = null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_blob_close(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct Backup
+{
+    internal rawmutptr<SQLite3BackupNative> Handle;
+
+    Backup()
+    {
+        self.Handle = null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_backup_finish(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct SQLiteOwnedBytes
+{
+    internal rawmutptr<u8[0 max]> Data;
+    internal u64[0 max] ByteLength;
+
+    SQLiteOwnedBytes()
+    {
+        self.Data = null;
+        self.ByteLength = 0;
+    }
+
+    public inline finite law u64[0 max] Length(borrow SQLiteOwnedBytes self)
+    {
+        return self.ByteLength;
+    }
+
+    public inline finite law bool IsEmpty(borrow SQLiteOwnedBytes self)
+    {
+        return self.ByteLength == 0;
+    }
+
+    public fn SQLiteStatusResult CopyTo(borrow SQLiteOwnedBytes self, borrow mut u8[0 max][] destination)
+    {
+        if (destination.Length < self.ByteLength)
+        {
+            return SQLiteStatusResult.Err(SQLiteError.TooLarge);
+        }
+
+        if (self.ByteLength == 0)
+        {
+            return SQLiteStatusResult.Ok;
+        }
+
+        if (self.Data == null)
+        {
+            return SQLiteStatusResult.Err(SQLiteError.NullValue);
+        }
+
+        unsafe
+        {
+            stack mut u64[0 max] index = 0;
+            while willexit (index < self.ByteLength)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return SQLiteStatusResult.Ok;
+    }
+
+    public fn void Close(mut borrow SQLiteOwnedBytes self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                sqlite3_free((rawmutptr<System.C.c_void>)self.Data);
+                self.Data = null;
+                self.ByteLength = 0;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public struct SQLiteOwnedValue
+{
+    internal rawmutptr<SQLite3ValueNative> Handle;
+
+    SQLiteOwnedValue()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteOwnedValue self)
+    {
+        return self.Handle != null;
+    }
+
+    public fn void Close(mut borrow SQLiteOwnedValue self)
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_value_free(self.Handle);
+                self.Handle = null;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
     }
 }
 
@@ -105,6 +286,13 @@ public enum SQLiteColumnType
     Unknown(i32[min max]),
 }
 
+public enum SQLiteStatementExplainMode
+{
+    Normal,
+    Explain,
+    ExplainQueryPlan,
+}
+
 public enum SQLiteError
 {
     SQLite(SQLiteStatus),
@@ -133,9 +321,63 @@ public enum SQLiteStatementResult
     [Err] Err(SQLiteError),
 }
 
+public enum SQLiteBlobResult
+{
+    [Ok] Ok(Blob),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteBackupResult
+{
+    [Ok] Ok(Backup),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteBytesResult
+{
+    [Ok] Ok(SQLiteOwnedBytes),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteOwnedValueResult
+{
+    [Ok] Ok(SQLiteOwnedValue),
+    [Err] Err(SQLiteError),
+}
+
 public enum SQLiteTextResult
 {
     [Ok] Ok(System.Text.OwnedAscii),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteUtf16Result
+{
+    [Ok] Ok(System.Text.OwnedUtf16),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteBoolResult
+{
+    [Ok] Ok(bool),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteIntResult
+{
+    [Ok] Ok(i32[min max]),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteI64Result
+{
+    [Ok] Ok(i64[min max]),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLitePointerResult
+{
+    [Ok] Ok(rawptr<System.C.c_void>),
     [Err] Err(SQLiteError),
 }
 
@@ -144,6 +386,52 @@ public enum SQLiteStepResult
     Row,
     Done,
     Err(SQLiteError),
+}
+
+public enum SQLiteBackupStepResult
+{
+    More,
+    Done,
+    Err(SQLiteError),
+}
+
+public struct SQLiteStatusSnapshot
+{
+    i64[min max] Current;
+    i64[min max] HighWater;
+}
+
+public enum SQLiteStatusSnapshotResult
+{
+    [Ok] Ok(SQLiteStatusSnapshot),
+    [Err] Err(SQLiteError),
+}
+
+public struct SQLiteColumnMetadata
+{
+    System.Text.OwnedAscii DataType;
+    System.Text.OwnedAscii Collation;
+    bool NotNull;
+    bool PrimaryKey;
+    bool AutoIncrement;
+}
+
+public enum SQLiteColumnMetadataResult
+{
+    [Ok] Ok(SQLiteColumnMetadata),
+    [Err] Err(SQLiteError),
+}
+
+public struct SQLiteWalCheckpointSnapshot
+{
+    i32[min max] LogFrameCount;
+    i32[min max] CheckpointedFrameCount;
+}
+
+public enum SQLiteWalCheckpointResult
+{
+    [Ok] Ok(SQLiteWalCheckpointSnapshot),
+    [Err] Err(SQLiteError),
 }
 
 public const SQLITE_OK = 0;
@@ -187,14 +475,122 @@ public const SQLITE_NULL = 5;
 public const SQLITE_OPEN_READONLY = 1;
 public const SQLITE_OPEN_READWRITE = 2;
 public const SQLITE_OPEN_CREATE = 4;
+public const SQLITE_OPEN_DELETEONCLOSE = 8;
+public const SQLITE_OPEN_EXCLUSIVE = 16;
+public const SQLITE_OPEN_AUTOPROXY = 32;
 public const SQLITE_OPEN_URI = 64;
 public const SQLITE_OPEN_MEMORY = 128;
+public const SQLITE_OPEN_MAIN_DB = 256;
+public const SQLITE_OPEN_TEMP_DB = 512;
+public const SQLITE_OPEN_TRANSIENT_DB = 1024;
+public const SQLITE_OPEN_MAIN_JOURNAL = 2048;
+public const SQLITE_OPEN_TEMP_JOURNAL = 4096;
+public const SQLITE_OPEN_SUBJOURNAL = 8192;
+public const SQLITE_OPEN_SUPER_JOURNAL = 16384;
 public const SQLITE_OPEN_NOMUTEX = 32768;
 public const SQLITE_OPEN_FULLMUTEX = 65536;
 public const SQLITE_OPEN_SHAREDCACHE = 131072;
 public const SQLITE_OPEN_PRIVATECACHE = 262144;
+public const SQLITE_OPEN_WAL = 524288;
 public const SQLITE_OPEN_NOFOLLOW = 16777216;
 public const SQLITE_OPEN_EXRESCODE = 33554432;
+
+public const SQLITE_UTF8 = 1;
+public const SQLITE_UTF16LE = 2;
+public const SQLITE_UTF16BE = 3;
+public const SQLITE_UTF16 = 4;
+public const SQLITE_UTF16_ALIGNED = 8;
+public const SQLITE_UTF8_ZT = 16;
+
+public const SQLITE_DETERMINISTIC = 2048;
+public const SQLITE_DIRECTONLY = 524288;
+public const SQLITE_SUBTYPE = 1048576;
+public const SQLITE_INNOCUOUS = 2097152;
+public const SQLITE_RESULT_SUBTYPE = 16777216;
+public const SQLITE_SELFORDER1 = 33554432;
+
+public const SQLITE_LIMIT_LENGTH = 0;
+public const SQLITE_LIMIT_SQL_LENGTH = 1;
+public const SQLITE_LIMIT_COLUMN = 2;
+public const SQLITE_LIMIT_EXPR_DEPTH = 3;
+public const SQLITE_LIMIT_COMPOUND_SELECT = 4;
+public const SQLITE_LIMIT_VDBE_OP = 5;
+public const SQLITE_LIMIT_FUNCTION_ARG = 6;
+public const SQLITE_LIMIT_ATTACHED = 7;
+public const SQLITE_LIMIT_LIKE_PATTERN_LENGTH = 8;
+public const SQLITE_LIMIT_VARIABLE_NUMBER = 9;
+public const SQLITE_LIMIT_TRIGGER_DEPTH = 10;
+public const SQLITE_LIMIT_WORKER_THREADS = 11;
+public const SQLITE_LIMIT_PARSER_DEPTH = 12;
+
+public const SQLITE_PREPARE_PERSISTENT = 1;
+public const SQLITE_PREPARE_NORMALIZE = 2;
+public const SQLITE_PREPARE_NO_VTAB = 4;
+public const SQLITE_PREPARE_DONT_LOG = 16;
+public const SQLITE_PREPARE_FROM_DDL = 32;
+
+public const SQLITE_TXN_NONE = 0;
+public const SQLITE_TXN_READ = 1;
+public const SQLITE_TXN_WRITE = 2;
+
+public const SQLITE_CHECKPOINT_NOOP = -1;
+public const SQLITE_CHECKPOINT_PASSIVE = 0;
+public const SQLITE_CHECKPOINT_FULL = 1;
+public const SQLITE_CHECKPOINT_RESTART = 2;
+public const SQLITE_CHECKPOINT_TRUNCATE = 3;
+
+public const SQLITE_SERIALIZE_NOCOPY = 1;
+
+public const SQLITE_DESERIALIZE_FREEONCLOSE = 1;
+public const SQLITE_DESERIALIZE_RESIZEABLE = 2;
+public const SQLITE_DESERIALIZE_READONLY = 4;
+
+public const SQLITE_STATUS_MEMORY_USED = 0;
+public const SQLITE_STATUS_PAGECACHE_USED = 1;
+public const SQLITE_STATUS_PAGECACHE_OVERFLOW = 2;
+public const SQLITE_STATUS_SCRATCH_USED = 3;
+public const SQLITE_STATUS_SCRATCH_OVERFLOW = 4;
+public const SQLITE_STATUS_MALLOC_SIZE = 5;
+public const SQLITE_STATUS_PARSER_STACK = 6;
+public const SQLITE_STATUS_PAGECACHE_SIZE = 7;
+public const SQLITE_STATUS_SCRATCH_SIZE = 8;
+public const SQLITE_STATUS_MALLOC_COUNT = 9;
+
+public const SQLITE_DBSTATUS_LOOKASIDE_USED = 0;
+public const SQLITE_DBSTATUS_CACHE_USED = 1;
+public const SQLITE_DBSTATUS_SCHEMA_USED = 2;
+public const SQLITE_DBSTATUS_STMT_USED = 3;
+public const SQLITE_DBSTATUS_LOOKASIDE_HIT = 4;
+public const SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE = 5;
+public const SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL = 6;
+public const SQLITE_DBSTATUS_CACHE_HIT = 7;
+public const SQLITE_DBSTATUS_CACHE_MISS = 8;
+public const SQLITE_DBSTATUS_CACHE_WRITE = 9;
+public const SQLITE_DBSTATUS_DEFERRED_FKS = 10;
+public const SQLITE_DBSTATUS_CACHE_USED_SHARED = 11;
+public const SQLITE_DBSTATUS_CACHE_SPILL = 12;
+public const SQLITE_DBSTATUS_TEMPBUF_SPILL = 13;
+public const SQLITE_DBSTATUS_MAX = 13;
+
+public const SQLITE_STMTSTATUS_FULLSCAN_STEP = 1;
+public const SQLITE_STMTSTATUS_SORT = 2;
+public const SQLITE_STMTSTATUS_AUTOINDEX = 3;
+public const SQLITE_STMTSTATUS_VM_STEP = 4;
+public const SQLITE_STMTSTATUS_REPREPARE = 5;
+public const SQLITE_STMTSTATUS_RUN = 6;
+public const SQLITE_STMTSTATUS_FILTER_MISS = 7;
+public const SQLITE_STMTSTATUS_FILTER_HIT = 8;
+public const SQLITE_STMTSTATUS_MEMUSED = 99;
+
+public const SQLITE_SCANSTAT_NLOOP = 0;
+public const SQLITE_SCANSTAT_NVISIT = 1;
+public const SQLITE_SCANSTAT_EST = 2;
+public const SQLITE_SCANSTAT_NAME = 3;
+public const SQLITE_SCANSTAT_EXPLAIN = 4;
+public const SQLITE_SCANSTAT_SELECTID = 5;
+public const SQLITE_SCANSTAT_PARENTID = 6;
+public const SQLITE_SCANSTAT_NCYCLE = 7;
+public const SQLITE_SCANSTAT_COMPLEX = 1;
 
 public finite law SQLiteStatus StatusFromCode(i32[min max] code)
 {
@@ -360,6 +756,19 @@ public finite law SQLiteColumnType ColumnTypeFromCode(i32[min max] code)
             return SQLiteColumnType.Null;
         default:
             return SQLiteColumnType.Unknown(code);
+    }
+}
+
+public finite law i32[min max] Code(SQLiteStatementExplainMode mode)
+{
+    switch (mode)
+    {
+        case SQLiteStatementExplainMode.Normal:
+            return 0;
+        case SQLiteStatementExplainMode.Explain:
+            return 1;
+        case SQLiteStatementExplainMode.ExplainQueryPlan:
+            return 2;
     }
 }
 

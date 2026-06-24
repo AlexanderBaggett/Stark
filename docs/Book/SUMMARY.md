@@ -296,7 +296,7 @@ with Stark-specific framing:
     - directory inspection
     - owned handles and cleanup
 39. Project: Native-Backed Package
-    - Raylib/GLFW/SDL3/KbTextShape-style native adapter
+    - Raylib/GLFW/SDL3 native adapter patterns
     - package-owned native metadata
     - downstream executable build
 40. Project: Performance Case Study

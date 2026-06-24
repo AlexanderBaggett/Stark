@@ -424,8 +424,9 @@ internal static class TypeCompatibilityFacts
         {
             FunctionPointerParameterMemoryRelation.Same => source is FunctionPointerParameterMemoryRelation.Same
                 or FunctionPointerParameterMemoryRelation.Overlap,
-            FunctionPointerParameterMemoryRelation.Overlap or FunctionPointerParameterMemoryRelation.None => source == FunctionPointerParameterMemoryRelation.Overlap,
-            FunctionPointerParameterMemoryRelation.Disjoint => source is FunctionPointerParameterMemoryRelation.Disjoint
+            FunctionPointerParameterMemoryRelation.Overlap => source == FunctionPointerParameterMemoryRelation.Overlap,
+            FunctionPointerParameterMemoryRelation.None or FunctionPointerParameterMemoryRelation.Disjoint => source is FunctionPointerParameterMemoryRelation.None
+                or FunctionPointerParameterMemoryRelation.Disjoint
                 or FunctionPointerParameterMemoryRelation.Overlap,
             _ => false
         };

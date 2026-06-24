@@ -962,399 +962,6 @@ public sealed class ExamplesCompileRunTests
     }
 
     [Fact]
-    public async Task VendorLZ4ModulesCheckWithoutNativeExecution()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var lz4Source = Path.Combine(vendorImportDirectory, "Vendor", "LZ4.stark");
-
-        var sourceText = await File.ReadAllTextAsync(lz4Source);
-        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int LZ4_compress_default", sourceText, StringComparison.Ordinal);
-        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int LZ4_decompress_safe", sourceText, StringComparison.Ordinal);
-        Assert.Contains("borrow i8[min max][] source", sourceText, StringComparison.Ordinal);
-        Assert.Contains("borrow mut i8[min max][] destination", sourceText, StringComparison.Ordinal);
-        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
-
-        await CheckSourceAsync(
-            lz4Source,
-            vendorImportDirectory,
-            stdlibImportDirectory);
-
-        await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "examples", "lz4", "LZ4RoundTrip.stark"),
-            vendorImportDirectory,
-            stdlibImportDirectory);
-    }
-
-    [Fact]
-    public async Task VendorLZ4BuildsAndRunsThroughPackageOwnedNativeMetadata()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows()
-            || !await PkgConfigPackageExistsAsync("liblz4"))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-lz4-pkg-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
-
-        var vendorLZ4Source = Path.Combine(vendorImportDirectory, "Vendor", "LZ4.stark");
-        var vendorLZ4Library = Path.Combine(packageDirectory, "libVendorLZ4.a");
-        var vendorLZ4Package = Path.ChangeExtension(vendorLZ4Library, ".starkpkg");
-        var roundTripOutput = Path.Combine(tempDirectory.FullName, "lz4-round-trip");
-
-        try
-        {
-            var emitStdout = new StringWriter();
-            var emitStderr = new StringWriter();
-            var emitExitCode = await CompilerCli.RunAsync(
-                [
-                    vendorLZ4Source,
-                    "--emit-lib",
-                    "-I", vendorImportDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", vendorLZ4Library,
-                    "--native-pkg-config", "liblz4",
-                ],
-                new StringReader(string.Empty),
-                emitStdout,
-                emitStderr);
-
-            Assert.True(emitExitCode == 0, emitStderr.ToString());
-            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(vendorLZ4Library));
-            Assert.True(File.Exists(vendorLZ4Package));
-
-            Assert.True(PackageImageLoader.TryLoadManifest(vendorLZ4Package, out var manifest));
-            Assert.Equal("Vendor.LZ4", manifest.RootModule);
-            Assert.NotNull(manifest.NativeDependencies);
-            Assert.Equal("liblz4", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
-            Assert.True(manifest.NativeDependencies.Sources is null || manifest.NativeDependencies.Sources.Count == 0);
-
-            var inspectStdout = new StringWriter();
-            var inspectStderr = new StringWriter();
-            var inspectExitCode = await CompilerCli.RunAsync(
-                [vendorLZ4Package, "--inspect-pkg"],
-                new StringReader(string.Empty),
-                inspectStdout,
-                inspectStderr);
-
-            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
-            Assert.Matches(
-                "native dependencies: sources=0, .*pkg-config=1",
-                inspectStdout.ToString());
-
-            var compileStdout = new StringWriter();
-            var compileStderr = new StringWriter();
-            var compileExitCode = await CompilerCli.RunAsync(
-                [
-                    Path.Combine(repositoryRoot, "examples", "lz4", "LZ4RoundTrip.stark"),
-                    "--emit-exe",
-                    "-I", packageDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", roundTripOutput,
-                ],
-                new StringReader(string.Empty),
-                compileStdout,
-                compileStderr);
-
-            Assert.True(compileExitCode == 0, compileStderr.ToString());
-            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(roundTripOutput));
-
-            var processResult = await RunNativeExecutableAsync(roundTripOutput);
-
-            Assert.Equal(0, processResult.ExitCode);
-            Assert.Equal("LZ4 round trip ok\n", processResult.StandardOutput);
-            Assert.Equal(string.Empty, processResult.StandardError);
-        }
-        finally
-        {
-            Cleanup(tempDirectory);
-        }
-    }
-
-    [Fact]
-    public async Task VendorZlibModulesCheckWithoutNativeExecution()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var zlibSource = Path.Combine(vendorImportDirectory, "Vendor", "Zlib.stark");
-        var zlibNativeSource = Path.Combine(repositoryRoot, "vendor", "ZlibStreamBinding.c");
-
-        Assert.True(File.Exists(zlibNativeSource));
-        var nativeSourceText = await File.ReadAllTextAsync(zlibNativeSource);
-        Assert.Contains("deflateInit", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("inflateInit", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_zlib_deflate_update", nativeSourceText, StringComparison.Ordinal);
-
-        var sourceText = await File.ReadAllTextAsync(zlibSource);
-        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int compress2", sourceText, StringComparison.Ordinal);
-        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int uncompress", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public struct DeflateStream", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public struct InflateStream", sourceText, StringComparison.Ordinal);
-        Assert.Contains("borrow i8[min max][] source", sourceText, StringComparison.Ordinal);
-        Assert.Contains("borrow mut i8[min max][] destination", sourceText, StringComparison.Ordinal);
-        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
-
-        await CheckSourceAsync(
-            zlibSource,
-            vendorImportDirectory,
-            stdlibImportDirectory);
-
-        await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "examples", "zlib", "ZlibRoundTrip.stark"),
-            vendorImportDirectory,
-            stdlibImportDirectory);
-    }
-
-    [Fact]
-    public async Task VendorZlibBuildsAndRunsThroughPackageOwnedNativeMetadata()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows()
-            || !await PkgConfigPackageExistsAsync("zlib"))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-zlib-pkg-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
-
-        var vendorZlibSource = Path.Combine(vendorImportDirectory, "Vendor", "Zlib.stark");
-        var zlibNativeSource = Path.Combine(repositoryRoot, "vendor", "ZlibStreamBinding.c");
-        var vendorZlibLibrary = Path.Combine(packageDirectory, "libVendorZlib.a");
-        var vendorZlibPackage = Path.ChangeExtension(vendorZlibLibrary, ".starkpkg");
-        var roundTripOutput = Path.Combine(tempDirectory.FullName, "zlib-round-trip");
-
-        try
-        {
-            var emitStdout = new StringWriter();
-            var emitStderr = new StringWriter();
-            var emitExitCode = await CompilerCli.RunAsync(
-                [
-                    vendorZlibSource,
-                    "--emit-lib",
-                    "-I", vendorImportDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", vendorZlibLibrary,
-                    "--native-source", zlibNativeSource,
-                    "--native-pkg-config", "zlib",
-                ],
-                new StringReader(string.Empty),
-                emitStdout,
-                emitStderr);
-
-            Assert.True(emitExitCode == 0, emitStderr.ToString());
-            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(vendorZlibLibrary));
-            Assert.True(File.Exists(vendorZlibPackage));
-
-            Assert.True(PackageImageLoader.TryLoadManifest(vendorZlibPackage, out var manifest));
-            Assert.Equal("Vendor.Zlib", manifest.RootModule);
-            Assert.NotNull(manifest.NativeDependencies);
-            Assert.Equal("zlib", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
-            Assert.Equal("ZlibStreamBinding.c", Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
-
-            var inspectStdout = new StringWriter();
-            var inspectStderr = new StringWriter();
-            var inspectExitCode = await CompilerCli.RunAsync(
-                [vendorZlibPackage, "--inspect-pkg"],
-                new StringReader(string.Empty),
-                inspectStdout,
-                inspectStderr);
-
-            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
-            Assert.Matches(
-                "native dependencies: sources=1, .*pkg-config=1",
-                inspectStdout.ToString());
-
-            var compileStdout = new StringWriter();
-            var compileStderr = new StringWriter();
-            var compileExitCode = await CompilerCli.RunAsync(
-                [
-                    Path.Combine(repositoryRoot, "examples", "zlib", "ZlibRoundTrip.stark"),
-                    "--emit-exe",
-                    "-I", packageDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", roundTripOutput,
-                ],
-                new StringReader(string.Empty),
-                compileStdout,
-                compileStderr);
-
-            Assert.True(compileExitCode == 0, compileStderr.ToString());
-            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(roundTripOutput));
-
-            var processResult = await RunNativeExecutableAsync(roundTripOutput);
-
-            Assert.Equal(0, processResult.ExitCode);
-            Assert.Equal("Zlib round trip ok\n", processResult.StandardOutput);
-            Assert.Equal(string.Empty, processResult.StandardError);
-        }
-        finally
-        {
-            Cleanup(tempDirectory);
-        }
-    }
-
-    [Fact]
-    public async Task VendorCurlModulesCheckWithoutNativeExecution()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var curlSource = Path.Combine(vendorImportDirectory, "Vendor", "Curl.stark");
-        var curlNativeSource = Path.Combine(repositoryRoot, "vendor", "CurlEasyBinding.c");
-
-        Assert.True(File.Exists(curlNativeSource));
-        var nativeSourceText = await File.ReadAllTextAsync(curlNativeSource);
-        Assert.Contains("curl_easy_setopt", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("CURLOPT_WRITEFUNCTION", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("CURLOPT_HEADERFUNCTION", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_curl_get_into", nativeSourceText, StringComparison.Ordinal);
-
-        var sourceText = await File.ReadAllTextAsync(curlSource);
-        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_curl_get_into", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public struct CurlResponse", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn CurlTransferResult GetInto", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn CurlResponseResult GetBytes", sourceText, StringComparison.Ordinal);
-        Assert.Contains("borrow mut i8[min max][] bodyDestination", sourceText, StringComparison.Ordinal);
-        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
-
-        await CheckSourceAsync(
-            curlSource,
-            vendorImportDirectory,
-            stdlibImportDirectory);
-
-        await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "examples", "curl", "CurlGet.stark"),
-            vendorImportDirectory,
-            stdlibImportDirectory);
-    }
-
-    [Fact]
-    public async Task VendorCurlBuildsAndRunsThroughPackageOwnedNativeMetadata()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || OperatingSystem.IsWindows()
-            || !await PkgConfigPackageExistsAsync("libcurl"))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-curl-pkg-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
-
-        var vendorCurlSource = Path.Combine(vendorImportDirectory, "Vendor", "Curl.stark");
-        var curlNativeSource = Path.Combine(repositoryRoot, "vendor", "CurlEasyBinding.c");
-        var vendorCurlLibrary = Path.Combine(packageDirectory, "libVendorCurl.a");
-        var vendorCurlPackage = Path.ChangeExtension(vendorCurlLibrary, ".starkpkg");
-        var curlOutput = Path.Combine(tempDirectory.FullName, "curl-get");
-
-        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        var serverTask = ServeCurlExampleRequestsAsync(listener, requestCount: 2);
-
-        try
-        {
-            var emitStdout = new StringWriter();
-            var emitStderr = new StringWriter();
-            var emitExitCode = await CompilerCli.RunAsync(
-                [
-                    vendorCurlSource,
-                    "--emit-lib",
-                    "-I", vendorImportDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", vendorCurlLibrary,
-                    "--native-source", curlNativeSource,
-                    "--native-pkg-config", "libcurl",
-                ],
-                new StringReader(string.Empty),
-                emitStdout,
-                emitStderr);
-
-            Assert.True(emitExitCode == 0, emitStderr.ToString());
-            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(vendorCurlLibrary));
-            Assert.True(File.Exists(vendorCurlPackage));
-
-            Assert.True(PackageImageLoader.TryLoadManifest(vendorCurlPackage, out var manifest));
-            Assert.Equal("Vendor.Curl", manifest.RootModule);
-            Assert.NotNull(manifest.NativeDependencies);
-            Assert.Equal("libcurl", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
-            Assert.Equal("CurlEasyBinding.c", Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
-
-            var inspectStdout = new StringWriter();
-            var inspectStderr = new StringWriter();
-            var inspectExitCode = await CompilerCli.RunAsync(
-                [vendorCurlPackage, "--inspect-pkg"],
-                new StringReader(string.Empty),
-                inspectStdout,
-                inspectStderr);
-
-            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
-            Assert.Matches(
-                "native dependencies: sources=1, .*pkg-config=1",
-                inspectStdout.ToString());
-
-            var compileStdout = new StringWriter();
-            var compileStderr = new StringWriter();
-            var compileExitCode = await CompilerCli.RunAsync(
-                [
-                    Path.Combine(repositoryRoot, "examples", "curl", "CurlGet.stark"),
-                    "--emit-exe",
-                    "-I", packageDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", curlOutput,
-                ],
-                new StringReader(string.Empty),
-                compileStdout,
-                compileStderr);
-
-            Assert.True(compileExitCode == 0, compileStderr.ToString());
-            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(curlOutput));
-
-            var processResult = await RunNativeExecutableAsync(
-                curlOutput,
-                environment:
-                    new Dictionary<string, string>
-                    {
-                        ["STARK_CURL_URL"] = $"http://127.0.0.1:{port}/stark-vendor-curl"
-                    });
-
-            Assert.Equal(0, processResult.ExitCode);
-            Assert.Equal("Curl GET ok\n", processResult.StandardOutput);
-            Assert.Equal(string.Empty, processResult.StandardError);
-
-            await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
-        }
-        finally
-        {
-            listener.Stop();
-            Cleanup(tempDirectory);
-        }
-    }
-
-    [Fact]
     public async Task VendorSTBImageModulesCheckWithoutNativeExecution()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -1494,168 +1101,6 @@ public sealed class ExamplesCompileRunTests
 
             Assert.Equal(0, processResult.ExitCode);
             Assert.Equal("STB image ok\n", processResult.StandardOutput);
-            Assert.Equal(string.Empty, processResult.StandardError);
-        }
-        finally
-        {
-            Cleanup(tempDirectory);
-        }
-    }
-
-    [Fact]
-    public async Task VendorSTBTruetypeModulesCheckWithoutNativeExecution()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var stbTruetypeSource = Path.Combine(vendorImportDirectory, "Vendor", "STB", "Truetype.stark");
-        var stbNativeSource = Path.Combine(repositoryRoot, "vendor", "StbTruetypeImplementation.c");
-        var stbVersionFile = Path.Combine(repositoryRoot, "vendor", "native", "stb", "VERSION.md");
-        var fontFixture = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.ttf");
-        var fontLicense = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.LICENSE");
-
-        Assert.True(File.Exists(stbNativeSource));
-        Assert.True(File.Exists(Path.Combine(repositoryRoot, "vendor", "native", "stb", "stb_truetype.h")));
-        Assert.True(File.Exists(fontFixture));
-        Assert.True(File.Exists(fontLicense));
-        Assert.Contains(
-            "31c1ad37456438565541f4919958214b6e762fb4",
-            await File.ReadAllTextAsync(stbVersionFile),
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "Vera.ttf",
-            await File.ReadAllTextAsync(stbVersionFile),
-            StringComparison.Ordinal);
-
-        var nativeSourceText = await File.ReadAllTextAsync(stbNativeSource);
-        Assert.Contains("STB_TRUETYPE_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_stbtt_font_create", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_stbtt_make_glyph_bitmap", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_stbtt_pack_glyph_range", nativeSourceText, StringComparison.Ordinal);
-
-        var sourceText = await File.ReadAllTextAsync(stbTruetypeSource);
-        Assert.Contains("internal struct TrueTypeFontNative", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public struct Font", sourceText, StringComparison.Ordinal);
-        Assert.Contains("mut drop", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn FontResult LoadFontFromMemory", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn TrueTypeStatus RenderGlyphBitmap", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn TrueTypeStatus PackGlyphRange", sourceText, StringComparison.Ordinal);
-        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
-
-        await CheckSourceAsync(
-            stbTruetypeSource,
-            vendorImportDirectory,
-            stdlibImportDirectory);
-
-        await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "examples", "stb-truetype", "StbTruetypeGlyphAtlas.stark"),
-            vendorImportDirectory,
-            stdlibImportDirectory);
-    }
-
-    [Fact]
-    public async Task VendorSTBTruetypeBuildsAndRunsThroughPackageOwnedNativeMetadata()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-stb-truetype-pkg-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
-
-        var vendorSTBTruetypeSource = Path.Combine(vendorImportDirectory, "Vendor", "STB", "Truetype.stark");
-        var stbNativeSource = Path.Combine(repositoryRoot, "vendor", "StbTruetypeImplementation.c");
-        var stbIncludeDirectory = Path.Combine(repositoryRoot, "vendor", "native", "stb");
-        var fontFixture = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.ttf");
-        var vendorSTBTruetypeLibrary = Path.Combine(
-            packageDirectory,
-            OperatingSystem.IsWindows() ? "VendorSTBTruetype.lib" : "libVendorSTBTruetype.a");
-        var vendorSTBTruetypePackage = Path.ChangeExtension(vendorSTBTruetypeLibrary, ".starkpkg");
-        var stbTruetypeOutput = Path.Combine(
-            tempDirectory.FullName,
-            OperatingSystem.IsWindows() ? "stb-truetype-glyph-atlas.exe" : "stb-truetype-glyph-atlas");
-
-        try
-        {
-            var emitStdout = new StringWriter();
-            var emitStderr = new StringWriter();
-            var emitExitCode = await CompilerCli.RunAsync(
-                [
-                    vendorSTBTruetypeSource,
-                    "--emit-lib",
-                    "-I", vendorImportDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", vendorSTBTruetypeLibrary,
-                    "--native-source", stbNativeSource,
-                    "--native-include-dir", stbIncludeDirectory,
-                ],
-                new StringReader(string.Empty),
-                emitStdout,
-                emitStderr);
-
-            Assert.True(emitExitCode == 0, emitStderr.ToString());
-            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(vendorSTBTruetypeLibrary));
-            Assert.True(File.Exists(vendorSTBTruetypePackage));
-
-            Assert.True(PackageImageLoader.TryLoadManifest(vendorSTBTruetypePackage, out var manifest));
-            Assert.Equal("Vendor.STB.Truetype", manifest.RootModule);
-            Assert.NotNull(manifest.NativeDependencies);
-            Assert.Equal(
-                "StbTruetypeImplementation.c",
-                Path.GetFileName(Assert.Single(manifest.NativeDependencies!.Sources!)));
-            Assert.EndsWith(
-                Path.Combine("native", "stb"),
-                Assert.Single(manifest.NativeDependencies.IncludeDirectories!),
-                StringComparison.Ordinal);
-            Assert.True(manifest.NativeDependencies.PkgConfigPackages is null
-                || manifest.NativeDependencies.PkgConfigPackages.Count == 0);
-
-            var inspectStdout = new StringWriter();
-            var inspectStderr = new StringWriter();
-            var inspectExitCode = await CompilerCli.RunAsync(
-                [vendorSTBTruetypePackage, "--inspect-pkg"],
-                new StringReader(string.Empty),
-                inspectStdout,
-                inspectStderr);
-
-            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
-            Assert.Matches(
-                "native dependencies: sources=1, includes=1, .*pkg-config=0",
-                inspectStdout.ToString());
-
-            var compileStdout = new StringWriter();
-            var compileStderr = new StringWriter();
-            var compileExitCode = await CompilerCli.RunAsync(
-                [
-                    Path.Combine(repositoryRoot, "examples", "stb-truetype", "StbTruetypeGlyphAtlas.stark"),
-                    "--emit-exe",
-                    "-I", packageDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", stbTruetypeOutput,
-                ],
-                new StringReader(string.Empty),
-                compileStdout,
-                compileStderr);
-
-            Assert.True(compileExitCode == 0, compileStderr.ToString());
-            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(stbTruetypeOutput));
-
-            var processResult = await RunNativeExecutableAsync(
-                stbTruetypeOutput,
-                environment: new Dictionary<string, string>
-                {
-                    ["STARK_STB_TRUETYPE_FONT_PATH"] = fontFixture
-                });
-
-            Assert.Equal(0, processResult.ExitCode);
-            Assert.Equal("STB truetype ok\n", processResult.StandardOutput);
             Assert.Equal(string.Empty, processResult.StandardError);
         }
         finally
@@ -2301,161 +1746,6 @@ public sealed class ExamplesCompileRunTests
     }
 
     [Fact]
-    public async Task VendorKbTextShapeModulesCheckWithoutNativeExecution()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var kbTextShapeSource = Path.Combine(vendorImportDirectory, "Vendor", "KbTextShape.stark");
-        var kbTextShapeNativeSource = Path.Combine(repositoryRoot, "vendor", "KbTextShapeBinding.c");
-
-        Assert.True(File.Exists(kbTextShapeNativeSource));
-        var nativeSourceText = await File.ReadAllTextAsync(kbTextShapeNativeSource);
-        Assert.Contains("#include <hb.h>", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("#include <unicode/ubrk.h>", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("utext_openUTF8", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("hb_shape", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_kb_segment_utf8", nativeSourceText, StringComparison.Ordinal);
-        Assert.Contains("stark_kb_shape_utf8", nativeSourceText, StringComparison.Ordinal);
-
-        var sourceText = await File.ReadAllTextAsync(kbTextShapeSource);
-        Assert.Contains("public struct Segmenter", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public struct Font", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn SegmenterResult CreateSegmenter", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn FontResult CreateFontFromMemory", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn OutputCountResult SegmentUtf8Into", sourceText, StringComparison.Ordinal);
-        Assert.Contains("public fn OutputCountResult ShapeUtf8Into", sourceText, StringComparison.Ordinal);
-        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
-
-        await CheckSourceAsync(
-            kbTextShapeSource,
-            vendorImportDirectory,
-            stdlibImportDirectory);
-
-        await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "examples", "kb-text-shape", "TextShapeGlyphs.stark"),
-            vendorImportDirectory,
-            stdlibImportDirectory);
-
-        await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "tests-stark", "vendor.KbTextShape", "KbTextShapeTests.stark"),
-            vendorImportDirectory,
-            stdlibImportDirectory);
-    }
-
-    [Fact]
-    public async Task VendorKbTextShapeBuildsAndRunsThroughPackageOwnedNativeMetadata()
-    {
-        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
-            || !await PkgConfigPackageExistsAsync("harfbuzz")
-            || !await PkgConfigPackageExistsAsync("icu-uc")
-            || !await PkgConfigPackageExistsAsync("icu-i18n"))
-        {
-            return;
-        }
-
-        var repositoryRoot = FindRepositoryRoot();
-        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
-        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-kb-text-shape-pkg-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
-
-        var vendorKbTextShapeSource = Path.Combine(vendorImportDirectory, "Vendor", "KbTextShape.stark");
-        var kbTextShapeNativeSource = Path.Combine(repositoryRoot, "vendor", "KbTextShapeBinding.c");
-        var fixtureFont = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.ttf");
-        var vendorKbTextShapeLibrary = Path.Combine(
-            packageDirectory,
-            OperatingSystem.IsWindows() ? "VendorKbTextShape.lib" : "libVendorKbTextShape.a");
-        var vendorKbTextShapePackage = Path.ChangeExtension(vendorKbTextShapeLibrary, ".starkpkg");
-        var kbTextShapeOutput = Path.Combine(
-            tempDirectory.FullName,
-            OperatingSystem.IsWindows() ? "kb-text-shape-glyphs.exe" : "kb-text-shape-glyphs");
-
-        try
-        {
-            var emitStdout = new StringWriter();
-            var emitStderr = new StringWriter();
-            var emitExitCode = await CompilerCli.RunAsync(
-                [
-                    vendorKbTextShapeSource,
-                    "--emit-lib",
-                    "-I", vendorImportDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", vendorKbTextShapeLibrary,
-                    "--native-source", kbTextShapeNativeSource,
-                    "--native-pkg-config", "harfbuzz",
-                    "--native-pkg-config", "icu-uc",
-                    "--native-pkg-config", "icu-i18n",
-                ],
-                new StringReader(string.Empty),
-                emitStdout,
-                emitStderr);
-
-            Assert.True(emitExitCode == 0, emitStderr.ToString());
-            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(vendorKbTextShapeLibrary));
-            Assert.True(File.Exists(vendorKbTextShapePackage));
-
-            Assert.True(PackageImageLoader.TryLoadManifest(vendorKbTextShapePackage, out var manifest));
-            Assert.Equal("Vendor.KbTextShape", manifest.RootModule);
-            Assert.NotNull(manifest.NativeDependencies);
-            Assert.Contains("harfbuzz", manifest.NativeDependencies!.PkgConfigPackages!);
-            Assert.Contains("icu-uc", manifest.NativeDependencies.PkgConfigPackages!);
-            Assert.Contains("icu-i18n", manifest.NativeDependencies.PkgConfigPackages!);
-            Assert.Equal(
-                "KbTextShapeBinding.c",
-                Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
-
-            var inspectStdout = new StringWriter();
-            var inspectStderr = new StringWriter();
-            var inspectExitCode = await CompilerCli.RunAsync(
-                [vendorKbTextShapePackage, "--inspect-pkg"],
-                new StringReader(string.Empty),
-                inspectStdout,
-                inspectStderr);
-
-            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
-            Assert.Matches(
-                "native dependencies: sources=1, .*pkg-config=3",
-                inspectStdout.ToString());
-
-            var compileStdout = new StringWriter();
-            var compileStderr = new StringWriter();
-            var compileExitCode = await CompilerCli.RunAsync(
-                [
-                    Path.Combine(repositoryRoot, "examples", "kb-text-shape", "TextShapeGlyphs.stark"),
-                    "--emit-exe",
-                    "-I", packageDirectory,
-                    "-I", stdlibImportDirectory,
-                    "-o", kbTextShapeOutput,
-                ],
-                new StringReader(string.Empty),
-                compileStdout,
-                compileStderr);
-
-            Assert.True(compileExitCode == 0, compileStderr.ToString());
-            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(kbTextShapeOutput));
-
-            var processResult = await RunNativeExecutableAsync(
-                kbTextShapeOutput,
-                environment: new Dictionary<string, string>
-                {
-                    ["STARK_KB_TEXT_SHAPE_FONT_PATH"] = fixtureFont
-                });
-
-            Assert.Equal(0, processResult.ExitCode);
-            Assert.Equal("KbTextShape ok\n", processResult.StandardOutput);
-            Assert.Equal(string.Empty, processResult.StandardError);
-        }
-        finally
-        {
-            Cleanup(tempDirectory);
-        }
-    }
-
-    [Fact]
     public async Task VendorSQLiteModulesCheckWithoutNativeExecution()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -2469,17 +1759,167 @@ public sealed class ExamplesCompileRunTests
         var nativeSourceText = await File.ReadAllTextAsync(sqliteNativeSource);
         Assert.Contains("SQLITE_TRANSIENT", nativeSourceText, StringComparison.Ordinal);
         Assert.Contains("stark_sqlite_bind_text_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_bind_text16_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_bind_text64_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_bind_blob_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_bind_blob64_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_result_text_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_result_text16_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_result_text64_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_result_blob_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_result_blob64_transient", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_function_argument", nativeSourceText, StringComparison.Ordinal);
 
         var coreSourceText = await File.ReadAllTextAsync(sqliteCoreSource);
         Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text_transient", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text16_transient", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text64_transient", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_blob_transient", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_compileoption_used", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_keyword_name", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_complete16", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_open16", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_prepare16_v3", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_zeroblob", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_prepare_v3", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_int", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_parameter_count", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_bind_parameter_name", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_data_count", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_blob", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_void> sqlite3_column_text16", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_decltype", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_origin_name", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_column_int", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_sql", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_expanded_sql", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_transfer_bindings", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_stmt_status", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3Native> sqlite3_db_handle", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_blob_open", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_blob_read", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_blob_write", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3BackupNative> sqlite3_backup_init", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_backup_step", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_malloc64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<u8[0 max]> sqlite3_serialize", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_deserialize", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_wal_autocheckpoint", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_wal_checkpoint_v2", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn i64[min max] sqlite3_memory_used", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_release_memory", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn void sqlite3_randomness", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_stricmp", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_table_column_metadata", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3ValueNative> stark_sqlite_function_argument", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_create_function_v2", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<System.C.c_void> sqlite3_user_data", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3Native> sqlite3_context_db_handle", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3ValueNative> sqlite3_column_value", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_value", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<u8[0 max]> sqlite3_value_text", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_value_frombind", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3ValueNative> sqlite3_value_dup", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn void sqlite3_result_error", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn void sqlite3_result_int64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_result_zeroblob64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_errcode", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_extended_result_codes", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_limit", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_db_name", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_txn_state", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn rawmutptr<SQLite3StatementNative> sqlite3_next_stmt", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_status64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_db_status64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int sqlite3_changes", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn i64[min max] sqlite3_total_changes64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatementResult PrepareWithFlags", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatementResult PrepareLegacy", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatementResult PrepareUtf16AsciiWithFlags", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteDatabaseResult OpenDefault", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult CloseStrict", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBoolResult CompileOptionUsed", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteTextResult KeywordName", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBoolResult IsCompleteSqlUtf16Ascii", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult BindBytes", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult BindText64", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult BindText16Ascii", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult BindZeroBlob", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteIntResult ColumnBlobCopy", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteUtf16Result ColumnText16", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteTextResult ColumnOriginName", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteColumnMetadataResult TableColumnMetadata", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBlobResult OpenBlob", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteIntResult ReadBlob", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteIntResult WriteBlob", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBackupResult OpenBackup", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBackupStepResult StepBackup", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBytesResult SerializeDatabase", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult DeserializeDatabaseFromSerialized", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteWalCheckpointResult WalCheckpointWithMode", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteTextResult ExpandedSql", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn i32[min max] StatementStatus", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatus LastErrorCode", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteIntResult CurrentLimit", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusSnapshotResult DatabaseStatus", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusSnapshotResult GlobalStatus", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusSnapshotResult GlobalStatus32", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn i64[min max] MemoryUsed", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteStatusResult Randomness", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SQLiteBoolResult GlobMatches", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteStatusResult RegisterScalarFunction", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn rawmutptr<SQLite3ValueNative> FunctionArgument", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteTextResult ValueText", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteIntResult ValueBlobLength", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteBoolResult ValueFromBind", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteStatusResult ResultText", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteStatusResult ResultBytes", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe fn SQLiteStatusResult ResultValue", coreSourceText, StringComparison.Ordinal);
         Assert.Contains("System.C.FromAscii", coreSourceText, StringComparison.Ordinal);
         Assert.Contains("System.C.ToAscii", coreSourceText, StringComparison.Ordinal);
 
         var typesSourceText = await File.ReadAllTextAsync(sqliteTypesSource);
+        Assert.Contains("public struct SQLite3ContextNative", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct SQLite3ValueNative", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public alias SQLiteScalarCallback", typesSourceText, StringComparison.Ordinal);
         Assert.Contains("public struct Database", typesSourceText, StringComparison.Ordinal);
         Assert.Contains("public struct Statement", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Blob", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Backup", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct SQLiteOwnedBytes", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct SQLiteOwnedValue", typesSourceText, StringComparison.Ordinal);
         Assert.Contains("internal rawmutptr<SQLite3Native> Handle;", typesSourceText, StringComparison.Ordinal);
         Assert.Contains("internal rawmutptr<SQLite3StatementNative> Handle;", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<SQLite3BlobNative> Handle;", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<SQLite3BackupNative> Handle;", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteStatementExplainMode", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteBlobResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteBackupResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteBytesResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteOwnedValueResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLitePointerResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteWalCheckpointResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteUtf16Result", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteBoolResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteI64Result", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct SQLiteColumnMetadata", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public enum SQLiteIntResult", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct SQLiteStatusSnapshot", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_CHECKPOINT_NOOP", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_SERIALIZE_NOCOPY", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_DESERIALIZE_FREEONCLOSE", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_LIMIT_VARIABLE_NUMBER", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_TXN_NONE", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_STATUS_MEMORY_USED", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_DBSTATUS_SCHEMA_USED", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_UTF8", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_DETERMINISTIC", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_DIRECTONLY", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_INNOCUOUS", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_OPEN_WAL", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_SCANSTAT_NLOOP", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_PREPARE_PERSISTENT", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_STMTSTATUS_VM_STEP", typesSourceText, StringComparison.Ordinal);
 
         await CheckSourceAsync(
             Path.Combine(vendorImportDirectory, "Vendor", "SQLite.stark"),
@@ -2880,46 +2320,7 @@ public sealed class ExamplesCompileRunTests
 
         return (process.ExitCode, standardOutput, standardError);
     }
-
-    private static async Task ServeCurlExampleRequestsAsync(
-        System.Net.Sockets.TcpListener listener,
-        int requestCount)
-    {
-        var body = System.Text.Encoding.ASCII.GetBytes("stark-curl-ok\n");
-        var header = System.Text.Encoding.ASCII.GetBytes(
-            "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: text/plain\r\n" +
-            "Content-Length: 14\r\n" +
-            "Connection: close\r\n" +
-            "X-Stark-Curl: ok\r\n" +
-            "\r\n");
-
-        for (var requestIndex = 0; requestIndex < requestCount; requestIndex++)
-        {
-            using var client = await listener.AcceptTcpClientAsync();
-            await using var stream = client.GetStream();
-
-            var buffer = new byte[1024];
-            while (true)
-            {
-                var read = await stream.ReadAsync(buffer);
-                if (read == 0)
-                {
-                    break;
-                }
-
-                if (System.Text.Encoding.ASCII.GetString(buffer, 0, read).Contains("\r\n\r\n", StringComparison.Ordinal))
-                {
-                    break;
-                }
-            }
-
-            await stream.WriteAsync(header);
-            await stream.WriteAsync(body);
-        }
-    }
-
-    private static async Task<bool> PkgConfigPackageExistsAsync(string packageName)
+private static async Task<bool> PkgConfigPackageExistsAsync(string packageName)
     {
         try
         {

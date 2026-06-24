@@ -1,17 +1,18 @@
 [project]
-name = "vendor-lz4-tests"
+name = "vendor-sqlite-tests"
 version = "0.1.0"
 kind = "test"
 
 [test]
-root = "LZ4Tests.stark"
-output = "vendor-lz4-tests"
+root = "SQLiteTests.stark"
+output = "vendor-sqlite-tests"
 
 [dependencies]
 stdlib = { path = "../../stdlib" }
 
 [native]
-pkg-config = ["liblz4"]
+sources = ["../../vendor/SQLiteTextBinding.c"]
+pkg-config = ["sqlite3"]
 
 [profiles.dev]
 opt = 0

@@ -36,14 +36,10 @@ adapter is required for real ABI reasons: SDL3 keeps C `bool` returns,
 `SDL_Event`'s union layout, nullable handles, and callback-shaped audio entry
 points inside `Sdl3Binding.c`, while safe Stark callers use handles, result
 enums, flat event values, and caller-owned byte buffers.
-Use `Vendor.KbTextShape` as the same pattern for native text engines: HarfBuzz
-and ICU handles stay inside `KbTextShapeBinding.c`, while Stark code passes
-UTF-8 text and caller-owned output slices for boundaries and shaped glyphs.
-Use `Vendor.Vulkan` as the generated direct-binding model: pin the upstream
-registry input, regenerate Stark handle wrappers and C ABI carriers, keep raw
-`vk*` symbols internal, and let the emitted package image carry
-`pkg-config vulkan` or explicit loader-library metadata. No adapter source is
-needed when the C ABI shape is already expressible by Stark.
+Use `Vendor.Miniaudio` and `Vendor.Cgltf` as models for pinned single-header
+source drops behind small native implementation files. Use `Vendor.GLFW` as the
+model for native callback bridges that translate C callbacks into caller-polled
+Stark values without retaining Stark closures in foreign code.
 
 ## Step 2: Write The Stark Wrapper First
 

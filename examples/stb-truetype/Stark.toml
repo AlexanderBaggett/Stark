@@ -1,8 +1,0 @@
-[project]
-name = "stb-truetype"
-version = "0.1.0"
-kind = "executable"
-
-[executable]
-root = "StbTruetypeGlyphAtlas.stark"
-output = "stb-truetype-glyph-atlas"

@@ -15,12 +15,12 @@
     ],
     "description": "Import a Stark module"
   },
-  "Import Vendor Vulkan": {
-    "prefix": "import Vendor.Vulkan",
+  "Import Vendor Binding": {
+    "prefix": "import Vendor",
     "body": [
-      "import Vendor.Vulkan"
+      "import ${1|Vendor.Raylib,Vendor.SQLite,Vendor.GLFW,Vendor.SDL3,Vendor.Miniaudio,Vendor.STB.Image,Vendor.Cgltf|}"
     ],
-    "description": "Import the bundled Vulkan vendor binding"
+    "description": "Import a bundled Vendor binding"
   },
   "Export Import": {
     "prefix": "export import",

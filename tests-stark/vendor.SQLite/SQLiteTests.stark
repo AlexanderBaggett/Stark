@@ -1,0 +1,1079 @@
+import System.Testing
+import Vendor.SQLite
+module SQLiteTests
+
+fn bool TextResultEquals(SQLiteTextResult result, ascii expected)
+{
+    switch (result)
+    {
+        case SQLiteTextResult.Err(var error):
+            return false;
+        case SQLiteTextResult.Ok(var text):
+            return text.View() == expected;
+    }
+}
+
+fn bool TextResultIsNonEmpty(SQLiteTextResult result)
+{
+    switch (result)
+    {
+        case SQLiteTextResult.Err(var error):
+            return false;
+        case SQLiteTextResult.Ok(var text):
+            return !text.IsEmpty();
+    }
+}
+
+fn bool IntResultEquals(SQLiteIntResult result, i32[min max] expected)
+{
+    switch (result)
+    {
+        case SQLiteIntResult.Err(var error):
+            return false;
+        case SQLiteIntResult.Ok(var value):
+            return value == expected;
+    }
+}
+
+fn bool IntResultAtLeast(SQLiteIntResult result, i32[min max] minimum)
+{
+    switch (result)
+    {
+        case SQLiteIntResult.Err(var error):
+            return false;
+        case SQLiteIntResult.Ok(var value):
+            return value >= minimum;
+    }
+}
+
+fn bool I64ResultEquals(SQLiteI64Result result, i64[min max] expected)
+{
+    switch (result)
+    {
+        case SQLiteI64Result.Err(var error):
+            return false;
+        case SQLiteI64Result.Ok(var value):
+            return value == expected;
+    }
+}
+
+fn bool BoolResultEquals(SQLiteBoolResult result, bool expected)
+{
+    switch (result)
+    {
+        case SQLiteBoolResult.Err(var error):
+            return false;
+        case SQLiteBoolResult.Ok(var value):
+            return value == expected;
+    }
+}
+
+fn bool SnapshotCurrentAtLeast(SQLiteStatusSnapshotResult result, i64[min max] minimum)
+{
+    switch (result)
+    {
+        case SQLiteStatusSnapshotResult.Err(var error):
+            return false;
+        case SQLiteStatusSnapshotResult.Ok(var snapshot):
+            return snapshot.Current >= minimum;
+    }
+}
+
+fn bool Utf16ResultLengthEquals(SQLiteUtf16Result result, u16[0 4096] expectedLength)
+{
+    switch (result)
+    {
+        case SQLiteUtf16Result.Err(var error):
+            return false;
+        case SQLiteUtf16Result.Ok(var text):
+            return text.Length() == expectedLength;
+    }
+}
+
+fn bool ColumnMetadataLooksLikeId(SQLiteColumnMetadataResult result)
+{
+    switch (result)
+    {
+        case SQLiteColumnMetadataResult.Err(var error):
+            return false;
+        case SQLiteColumnMetadataResult.Ok(var metadataValue):
+            stack mut SQLiteColumnMetadata metadata = metadataValue;
+            return metadata.DataType.View() == "INTEGER"
+                && metadata.Collation.View() == "BINARY"
+                && !metadata.NotNull
+                && metadata.PrimaryKey
+                && metadata.AutoIncrement;
+    }
+}
+
+fn bool BufferEquals(borrow u8[0 max][] left, borrow u8[0 max][] right)
+{
+    if (left.Length != right.Length)
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] index = 0;
+    while willexit (index < left.Length)
+    {
+        if (left[index] != right[index])
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+fn bool QueryIntEquals(mut borrow Database database, ascii sql, i32[min max] expected)
+{
+    switch (Prepare(database, sql))
+    {
+        case SQLiteStatementResult.Err(var error):
+            return false;
+        case SQLiteStatementResult.Ok(var statementValue):
+            stack mut Statement statement = statementValue;
+            switch (Step(statement))
+            {
+                case SQLiteStepResult.Row:
+                    if (ColumnInt(statement, 0) != expected)
+                    {
+                        return false;
+                    }
+                default:
+                    return false;
+            }
+
+            return Finalize(statement) == SQLiteStatusResult.Ok;
+    }
+}
+
+unsafe ffi(c) fn void AddOneCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        stack rawmutptr<SQLite3ValueNative> value = FunctionArgument(values, argumentCount, 0);
+        if (value == null)
+        {
+            ResultError(nativeContext, "missing argument");
+            return;
+        }
+
+        if (ValueType(value) == SQLiteColumnType.Null)
+        {
+            ResultNull(nativeContext);
+            return;
+        }
+
+        ResultInt64(nativeContext, ValueInt64(value) + 1);
+        return;
+    }
+}
+
+unsafe ffi(c) fn void EchoTextCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        stack rawmutptr<SQLite3ValueNative> value = FunctionArgument(values, argumentCount, 0);
+        if (value == null)
+        {
+            ResultError(nativeContext, "missing text");
+            return;
+        }
+
+        switch (ValueText(value))
+        {
+            case SQLiteTextResult.Err(var error):
+                ResultError(nativeContext, "text expected");
+                return;
+            case SQLiteTextResult.Ok(var text):
+                ResultText(nativeContext, text.View());
+                return;
+        }
+    }
+}
+
+unsafe ffi(c) fn void IsBoundCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        stack rawmutptr<SQLite3ValueNative> value = FunctionArgument(values, argumentCount, 0);
+        if (value == null)
+        {
+            ResultInt(nativeContext, 0);
+            return;
+        }
+
+        switch (ValueFromBind(value))
+        {
+            case SQLiteBoolResult.Err(var error):
+                ResultInt(nativeContext, 0);
+                return;
+            case SQLiteBoolResult.Ok(var isBound):
+                if (isBound)
+                {
+                    ResultInt(nativeContext, 1);
+                    return;
+                }
+
+                ResultInt(nativeContext, 0);
+                return;
+        }
+    }
+}
+
+unsafe ffi(c) fn void BlobLengthCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        stack rawmutptr<SQLite3ValueNative> value = FunctionArgument(values, argumentCount, 0);
+        if (value == null)
+        {
+            ResultError(nativeContext, "missing blob");
+            return;
+        }
+
+        switch (ValueBlobLength(value))
+        {
+            case SQLiteIntResult.Err(var error):
+                ResultError(nativeContext, "blob expected");
+                return;
+            case SQLiteIntResult.Ok(var length):
+                ResultInt(nativeContext, length);
+                return;
+        }
+    }
+}
+
+unsafe ffi(c) fn void BytesCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        stack u8[0 max][3] bytes = { 5, 6, 7 };
+        stack u8[0 max][] view = bytes;
+        ResultBytes(nativeContext, view);
+        return;
+    }
+}
+
+unsafe ffi(c) fn void ZeroBlobCallback(
+    rawmutptr<i8[min max]> context,
+    i32[min max] argumentCount,
+    rawmutptr<i8[min max]> values)
+{
+    unsafe
+    {
+        stack rawmutptr<SQLite3ContextNative> nativeContext = FunctionContext(context);
+        ResultZeroBlob64(nativeContext, 4);
+        return;
+    }
+}
+
+fn bool BackupStepDone(SQLiteBackupStepResult result)
+{
+    switch (result)
+    {
+        case SQLiteBackupStepResult.Done:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool WalCheckpointSucceeded(SQLiteWalCheckpointResult result)
+{
+    switch (result)
+    {
+        case SQLiteWalCheckpointResult.Err(var error):
+            return false;
+        case SQLiteWalCheckpointResult.Ok(var snapshot):
+            return snapshot.LogFrameCount >= -1 && snapshot.CheckpointedFrameCount >= -1;
+    }
+}
+
+[Fact]
+fn bool ScalarFunctionCallbacksAndValueResultsWork()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            unsafe
+            {
+                stack SQLiteScalarCallback addOne = AddOneCallback;
+                stack SQLiteScalarCallback echo = EchoTextCallback;
+                stack SQLiteScalarCallback isBound = IsBoundCallback;
+                stack SQLiteScalarCallback blobLength = BlobLengthCallback;
+                stack SQLiteScalarCallback bytes = BytesCallback;
+                stack SQLiteScalarCallback zeroBlob = ZeroBlobCallback;
+                if (RegisterScalarFunction(database, "stark_add_one", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, addOne) != SQLiteStatusResult.Ok
+                    || RegisterScalarFunction(database, "stark_echo", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, echo) != SQLiteStatusResult.Ok
+                    || RegisterScalarFunction(database, "stark_is_bound", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, isBound) != SQLiteStatusResult.Ok
+                    || RegisterScalarFunction(database, "stark_blob_len", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, blobLength) != SQLiteStatusResult.Ok
+                    || RegisterScalarFunction(database, "stark_bytes", 0, SQLITE_UTF8 | SQLITE_DETERMINISTIC, bytes) != SQLiteStatusResult.Ok
+                    || RegisterScalarFunction(database, "stark_zero_blob", 0, SQLITE_UTF8 | SQLITE_DETERMINISTIC, zeroBlob) != SQLiteStatusResult.Ok)
+                {
+                    return false;
+                }
+            }
+
+            if (!QueryIntEquals(database, "SELECT stark_add_one(41);", 42)
+                || !QueryIntEquals(database, "SELECT length(stark_bytes());", 3)
+                || !QueryIntEquals(database, "SELECT length(stark_zero_blob());", 4))
+            {
+                return false;
+            }
+
+            switch (Prepare(database, "SELECT stark_echo('hello');"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var echoValue):
+                    stack mut Statement echo = echoValue;
+                    switch (Step(echo))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (!TextResultEquals(ColumnText(echo, 0), "hello"))
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(echo) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (Prepare(database, "SELECT stark_is_bound(?1), stark_blob_len(?2);"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var boundValue):
+                    stack mut Statement bound = boundValue;
+                    stack u8[0 max][3] payload = { 1, 2, 3 };
+                    stack u8[0 max][] payloadBytes = payload;
+                    if (BindInt(bound, 1, 11) != SQLiteStatusResult.Ok
+                        || BindBytes(bound, 2, payloadBytes) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    switch (Step(bound))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (ColumnInt(bound, 0) != 1 || ColumnInt(bound, 1) != 3)
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(bound) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            return Close(database) == SQLiteStatusResult.Ok;
+    }
+}
+
+[Fact]
+fn bool NoCallbackUtilityAndMetadataApisWork()
+{
+    if (!TextResultIsNonEmpty(SourceId(256))
+        || !TextResultIsNonEmpty(CompileOptionName(0, 128))
+        || !BoolResultEquals(CompileOptionUsed("THREADSAFE"), true)
+        || KeywordCount() <= 0
+        || !TextResultIsNonEmpty(KeywordName(0, 64))
+        || !BoolResultEquals(IsKeyword("SELECT"), true)
+        || !BoolResultEquals(IsKeyword("not_a_keyword"), false)
+        || !BoolResultEquals(IsCompleteSql("SELECT 1;"), true)
+        || !BoolResultEquals(IsCompleteSql("SELECT"), false)
+        || !BoolResultEquals(IsCompleteSqlUtf16Ascii("SELECT 1;"), true)
+        || !BoolResultEquals(IsCompleteSqlUtf16Unicode((unicode)"SELECT 1;"), true)
+        || !IntResultEquals(StringCompareInsensitive("Alpha", "alpha"), 0)
+        || !IntResultEquals(StringCompareInsensitivePrefix("Alphabet", "alpha", 5), 0)
+        || !BoolResultEquals(GlobMatches("Al*", "Alpha"), true)
+        || !BoolResultEquals(LikeMatches("Al%", "Alpha", 0), true)
+        || MemoryUsed() < 0
+        || MemoryHighWater(false) < 0
+        || !IntResultAtLeast(ReleaseGlobalMemory(0), 0)
+        || SoftHeapLimit(-1) < 0
+        || HardHeapLimit(-1) < 0
+        || !SnapshotCurrentAtLeast(GlobalStatus32(SQLITE_STATUS_MEMORY_USED, false), 0))
+    {
+        return false;
+    }
+
+    stack mut u8[0 max][8] randomBytes = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    stack mut u8[0 max][] randomView = randomBytes;
+    if (Randomness(randomView) != SQLiteStatusResult.Ok || SleepMilliseconds(0) < 0)
+    {
+        return false;
+    }
+
+    switch (OpenDefault(":memory:"))
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var defaultValue):
+            stack mut Database defaultDatabase = defaultValue;
+            if (CloseStrict(defaultDatabase) != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+    }
+
+    switch (OpenUtf16Ascii(":memory:"))
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var utf16Value):
+            stack mut Database utf16Database = utf16Value;
+            if (Close(utf16Database) != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+    }
+
+    switch (Open("file:stark_sqlite_no_callback?mode=memory&cache=shared&flag=1&size=42", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI))
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (!BoolResultEquals(DatabaseUriBoolean(database, "main", "missing", true), true)
+                || !I64ResultEquals(DatabaseUriInt64(database, "main", "missing", 42), 42)
+                || !IntResultAtLeast(SystemErrno(database), 0))
+            {
+                return false;
+            }
+
+            if (Execute(database, "CREATE TABLE meta(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, note TEXT);") != SQLiteStatusResult.Ok
+                || Execute(database, "INSERT INTO meta(name, note) VALUES('alpha', 'first');") != SQLiteStatusResult.Ok
+                || !ColumnMetadataLooksLikeId(TableColumnMetadata(database, "main", "meta", "id", 64)))
+            {
+                return false;
+            }
+
+            switch (PrepareLegacy(database, "SELECT name FROM meta WHERE id = 1;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var legacyValue):
+                    stack mut Statement legacy = legacyValue;
+                    if (!StatementHasDatabase(legacy) || StatementExpired(legacy))
+                    {
+                        return false;
+                    }
+
+                    switch (Step(legacy))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (!TextResultEquals(ColumnName(legacy, 0, 64), "name")
+                                || !Utf16ResultLengthEquals(ColumnName16(legacy, 0, 64), 4)
+                                || !TextResultEquals(ColumnDeclType(legacy, 0, 64), "TEXT")
+                                || !Utf16ResultLengthEquals(ColumnDeclType16(legacy, 0, 64), 4)
+                                || !TextResultEquals(ColumnDatabaseName(legacy, 0, 64), "main")
+                                || !Utf16ResultLengthEquals(ColumnDatabaseName16(legacy, 0, 64), 4)
+                                || !TextResultEquals(ColumnTableName(legacy, 0, 64), "meta")
+                                || !Utf16ResultLengthEquals(ColumnTableName16(legacy, 0, 64), 4)
+                                || !TextResultEquals(ColumnOriginName(legacy, 0, 64), "name")
+                                || !Utf16ResultLengthEquals(ColumnOriginName16(legacy, 0, 64), 4)
+                                || !Utf16ResultLengthEquals(ColumnText16(legacy, 0), 5)
+                                || !IntResultEquals(ColumnBytes16(legacy, 0), 10))
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(legacy) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (Prepare(database, "SELECT ?1, ?2;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var sourceValue):
+                    stack mut Statement source = sourceValue;
+                    switch (Prepare(database, "INSERT INTO meta(name, note) VALUES(?1, ?2);"))
+                    {
+                        case SQLiteStatementResult.Err(var insertError):
+                            return false;
+                        case SQLiteStatementResult.Ok(var destinationValue):
+                            stack mut Statement destination = destinationValue;
+                            if (BindText64(source, 1, "beta") != SQLiteStatusResult.Ok
+                                || BindText16Ascii(source, 2, "utf16") != SQLiteStatusResult.Ok
+                                || TransferBindings(source, destination) != SQLiteStatusResult.Ok)
+                            {
+                                return false;
+                            }
+
+                            switch (Step(destination))
+                            {
+                                case SQLiteStepResult.Done:
+                                    break;
+                                default:
+                                    return false;
+                            }
+
+                            if (Finalize(destination) != SQLiteStatusResult.Ok)
+                            {
+                                return false;
+                            }
+                    }
+
+                    if (Finalize(source) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (PrepareUtf16LegacyAscii(database, "SELECT 1;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var statementValue):
+                    stack mut Statement statement = statementValue;
+                    switch (Step(statement))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (ColumnInt(statement, 0) != 1)
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(statement) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (PrepareUtf16AsciiWithFlags(database, "SELECT COUNT(*) FROM meta;", SQLITE_PREPARE_PERSISTENT))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var countValue):
+                    stack mut Statement count = countValue;
+                    switch (Step(count))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (ColumnInt(count, 0) != 2)
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(count) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            return Close(database) == SQLiteStatusResult.Ok;
+    }
+}
+
+[Fact]
+fn bool DatabaseIntrospectionAndCountersWork()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (SetExtendedResultCodes(database, true) != SQLiteStatusResult.Ok
+                || LastErrorCode(database) != SQLiteStatus.Ok
+                || LastExtendedErrorCode(database) != SQLITE_OK
+                || ErrorOffset(database) != -1
+                || !IsAutocommit(database)
+                || !TextResultEquals(DatabaseName(database, 0, 32), "main")
+                || !IntResultEquals(DatabaseReadonly(database, "main"), 0)
+                || !IntResultEquals(TransactionState(database, "main"), SQLITE_TXN_NONE)
+                || !IntResultAtLeast(CurrentLimit(database, SQLITE_LIMIT_VARIABLE_NUMBER), 1)
+                || !SnapshotCurrentAtLeast(GlobalStatus(SQLITE_STATUS_MEMORY_USED, false), 0))
+            {
+                return false;
+            }
+
+            if (Execute(database, "CREATE TABLE counters(id INTEGER PRIMARY KEY);") != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            if (!SnapshotCurrentAtLeast(DatabaseStatus(database, SQLITE_DBSTATUS_SCHEMA_USED, false), 0))
+            {
+                return false;
+            }
+
+            if (Execute(database, "INSERT INTO counters(id) VALUES(11);") != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            if (Changes32(database) != 1
+                || Changes(database) != 1
+                || TotalChanges32(database) < 1
+                || TotalChanges(database) < 1
+                || LastInsertRowId(database) != 11)
+            {
+                return false;
+            }
+
+            if (SetLastInsertRowId(database, 77) != SQLiteStatusResult.Ok || LastInsertRowId(database) != 77)
+            {
+                return false;
+            }
+
+            switch (Prepare(database, "SELECT id FROM counters;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var statementValue):
+                    stack mut Statement statement = statementValue;
+                    if (!HasOpenStatements(database) || !IntResultAtLeast(OpenStatementCount(database), 1))
+                    {
+                        return false;
+                    }
+
+                    if (Finalize(statement) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            Interrupt(database);
+            return CacheFlush(database) == SQLiteStatusResult.Ok
+                && ReleaseMemory(database) == SQLiteStatusResult.Ok
+                && Close(database) == SQLiteStatusResult.Ok;
+    }
+}
+
+[Fact]
+fn bool BackupSerializeDeserializeAndWalWork()
+{
+    if (SQLITE_CHECKPOINT_NOOP != -1
+        || SQLITE_CHECKPOINT_PASSIVE != 0
+        || SQLITE_CHECKPOINT_FULL != 1
+        || SQLITE_CHECKPOINT_RESTART != 2
+        || SQLITE_CHECKPOINT_TRUNCATE != 3
+        || SQLITE_SERIALIZE_NOCOPY != 1
+        || SQLITE_DESERIALIZE_FREEONCLOSE != 1
+        || SQLITE_DESERIALIZE_RESIZEABLE != 2
+        || SQLITE_DESERIALIZE_READONLY != 4)
+    {
+        return false;
+    }
+
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var sourceValue):
+            stack mut Database source = sourceValue;
+            if (Execute(source, "CREATE TABLE saved(id INTEGER PRIMARY KEY, value INTEGER NOT NULL);") != SQLiteStatusResult.Ok
+                || Execute(source, "INSERT INTO saved(id, value) VALUES(1, 77);") != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            switch (OpenInMemory())
+            {
+                case SQLiteDatabaseResult.Err(var error):
+                    return false;
+                case SQLiteDatabaseResult.Ok(var destinationValue):
+                    stack mut Database destination = destinationValue;
+                    switch (OpenBackup(destination, "main", source, "main"))
+                    {
+                        case SQLiteBackupResult.Err(var error):
+                            return false;
+                        case SQLiteBackupResult.Ok(var backupValue):
+                            stack mut Backup backup = backupValue;
+                            if (!BackupStepDone(StepBackup(backup, -1))
+                                || !IntResultAtLeast(BackupPageCount(backup), 0)
+                                || !IntResultAtLeast(BackupRemaining(backup), 0)
+                                || FinishBackup(backup) != SQLiteStatusResult.Ok)
+                            {
+                                return false;
+                            }
+                    }
+
+                    if (!QueryIntEquals(destination, "SELECT value FROM saved WHERE id = 1;", 77))
+                    {
+                        return false;
+                    }
+
+                    if (WalAutoCheckpoint(destination, 64) != SQLiteStatusResult.Ok
+                        || WalCheckpoint(destination, "main") != SQLiteStatusResult.Ok
+                        || !WalCheckpointSucceeded(WalCheckpointWithMode(destination, "main", SQLITE_CHECKPOINT_NOOP)))
+                    {
+                        return false;
+                    }
+
+                    switch (SerializeDatabase(destination, "main"))
+                    {
+                        case SQLiteBytesResult.Err(var error):
+                            return false;
+                        case SQLiteBytesResult.Ok(var serializedValue):
+                            stack mut SQLiteOwnedBytes serialized = serializedValue;
+                            if (serialized.Length() == 0)
+                            {
+                                return false;
+                            }
+
+                            switch (OpenInMemory())
+                            {
+                                case SQLiteDatabaseResult.Err(var error):
+                                    return false;
+                                case SQLiteDatabaseResult.Ok(var restoredValue):
+                                    stack mut Database restored = restoredValue;
+                                    if (DeserializeDatabaseFromSerialized(restored, "main", serialized) != SQLiteStatusResult.Ok)
+                                    {
+                                        return false;
+                                    }
+
+                                    if (!QueryIntEquals(restored, "SELECT value FROM saved WHERE id = 1;", 77))
+                                    {
+                                        return false;
+                                    }
+
+                                    if (Close(restored) != SQLiteStatusResult.Ok)
+                                    {
+                                        return false;
+                                    }
+                            }
+
+                            serialized.Close();
+                    }
+
+                    return Close(destination) == SQLiteStatusResult.Ok
+                        && Close(source) == SQLiteStatusResult.Ok;
+            }
+    }
+}
+
+[Fact]
+fn bool BlobBindingAndIncrementalIoWork()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (Execute(database, "CREATE TABLE blobs(id INTEGER PRIMARY KEY, data BLOB NOT NULL);") != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            switch (Prepare(database, "INSERT INTO blobs(id, data) VALUES(:id, :data);"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var insertValue):
+                    stack mut Statement insert = insertValue;
+                    stack mut u8[0 max][4] payload = { 1, 2, 3, 4 };
+                    stack u8[0 max][] payloadBytes = payload;
+                    if (BindInt(insert, 1, 1) != SQLiteStatusResult.Ok
+                        || BindBytes(insert, 2, payloadBytes) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    switch (Step(insert))
+                    {
+                        case SQLiteStepResult.Done:
+                            break;
+                        default:
+                            return false;
+                    }
+
+                    if (Reset(insert) != SQLiteStatusResult.Ok || ClearBindings(insert) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    if (BindInt(insert, 1, 2) != SQLiteStatusResult.Ok
+                        || BindZeroBlob(insert, 2, 4) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    switch (Step(insert))
+                    {
+                        case SQLiteStepResult.Done:
+                            break;
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(insert) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (Prepare(database, "SELECT data FROM blobs WHERE id = :id;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var queryValue):
+                    stack mut Statement query = queryValue;
+                    if (BindInt(query, 1, 1) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    switch (Step(query))
+                    {
+                        case SQLiteStepResult.Row:
+                            stack mut u8[0 max][4] copied = { 0, 0, 0, 0 };
+                            stack mut u8[0 max][] copiedBytes = copied;
+                            stack u8[0 max][4] expected = { 1, 2, 3, 4 };
+                            stack u8[0 max][] expectedBytes = expected;
+                            if (ColumnType(query, 0) != SQLiteColumnType.Blob
+                                || !IntResultEquals(ColumnBlobLength(query, 0), 4)
+                                || !IntResultEquals(ColumnBlobCopy(query, 0, copiedBytes), 4)
+                                || !BufferEquals(copiedBytes, expectedBytes))
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    if (Finalize(query) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (OpenBlobReadWrite(database, "main", "blobs", "data", 2))
+            {
+                case SQLiteBlobResult.Err(var error):
+                    return false;
+                case SQLiteBlobResult.Ok(var blobValue):
+                    stack mut Blob blob = blobValue;
+                    stack mut u8[0 max][4] initial = { 0, 0, 0, 0 };
+                    stack mut u8[0 max][] initialBytes = initial;
+                    stack u8[0 max][4] empty = { 0, 0, 0, 0 };
+                    stack u8[0 max][] emptyBytes = empty;
+                    stack u8[0 max][2] patch = { 9, 8 };
+                    stack u8[0 max][] patchBytes = patch;
+                    stack u8[0 max][4] patched = { 0, 9, 8, 0 };
+                    stack u8[0 max][] patchedBytes = patched;
+                    if (!IntResultEquals(BlobByteLength(blob), 4)
+                        || !IntResultEquals(ReadBlob(blob, initialBytes, 0), 4)
+                        || !BufferEquals(initialBytes, emptyBytes))
+                    {
+                        return false;
+                    }
+
+                    if (!IntResultEquals(WriteBlob(blob, patchBytes, 1), 2)
+                        || ReopenBlob(blob, 2) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    if (!IntResultEquals(ReadBlob(blob, initialBytes, 0), 4)
+                        || !BufferEquals(initialBytes, patchedBytes))
+                    {
+                        return false;
+                    }
+
+                    if (CloseBlob(blob) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+            }
+
+            return Close(database) == SQLiteStatusResult.Ok;
+    }
+}
+
+[Fact]
+fn bool PrepareMetadataReportsNamesAndSql()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            switch (Prepare(database, "SELECT :left + :right;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var statementValue):
+                    stack mut Statement statement = statementValue;
+                    if (BindParameterCount(statement) != 2
+                        || BindParameterIndex(statement, ":left") != 1
+                        || BindParameterIndex(statement, ":right") != 2
+                        || !IsStatementReadOnly(statement)
+                        || IsStatementBusy(statement))
+                    {
+                        return false;
+                    }
+
+                    if (!TextResultEquals(BindParameterName(statement, 2, 32), ":right"))
+                    {
+                        return false;
+                    }
+
+                    if (!TextResultEquals(StatementSql(statement, 64), "SELECT :left + :right;"))
+                    {
+                        return false;
+                    }
+
+                    return Finalize(statement) == SQLiteStatusResult.Ok
+                        && Close(database) == SQLiteStatusResult.Ok;
+            }
+    }
+}
+
+[Fact]
+fn bool StatementStateAndCountersUpdateDuringExecution()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (Execute(database, "CREATE TABLE values_table(id INTEGER PRIMARY KEY, value INTEGER NOT NULL);") != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            if (Execute(database, "INSERT INTO values_table(id, value) VALUES(7, 35);") != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            switch (PrepareWithFlags(database, "SELECT value FROM values_table WHERE id = :id;", SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NO_VTAB))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var statementValue):
+                    stack mut Statement statement = statementValue;
+                    if (DataCount(statement) != 0 || StatementExplainMode(statement) != 0)
+                    {
+                        return false;
+                    }
+
+                    if (BindInt(statement, 1, 7) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    if (!TextResultIsNonEmpty(ExpandedSql(statement, 128)))
+                    {
+                        return false;
+                    }
+
+                    switch (Step(statement))
+                    {
+                        case SQLiteStepResult.Row:
+                            if (DataCount(statement) != 1
+                                || !IsStatementBusy(statement)
+                                || ColumnInt(statement, 0) != 35)
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    switch (Step(statement))
+                    {
+                        case SQLiteStepResult.Done:
+                            if (DataCount(statement) != 0
+                                || StatementStatus(statement, SQLITE_STMTSTATUS_VM_STEP, false) <= 0)
+                            {
+                                return false;
+                            }
+                        default:
+                            return false;
+                    }
+
+                    return Finalize(statement) == SQLiteStatusResult.Ok
+                        && Close(database) == SQLiteStatusResult.Ok;
+            }
+    }
+}
+
+[Fact]
+fn bool ExplainModeCanBeChangedBeforeExecution()
+{
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            switch (Prepare(database, "SELECT 1;"))
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return false;
+                case SQLiteStatementResult.Ok(var statementValue):
+                    stack mut Statement statement = statementValue;
+                    if (StatementExplainMode(statement) != 0)
+                    {
+                        return false;
+                    }
+
+                    if (SetStatementExplainMode(statement, SQLiteStatementExplainMode.ExplainQueryPlan) != SQLiteStatusResult.Ok)
+                    {
+                        return false;
+                    }
+
+                    if (StatementExplainMode(statement) != 2)
+                    {
+                        return false;
+                    }
+
+                    return Finalize(statement) == SQLiteStatusResult.Ok
+                        && Close(database) == SQLiteStatusResult.Ok;
+            }
+    }
+}
