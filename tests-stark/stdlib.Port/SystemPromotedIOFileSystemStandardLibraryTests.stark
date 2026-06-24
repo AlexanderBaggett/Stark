@@ -12,13 +12,8 @@ module SystemPromotedIOFileSystemStandardLibraryTests
 // Ported from SystemPromotedIOFileSystemStandardLibraryTests.StdLibSourcePromotedIOFileSystemSurfaceCompiles.
 internal fn bool StdLibSourcePromotedIOFileSystemSurfaceCompilesImpl()
 {
-    // PORT-NOTE: the original also reads stdlib source files (Platform.stark and
-    // FileSystem.stark) off disk and asserts on their raw text (e.g. the
-    // "rawmutptr<i8[min max]>[capacity] buffer" signatures, "OpenDirectoryFastInto",
-    // the *FileBytes* overloads, the FixedByteBuffer8192 field, and the absence of
-    // System.Memory.Allocation). The compile-only host bridge has no access to those
-    // source files, so those file-text assertions are dropped; the LLVM-IR Contains/
-    // DoesNotContain assertions over the compiled program are preserved below.
+    // Keep the LLVM surface probe plus the source-level raw-region and allocation
+    // assertions from the C# oracle.
     stack mut ProgramCompile c = CompileProgram("stark-stdlib-promoted-iofs-surface", raw"""
         import System.FileSystem
         import System.IO
@@ -85,6 +80,37 @@ internal fn bool StdLibSourcePromotedIOFileSystemSurfaceCompilesImpl()
     if (!System.Testing.DoesNotContain(llvm, "System_Experimental_FileSystem_"))
     {
         return false;
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Platform.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var platformSourceOwner):
+            stack ascii platformSource = platformSourceOwner.View();
+            if (!System.Testing.Contains(platformSource, "rawmutptr<i8[min max]>[capacity] buffer")
+                || !System.Testing.Contains(platformSource, "OpenDirectoryFastInto")
+                || !System.Testing.Contains(platformSource, "ReadFileBytes(rawmutptr<i8[min max]>[length] buffer")
+                || !System.Testing.Contains(platformSource, "WriteFileBytes(rawptr<i8[min max]>[length] buffer")
+                || !System.Testing.Contains(platformSource, "ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer")
+                || !System.Testing.Contains(platformSource, "WriteFileBytesFast(rawptr<i8[min max]>[length] buffer"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/FileSystem.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var fileSystemSourceOwner):
+            stack ascii fileSystemSource = fileSystemSourceOwner.View();
+            if (!System.Testing.Contains(fileSystemSource, "System.Runtime.Buffer.FixedByteBuffer8192 Buffer")
+                || System.Testing.Contains(fileSystemSource, "System.Memory.Allocation")
+                || System.Testing.Contains(fileSystemSource, "rawmutptr<i8[min max]> Buffer"))
+            {
+                return false;
+            }
     }
 
     return true;

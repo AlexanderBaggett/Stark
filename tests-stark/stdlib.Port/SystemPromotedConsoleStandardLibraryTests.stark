@@ -1,6 +1,7 @@
 import StdlibPortSupport
 import System.Console
 import System.IO
+import System.IO.File
 import System.Memory
 import System.Runtime.Buffer
 import System.Testing
@@ -66,120 +67,86 @@ internal fn bool StdLibSourcePromotedConsoleSurfaceCompilesImpl()
 // Ported from SystemPromotedConsoleStandardLibraryTests.StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPaths.
 internal fn bool StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPathsImpl()
 {
-    // PORT-NOTE: the original compiles the stdlib module file System/Console.stark read
-    // directly from disk through a TargetAwareStdLibModuleResolver, then uses
-    // ExtractLlvmFunctionBody to isolate each promoted console writer (WriteBytesToStdout,
-    // WriteLine__ascii_, WriteErrorLine__unicode_, ...) and asserts each body calls the
-    // direct System.Runtime.Platform.* path while the byte writers never touch
-    // OwnedAscii_AppendByte. It also reads Platform.stark source text and asserts the
-    // raw-pointer WriteStdoutBytes/WriteStderrBytes/ReadStdin signatures are present.
-    // The compile-only host bridge cannot select an arbitrary stdlib source file as the
-    // compilation root, cannot read sibling stdlib source files, and cannot do
-    // per-function LLVM body extraction, so this reduces to compiling an embedded program
-    // that exercises the promoted console byte/line write surface and asserting the
-    // whole-module LLVM still routes through the System.Runtime.Platform.* symbols and
-    // never falls back to the experimental console.
-    stack mut ProgramCompile c = CompileProgram("stdlib-promoted-console-direct-platform-paths", raw"""
-        import System.Console
-        import System.Runtime.Buffer
-        import System.Text
-        import System.IO
-        module Demo
-
-        fn bool StatusOk(System.IO.IOStatus status)
-        {
-            switch (status)
-            {
-                case System.IO.IOStatus.Ok:
-                    return true;
-                case System.IO.IOStatus.Err(var error):
-                    return false;
-            }
-        }
-
-        fn bool WriteSurface(
-            mut borrow System.Text.OwnedAscii ascii,
-            borrow System.Runtime.Buffer.DynamicByteBuffer bytes)
-        {
-            return StatusOk(System.Console.WriteLine(ascii))
-                && StatusOk(System.Console.WriteLine((unicode)"unicode"))
-                && StatusOk(System.Console.WriteLine(bytes))
-                && StatusOk(System.Console.WriteErrorLine("err"))
-                && StatusOk(System.Console.WriteErrorLine((unicode)"err"))
-                && StatusOk(System.Console.WriteError(bytes));
-        }
-        """);
+    // Compile the stdlib module directly so the scoped LLVM checks match the C# oracle.
+    stack mut ProgramCompile c = CompileSourceFile(
+        "stdlib-promoted-console-direct-platform-paths",
+        "../../stdlib/src/System/Console.stark");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack mut ascii llvm = Llvm(c);
-    if (!System.Testing.Contains(llvm, "System_Runtime_Platform_WriteStdoutBytes"))
+    stack ascii writeBytesToStdout = LlvmDefinitionBody(llvm, "WriteBytesToStdout");
+    stack ascii writeBytesToStderr = LlvmDefinitionBody(llvm, "WriteBytesToStderr");
+    stack ascii writeBytesLineToStdout = LlvmDefinitionBody(llvm, "WriteBytesLineToStdout");
+    stack ascii writeBytesLineToStderr = LlvmDefinitionBody(llvm, "WriteBytesLineToStderr");
+    stack ascii writeLineAscii = LlvmDefinitionBody(llvm, "WriteLine__ascii_");
+    stack ascii writeLineUnicode = LlvmDefinitionBody(llvm, "WriteLine__unicode_");
+    stack ascii writeLineBytes = LlvmDefinitionBody(llvm, "WriteLine__borrowi8_minmax____");
+    stack ascii writeErrorLineAscii = LlvmDefinitionBody(llvm, "WriteErrorLine__ascii_");
+    stack ascii writeErrorLineUnicode = LlvmDefinitionBody(llvm, "WriteErrorLine__unicode_");
+    stack ascii writeErrorLineBytes = LlvmDefinitionBody(llvm, "WriteErrorLine__borrowi8_minmax____");
+
+    if (!System.Testing.Contains(writeBytesToStdout, "@System_Runtime_Platform_WriteStdoutBytes(")
+        || !System.Testing.Contains(writeBytesToStderr, "@System_Runtime_Platform_WriteStderrBytes(")
+        || !System.Testing.Contains(writeBytesLineToStdout, "@System_Runtime_Platform_WriteStdoutBytesLine(")
+        || !System.Testing.Contains(writeBytesLineToStderr, "@System_Runtime_Platform_WriteStderrBytesLine(")
+        || !System.Testing.Contains(writeLineAscii, "@System_Runtime_Platform_WriteStdoutAsciiLine(")
+        || !System.Testing.Contains(writeLineUnicode, "@System_Runtime_Platform_WriteStdoutUnicodeLine(")
+        || !System.Testing.Contains(writeLineBytes, "@WriteBytesLineToStdout(")
+        || !System.Testing.Contains(writeErrorLineAscii, "@System_Runtime_Platform_WriteStderrAsciiLine(")
+        || !System.Testing.Contains(writeErrorLineUnicode, "@System_Runtime_Platform_WriteStderrUnicodeLine(")
+        || !System.Testing.Contains(writeErrorLineBytes, "@WriteBytesLineToStderr("))
     {
         return false;
     }
 
-    if (!System.Testing.Contains(llvm, "System_Runtime_Platform_WriteStderrBytes"))
+    if (System.Testing.Contains(writeBytesToStdout, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeBytesToStderr, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeBytesLineToStdout, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeBytesLineToStderr, "System_Text_OwnedAscii_AppendByte")
+        || System.Testing.Contains(writeLineAscii, "@Write__ascii_")
+        || System.Testing.Contains(writeErrorLineAscii, "@WriteError__ascii_"))
     {
         return false;
     }
 
-    if (!System.Testing.DoesNotContain(llvm, "System_Experimental_Console"))
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Platform.stark"))
     {
-        return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var source):
+            stack ascii platformSource = source.View();
+            return System.Testing.Contains(platformSource, "WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)")
+                && System.Testing.Contains(platformSource, "WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)")
+                && System.Testing.Contains(platformSource, "ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity)");
     }
-
-    return true;
 }
 
 // Ported from SystemPromotedConsoleStandardLibraryTests.StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffers.
 internal fn bool StdLibSourceRuntimePlatformLineWritesCoalesceSmallBuffersImpl()
 {
-    // PORT-NOTE: the original compiles the stdlib module file
-    // System/Runtime/Platform/Linux.stark read directly from disk, then uses
-    // ExtractLlvmFunctionBody to isolate WriteBufferLineToHandle/WriteAsciiLineToHandle/
-    // WriteUnicodeLineToHandle and asserts each coalesces a trailing newline into a small
-    // FixedByteBuffer (FixedByteBuffer8192 / FixedByteBuffer4096), routes through
-    // WriteBufferToHandle, and appends the i32 10 newline code point. The compile-only host
-    // bridge cannot select that platform-specific stdlib source file as the compilation
-    // root nor do per-function LLVM body extraction, so this reduces to compiling an
-    // embedded program that exercises the buffered line-write surface and asserting the
-    // whole-module LLVM still references the small fixed byte buffers used for coalescing.
-    stack mut ProgramCompile c = CompileProgram("stdlib-runtime-platform-line-writes-coalesce", raw"""
-        import System.Console
-        import System.Runtime.Buffer
-        import System.Text
-        import System.IO
-        module Demo
-
-        fn bool StatusOk(System.IO.IOStatus status)
-        {
-            switch (status)
-            {
-                case System.IO.IOStatus.Ok:
-                    return true;
-                case System.IO.IOStatus.Err(var error):
-                    return false;
-            }
-        }
-
-        fn bool LineWrites(
-            mut borrow System.Text.OwnedAscii ascii,
-            borrow System.Runtime.Buffer.DynamicByteBuffer bytes)
-        {
-            return StatusOk(System.Console.WriteLine(ascii))
-                && StatusOk(System.Console.WriteLine((unicode)"café"))
-                && StatusOk(System.Console.WriteLine(bytes));
-        }
-        """);
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "stdlib-runtime-platform-line-writes-coalesce",
+        "../../stdlib/src/System/Runtime/Platform/Linux.stark",
+        LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack mut ascii llvm = Llvm(c);
-    if (!System.Testing.Contains(llvm, "System_Runtime_Buffer_FixedByteBuffer8192"))
+    stack ascii bufferLine = LlvmDefinitionBody(llvm, "WriteBufferLineToHandle");
+    stack ascii asciiLine = LlvmDefinitionBody(llvm, "WriteAsciiLineToHandle");
+    stack ascii unicodeLine = LlvmDefinitionBody(llvm, "WriteUnicodeLineToHandle");
+
+    if (!System.Testing.Contains(bufferLine, "%System_Runtime_Buffer_FixedByteBuffer8192")
+        || !System.Testing.Contains(bufferLine, "@WriteBufferToHandle(")
+        || !System.Testing.Contains(asciiLine, "@WriteBufferLineToHandle(")
+        || !System.Testing.Contains(unicodeLine, "%System_Runtime_Buffer_FixedByteBuffer4096")
+        || !System.Testing.Contains(unicodeLine, "@AppendUtf8CodePoint(")
+        || !System.Testing.Contains(unicodeLine, "i32 10"))
     {
         return false;
     }

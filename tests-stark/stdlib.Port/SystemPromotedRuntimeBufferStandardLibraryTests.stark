@@ -52,42 +52,21 @@ fn System.Memory.MemoryStatus AppendDynamic(
 // Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPaths.
 // PORT-NOTE: The C# original reads the on-disk stdlib module
 // stdlib/src/System/Runtime/Buffer.stark and compiles it directly. The
-// compile-only bridge cannot read repository source, so the surface is exercised
-// through a program that imports System.Runtime.Buffer and forces both
-// WriteSliceToStorage and DynamicByteBuffer.WriteSlice to be lowered; the
-// disjoint-write fast paths are then verified on those emitted LLVM bodies.
+// Stark port compiles the same source file through the host-test bridge and
+// verifies the disjoint-write fast paths on the same emitted LLVM bodies.
 internal fn bool StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPathsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("promoted-runtime-buffer-disjoint-write-fast-paths", raw"""
-import System.Runtime
-import System.Runtime.Buffer
-import System.Memory
-module Demo
-
-fn System.Memory.MemoryStatus FillFixed(
-    mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
-    borrow i8[min max][] source,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return buffer.WriteSlice(source, count);
-}
-
-fn System.Memory.MemoryStatus AppendDynamic(
-    mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
-    borrow i8[min max][] source,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return buffer.WriteSlice(source, count);
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "promoted-runtime-buffer-disjoint-write-fast-paths",
+        "../../stdlib/src/System/Runtime/Buffer.stark");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    stack ascii writeSliceBody = LlvmDefinitionBody(llvm, "@WriteSliceToStorage(");
-    stack ascii dynamicWriteSliceBody = LlvmDefinitionBody(llvm, "@DynamicByteBuffer_WriteSlice(");
+    stack ascii writeSliceBody = LlvmDefinitionBody(llvm, "WriteSliceToStorage");
+    stack ascii dynamicWriteSliceBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteSlice");
 
     if (!Contains(writeSliceBody, "icmp ule ptr"))
     {
@@ -105,43 +84,21 @@ fn System.Memory.MemoryStatus AppendDynamic(
 // Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpers.
 // PORT-NOTE: The C# original reads the on-disk stdlib module
 // stdlib/src/System/Runtime/Buffer.stark and compiles it directly. The
-// compile-only bridge cannot read repository source, so the surface is exercised
-// through a program that imports System.Runtime.Buffer and forces both
-// DynamicByteBuffer.WriteSlice and DynamicByteBuffer.WriteFill to be lowered; the
-// tail-region memory-helper expectations are then verified on those emitted LLVM
-// bodies.
+// Stark port compiles the same source file through the host-test bridge and
+// verifies the tail-region memory-helper expectations on the same bodies.
 internal fn bool StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpersImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("promoted-runtime-buffer-tail-region-memory-helpers", raw"""
-import System.Runtime
-import System.Runtime.Buffer
-import System.Memory
-module Demo
-
-fn System.Memory.MemoryStatus AppendDynamic(
-    mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
-    borrow i8[min max][] source,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return buffer.WriteSlice(source, count);
-}
-
-fn System.Memory.MemoryStatus FillDynamic(
-    mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
-    i8[min max] value,
-    u64[0 2 ** 63 - 1] count)
-    {
-        return buffer.WriteFill(value, count);
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "promoted-runtime-buffer-tail-region-memory-helpers",
+        "../../stdlib/src/System/Runtime/Buffer.stark");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    stack ascii dynamicWriteSliceBody = LlvmDefinitionBody(llvm, "@DynamicByteBuffer_WriteSlice(");
-    stack ascii dynamicWriteFillBody = LlvmDefinitionBody(llvm, "@DynamicByteBuffer_WriteFill(");
+    stack ascii dynamicWriteSliceBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteSlice");
+    stack ascii dynamicWriteFillBody = LlvmDefinitionBody(llvm, "DynamicByteBuffer_WriteFill");
 
     if (!Contains(dynamicWriteSliceBody, "@__stark_inline_clone_System_Memory_InitializeBytesDisjoint")
         && !Contains(dynamicWriteSliceBody, "@llvm.memcpy.p0.p0.i64"))
@@ -165,55 +122,13 @@ fn System.Memory.MemoryStatus FillDynamic(
 // Ported from SystemPromotedRuntimeBufferStandardLibraryTests.StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorage.
 // PORT-NOTE: The C# original reads the on-disk stdlib module
 // stdlib/src/System/Runtime/Buffer.stark and compiles it directly. The
-// compile-only bridge cannot read repository source, so the fixed buffers are
-// exercised through a program that imports System.Runtime.Buffer and forces the
-// WriteByte/WriteFill/Compact entry points of FixedByteBuffer512/4096/8192 (and
-// the shared WriteSliceToStorage/WriteFillToStorage/CompactStorage helpers) to be
-// lowered; the inline-storage type layouts and the absence of dynamic allocation
-// in those bodies are then verified on the emitted LLVM text.
+// Stark port compiles the same source file through the host-test bridge and
+// verifies inline-storage layouts plus allocation-free fixed-buffer bodies.
 internal fn bool StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorageImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("promoted-runtime-buffer-fixed-inline-storage", raw"""
-import System.Runtime
-import System.Runtime.Buffer
-import System.Memory
-module Demo
-
-fn System.Memory.MemoryStatus Exercise512(
-    mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
-    borrow i8[min max][] source,
-    i8[min max] value,
-    u64[0 2 ** 63 - 1] count)
-    {
-        stack mut System.Memory.MemoryStatus status = buffer.WriteByte(value);
-        status = buffer.WriteFill(value, count);
-        status = buffer.WriteSlice(source, count);
-        buffer.Compact();
-        return status;
-}
-
-fn System.Memory.MemoryStatus Exercise4096(
-    mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer,
-    i8[min max] value,
-    u64[0 2 ** 63 - 1] count)
-    {
-        stack mut System.Memory.MemoryStatus status = buffer.WriteByte(value);
-        status = buffer.WriteFill(value, count);
-        buffer.Compact();
-        return status;
-}
-
-fn System.Memory.MemoryStatus Exercise8192(
-    mut borrow System.Runtime.Buffer.FixedByteBuffer8192 buffer,
-    i8[min max] value,
-    u64[0 2 ** 63 - 1] count)
-    {
-        stack mut System.Memory.MemoryStatus status = buffer.WriteByte(value);
-        status = buffer.WriteFill(value, count);
-        buffer.Compact();
-        return status;
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "promoted-runtime-buffer-fixed-inline-storage",
+        "../../stdlib/src/System/Runtime/Buffer.stark");
     if (!Succeeds(c))
     {
         return false;
@@ -235,18 +150,18 @@ fn System.Memory.MemoryStatus Exercise8192(
         return false;
     }
 
-    if (!FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@WriteSliceToStorage("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@WriteFillToStorage("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@CompactStorage("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer512_WriteByte("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer512_WriteFill("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer512_Compact("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer4096_WriteByte("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer4096_WriteFill("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer4096_Compact("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer8192_WriteByte("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer8192_WriteFill("))
-        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "@FixedByteBuffer8192_Compact(")))
+    if (!FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "WriteSliceToStorage"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "WriteFillToStorage"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "CompactStorage"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer512_WriteByte"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer512_WriteFill"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer512_Compact"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer4096_WriteByte"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer4096_WriteFill"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer4096_Compact"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer8192_WriteByte"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer8192_WriteFill"))
+        || !FixedBodyIsInlineStorage(LlvmDefinitionBody(llvm, "FixedByteBuffer8192_Compact")))
     {
         return false;
     }

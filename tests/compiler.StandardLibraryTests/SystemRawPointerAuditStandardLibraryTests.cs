@@ -10,6 +10,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
         "stdlib/src/System/FileSystem.stark",
         "stdlib/src/System/IO/File.stark",
         "stdlib/src/System/IO/Path.stark",
+        "stdlib/src/System/Json.stark",
         "stdlib/src/System/Memory.stark",
         "stdlib/src/System/Net/Tcp.stark",
         "stdlib/src/System/Process.stark",
@@ -20,8 +21,10 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
         "stdlib/src/System/Runtime/Platform/Linux.stark",
         "stdlib/src/System/Runtime/Platform/MacOS.stark",
         "stdlib/src/System/Runtime/Platform/Windows.stark",
+        "stdlib/src/System/Testing/HostCompiler.stark",
         "stdlib/src/System/Text.stark",
-        "stdlib/src/System/Threading.stark"
+        "stdlib/src/System/Threading.stark",
+        "stdlib/src/System/Toml.stark"
     ];
 
     private static readonly string[] PublicRawPointerSurfaceFiles =

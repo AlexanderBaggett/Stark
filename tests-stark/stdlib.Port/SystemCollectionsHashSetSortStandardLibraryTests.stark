@@ -9,9 +9,7 @@ module SystemCollectionsHashSetSortStandardLibraryTests
 // tests/compiler.StandardLibraryTests/SystemCollectionsHashSetSortStandardLibraryTests.cs.
 // Each Impl compiles the embedded Stark program through the host-compile bridge
 // and translates the original xUnit assertions onto the rendered `llvm` artifact
-// text via Succeeds/Contains. Function-scoped LLVM-body extraction in the C#
-// oracle (ExtractDefinedFunctionText) is reduced to whole-module text checks
-// here; see // PORT-NOTE comments where the bridge cannot reproduce a signal.
+// text via Succeeds/Contains and LlvmDefinitionBody.
 
 // Ported from SystemCollectionsHashSetSortStandardLibraryTests.StdLibSourceSortByUsesInlineComparatorWithoutRuntimeClosureOrAllocation.
 internal fn bool StdLibSourceSortByUsesInlineComparatorWithoutRuntimeClosureOrAllocationImpl()
@@ -50,22 +48,19 @@ internal fn bool StdLibSourceSortByUsesInlineComparatorWithoutRuntimeClosureOrAl
         return false;
     }
 
-    // PORT-NOTE: the C# oracle extracts @SortFixed's LLVM body and asserts the
-    // inline comparator lowers with no malloc/realloc/free, no runtime alloc
-    // shims, no fnptr pair insert/extract, and no fastcc closure indirection.
-    // The compile-only bridge exposes whole-module text, so these are reduced to
-    // module-wide DoesNotContain checks plus the no-fallback guarantee.
     stack ascii llvm = Llvm(c);
+    stack ascii sortFixedBody = LlvmDefinitionBody(llvm, "SortFixed");
     return !System.Testing.Contains(llvm, "; LLVM body emission fallback")
-        && !System.Testing.Contains(llvm, "@malloc(")
-        && !System.Testing.Contains(llvm, "@realloc(")
-        && !System.Testing.Contains(llvm, "@free(")
-        && !System.Testing.Contains(llvm, "@__stark_runtime_alloc")
-        && !System.Testing.Contains(llvm, "@__stark_runtime_realloc")
-        && !System.Testing.Contains(llvm, "@__stark_runtime_free")
-        && !System.Testing.Contains(llvm, "insertvalue { ptr, ptr }")
-        && !System.Testing.Contains(llvm, "extractvalue { ptr, ptr }")
-        && !System.Testing.Contains(llvm, "call fastcc void %");
+        && !System.Testing.Contains(sortFixedBody, "@malloc(")
+        && !System.Testing.Contains(sortFixedBody, "@realloc(")
+        && !System.Testing.Contains(sortFixedBody, "@free(")
+        && !System.Testing.Contains(sortFixedBody, "@__stark_runtime_alloc")
+        && !System.Testing.Contains(sortFixedBody, "@__stark_runtime_realloc")
+        && !System.Testing.Contains(sortFixedBody, "@__stark_runtime_free")
+        && !System.Testing.Contains(sortFixedBody, "insertvalue { ptr, ptr }")
+        && !System.Testing.Contains(sortFixedBody, "extractvalue { ptr, ptr }")
+        && !System.Testing.Contains(sortFixedBody, "call fastcc %")
+        && !System.Testing.Contains(sortFixedBody, "call fastcc void %");
 }
 
 // Ported from SystemCollectionsHashSetSortStandardLibraryTests.StdLibSourceSortUsesOrdContractWithoutRuntimeClosureOrAllocation.
@@ -121,21 +116,19 @@ internal fn bool StdLibSourceSortUsesOrdContractWithoutRuntimeClosureOrAllocatio
         return false;
     }
 
-    // PORT-NOTE: the C# oracle extracts @SortFixed's LLVM body and asserts the
-    // Ord-contract sort lowers with no malloc/realloc/free, no runtime alloc
-    // shims, no fnptr pair insert/extract, and no fastcc closure indirection.
-    // Reduced to module-wide DoesNotContain checks plus the no-fallback guard.
     stack ascii llvm = Llvm(c);
+    stack ascii sortFixedBody = LlvmDefinitionBody(llvm, "SortFixed");
     return !System.Testing.Contains(llvm, "; LLVM body emission fallback")
-        && !System.Testing.Contains(llvm, "@malloc(")
-        && !System.Testing.Contains(llvm, "@realloc(")
-        && !System.Testing.Contains(llvm, "@free(")
-        && !System.Testing.Contains(llvm, "@__stark_runtime_alloc")
-        && !System.Testing.Contains(llvm, "@__stark_runtime_realloc")
-        && !System.Testing.Contains(llvm, "@__stark_runtime_free")
-        && !System.Testing.Contains(llvm, "insertvalue { ptr, ptr }")
-        && !System.Testing.Contains(llvm, "extractvalue { ptr, ptr }")
-        && !System.Testing.Contains(llvm, "call fastcc void %");
+        && !System.Testing.Contains(sortFixedBody, "@malloc(")
+        && !System.Testing.Contains(sortFixedBody, "@realloc(")
+        && !System.Testing.Contains(sortFixedBody, "@free(")
+        && !System.Testing.Contains(sortFixedBody, "@__stark_runtime_alloc")
+        && !System.Testing.Contains(sortFixedBody, "@__stark_runtime_realloc")
+        && !System.Testing.Contains(sortFixedBody, "@__stark_runtime_free")
+        && !System.Testing.Contains(sortFixedBody, "insertvalue { ptr, ptr }")
+        && !System.Testing.Contains(sortFixedBody, "extractvalue { ptr, ptr }")
+        && !System.Testing.Contains(sortFixedBody, "call fastcc %")
+        && !System.Testing.Contains(sortFixedBody, "call fastcc void %");
 }
 
 // Ported from SystemCollectionsHashSetSortStandardLibraryTests.StdLibSourceSortRequiresOrdConformance.
@@ -327,19 +320,38 @@ internal fn bool StdLibSourceHashSetCustomKeysUseExplicitStaticHashAndEqualsCont
         return false;
     }
 
-    // PORT-NOTE: the C# oracle additionally extracts the custom-key
-    // HashSet.Contains and HashSet.FindIndex specialization bodies and asserts
-    // they call the user-declared @Symbol_Hash/@Symbol_Equals rather than the
-    // DictionaryKey contract. The compile-only bridge exposes whole-module text,
-    // so the positive markers are checked module-wide and the DictionaryKey
-    // contract markers are reduced to module-wide DoesNotContain checks.
     stack ascii llvm = Llvm(c);
-    return System.Testing.Contains(llvm, "@Symbol_Hash")
-        && System.Testing.Contains(llvm, "@Symbol_Equals")
-        && System.Testing.Contains(llvm, "call fastcc i64 @Symbol_Hash")
-        && System.Testing.Contains(llvm, "call fastcc i1 @Symbol_Equals")
-        && !System.Testing.Contains(llvm, "call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__Symbol")
-        && !System.Testing.Contains(llvm, "call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__Symbol");
+    stack ascii symbolHashBody = LlvmDefinitionBody(llvm, "Symbol_Hash");
+    stack ascii symbolEqualsBody = LlvmDefinitionBody(llvm, "Symbol_Equals");
+    stack ascii addBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_HashSet_Add__Symbol");
+    stack ascii containsBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_HashSet_Contains__Symbol");
+    stack ascii findIndexBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_HashSet_FindIndex__Symbol");
+    stack ascii findInsertionIndexBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_HashSet_FindInsertionIndex__Symbol");
+    return System.Testing.Contains(symbolHashBody, "load i32")
+        && System.Testing.Contains(symbolEqualsBody, "icmp eq i32")
+        && System.Testing.Contains(addBody, "load i32")
+        && System.Testing.Contains(addBody, "HashSet_FindInsertionIndex__Symbol")
+        && System.Testing.Contains(containsBody, "HashSet_FindIndex__Symbol")
+        && System.Testing.Contains(findIndexBody, "load i32")
+        && System.Testing.Contains(findIndexBody, "icmp eq i32")
+        && System.Testing.Contains(findInsertionIndexBody, "load i32")
+        && System.Testing.Contains(findInsertionIndexBody, "icmp eq i32")
+        && !System.Testing.Contains(addBody, "DictionaryKey_Hash")
+        && !System.Testing.Contains(addBody, "DictionaryKey_Equals")
+        && !System.Testing.Contains(containsBody, "DictionaryKey_Hash")
+        && !System.Testing.Contains(containsBody, "DictionaryKey_Equals")
+        && !System.Testing.Contains(findIndexBody, "DictionaryKey_Hash")
+        && !System.Testing.Contains(findIndexBody, "DictionaryKey_Equals")
+        && !System.Testing.Contains(findInsertionIndexBody, "DictionaryKey_Hash")
+        && !System.Testing.Contains(findInsertionIndexBody, "DictionaryKey_Equals");
 }
 
 // Ported from SystemCollectionsHashSetSortStandardLibraryTests.SourceStdLibHashSetExecutableRuns.

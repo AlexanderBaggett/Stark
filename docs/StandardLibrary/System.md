@@ -13,12 +13,14 @@ It re-exports:
 - `System.IO`
 - `System.IO.File`
 - `System.IO.Path`
+- `System.Json`
 - `System.Math`
 - `System.Memory`
 - `System.Net`
 - `System.Net.Tcp`
 - `System.Process`
 - `System.Threading`
+- `System.Toml`
 
 It also imports internal runtime support, `System.Syscall`, `System.Core`, and
 `System.Testing` during package build, but those modules are not re-exported
@@ -78,6 +80,8 @@ export fn i32 main()
 - `System.Net.Tcp` currently exposes `TcpShutdown` plus owned `TcpClient` and
   `TcpListener`, including connect/listen/accept, slice reads and writes,
   byte-buffer overloads, vectored IO, wait helpers, shutdown, and close.
+- `System.Json` currently exposes a flat node-table JSON reader and compact writer.
+- `System.Toml` currently exposes the reusable manifest-grade TOML reader and deterministic writer.
 - `System.Process` currently exposes process id/exit helpers plus Linux-backed process spawn/capture with optional stdin input, timeout capture, environment, argv, and working-directory APIs.
 - `System.Testing` currently exposes finite-law boolean/equality, text/count, range, slice/List shape assertions, root `Option`/`Result` shape predicates, process output predicates plus effectful run-match/timeout helpers, temp fixture helpers, snapshot/golden text helpers, and `RunFact`/exit helpers used by generated `stark test` `[Fact]` / `[Theory]` runners with inline and typed member data.
 - `System.Text` currently exposes owned text helpers, text/count scans, byte-slice-to-ASCII scans, parsers, formatters, and low-level caller-buffer conversion APIs through explicit `import System.Text`.

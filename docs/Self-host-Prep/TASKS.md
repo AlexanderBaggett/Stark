@@ -230,6 +230,22 @@ historical triage.
     - [x] Recheck the `threading-atomics` collection residue.
     - [x] Recheck the `runtime-platform-windows` collection residue.
     - [x] Resolve the `collections-dictionary` collection residue.
+    - [x] Resolve the `collections-hash-set-sort` collection residue.
+    - [x] Recheck the `collections-stack-queue` collection residue.
+    - [x] Resolve the `collections` collection residue.
+    - [x] Resolve the `text` collection residue.
+    - [x] Recheck the `text-runtime` collection residue.
+    - [x] Recheck the `text-interning` collection residue.
+    - [x] Resolve the `promoted-runtime-buffer` collection residue.
+    - [x] Resolve the `promoted-console` collection residue.
+    - [x] Recheck and strengthen the `promoted-io-file-system` collection residue.
+    - [x] Resolve the `promoted-net-tcp` collection residue.
+    - [x] Recheck the `runtime-buffer` collection residue.
+    - [x] Recheck the `console` collection residue.
+    - [x] Resolve the `process` collection residue.
+    - [x] Recheck the `net`, `file-system`, `json`, `math`, `c`, `compiler-integer-facts`, and `backend-boundary-audit` collection residues.
+    - [x] Resolve the `memory-contract-audit` collection residue.
+    - [x] Resolve the `raw-pointer-audit` collection residue.
   - [x] Recheck the lone `compiler.FeatureTests` failure and close it if still reproducible.
 
 - [ ] Close test-scope hygiene.

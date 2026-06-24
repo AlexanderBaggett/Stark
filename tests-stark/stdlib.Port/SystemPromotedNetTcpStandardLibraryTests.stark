@@ -1,4 +1,6 @@
 import StdlibPortSupport
+import System.IO
+import System.IO.File
 import System.Net
 import System.Net.Tcp
 import System.Runtime.Buffer
@@ -164,76 +166,12 @@ fn i32[min max] RunClosedSurface()
 }
 
 // Ported from SystemPromotedNetTcpStandardLibraryTests.StdLibSourcePromotedNetTcpBufferReadsUseBulkPaths.
-//
-// PORT-NOTE: the C# test reads the on-disk stdlib source
-// stdlib/src/System/Net/Tcp.stark and compiles that module file directly with
-// EmitLlvmIr (resolving against stdlib/src), then scans per-function LLVM bodies
-// for the TcpClient_Read fixed/dynamic buffer bulk paths. The compile-only host
-// bridge cannot read the repository source tree nor compile a bare stdlib module
-// in isolation, so this port compiles a program that imports System.Net.Tcp and
-// System.Runtime.Buffer and exercises TcpClient.Read over the 512/4096/8192
-// fixed buffers and the dynamic buffer, forcing the host stdlib to emit the
-// TcpClient_Read__* definitions into the program module, then applies the same
-// per-body Contains/DoesNotContain checks via LlvmDefinitionBody (the Stark
-// mirror of the C# ExtractLlvmFunctionBody helper).
-//
-// PORT-NOTE: the two final assertions read the on-disk stdlib source
-// stdlib/src/System/Runtime/Platform.stark for the
-// `rawmutptr<i8[min max]>[capacity] buffer` and `rawptr<i8[min max]>[length] buffer`
-// parameter spellings. The compile-only host bridge has no access to the
-// repository source text, so those source-text checks cannot be reproduced and
-// are dropped here; the compiled-program bulk-path body checks above are the
-// strongest signal the bridge can reproduce.
 internal fn bool StdLibSourcePromotedNetTcpBufferReadsUseBulkPathsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("stdlib-promoted-net-tcp-buffer-reads-bulk-paths", raw"""
-import System.Net
-import System.Net.Tcp
-import System.Runtime.Buffer
-module Demo
-
-fn bool CountFailed(System.Net.NetResult<u64[0 2 ** 63 - 1]> result)
-{
-    switch (result)
-    {
-        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var value):
-            return false;
-        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
-            return true;
-    }
-}
-
-fn i32[min max] RunBulkReads()
-{
-    stack mut System.Net.Tcp.TcpClient client = new();
-    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixed512 = new();
-    stack mut System.Runtime.Buffer.FixedByteBuffer4096 fixed4096 = new();
-    stack mut System.Runtime.Buffer.FixedByteBuffer8192 fixed8192 = new();
-    stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
-
-    if (!CountFailed(client.Read(fixed512)))
-    {
-        return 1;
-    }
-
-    if (!CountFailed(client.Read(fixed4096)))
-    {
-        return 2;
-    }
-
-    if (!CountFailed(client.Read(fixed8192)))
-    {
-        return 3;
-    }
-
-    if (!CountFailed(client.Read(dynamicBuffer, 4)))
-    {
-        return 4;
-    }
-
-    return 0;
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "stdlib-promoted-net-tcp-buffer-reads-bulk-paths",
+        "../../stdlib/src/System/Net/Tcp.stark",
+        LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -241,10 +179,18 @@ fn i32[min max] RunBulkReads()
 
     stack ascii llvm = Llvm(c);
 
-    stack ascii fixed512Read = LlvmDefinitionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer512_(");
-    stack ascii fixed4096Read = LlvmDefinitionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_(");
-    stack ascii fixed8192Read = LlvmDefinitionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_(");
-    stack ascii dynamicRead = LlvmDefinitionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_");
+    stack ascii fixed512Read = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer512_");
+    stack ascii fixed4096Read = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_");
+    stack ascii fixed8192Read = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_");
+    stack ascii dynamicRead = LlvmDefinitionBody(
+        llvm,
+        "TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_u64_02__63_1__");
 
     if (!Contains(fixed512Read, "ptr noundef nonnull noalias captures(none) dereferenceable(528) align 8 %arg_destination"))
     {
@@ -305,6 +251,19 @@ fn i32[min max] RunBulkReads()
     if (Contains(dynamicRead, "DynamicByteBuffer_WriteByte"))
     {
         return false;
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Platform.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var platformSourceOwner):
+            stack ascii platformSource = platformSourceOwner.View();
+            if (!Contains(platformSource, "rawmutptr<i8[min max]>[capacity] buffer")
+                || !Contains(platformSource, "rawptr<i8[min max]>[length] buffer"))
+            {
+                return false;
+            }
     }
 
     return true;

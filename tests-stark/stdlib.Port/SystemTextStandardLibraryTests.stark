@@ -1,5 +1,7 @@
 import StdlibPortSupport
 import System
+import System.IO
+import System.IO.File
 import System.Memory
 import System.Testing
 import System.Text
@@ -87,16 +89,12 @@ unsafe fn i32[min max] Use()
 }
 
 // Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedTextLowersThroughDynamicStorage.
-// PORT-NOTE: The C# original pins a Linux target ("x86_64-unknown-linux-gnu") and
-// StopAfterPassId "emit-llvm" so that the libc-free dynamic-storage lowering is
-// asserted on Linux specifically; the compile-only bridge does not expose target
-// pinning, so the embedded program is compiled through the default host pipeline
-// with LLVM requested. The embedded program is reproduced verbatim. The fallback /
-// allocator / runtime-shim LLVM text checks are translated as Contains /
-// DoesNotContain over the rendered module text.
+// PORT-NOTE: The C# original pins TargetInfo=x86_64-unknown-linux-gnu so the
+// libc-free dynamic-storage lowering is asserted; keep the same target here
+// because macOS legitimately bottoms out in libc allocation helpers.
 internal fn bool StdLibSourcePromotedTextLowersThroughDynamicStorageImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-text-promoted-dynamic-storage-lowering", raw"""
+    stack mut ProgramCompile c = CompileProgramForTarget("system-text-promoted-dynamic-storage-lowering", raw"""
 import System.Text
 import System.Memory
 module Demo
@@ -123,7 +121,7 @@ fn u64[0 2 ** 63 - 1] GrowAndRead()
     stack i8[min max][] view = text.AsSlice();
     return (u64[0 2 ** 63 - 1])view[4];
 }
-""");
+""", LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -147,60 +145,16 @@ fn u64[0 2 ** 63 - 1] GrowAndRead()
 }
 
 // Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpers.
-// PORT-NOTE: The C# original reads stdlib/src/System/Text.stark off disk and
+// PORT-NOTE: The C# original reads stdlib/src/System/Text.stark off disk,
 // compiles that module file directly with EmitLlvmIr, then inspects the lowered
-// OwnedAscii/OwnedUnicode append helpers. The compile-only bridge cannot use a
-// repository source file as the compilation input, so an importer program forces
-// those append surfaces (slice / literal / const / disjoint, ascii and unicode)
-// to be resolved, lowered, and emitted; the same disjoint-delegation, memcpy,
-// pointer-equality, slot_snapshot, and tail-region (icmp ule ptr) LLVM checks are
-// translated as Contains / DoesNotContain over each LlvmDefinitionBody.
+// OwnedAscii/OwnedUnicode append helpers. The Stark port compiles the same
+// on-disk module through the host-test bridge and scopes the checks to the same
+// helper bodies.
 internal fn bool StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpersImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-text-promoted-appends-tail-region", raw"""
-import System.Text
-import System.Memory
-module Demo
-
-fn bool Ok(System.Memory.MemoryStatus status)
-{
-    switch (status)
-    {
-        case System.Memory.MemoryStatus.Ok:
-            return true;
-        case System.Memory.MemoryStatus.Err(var error):
-            return false;
-    }
-}
-
-unsafe fn bool ExerciseAscii()
-{
-    stack mut System.Text.OwnedAscii text = new();
-    stack i8[min max][3] storage = { 97, 98, 99 };
-    if (!Ok(text.AppendSlice(storage, 3))
-        || !Ok(text.AppendAscii("abc"))
-        || !Ok(text.AppendConstAscii("xyz")))
-    {
-        return false;
-    }
-
-    return true;
-}
-
-unsafe fn bool ExerciseUnicode()
-{
-    stack mut System.Text.OwnedUnicode text = new();
-    stack i32[min max][3] storage = { 97, 98, 99 };
-    if (!Ok(text.AppendSlice(storage, 3))
-        || !Ok(text.AppendUnicode((unicode)"abc"))
-        || !Ok(text.AppendConstUnicode((unicode)"xyz")))
-    {
-        return false;
-    }
-
-    return true;
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "system-text-promoted-appends-tail-region",
+        "../../stdlib/src/System/Text.stark");
     if (!Succeeds(c))
     {
         return false;
@@ -290,28 +244,13 @@ unsafe fn bool ExerciseUnicode()
 // Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectly.
 // PORT-NOTE: The C# original compiles stdlib/src/System/Text.stark as the module
 // input with EmitLlvmIr and inspects the wide-integer Unicode formatting helpers.
-// The compile-only bridge cannot use a repository source file as input, so an
-// importer program references the wide signed/unsigned format surface to force
-// those helpers to be lowered and emitted; the assertions that Unicode formatting
-// delegates to the signed-unsigned core, never re-routes through the Ascii path or
-// an Ascii->Unicode conversion, allocates no Ascii scratch buffer, and that the
-// reversed-digit writer divides limbs by ten (never emitting raw udiv/urem i1024)
-// are translated as Contains / DoesNotContain over each LlvmDefinitionBody.
+// The Stark port compiles the same on-disk module through the host-test bridge
+// and preserves the direct-Unicode and no-raw-i1024-division checks.
 internal fn bool StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectlyImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-text-promoted-wide-unicode-int-format", raw"""
-import System
-import System.Text
-module Demo
-
-unsafe fn bool ProbeWide(rawmutptr<Unicode> wide)
-{
-    return System.Text.TryFormatI1024Unicode(wide, (i1024[min max])(-(2 ** 1023)))
-        && System.Text.TryFormatU1024Unicode(wide, (u1024[0 max])(2 ** 1024 - 1))
-        && System.Text.TryFormatI128Unicode(wide, (i128[min max])(-(2 ** 127)))
-        && System.Text.TryFormatU128Unicode(wide, (u128[0 max])(2 ** 128 - 1));
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "system-text-promoted-wide-unicode-int-format",
+        "../../stdlib/src/System/Text.stark");
     if (!Succeeds(c))
     {
         return false;
@@ -383,26 +322,13 @@ unsafe fn bool ProbeWide(rawmutptr<Unicode> wide)
 // Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffs.
 // PORT-NOTE: The C# original compiles stdlib/src/System/Text.stark as the module
 // input with EmitLlvmIr and, for each of the four wide parse helpers, asserts the
-// lowered body never emits a raw udiv/urem i1024 (cutoffs are constant-folded). The
-// compile-only bridge cannot use a repository source file as input, so an importer
-// program references the wide parse surface to force those helpers to be lowered
-// and emitted; the per-function DoesNotContain checks are translated over each
-// LlvmDefinitionBody.
+// lowered body never emits a raw udiv/urem i1024. The Stark port compiles the same
+// on-disk module through the host-test bridge and scopes the checks to each helper.
 internal fn bool StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-text-promoted-wide-int-parse-cutoffs", raw"""
-import System
-import System.Text
-module Demo
-
-fn bool Probe()
-{
-    return System.Text.IsParseOkI1024(System.Text.ParseI1024Ascii("-1"))
-        && System.Text.IsParseOkI1024(System.Text.ParseI1024Unicode((unicode)"-1"))
-        && System.Text.IsParseOkU1024(System.Text.ParseU1024Ascii("1"))
-        && System.Text.IsParseOkU1024(System.Text.ParseU1024Unicode((unicode)"1"));
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFile(
+        "system-text-promoted-wide-int-parse-cutoffs",
+        "../../stdlib/src/System/Text.stark");
     if (!Succeeds(c))
     {
         return false;
@@ -431,42 +357,28 @@ fn bool Probe()
 
 // Ported from SystemTextStandardLibraryTests.StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegions.
 // PORT-NOTE: The C# original reads stdlib/src/System/Text.stark off disk and
-// asserts on its raw source text that the UTF encoding helpers declare bounded
-// raw-pointer regions (rawptr<i8[min max]>[length] data, the rawmutptr capacity
-// destinations, the where disjoint(source, destination[0, capacity]) contract, the
-// TryDecodeUtf8CodePoint call site, and the finite-law AsSlice borrow signatures).
-// The compile-only bridge cannot read or scan that source text, so the bounded
-// raw-pointer surface is exercised indirectly: an importer program references the
-// UTF encode/decode and AsSlice surfaces of System.Text, forcing those bounded
-// rawptr/rawmutptr declarations and disjoint contracts to be resolved and
-// type-checked during compilation. The test passes only when that program compiles,
-// standing in for the source-text assertions.
+// asserts on its raw source text that UTF helpers declare bounded raw-pointer
+// regions, disjoint contracts, decoded-code-point routing, and finite-law AsSlice
+// borrow signatures. The Stark port reads the same source file and scans the same
+// source fragments.
 internal fn bool StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegionsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-text-promoted-encoding-bounded-rawptr", raw"""
-import System
-import System.Text
-module Demo
-
-fn bool ProbeAsSlice()
-{
-    stack mut System.Text.OwnedAscii ascii = new();
-    stack mut System.Text.OwnedUnicode unicode = new();
-    stack mut System.Text.OwnedUtf16 utf16 = new();
-    stack i8[min max][] asciiView = ascii.AsSlice();
-    stack i32[min max][] unicodeView = unicode.AsSlice();
-    stack i16[min max][] utf16View = utf16.AsSlice();
-    return asciiView.Length >= 0
-        && unicodeView.Length >= 0
-        && utf16View.Length >= 0;
-}
-""");
-    if (!Succeeds(c))
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Text.stark"))
     {
-        return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var source):
+            stack ascii text = source.View();
+            return System.Testing.Contains(text, "rawptr<i8[min max]>[length] data")
+                && System.Testing.Contains(text, "rawmutptr<i8[min max]>[capacity] destination")
+                && System.Testing.Contains(text, "rawmutptr<i16[min max]>[capacity] destination")
+                && System.Testing.Contains(text, "rawptr<i16[min max]>[sourceLength] source")
+                && System.Testing.Contains(text, "where disjoint(source, destination[0, capacity])")
+                && System.Testing.Contains(text, "decoded = TryDecodeUtf8CodePoint")
+                && System.Testing.Contains(text, "finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self)")
+                && System.Testing.Contains(text, "finite law retborrow i32[min max][] AsSlice(borrow OwnedUnicode self)")
+                && System.Testing.Contains(text, "finite law retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self)");
     }
-
-    return true;
 }
 
 // Ported from SystemTextStandardLibraryTests.PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource.

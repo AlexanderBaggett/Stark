@@ -16,6 +16,7 @@ legitimately needs raw pointers, add it here with a rationale and to the test's
 | `System/FileSystem.stark` | Directory iteration and metadata calls pass platform structs and paths. |
 | `System/IO/File.stark` | Owned file handles exchange buffers with platform read/write/seek calls. |
 | `System/IO/Path.stark` | Path shaping fills caller-provided fixed buffers through platform queries. |
+| `System/Json.stark` | The flat node-table parser/writer scans ASCII text through audited `System.Text.AsciiData` views while keeping raw pointers out of public declarations. |
 | `System/Memory.stark` | The allocator surface itself: reserve/append/copy/move/fill primitives. |
 | `System/Net/Tcp.stark` | Socket calls exchange address structs and payload buffers with the platform. |
 | `System/Process.stark` | Process spawn/argv/environment plumbing passes argv vectors and status buffers to platform syscalls. |
@@ -26,8 +27,10 @@ legitimately needs raw pointers, add it here with a rationale and to the test's
 | `System/Runtime/Platform/Linux.stark` | Linux syscall shims: every syscall argument is a raw region or scalar. |
 | `System/Runtime/Platform/MacOS.stark` | macOS libSystem shims, same shape as the Linux boundary. |
 | `System/Runtime/Platform/Windows.stark` | Win32 API shims, same shape as the Linux boundary. |
+| `System/Testing/HostCompiler.stark` | Host-test JSON protocol helpers bind parsed string fields as text views and keep that unsafe parsing boundary inside test infrastructure. |
 | `System/Text.stark` | Fixed-buffer concat/format helpers write through bounded raw regions. |
 | `System/Threading.stark` | Thread entry trampolines and payload handoff cross an FFI boundary. |
+| `System/Toml.stark` | The manifest TOML parser/writer mirrors the JSON flat-table design and uses audited raw text scans internally without exposing raw pointers publicly. |
 
 ## Public Raw Pointer Surfaces
 
