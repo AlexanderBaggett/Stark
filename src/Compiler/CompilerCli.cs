@@ -742,6 +742,7 @@ internal static class CompilerCli
 
         var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result, compilerOptions.TargetInfo);
         var linkInputs = new List<string>();
+        var packageLibraryInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
         var canUseExecutableLto = ShouldEnableExecutableLto(toolchainOptions.Toolchain);
@@ -790,7 +791,7 @@ internal static class CompilerCli
                         var libraryPath = Path.GetFullPath(module.Reference.LibraryPath!);
                         if (linkedLibraries.Add(libraryPath))
                         {
-                            linkInputs.Add(libraryPath);
+                            packageLibraryInputs.Add(libraryPath);
                             CollectPackageProvidedModuleNames(module.Reference.ManifestPath, packageProvidedModuleNames);
                         }
 
@@ -857,6 +858,7 @@ internal static class CompilerCli
             }
 
             linkInputs.AddRange(nativeDependencyResult.ObjectPaths);
+            linkInputs.AddRange(packageLibraryInputs);
 
             var combinedLibrarySearchDirectories = CombineDistinct(
                 toolchainOptions.LibrarySearchDirectories,

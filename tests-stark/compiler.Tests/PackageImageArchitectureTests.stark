@@ -548,7 +548,7 @@ internal fn bool PackageImageConsumerLowersImportedGenericForTraversalTypedBodyI
         // (TraversalIndexName "index", TraversalElementName "box"), corrupts the template BodyText to
         // prove the typed body (not the text) is lowered, deletes the Facade source, then runs the
         // `Demo` consumer (emit-llvm) and asserts the LLVM text contains
-        // `__stark_mono_fn_Demo__Facade_CountIndexed__` and not "this is not valid Stark".
+        // `__stark_mono_fn_Facade__Facade_CountIndexed__` and not "this is not valid Stark".
         // Package-image construction, manifest corruption, typed-body probing and sourceless
         // resolution are not expressible via the compile helpers, so this resolves `Facade` as a
         // sibling source module, compiles the `Demo` consumer to LLVM, and asserts the LLVM text
@@ -593,7 +593,7 @@ public fn u64[0 max] CountIndexed<T>(Box<T>[] boxes, T tag)
 }
 """);
         return Succeeds(compiled)
-            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_CountIndexed__");
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Facade__Facade_CountIndexed__");
     }
 }
 
@@ -606,7 +606,7 @@ internal fn bool PackageImagePreservesLabeledLoopControlInImportedGenericTypedBo
         // switch with `break selector`, builds a package image, probes the typed-body/loaded-facts
         // statement tree for the labeled control-flow, corrupts the template BodyText, deletes the
         // Facade source, then runs the `Demo` consumer (lower-mir) and asserts the MIR contains the
-        // monomorphized `__stark_mono_fn_Demo__Facade_Score__i32`. Package-image construction,
+        // monomorphized `__stark_mono_fn_Facade__Facade_Score__i32`. Package-image construction,
         // manifest corruption, typed-body probing, sourceless resolution and the MIR-with-module
         // probe are not expressible via the compile helpers (there is no MIR-with-module helper), so
         // this resolves `Facade` as a sibling source module and compiles the `Demo` consumer through
@@ -1473,8 +1473,8 @@ internal fn bool PackageImageConsumerLowersImportedComptimeGenericTemplateTypedB
         // `Forward<comptime N>` that calls `Pick<comptime N>`, builds a package image, corrupts the
         // Forward template BodyText, deletes the Facade source, runs the `Demo` consumer through
         // `lower-hir` to probe the `Facade_Pick`/`N_5` specialization's comptime value, then through
-        // `emit-llvm` and asserts the LLVM contains `__stark_mono_fn_Demo__Facade_Forward__N_5` and
-        // that `__stark_mono_fn_Demo__Facade_Pick__N_5` folds to `ret i8 5`. Package-image
+        // `emit-llvm` and asserts the LLVM contains `__stark_mono_fn_Facade__Facade_Forward__N_5` and
+        // that `__stark_mono_fn_Facade__Facade_Pick__N_5` folds to `ret i8 5`. Package-image
         // construction, manifest corruption, HIR specialization probing and sourceless resolution are
         // not expressible via the compile helpers, so this resolves `Facade` as a sibling source
         // module, compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the
@@ -1506,7 +1506,7 @@ public finite law u8[0 max] Forward<comptime u8[1 8] N>()
 }
 """);
         return Succeeds(compiled)
-            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_Forward__N_5")
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Facade__Facade_Forward__N_5")
             && System.Testing.Contains(Llvm(compiled), "ret i8 5");
     }
 }
@@ -1518,7 +1518,7 @@ internal fn bool PackageImageConsumerLowersImportedOrdinaryComptimeTemplateTyped
         // PORT-NOTE: The C# test publishes a `Facade` library with `Fold<T>` returning
         // `comptime (5 + 2)`, builds a package image (asserting its JSON carries a "comptime"
         // statement kind), corrupts the template BodyText, deletes the Facade source, then runs the
-        // `Demo` consumer through `emit-llvm` and asserts `__stark_mono_fn_Demo__Facade_Fold__i32`
+        // `Demo` consumer through `emit-llvm` and asserts `__stark_mono_fn_Facade__Facade_Fold__i32`
         // folds to `ret i8 7`. Package-image construction, manifest corruption and sourceless
         // resolution are not expressible via the compile helpers, so this resolves `Facade` as a
         // sibling source module, compiles the `Demo` consumer to LLVM, and asserts the LLVM contains
@@ -1558,8 +1558,8 @@ internal fn bool PackageImageConsumerLowersImportedComptimeGenericArithmeticTemp
         // `comptime (N + 2)` and a `Forward<T, comptime M>` that calls `comptime Fold<T, comptime M>`,
         // builds a package image (asserting its JSON carries "comptime"/"N"/"M"), corrupts every
         // template BodyText, deletes the Facade source, then runs the `Demo` consumer through
-        // `emit-llvm` and asserts the folded `__stark_mono_fn_Demo__Facade_Fold__i32__N_5`,
-        // `__stark_mono_fn_Demo__Facade_Forward__i32__M_5` and `Run` all return `ret i8 7`.
+        // `emit-llvm` and asserts the folded `__stark_mono_fn_Facade__Facade_Fold__i32__N_5`,
+        // `__stark_mono_fn_Facade__Facade_Forward__i32__M_5` and `Run` all return `ret i8 7`.
         // Package-image construction, manifest corruption and sourceless resolution are not
         // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
         // compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the folded `ret i8 7`.
@@ -1602,7 +1602,7 @@ internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithStatem
         // multi-statement body and a `Fold<T, comptime M>` that folds `comptime Build<T, comptime M>`,
         // builds a package image, corrupts every template BodyText, deletes the Facade source, then
         // runs the `Demo` consumer through `emit-llvm` and asserts the folded
-        // `__stark_mono_fn_Demo__Facade_Build__i32__N_5`, `__stark_mono_fn_Demo__Facade_Fold__i32__M_5`
+        // `__stark_mono_fn_Facade__Facade_Build__i32__N_5`, `__stark_mono_fn_Facade__Facade_Fold__i32__M_5`
         // and `Run` all return `ret i32 42`. Package-image construction, manifest corruption and
         // sourceless resolution are not expressible via the compile helpers, so this resolves
         // `Facade` as a sibling source module, compiles the `Demo` consumer to LLVM, and asserts the
@@ -1654,7 +1654,7 @@ internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithMember
         // `comptime BuildBox<T, comptime N>().Add(5).Read()`, builds a package image (asserting >= 2
         // member-call facts), corrupts every template BodyText, deletes the Facade source, then runs
         // the `Demo` consumer through `lower-mir` and asserts the
-        // `__stark_mono_fn_Demo__Facade_MemberScore__i32__N_37` MIR entry-block terminator is the
+        // `__stark_mono_fn_Facade__Facade_MemberScore__i32__N_37` MIR entry-block terminator is the
         // integer constant 42 with no residual call rvalue. Package-image construction, manifest
         // corruption, direct MIR terminator/statement probing (there is no MIR-with-module helper);
         // and sourceless resolution are not expressible via the compile helpers, so this resolves
@@ -1789,7 +1789,7 @@ internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithTextCo
         // text constants and a `TextScore<T>` that returns 42 when both fold to "Score: 100", builds
         // a package image (asserting its JSON carries a "text-interpolation" statement kind), corrupts
         // every template BodyText, deletes the Facade source, then runs the `Demo` consumer through
-        // `emit-llvm` and asserts the folded `__stark_mono_fn_Demo__Facade_TextScore__i32` and `Run`
+        // `emit-llvm` and asserts the folded `__stark_mono_fn_Facade__Facade_TextScore__i32` and `Run`
         // return `ret i32 42` with the "Score: {100}" template literal absent. Package-image
         // construction, manifest corruption, LLVM-text inspection and sourceless resolution are not
         // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
@@ -1847,8 +1847,8 @@ internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatter
         // `Fold<T, comptime M>` that folds `comptime PatternScore<T, comptime M>`, builds a package
         // image (asserting condition/switch-case typed-body facts), corrupts every template BodyText,
         // deletes the Facade source, then runs the `Demo` consumer through `emit-llvm` and asserts
-        // the LLVM contains `__stark_mono_fn_Demo__Facade_PatternScore__i32__N_4` and that the folded
-        // `__stark_mono_fn_Demo__Facade_Fold__i32__M_4` and `Run` return `ret i32 42`. Package-image
+        // the LLVM contains `__stark_mono_fn_Facade__Facade_PatternScore__i32__N_4` and that the folded
+        // `__stark_mono_fn_Facade__Facade_Fold__i32__M_4` and `Run` return `ret i32 42`. Package-image
         // construction, manifest corruption, LLVM-text inspection and sourceless resolution are not
         // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
         // compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the
@@ -1964,7 +1964,7 @@ public finite law i32[min max] Fold<T, comptime u8[0 8] M>()
 }
 """);
         return Succeeds(compiled)
-            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_PatternScore__i32__N_4")
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Facade__Facade_PatternScore__i32__N_4")
             && System.Testing.Contains(Llvm(compiled), "ret i32 42");
     }
 }
@@ -2138,7 +2138,7 @@ internal fn bool PackageImageGenericTemplatesPublishAllBoundOperationFamiliesImp
         // asserts the published BoundOperations cover all required kinds plus the loaded-facts
         // bound-operation interfaces, corrupts the Run template BodyText, round-trips a body-less
         // surface, deletes the Facade source, then runs the `Demo` consumer through `emit-llvm` and
-        // asserts the LLVM contains `__stark_mono_fn_Demo__System_Text_Run__` and not
+        // asserts the LLVM contains `__stark_mono_fn_System_Text__System_Text_Run__` and not
         // "this is not valid Stark". Package-image construction, bound-operation/fact probing,
         // manifest corruption and sourceless resolution are not expressible via the compile helpers,
         // so this resolves `System.Text` as a sibling source module (System/Text.stark), compiles
@@ -2154,12 +2154,12 @@ fn i32[min max] LocalInc(i32[min max] value)
     return value + 1;
 }
 
-unsafe fn i32[min max] Run()
+unsafe fn i32[min max] Execute()
 {
     stack fnptr<fn i32[min max](i32[min max])> pointerOp = LocalInc;
     stack closure<fn i32[min max](i32[min max])> closureOp =
         (i32[min max] value) => value + 6;
-    return System.Text.Run(7, pointerOp, closureOp);
+    return Run(7, pointerOp, closureOp);
 }
 """,
             "System",
@@ -2318,7 +2318,7 @@ public unsafe fn T Run<T>(
 }
 """);
         return Succeeds(compiled)
-            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__System_Text_Run__");
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_System_Text__System_Text_Run__");
     }
 }
 
@@ -2400,7 +2400,7 @@ internal fn bool PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAn
         // `Pair<T>` and switch-dispatches on `choose`, builds a package image (asserting
         // object-creation/switch-dispatch bound operations), corrupts the Pick template BodyText,
         // deletes the Facade source, then runs the `Demo` consumer through `emit-llvm` and asserts
-        // the LLVM contains `__stark_mono_fn_Demo__Facade_Pick__i32` and not "this is not valid
+        // the LLVM contains `__stark_mono_fn_Facade__Facade_Pick__i32` and not "this is not valid
         // Stark". Package-image construction, bound-operation probing, manifest corruption and
         // sourceless resolution are not expressible via the compile helpers, so this resolves
         // `Facade` as a sibling source module, compiles the `Demo` consumer to LLVM, and asserts the
@@ -2445,7 +2445,7 @@ public fn T Pick<T>(T left, T right, bool choose)
 }
 """);
         return Succeeds(compiled)
-            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_Pick__i32");
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Facade__Facade_Pick__i32");
     }
 }
 
@@ -2466,7 +2466,7 @@ internal fn bool PackageImagePreservesTraitConformanceMetadataImpl()
         // the negative STK3032 conformance diagnostic, so this resolves `Facade` as a sibling source
         // module and asserts the `Broken` consumer fails type-check with STK3032 mentioning
         // "Facade.Drawable.Width" (the positive comptime-fact `DemoFacts` consumer is reduced away).
-        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        stack mut LlvmCompile compiled = CompileFullWithModule(
             "package-image-preserves-trait-conformance-metadata",
             raw"""
 import Facade

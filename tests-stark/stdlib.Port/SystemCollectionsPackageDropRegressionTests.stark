@@ -1,0 +1,44 @@
+import StdlibPortSupport
+import System.Testing
+module SystemCollectionsPackageDropRegressionTests
+
+// Ported from SystemCollectionsPackageDropRegressionTests.ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackage.
+internal fn bool ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackageImpl()
+{
+    stack mut ProgramCompile c = CompileMirWithPackage(
+        "manifest-backed-generic-field-drop-list-clear",
+        raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run()
+{
+    stack Facade.Owner<u32[0 max]> owner = new Facade.Owner<u32[0 max]>();
+    return 0;
+}
+""",
+        "Facade",
+        raw"""
+import System.Collections
+module Facade
+
+public struct Owner<T>
+{
+    System.Collections.List<T> Items;
+
+    Owner()
+    {
+        self.Items = new();
+    }
+}
+""");
+
+    if (!Succeeds(c) || HasDiagnostic(c, "STK9999"))
+    {
+        return false;
+    }
+
+    stack ascii mir = Mir(c);
+    return Contains(mir, "Facade.Owner")
+        && Contains(mir, "MoveLast");
+}

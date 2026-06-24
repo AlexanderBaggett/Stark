@@ -35,26 +35,28 @@ export fn i32[min max] main()
 // PORT-NOTE: the original drops a stage-local `System.StageProbe` stdlib module on
 // disk and asserts the build resolves it (exit 0, emitted executable). Stage-local
 // stdlib discovery and the build CLI are not expressible here, so the imported
-// `System.StageProbe` module is inlined ahead of `App` and the combined program is
-// compiled.
+// `System.StageProbe` module is supplied through the host-test search directory.
 internal fn bool BuildUsesStageLocalStdlibSearchDirectoryImpl()
 {
-    stack mut LlvmCompile compiled = CompileFull(
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "project-cli-build-stage-local-stdlib",
         raw"""
-module System.StageProbe
-
-public finite law i32[min max] Value()
-{
-    return 0;
-}
-
 import System.StageProbe
 module App
 
 export fn i32[min max] main()
 {
     return System.StageProbe.Value();
+}
+""",
+        "System",
+        "StageProbe.stark",
+        raw"""
+module System.StageProbe
+
+public finite law i32[min max] Value()
+{
+    return 0;
 }
 """);
     return Succeeds(compiled);
@@ -64,26 +66,29 @@ export fn i32[min max] main()
 // PORT-NOTE: the original drops a repo `stdlib/src/System.RepoSourceProbe` source
 // tree on disk and asserts the build discovers it (exit 0, emitted executable).
 // Repo stdlib source-tree discovery and the build CLI are not expressible here, so
-// the imported `System.RepoSourceProbe` module is inlined ahead of `App` and the
-// combined program is compiled.
+// the imported `System.RepoSourceProbe` module is supplied through the host-test
+// search directory.
 internal fn bool BuildUsesRepoStdlibSourceTreeDiscoveryImpl()
 {
-    stack mut LlvmCompile compiled = CompileFull(
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "project-cli-build-repo-stdlib-source-tree",
         raw"""
-module System.RepoSourceProbe
-
-public finite law i32[min max] Value()
-{
-    return 0;
-}
-
 import System.RepoSourceProbe
 module App
 
 export fn i32[min max] main()
 {
     return System.RepoSourceProbe.Value();
+}
+""",
+        "System",
+        "RepoSourceProbe.stark",
+        raw"""
+module System.RepoSourceProbe
+
+public finite law i32[min max] Value()
+{
+    return 0;
 }
 """);
     return Succeeds(compiled);
@@ -93,26 +98,29 @@ export fn i32[min max] main()
 // PORT-NOTE: the original installs a bundled `System.InstalledProbe` stdlib package
 // (no repo stdlib present) and asserts the build resolves it (exit 0, emitted
 // executable). Bundled-package install/discovery and the build CLI are not
-// expressible here, so the imported `System.InstalledProbe` module is inlined ahead
-// of `App` and the combined program is compiled.
+// expressible here, so the imported `System.InstalledProbe` module is supplied
+// through the host-test search directory.
 internal fn bool BuildUsesInstalledBundledStdlibPackageWhenNoRepoStdlibExistsImpl()
 {
-    stack mut LlvmCompile compiled = CompileFull(
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "project-cli-build-installed-bundled-stdlib",
         raw"""
-module System.InstalledProbe
-
-public finite law i32[min max] Value()
-{
-    return 0;
-}
-
 import System.InstalledProbe
 module App
 
 export fn i32[min max] main()
 {
     return System.InstalledProbe.Value();
+}
+""",
+        "System",
+        "InstalledProbe.stark",
+        raw"""
+module System.InstalledProbe
+
+public finite law i32[min max] Value()
+{
+    return 0;
 }
 """);
     return Succeeds(compiled);
@@ -187,26 +195,28 @@ export fn i32[min max] main()
 // `app` executable with a path dependency on it) and asserts both the static library
 // and executable are emitted, plus package-image artifacts on disk. Solution driving,
 // path dependencies, and file-system artifacts are not expressible here, so the
-// `Math` library module is inlined ahead of `App` and the combined program is
-// compiled.
+// `Math` library module is supplied through the host-test search directory.
 internal fn bool BuildBuildsSolutionDefaultTargetAndPathDependenciesImpl()
 {
-    stack mut LlvmCompile compiled = CompileFull(
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "project-cli-build-solution-default-target-and-path-deps",
         raw"""
-module Math
-
-public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
-{
-    return left + right;
-}
-
 import Math
 module App
 
 export fn i32[min max] main()
 {
     return Math.Add(3, 4);
+}
+""",
+        "",
+        "Math.stark",
+        raw"""
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
 }
 """);
     return Succeeds(compiled);
@@ -300,11 +310,10 @@ internal fn bool RunUsesSolutionDefaultRunTargetImpl()
     // PORT-NOTE: original writes a solution (math library + app executable importing
     // Math) and asserts `stark run` picks the solution default run target, links the
     // path dependency, emits the static library and executable, and exits with code
-    // 7 (Math.Add(3, 4)). The single-module helper cannot supply the sibling Math
-    // module, drive the solution run target, or observe exit codes / "Emitted ..."
-    // stdout; reduced to compiling the app root program through the full pipeline and
-    // returning Succeeds.
-    stack mut LlvmCompile compiled = CompileFull(
+    // 7 (Math.Add(3, 4)). The host-test helper supplies the sibling Math module,
+    // but still cannot drive the solution run target or observe exit codes /
+    // "Emitted ..." stdout.
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "project-run-solution-default-run-target",
         raw"""
 import Math
@@ -313,6 +322,16 @@ module App
 export fn i32[min max] main()
 {
     return Math.Add(3, 4);
+}
+""",
+        "",
+        "Math.stark",
+        raw"""
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
 }
 """);
     return Succeeds(compiled);
@@ -618,11 +637,10 @@ internal fn bool TestRunsSolutionDefaultTestTargetAndPathDependenciesImpl()
     // PORT-NOTE: original writes a test solution (math library + math-tests importing
     // Math) and asserts `stark test` builds the path dependency, runs the solution
     // default test target, emits the static library / executable / package image, and
-    // reports "Passed test project 'math-tests'.". The single-module helper cannot
-    // supply the sibling Math module, drive the solution test target, or observe CLI
-    // stdout / emitted files; reduced to compiling the math-tests root program through
-    // the full pipeline and returning Succeeds.
-    stack mut LlvmCompile compiled = CompileFull(
+    // reports "Passed test project 'math-tests'.". The host-test helper supplies
+    // the sibling Math module, but still cannot drive the solution test target or
+    // observe CLI stdout / emitted files.
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "project-test-solution-default-test-target",
         raw"""
 import Math
@@ -636,6 +654,16 @@ export fn i32[min max] main()
     }
 
     return 1;
+}
+""",
+        "",
+        "Math.stark",
+        raw"""
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
 }
 """);
     return Succeeds(compiled);

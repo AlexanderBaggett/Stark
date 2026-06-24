@@ -537,16 +537,6 @@ internal static class ProjectCliDriver
         compileArgs.Add("--save-temps");
         compileArgs.Add(intermediateDirectory);
 
-        var bundledLibrarySearchPaths = GetBundledLibrarySearchPaths(session);
-        foreach (var bundledSearchDirectory in bundledLibrarySearchPaths
-                     .Where(static path => path.IncludeInCompilerSearch)
-                     .Select(static path => path.Path)
-                     .Distinct(StringComparer.Ordinal))
-        {
-            compileArgs.Add("-I");
-            compileArgs.Add(bundledSearchDirectory);
-        }
-
         string? packageSearchDirectory = null;
         if (project.Kind == ProjectKind.Library)
         {
@@ -569,6 +559,16 @@ internal static class ProjectCliDriver
         {
             compileArgs.Add("-I");
             compileArgs.Add(searchDirectory);
+        }
+
+        var bundledLibrarySearchPaths = GetBundledLibrarySearchPaths(session);
+        foreach (var bundledSearchDirectory in bundledLibrarySearchPaths
+                     .Where(static path => path.IncludeInCompilerSearch)
+                     .Select(static path => path.Path)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            compileArgs.Add("-I");
+            compileArgs.Add(bundledSearchDirectory);
         }
 
         var nativeArgsResult = BuildNativeArgs(
@@ -1073,7 +1073,10 @@ internal static class ProjectCliDriver
         builder.Append("stage=").Append(session.StageName).Append('\n');
         builder.Append("kind=").Append(project.Kind).Append('\n');
         builder.Append("output=").Append(project.OutputName).Append('\n');
-        builder.Append("filters=").Append(string.Join("", session.TestFilters)).Append('\n');
+        if (project.Kind == ProjectKind.Test)
+        {
+            builder.Append("filters=").Append(string.Join("", session.TestFilters)).Append('\n');
+        }
 
         try
         {
