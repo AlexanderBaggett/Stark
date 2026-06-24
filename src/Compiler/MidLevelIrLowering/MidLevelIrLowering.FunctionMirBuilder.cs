@@ -11801,6 +11801,11 @@ internal sealed partial class MidLevelIrLowerer
                 return ReadPlace(captureTarget);
             }
 
+            if (TryResolveConcreteComptimeGenericValueOperand(name, out var comptimeValue))
+            {
+                return comptimeValue;
+            }
+
             if (TryResolveGlobal(name, out var global))
             {
                 // Aggregate consts stay global loads: const-lookup folding matches the
@@ -11826,6 +11831,22 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return null;
+        }
+
+        private bool TryResolveConcreteComptimeGenericValueOperand(string name, out MidLevelIrOperand operand)
+        {
+            operand = default!;
+            if (_activeGenericValueSubstitution is not { Count: > 0 } valueSubstitution
+                || !valueSubstitution.TryGetValue(name, out var value)
+                || ActiveComptimeGenericParameters() is not { Count: > 0 } parameters
+                || !parameters.TryGetValue(name, out var parameter)
+                || parameter.Type.Kind != StarkTypeKind.Integer)
+            {
+                return false;
+            }
+
+            operand = new MidLevelIrIntegerConstantOperand(value, ApplyGenericSubstitution(parameter.Type));
+            return true;
         }
 
         private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
@@ -12476,10 +12497,27 @@ internal sealed partial class MidLevelIrLowerer
 
         private IEnumerable<string> BoundOperationFunctionNames()
         {
-            yield return _function.Name;
-            if (!string.Equals(_function.Signature.Name, _function.Name, StringComparison.Ordinal))
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            if (seen.Add(_function.Name))
+            {
+                yield return _function.Name;
+            }
+
+            if (seen.Add(_function.Signature.Name))
             {
                 yield return _function.Signature.Name;
+            }
+
+            if (_function.Signature.TemplateName is { Length: > 0 } signatureTemplateName
+                && seen.Add(signatureTemplateName))
+            {
+                yield return signatureTemplateName;
+            }
+
+            if (_function.BodyTemplateName is { Length: > 0 } bodyTemplateName
+                && seen.Add(bodyTemplateName))
+            {
+                yield return bodyTemplateName;
             }
         }
 

@@ -1643,7 +1643,8 @@ internal sealed class TypeChecker
     private IReadOnlyList<TypeParameterConstraint>? ParseTypeParameterConstraints(
         DeclaredFunctionSyntax functionSyntax,
         ISet<string>? genericParameters,
-        string currentModuleName)
+        string currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         var constraintContexts = GetTypeParameterConstraintContexts(functionSyntax.DeclarationContext);
         if (constraintContexts.Length == 0)
@@ -1658,7 +1659,7 @@ internal sealed class TypeChecker
             var bounds = new List<StarkTypeSymbol>();
             foreach (var boundContext in constraintContext.type_())
             {
-                bounds.Add(ResolveType(boundContext, genericParameters, currentModuleName));
+                bounds.Add(ResolveType(boundContext, genericParameters, currentModuleName, comptimeGenericParameters));
             }
 
             if (bounds.Count > 0)
@@ -2586,7 +2587,11 @@ internal sealed class TypeChecker
                         DisjointParameterGroups: effectiveDisjointGroups,
                         OverlapParameterGroups: overlapGroups,
                         SameParameterGroups: sameGroups,
-                        TypeParameterConstraints: ParseTypeParameterConstraints(functionSyntax, genericParameters, module.SyntaxModel.ModuleName),
+                        TypeParameterConstraints: ParseTypeParameterConstraints(
+                            functionSyntax,
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            comptimeGenericParameterMap),
                         HasBody: functionSyntax.HasBody,
                         ThreadSafetyLawPredicates: ParseThreadSafetyLawPredicates(
                             functionSyntax,
@@ -4097,6 +4102,7 @@ internal sealed class TypeChecker
         if (node is StarkParser.Type_Context typeContext)
         {
             if (SubtreeHasTypeArgumentList(typeContext)
+                && !SubtreeHasComptimeGenericArgument(typeContext)
                 && ImportedTypeNamesResolveSilently(typeContext, module.SyntaxModel.ModuleName, genericParameters))
             {
                 // Use the raw resolver: imported modules may reference their own
@@ -4189,6 +4195,25 @@ internal sealed class TypeChecker
         for (var index = 0; index < node.ChildCount; index++)
         {
             if (SubtreeHasTypeArgumentList(node.GetChild(index)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SubtreeHasComptimeGenericArgument(Antlr4.Runtime.Tree.IParseTree node)
+    {
+        if (node is StarkParser.GenericArgumentContext { } genericArgument
+            && genericArgument.COMPTIME() is not null)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (SubtreeHasComptimeGenericArgument(node.GetChild(index)))
             {
                 return true;
             }

@@ -12,7 +12,7 @@ module FunctionSemanticsTests
 // Ported from FunctionSemanticsTests.LawFunctionsRejectPlainFunctionPointerCalls.
 internal fn bool LawFunctionsRejectPlainFunctionPointerCallsImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-law-rejects-plain-fnptr-call",
         raw"""
 module Demo
@@ -30,7 +30,7 @@ unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op)
 // Ported from FunctionSemanticsTests.LawFunctionsRejectPlainClosureCalls.
 internal fn bool LawFunctionsRejectPlainClosureCallsImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-law-rejects-plain-closure-call",
         raw"""
 module Demo
@@ -41,15 +41,14 @@ unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op)
 }
 """);
     // A law body may not call a plain closure: STK4106 with a message about
-    // law-compatible closures. The C# test stops after `semantic-validate`;
-    // CompileTypeCheck is the closest staged helper.
+    // law-compatible closures.
     return FailsWithDiagnosticMessage(compiled, "STK4106", "law-compatible closures");
 }
 
 // Ported from FunctionSemanticsTests.NonCapturingLawLambdaBodiesRejectNonLawCalls.
 internal fn bool NonCapturingLawLambdaBodiesRejectNonLawCallsImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-non-capturing-law-lambda-rejects-non-law-call",
         raw"""
 module Demo
@@ -77,14 +76,10 @@ unsafe fn void Run()
 // Ported from FunctionSemanticsTests.RuntimeTextConcatenationPreservesFunctionKindObligations.
 internal fn bool RuntimeTextConcatenationPreservesFunctionKindObligationsImpl()
 {
-    // PORT-NOTE: The C# test supplies two virtual modules (System.Memory and
-    // System.Text) through an InMemoryModuleResolver so the `+` lowers to the
-    // runtime ConcatAscii call inside a `finite law`. The Stark harness only
-    // resolves a single sibling module, so the two-module resolver setup and the
-    // STK4107 expectation are reduced: the embedded `Demo` program is run through
-    // type-check with System.Memory provided as the resolvable sibling and the
-    // assertion is narrowed to the STK4106 kind-obligation diagnostic.
-    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+    // The C# test supplies virtual System.Memory/System.Text modules. The
+    // Stark port uses the source-tree stdlib through STARK_PATH so the runtime
+    // ConcatAscii call inside a `finite law` reaches semantic validation.
+    stack mut LlvmCompile compiled = CompileSemanticValidateUsingStarkPath(
         "diagp1-runtime-text-concat-preserves-kind-obligations",
         raw"""
 import System.Memory
@@ -95,32 +90,17 @@ unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.
 {
     return "Score: " + result;
 }
-""",
-        "System",
-        "Memory.stark",
-        raw"""
-module System.Memory
-
-public enum MemoryError
-{
-    OutOfMemory,
-}
-
-public enum MemoryResult<T>
-{
-    Ok(T),
-    Err(MemoryError),
-}
 """);
     // The runtime concatenation must not be permitted in a `finite law`: STK4106
-    // for the broken kind obligation (STK4107 reduced away with the resolver).
-    return HasDiagnostic(compiled, "STK4106");
+    // for the law obligation and STK4107 for the finite obligation.
+    return HasDiagnostic(compiled, "STK4106")
+        && HasDiagnostic(compiled, "STK4107");
 }
 
 // Ported from FunctionSemanticsTests.PureCallsInheritExternallyVisibleSliceWrites.
 internal fn bool PureCallsInheritExternallyVisibleSliceWritesImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-pure-calls-inherit-externally-visible-slice-writes",
         raw"""
 module Demo
@@ -201,7 +181,7 @@ unsafe fn i32[min max] Read(Utility utility)
 // Ported from FunctionSemanticsTests.StaticModifierIsRejectedOutsideStructAndRecordMemberFunctions.
 internal fn bool StaticModifierIsRejectedOutsideStructAndRecordMemberFunctionsImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-static-modifier-rejected-outside-member",
         raw"""
 module Demo
@@ -219,7 +199,7 @@ static unsafe fn void Bad()
 // Ported from FunctionSemanticsTests.LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites.
 internal fn bool LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWritesImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-law-bodies-reject-external-state-alloc-and-writes",
         raw"""
 module Demo
@@ -273,7 +253,7 @@ unsafe law u64[0 max] Bad()
 // Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffects.
 internal fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-law-bodies-reject-implicit-drop-effects",
         raw"""
 module Demo
@@ -304,7 +284,7 @@ unsafe law void Bad()
 // Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCalls.
 internal fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCallsImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-law-bodies-reject-implicit-drop-effects-through-dtor-calls",
         raw"""
 module Demo
@@ -341,7 +321,7 @@ unsafe law void Bad()
 // Ported from FunctionSemanticsTests.MemberFunctionVisibilityCannotExceedEnclosingTypeVisibility.
 internal fn bool MemberFunctionVisibilityCannotExceedEnclosingTypeVisibilityImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-member-visibility-cannot-exceed-enclosing-type",
         raw"""
 module Demo
@@ -362,7 +342,7 @@ internal struct Hidden
 // Ported from FunctionSemanticsTests.ExportMemberFunctionsRequireExportEnclosingTypes.
 internal fn bool ExportMemberFunctionsRequireExportEnclosingTypesImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileSemanticValidate(
         "diagp1-export-member-requires-export-enclosing-type",
         raw"""
 module Demo

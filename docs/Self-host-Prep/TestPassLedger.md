@@ -13,12 +13,12 @@ failure evidence, run logs, or status-update prose.
 
 ## Baseline Snapshot
 
-Porting is effectively done (2637/2638). The remaining test work is making the
+Porting is effectively done (2638/2638). The remaining test work is making the
 ported facts pass on macOS. All 19 suites were baselined with clean
 `rm -rf build && stark test` runs on 2026-06-19. `compiler.FeatureTests` and
 `compiler.LlvmTests` were rechecked by targeted full-project runs on 2026-06-23.
 
-Summary: at least 2842 / 3143 run-facts passing (~90%). 15 of 19 suites are
+Summary: at least 2843 / 3144 run-facts passing (~90%). 15 of 19 suites are
 known 100% green. At most 301 failures live in 4 suites. Counts are runner
 `ok`/`FAILED`; `[Theory]` rows expand, so run-fact totals differ slightly from
 static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
@@ -29,7 +29,7 @@ static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
 | compiler.Tests | 1090 | **112** | largest suite: semantic/lowering diagnostics, type-checking, ownership, pipeline, runtime, package-image, CLI, examples |
 | compiler.SsaTests | 346 | **61** | SSA lowering / validation / optimization text. ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + Cleanup + ScalarReplacement + InlineSsa + FunctionAddress + ConstantText + TextView + DynamicStorage families are green by targeted filters; count predates recent targeted fixes |
 | compiler.LlvmTests | 493 | 0 | green by 2026-06-23 targeted project rerun |
-| stdlib.Port | 213 | **14** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, `collections-dictionary`, `collections-hash-set-sort`, `collections`, `text`, `promoted-runtime-buffer`, `promoted-console`, `promoted-net-tcp`, `process`, `memory-contract-audit`, `raw-pointer-audit`, `range-notation`, and `runtime-platform-mac-os` fixes but no full-suite rebaseline |
+| stdlib.Port | 214 | **14** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, `collections-dictionary`, `collections-hash-set-sort`, `collections`, `text`, `promoted-runtime-buffer`, `promoted-console`, `promoted-net-tcp`, `process`, `memory-contract-audit`, `raw-pointer-audit`, `range-notation`, `runtime-platform-mac-os`, and `collections-package-drop-regression` fixes but no full-suite rebaseline |
 | compiler.MirTests | 101 | **36** | MIR lowering text; count predates recent switch-pattern, place-lowerer, generic, and lowering-contract targeted fixes |
 | compiler.FeatureTests | 213 | 0 | green by 2026-06-23 targeted project rerun |
 | selfhost.Ir | 122 | 0 | green |
@@ -55,7 +55,7 @@ Suites still needing work:
   rebaseline was run because broad sweeps are intentionally avoided.
 - compiler.Tests: 1090/1202, 112 failing; broad suite needing failure-family
   subcategorization.
-- stdlib.Port: at least 213/227, at most 14 failing after the 2026-06-23
+- stdlib.Port: at least 214/228, at most 14 failing after the 2026-06-23
   targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, and
   `memory` fixes plus the targeted collection fixes.
 - compiler.MirTests: 101/137, 36 failing before recent targeted fixes.
@@ -275,6 +275,17 @@ stdlib.Json.
 - Rechecked `testing`, `book-sample`, and `syscall`; all selected run-facts
   passed on `arm64-apple-macosx26.0.0`, with the Linux-only packaged syscall
   fact skipped by platform gate.
+- Rechecked `net-tcp` and `runtime-platform-linux`; all selected run-facts
+  passed on `arm64-apple-macosx26.0.0`, with Linux-only runtime facts skipped
+  by platform gates where applicable.
+- Ported the final unported qualifying C# stdlib regression,
+  `ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackage`, as a real
+  package-backed MIR test. The Stark helper builds a Facade package, deletes the
+  producer source, then compiles the Demo consumer through lower-mir with
+  STARK_PATH stdlib roots and target/data-layout facts preserved.
+- Narrow verification: `../../stark test --collection
+  collections-package-drop-regression --target arm64-apple-macosx26.0.0` passed
+  in `tests-stark/stdlib.Port`.
 
 ---
 
@@ -571,11 +582,95 @@ compiler.SsaTests detail:
     `tests-stark/compiler.SsaTests`: passed.
   - No broad aggregate collection was run.
 
+## 2026-06-24 Compiler.Tests CLI And Package-Link Recheck
+
+- Fixed project test builds so generated-test companion source roots and built
+  dependency package-image directories are searched before bundled source-tree
+  fallback. This keeps `compiler.Tests` on the freshly built stdlib package path
+  instead of recompiling stdlib source modules with pruned dependency bodies.
+- Fixed executable link input ordering so package archives are passed after
+  locally emitted object files, preserving static-archive resolution for package
+  definitions such as stdlib platform and memory helpers.
+- Fixed project input stamps so selected test filters invalidate only test
+  projects, not library dependencies such as stdlib.
+- Repointed the two CLI signed-range port facts at `semantic-validate`, matching
+  check-mode behavior where STK3014 is produced.
+- Narrow verification:
+  - `dotnet build src/compiler.csproj --no-restore`: passed with the two
+    existing nullable warnings in `TypeChecking.cs`.
+  - `../../stark test --filter CheckModeReportsSuccess --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+  - `../../stark test --filter CheckModeRejectsPositiveSignedRangesByDefault --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+  - `../../stark test --filter StrictIntegerRangeFlagRejectsPositiveSignedRanges --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+- No broad `compiler.Tests` sweep was run.
+
+## 2026-06-24 Compiler.Tests Project CLI Recheck
+
+- Fixed the six failing `project-cli` port reductions that still supplied
+  multiple modules as one source text or omitted sibling module fixtures.
+- The affected facts now use the existing module-aware host-test helper so
+  cross-module imports resolve through an explicit temporary search directory.
+- Narrow verification:
+  - `../../stark test --collection project-cli --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+- No broad `compiler.Tests` sweep was run.
+
+## 2026-06-24 Compiler.Tests Compiler CLI Recheck
+
+- Fixed the stale `compiler-cli` port reductions for current ownership,
+  diagnostic, import-resolution, and manifest-backed module behavior.
+- The negative MIR/LLVM mode reductions now use the transport-only host-test
+  path so type diagnostics are asserted without requiring successful lowering.
+- Narrow verification:
+  - `../../stark test --collection compiler-cli --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+- No broad `compiler.Tests` sweep was run.
+
+## 2026-06-24 Compiler.Tests Package Image Architecture Recheck
+
+- Fixed symbolic `comptime` value forwarding through imported source
+  materialization and generic argument decoding, preserving open value-generic
+  facts until concrete specialization.
+- Fixed MIR lowering of specialized comptime generic values so concrete values
+  such as `N=4` lower as immediate operands with their range-typed value facts.
+- Fixed package-image architecture expectations for current monomorphized
+  symbol names and trait-conformance validation phase behavior.
+- Narrow verification:
+  - `dotnet build src/compiler.csproj --no-restore`: passed with the two
+    existing nullable warnings in `TypeChecking.cs`.
+  - Direct `--host-test-inspect` minimal `Outer<T, comptime N>` probe: passed
+    with zero diagnostics.
+  - `../../stark test --filter PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatterns --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+  - `../../stark test --filter PackageImagePreservesComptimeGenericDeclarationsAndSymbolicTemplateCalls --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+  - `../../stark test --filter PackageImagePreservesMethodStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed.
+  - `../../stark test --collection package-image-architecture --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed, 30 selected facts.
+- No broad `compiler.Tests` sweep was run.
+
+## 2026-06-24 Compiler.Tests Function Semantics Recheck
+
+- Added semantic-validation host-test helpers so ported facts that assert
+  law-body, function-kind, visibility, and externally visible effect diagnostics
+  stop at the pass that actually emits those diagnostics.
+- Added a STARK_PATH-backed semantic-validation helper for source-tree stdlib
+  probes, restoring the runtime text concatenation fact to assert both the
+  law and finite kind-obligation diagnostics from the real `System.Text` path.
+- Narrow verification:
+  - `../../stark test --collection function-semantics --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.Tests`: passed, 33 selected facts.
+- No broad `compiler.Tests` sweep was run.
+
 Other suite notes:
 
-- compiler.Tests: about 30 package-image failures; remainder includes
-  AsmDeclarations, LawBodies, CheckMode, BuildUses, EmitLlvm/EmitExecutable,
-  TextDiagnostics/SystemText/RuntimeText/LawFunctions, and a long tail.
+- compiler.Tests: package-image architecture is green by targeted collection;
+  remaining work includes diagnostics, type-checking, ownership, pipeline,
+  runtime, CLI, examples, AsmDeclarations, CheckMode,
+  EmitLlvm/EmitExecutable, TextDiagnostics/SystemText, and a long tail.
 - stdlib.Port: at most 21 `StdLibSource*` lowering/intrinsic/syscall-path assertions,
   roughly 16 Linux/Windows platform-specific tests, WindowsDispatch 2,
   SourceStd 2, and miscellaneous cases.

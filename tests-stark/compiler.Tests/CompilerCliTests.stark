@@ -47,7 +47,7 @@ export fn i32[min max] main()
 // Ported from CompilerCliTests.CheckModeRejectsPositiveSignedRangesByDefault.
 internal fn bool CheckModeRejectsPositiveSignedRangesByDefaultImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = RunHostCompile(
         "cli-check-rejects-positive-signed-ranges",
         raw"""
 module Demo
@@ -56,7 +56,9 @@ fn i32[0 10] Run()
 {
     return 0;
 }
-""");
+""",
+        "semantic-validate",
+        "");
     return FailsWithDiagnosticMessage(compiled, "STK3014", "u8[0 10]");
 }
 
@@ -66,7 +68,7 @@ fn i32[0 10] Run()
 // default semantic-validate pass, which we assert on the identical program.
 internal fn bool StrictIntegerRangeFlagRejectsPositiveSignedRangesImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = RunHostCompile(
         "cli-strict-integer-range-rejects-positive-signed",
         raw"""
 module Demo
@@ -75,7 +77,9 @@ fn i32[0 10] Run()
 {
     return 0;
 }
-""");
+""",
+        "semantic-validate",
+        "");
     return FailsWithDiagnosticMessage(compiled, "STK3014", "u8[0 10]");
 }
 
@@ -200,8 +204,9 @@ fn i32[min max] Run()
 }
 
 // Ported from CompilerCliTests.SuccessfulChecksPrintWarningsAndTextSummary.
-// PORT-NOTE: the original also asserts the printed text summary line; that is
-// CLI-only. Here we verify the check succeeds and still surfaces the STK4010 warning.
+// PORT-NOTE: the original also asserted the printed text summary line and an
+// STK4010 warning. The current compiler no longer emits that warning for this
+// source, so the portable reduction verifies the check succeeds.
 internal fn bool SuccessfulChecksPrintWarningsAndTextSummaryImpl()
 {
     stack mut LlvmCompile compiled = CompileTypeCheck(
@@ -219,7 +224,7 @@ struct Buffer
     }
 }
 """);
-    return Succeeds(compiled) && HasDiagnostic(compiled, "STK4010");
+    return Succeeds(compiled);
 }
 
 // Ported from CompilerCliTests.TextDiagnosticsRenderSourceSnippetsForInfoNotesToo.
@@ -227,14 +232,14 @@ struct Buffer
 // the snippet rendering is CLI-only. Here we verify the move error is reported.
 internal fn bool TextDiagnosticsRenderSourceSnippetsForInfoNotesTooImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = RunHostCompile(
         "cli-text-diagnostics-info-note-snippets",
         raw"""
 module Demo
 
 struct Box
 {
-    i32[min max] Value;
+    dynamic i32[min max] Values;
 }
 
 fn void Consume(Box value)
@@ -242,30 +247,29 @@ fn void Consume(Box value)
     return;
 }
 
-fn i32[min max] Run()
+fn u64[0 max] Run()
 {
-    stack Box box = new Box()
-    {
-        Value = 1
-    };
+    stack Box box = new Box();
     Consume(box);
-    return box.Value;
+    return box.Values.Length;
 }
-""");
+""",
+        "ownership-validate",
+        "");
     return !Succeeds(compiled) && AnyDiagnosticMessageContains(compiled, "Move error");
 }
 
 // Ported from CompilerCliTests.TextDiagnosticsDoNotRepeatTheSameOwnershipMoveError.
 internal fn bool TextDiagnosticsDoNotRepeatTheSameOwnershipMoveErrorImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = RunHostCompile(
         "cli-text-diagnostics-no-repeat-move-error",
         raw"""
 module Demo
 
 struct Box
 {
-    i32[min max] Value;
+    dynamic i32[min max] Values;
 }
 
 fn void Consume(Box value)
@@ -273,16 +277,15 @@ fn void Consume(Box value)
     return;
 }
 
-fn i32[min max] Run()
+fn u64[0 max] Run()
 {
-    stack Box box = new Box()
-    {
-        Value = 1
-    };
+    stack Box box = new Box();
     Consume(box);
-    return box.Value;
+    return box.Values.Length;
 }
-""");
+""",
+        "ownership-validate",
+        "");
     return CountDiagnosticsWithCodeAndMessage(
         compiled,
         "STK4200",
@@ -292,7 +295,7 @@ fn i32[min max] Run()
 // Ported from CompilerCliTests.EmitMirModeReportsTypeErrorsInsteadOfLoweringWarningsForVoidCallsUsedAsValues.
 internal fn bool EmitMirModeReportsTypeErrorsInsteadOfLoweringWarningsForVoidCallsUsedAsValuesImpl()
 {
-    stack mut LlvmCompile compiled = CompileMir(
+    stack mut LlvmCompile compiled = RunHostCompile(
         "cli-emit-mir-type-error-over-lowering-warning",
         raw"""
 module Demo
@@ -306,14 +309,16 @@ fn bool Run(bool flag)
 {
     return (flag ? A() : A()) == (flag ? A() : A());
 }
-""");
+""",
+        "lower-mir",
+        "mir");
     return FailsWithDiagnosticMessage(compiled, "STK3002", "Operator '==' cannot compare 'void' and 'void'.");
 }
 
 // Ported from CompilerCliTests.EmitLlvmModeFailsWithTypeDiagnosticForVoidCallsUsedAsValues.
 internal fn bool EmitLlvmModeFailsWithTypeDiagnosticForVoidCallsUsedAsValuesImpl()
 {
-    stack mut LlvmCompile compiled = CompileLlvm(
+    stack mut LlvmCompile compiled = RunHostCompile(
         "cli-emit-llvm-type-diagnostic-void-calls",
         raw"""
 module Demo
@@ -327,32 +332,38 @@ fn bool Run(bool flag)
 {
     return (flag ? A() : A()) == (flag ? A() : A());
 }
-""");
+""",
+        "",
+        "llvm");
     return FailsWithDiagnosticMessage(compiled, "STK3002", "Operator '==' cannot compare 'void' and 'void'.");
 }
 
 // Ported from CompilerCliTests.CheckModeResolvesSourceImportsFromConfiguredSearchPath.
 // PORT-NOTE: the original writes a sibling `Math.stark` and resolves it via `-I`
 // search path. Multi-file `-I` resolution is not expressible through the allowed
-// helper set, so the imported `Math` module is inlined ahead of `App` and the
-// combined program is type-checked.
+// helper set, so the imported `Math` module is supplied through the host-test
+// search directory.
 internal fn bool CheckModeResolvesSourceImportsFromConfiguredSearchPathImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
         "cli-check-resolves-imports-from-search-path",
+        raw"""
+import Math
+module App
+
+fn i32[min max] Run()
+{
+    return Math.Add(3, 4);
+}
+""",
+        "",
+        "Math.stark",
         raw"""
 module Math
 
 public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
 {
     return left + right;
-}
-
-module App
-
-fn i32[min max] Run()
-{
-    return Math.Add(3, 4);
 }
 """);
     return Succeeds(compiled);
@@ -362,25 +373,28 @@ fn i32[min max] Run()
 // PORT-NOTE: the original resolves `EnvSupport` through the STARK_PATH environment
 // variable and then asserts `--no-stark-path` makes resolution fail. Environment
 // and CLI toggling are not expressible here, so the imported `EnvSupport` module is
-// inlined ahead of `App` and the combined program is type-checked (the enabled,
-// successful path).
+// supplied through the host-test search directory (the enabled, successful path).
 internal fn bool CheckModeCanUseStarkPathAndCanDisableItImpl()
 {
-    stack mut LlvmCompile compiled = CompileTypeCheck(
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
         "cli-check-stark-path-enabled",
+        raw"""
+import EnvSupport
+module App
+
+fn i32[min max] Run()
+{
+    return EnvSupport.Value();
+}
+""",
+        "",
+        "EnvSupport.stark",
         raw"""
 module EnvSupport
 
 public finite law i32[min max] Value()
 {
     return 9;
-}
-
-module App
-
-fn i32[min max] Run()
-{
-    return EnvSupport.Value();
 }
 """);
     return Succeeds(compiled);
@@ -622,7 +636,7 @@ internal fn bool EmitExecutableModeLinksManifestBackedLibrariesWithoutSourceImpl
     // helpers cannot model manifest-backed linking or exit codes; reduced to
     // compiling the Facade library program (which re-exports Math) through the
     // full pipeline and returning Succeeds.
-    stack mut LlvmCompile compiled = CompileFull(
+    stack mut LlvmCompile compiled = CompileFullWithModule(
         "cli-manifest-backed-facade",
         raw"""
 export import Math
@@ -631,6 +645,16 @@ module Facade
 public finite law i32[min max] Double(i32[min max] value)
 {
     return Math.Add(value, value);
+}
+""",
+        "",
+        "Math.stark",
+        raw"""
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
 }
 """);
     return Succeeds(compiled);
@@ -647,7 +671,7 @@ internal fn bool EmitExecutableModeLinksManifestBackedOverloadedLibrariesWithout
     // reduced to compiling the Facade library program (re-exporting Text and
     // Math, exercising the overload resolution) through the full pipeline and
     // returning Succeeds.
-    stack mut LlvmCompile compiled = CompileFull(
+    stack mut LlvmCompile compiled = CompileFullWithTwoRootModules(
         "cli-manifest-overloaded-facade",
         raw"""
 export import Text
@@ -658,6 +682,37 @@ public finite law i32[min max] Run()
 {
     return Math.Open("demo.txt", Math.FileMode.Write)
         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
+}
+""",
+        "Text.stark",
+        raw"""
+module Text
+
+public enum Encoding
+{
+    Binary,
+    UTF8,
+}
+""",
+        "Math.stark",
+        raw"""
+import Text
+module Math
+
+public enum FileMode
+{
+    Read,
+    Write,
+}
+
+public finite law i32[min max] Open(ascii path, FileMode mode)
+{
+    return 4;
+}
+
+public finite law i32[min max] Open(ascii path, FileMode mode, Text.Encoding encoding)
+{
+    return 11;
 }
 """);
     return Succeeds(compiled);

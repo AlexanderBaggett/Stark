@@ -1,3 +1,5 @@
+import System.IO
+import System.Memory
 import System.Process
 import System.Testing
 import System.Testing.HostCompiler
@@ -10,12 +12,12 @@ module StdlibPortSupport
 // artifact text. Stark-side port helper for tests/compiler.StandardLibraryTests.
 // Requires STARK_HOST_COMPILER to point at the host compiler executable.
 //
-// Runtime/native-execution, package-image-byte, and CLI assertions in the
-// original C# stdlib tests cannot be reproduced through the compile-only
-// bridge; those ports compile the embedded program and assert Succeeds, with a
-// // PORT-NOTE in the body naming the reduction.
+// Runtime/native-execution, package-image-byte, and CLI assertions in older
+// reductions are handled where a focused host-test helper exists. Otherwise the
+// port names the remaining reduction in a // PORT-NOTE beside the test body.
 
 const HostTimeoutMilliseconds = 180000;
+const PackageHostTargetDataLayout = "e-p:64:64";
 
 public const LinuxX64TargetTriple = "x86_64-unknown-linux-gnu";
 public const MacOSArm64TargetTriple = "arm64-apple-macosx26.0.0";
@@ -119,6 +121,32 @@ public fn ProgramCompile CompileProgramForTargetWithSeed(
     }
 }
 
+// Builds `libModuleSource` as a package image, deletes the source, then compiles
+// `source` through lower-mir against that package plus STARK_PATH stdlib roots.
+public fn ProgramCompile CompileMirWithPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = CompileArtifactWithPackage(
+            id,
+            source,
+            "lower-mir",
+            "mir",
+            libModuleName,
+            libModuleSource);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
 public fn bool Succeeds(mut borrow ProgramCompile compiled)
 {
     unsafe
@@ -127,11 +155,27 @@ public fn bool Succeeds(mut borrow ProgramCompile compiled)
     }
 }
 
+public fn bool HasDiagnostic(mut borrow ProgramCompile compiled, ascii code)
+{
+    unsafe
+    {
+        return compiled.Outcome.HasDiagnosticCode(code);
+    }
+}
+
 public fn ascii Llvm(mut borrow ProgramCompile compiled)
 {
     unsafe
     {
         return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+public fn ascii Mir(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("mir");
     }
 }
 
@@ -184,6 +228,162 @@ internal fn ProgramCompile RunHostCompileSourceFileForTarget(
         compiled.Ok = ok;
         compiled.Outcome = outcome;
         return compiled;
+    }
+}
+
+internal fn ProgramCompile CompileArtifactWithPackage(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    unsafe
+    {
+        stack mut ProgramCompile failed = new();
+
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return failed;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        stack mut OwnedAscii sourceName = new();
+        switch (sourceName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (sourceName.AppendConstAscii(".stark"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        switch (libraryName.AppendConstAscii("lib"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (libraryName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (libraryName.AppendConstAscii(".a"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut OwnedAscii packageName = new();
+        switch (packageName.AppendConstAscii("lib"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (packageName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (packageName.AppendConstAscii(".starkpkg"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        switch (System.Testing.CreateTempDirectory("stdlib-host-pkg"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return failed;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                switch (tempDir.WriteText(sourceName.View(), libModuleSource))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                switch (BuildLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    LinuxX64TargetTriple,
+                    PackageHostTargetDataLayout,
+                    false,
+                    HostTimeoutMilliseconds))
+                {
+                    case HostResult<bool>.Err(var buildError):
+                        return failed;
+                    case HostResult<bool>.Ok(var built):
+                }
+
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                stack mut HostCompileOutcome outcome = new();
+                stack mut bool transportOk = false;
+                stack mut OwnedAscii targetTripleCopy = new();
+                stack mut OwnedAscii dataLayoutCopy = new();
+                switch (targetTripleCopy.AppendAscii(LinuxX64TargetTriple))
+                {
+                    case MemoryStatus.Err(_):
+                        return failed;
+                    case MemoryStatus.Ok:
+                }
+                switch (dataLayoutCopy.AppendAscii(PackageHostTargetDataLayout))
+                {
+                    case MemoryStatus.Err(_):
+                        return failed;
+                    case MemoryStatus.Ok:
+                }
+
+                switch (CompileOnceArtifactInUsingStarkPathForTargetWithSeed(
+                    compilerPath.View(),
+                    id,
+                    source,
+                    stopAfterPassId,
+                    artifactName,
+                    tempDir.View(),
+                    0,
+                    HostTimeoutMilliseconds,
+                    targetTripleCopy.View(),
+                    dataLayoutCopy.View(),
+                    ""))
+                {
+                    case HostResult<HostCompileOutcome>.Err(var error):
+                        transportOk = false;
+                    case HostResult<HostCompileOutcome>.Ok(var captured):
+                        outcome = captured;
+                        transportOk = true;
+                }
+
+                stack mut ProgramCompile compiled = new();
+                compiled.Ok = transportOk && !outcome.HadProtocolError();
+                compiled.Outcome = outcome;
+                return compiled;
+        }
     }
 }
 

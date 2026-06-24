@@ -87,6 +87,26 @@ public fn LlvmCompile CompileTypeCheck(ascii id, ascii source)
     }
 }
 
+// Compiles the source stopping after semantic validation, for facts whose
+// diagnostics or summaries are emitted after type checking.
+public fn LlvmCompile CompileSemanticValidate(ascii id, ascii source)
+{
+    unsafe
+    {
+        return RunHostCompile(id, source, "semantic-validate", "");
+    }
+}
+
+// CompileSemanticValidate while appending STARK_PATH to module resolution.
+// Use only for facts that intentionally depend on the source-tree stdlib/vendor roots.
+public fn LlvmCompile CompileSemanticValidateUsingStarkPath(ascii id, ascii source)
+{
+    unsafe
+    {
+        return RunHostCompileUsingStarkPath(id, source, "semantic-validate", "");
+    }
+}
+
 // CompileTypeCheck with a compile-time loop iteration cap, for facts that
 // assert the comptime interpreter's iteration limit diagnostics.
 public fn LlvmCompile CompileTypeCheckWithLoopLimit(
@@ -128,6 +148,21 @@ public fn LlvmCompile CompileTypeCheckWithModule(
     }
 }
 
+// Compiles `source` stopping after semantic validation while `moduleSource` is
+// resolvable from a temporary search directory.
+public fn LlvmCompile CompileSemanticValidateWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        return RunWithModule(id, source, "semantic-validate", "", moduleDirectory, moduleFileName, moduleSource);
+    }
+}
+
 // Full-pipeline variant of CompileTypeCheckWithModule. `Ok` covers
 // transport/protocol only, so failing compiles can be asserted with
 // FailsWithDiagnostic.
@@ -141,6 +176,30 @@ public fn LlvmCompile CompileFullWithModule(
     unsafe
     {
         return RunWithModule(id, source, "", "", moduleDirectory, moduleFileName, moduleSource);
+    }
+}
+
+// Full-pipeline variant for root sources that need two sibling root-level
+// modules in the temporary search directory.
+public fn LlvmCompile CompileFullWithTwoRootModules(
+    ascii id,
+    ascii source,
+    ascii firstModuleFileName,
+    ascii firstModuleSource,
+    ascii secondModuleFileName,
+    ascii secondModuleSource)
+{
+    unsafe
+    {
+        return RunWithTwoRootModules(
+            id,
+            source,
+            "",
+            "",
+            firstModuleFileName,
+            firstModuleSource,
+            secondModuleFileName,
+            secondModuleSource);
     }
 }
 
@@ -161,6 +220,66 @@ public fn LlvmCompile CompileLlvmWithModule(
             compiled.Ok = false;
         }
 
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunWithTwoRootModules(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii firstModuleFileName,
+    ascii firstModuleSource,
+    ascii secondModuleFileName,
+    ascii secondModuleSource)
+{
+    unsafe
+    {
+        stack mut OwnedAscii root = new();
+        stack mut bool ready = false;
+        switch (System.FileSystem.CreateTempDirectory("stark-feature-modules-"))
+        {
+            case IOResult<OwnedAscii>.Err(var rootError):
+                ready = false;
+            case IOResult<OwnedAscii>.Ok(var created):
+                root = created;
+                ready = true;
+        }
+
+        stack mut OwnedAscii firstPath = new();
+        if (ready)
+        {
+            ready = MemoryOk(firstPath.AppendAscii(root.View()))
+                && MemoryOk(firstPath.AppendByte(47))
+                && MemoryOk(firstPath.AppendAscii(firstModuleFileName));
+        }
+
+        if (ready)
+        {
+            ready = IOOk(WriteAllText(firstPath.View(), firstModuleSource));
+        }
+
+        stack mut OwnedAscii secondPath = new();
+        if (ready)
+        {
+            ready = MemoryOk(secondPath.AppendAscii(root.View()))
+                && MemoryOk(secondPath.AppendByte(47))
+                && MemoryOk(secondPath.AppendAscii(secondModuleFileName));
+        }
+
+        if (ready)
+        {
+            ready = IOOk(WriteAllText(secondPath.View(), secondModuleSource));
+        }
+
+        stack mut LlvmCompile compiled = new();
+        if (ready)
+        {
+            compiled = RunHostCompileIn(id, source, stopAfterPassId, artifactName, root.View(), 0);
+        }
+
+        stack bool cleaned = IOOk(DeleteTreeIfExists(root.View()));
         return compiled;
     }
 }
@@ -896,6 +1015,18 @@ internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPa
     }
 }
 
+internal fn LlvmCompile RunHostCompileUsingStarkPath(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName)
+{
+    unsafe
+    {
+        return RunHostCompileInUsingStarkPath(id, source, stopAfterPassId, artifactName, "", 0);
+    }
+}
+
 internal fn LlvmCompile RunHostCompileIn(
     ascii id,
     ascii source,
@@ -922,6 +1053,62 @@ internal fn LlvmCompile RunHostCompileIn(
         if (havePath)
         {
             switch (CompileOnceArtifactIn(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                searchDirectory,
+                maximumComptimeLoopIterations,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunHostCompileInUsingStarkPath(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInUsingStarkPath(
                 compilerPath.View(),
                 id,
                 source,

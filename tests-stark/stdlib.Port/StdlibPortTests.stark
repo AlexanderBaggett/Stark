@@ -6,6 +6,7 @@ import SystemBackendBoundaryAuditTests
 import SystemCStandardLibraryTests
 import SystemCollectionsDictionaryStandardLibraryTests
 import SystemCollectionsHashSetSortStandardLibraryTests
+import SystemCollectionsPackageDropRegressionTests
 import SystemCollectionsStackQueueStandardLibraryTests
 import SystemCollectionsStandardLibraryTests
 import SystemCompilerIntegerFactsStandardLibraryTests
@@ -340,6 +341,13 @@ fn bool SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRuns()
 fn bool PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
 {
     return PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeListImpl();
+}
+
+[Fact]
+[Collection("collections-package-drop-regression")]
+fn bool ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackage()
+{
+    return ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackageImpl();
 }
 
 [Fact]

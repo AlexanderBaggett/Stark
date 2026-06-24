@@ -109,7 +109,7 @@ internal static class GenericArgumentSyntaxFacts
             return false;
         }
 
-        if (TryGetSingleIdentifierExpression(expression, out var identifier)
+        if (TryGetSymbolicComptimeArgumentName(argument, expression, visibleComptimeParameters, out var identifier)
             && visibleComptimeParameters?.ContainsKey(identifier) == true)
         {
             valueArgument = new ComptimeValueArgumentSymbol(
@@ -128,6 +128,48 @@ internal static class GenericArgumentSyntaxFacts
         }
 
         return TryCreateConcreteValueArgument(parameter, computed, out valueArgument);
+    }
+
+    private static bool TryGetSymbolicComptimeArgumentName(
+        StarkParser.GenericArgumentContext argument,
+        StarkParser.ExpressionContext expression,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? visibleComptimeParameters,
+        out string identifier)
+    {
+        if (TryGetSingleIdentifierExpression(expression, out identifier))
+        {
+            if (visibleComptimeParameters?.ContainsKey(identifier) == true)
+            {
+                return true;
+            }
+        }
+
+        if (argument.COMPTIME() is null
+            || visibleComptimeParameters is not { Count: > 0 })
+        {
+            identifier = string.Empty;
+            return false;
+        }
+
+        var text = expression.GetText();
+        const string prefix = "comptime";
+        if (!text.StartsWith(prefix, StringComparison.Ordinal)
+            || text.Length <= prefix.Length)
+        {
+            identifier = string.Empty;
+            return false;
+        }
+
+        var candidate = text[prefix.Length..];
+        if (!IsIdentifierText(candidate)
+            || !visibleComptimeParameters.ContainsKey(candidate))
+        {
+            identifier = string.Empty;
+            return false;
+        }
+
+        identifier = candidate;
+        return true;
     }
 
     private static bool TryCreateConcreteValueArgument(
@@ -154,16 +196,21 @@ internal static class GenericArgumentSyntaxFacts
 
     private static bool TryGetSingleIdentifierExpression(StarkParser.ExpressionContext expression, out string identifier)
     {
-        identifier = string.Empty;
         var text = expression.GetText();
-        if (string.IsNullOrWhiteSpace(text)
-            || !(char.IsLetter(text[0]) || text[0] == '_')
-            || !text.All(static character => char.IsLetterOrDigit(character) || character == '_'))
+        if (!IsIdentifierText(text))
         {
+            identifier = string.Empty;
             return false;
         }
 
         identifier = text;
         return true;
+    }
+
+    private static bool IsIdentifierText(string text)
+    {
+        return !string.IsNullOrWhiteSpace(text)
+            && (char.IsLetter(text[0]) || text[0] == '_')
+            && text.All(static character => char.IsLetterOrDigit(character) || character == '_');
     }
 }
