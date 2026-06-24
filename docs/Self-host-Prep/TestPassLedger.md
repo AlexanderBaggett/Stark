@@ -18,8 +18,8 @@ ported facts pass on macOS. All 19 suites were baselined with clean
 `rm -rf build && stark test` runs on 2026-06-19. `compiler.FeatureTests` and
 `compiler.LlvmTests` were rechecked by targeted full-project runs on 2026-06-23.
 
-Summary: at least 2839 / 3143 run-facts passing (~90%). 15 of 19 suites are
-known 100% green. At most 304 failures live in 4 suites. Counts are runner
+Summary: at least 2842 / 3143 run-facts passing (~90%). 15 of 19 suites are
+known 100% green. At most 301 failures live in 4 suites. Counts are runner
 `ok`/`FAILED`; `[Theory]` rows expand, so run-fact totals differ slightly from
 static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
 2026-06-19 baseline unless their notes say otherwise.
@@ -29,7 +29,7 @@ static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
 | compiler.Tests | 1090 | **112** | largest suite: semantic/lowering diagnostics, type-checking, ownership, pipeline, runtime, package-image, CLI, examples |
 | compiler.SsaTests | 346 | **61** | SSA lowering / validation / optimization text. ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + Cleanup + ScalarReplacement + InlineSsa + FunctionAddress + ConstantText + TextView + DynamicStorage families are green by targeted filters; count predates recent targeted fixes |
 | compiler.LlvmTests | 493 | 0 | green by 2026-06-23 targeted project rerun |
-| stdlib.Port | 210 | **17** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, `collections-dictionary`, `collections-hash-set-sort`, `collections`, `text`, `promoted-runtime-buffer`, `promoted-console`, `promoted-net-tcp`, `process`, `memory-contract-audit`, and `raw-pointer-audit` fixes but no full-suite rebaseline |
+| stdlib.Port | 213 | **14** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, `collections-dictionary`, `collections-hash-set-sort`, `collections`, `text`, `promoted-runtime-buffer`, `promoted-console`, `promoted-net-tcp`, `process`, `memory-contract-audit`, `raw-pointer-audit`, `range-notation`, and `runtime-platform-mac-os` fixes but no full-suite rebaseline |
 | compiler.MirTests | 101 | **36** | MIR lowering text; count predates recent switch-pattern, place-lowerer, generic, and lowering-contract targeted fixes |
 | compiler.FeatureTests | 213 | 0 | green by 2026-06-23 targeted project rerun |
 | selfhost.Ir | 122 | 0 | green |
@@ -55,7 +55,7 @@ Suites still needing work:
   rebaseline was run because broad sweeps are intentionally avoided.
 - compiler.Tests: 1090/1202, 112 failing; broad suite needing failure-family
   subcategorization.
-- stdlib.Port: at least 210/227, at most 17 failing after the 2026-06-23
+- stdlib.Port: at least 213/227, at most 14 failing after the 2026-06-23
   targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, and
   `memory` fixes plus the targeted collection fixes.
 - compiler.MirTests: 101/137, 36 failing before recent targeted fixes.
@@ -255,6 +255,26 @@ stdlib.Json.
   --target arm64-apple-macosx26.0.0` and `../../stark test --collection
   raw-pointer-audit --target arm64-apple-macosx26.0.0` passed in
   `tests-stark/stdlib.Port`.
+- Fixed the `range-notation` collection by canonicalizing remaining stdlib
+  source spellings (`2 ** 16`, `2 ** 15 - 1`, and spaced `2 ** 53` comments)
+  and replacing the compile-only Stark reduction with a real source/template
+  glob audit that ignores string literals like the C# oracle.
+- Narrow verification: `dotnet test
+  tests/compiler.StandardLibraryTests/compiler.StandardLibraryTests.csproj
+  --no-restore --filter FullyQualifiedName~SystemRangeNotationStandardLibraryTests`,
+  `../../stark test --collection range-notation --target
+  arm64-apple-macosx26.0.0`, `../../stark test --collection json --target
+  arm64-apple-macosx26.0.0`, and `../../stark test --collection toml --target
+  arm64-apple-macosx26.0.0` passed.
+- Fixed the `runtime-platform-mac-os` collection by restoring direct
+  source-path compilation of `System/Runtime/Platform/MacOS.stark` for
+  `arm64-apple-macosx26.0.0`, including the original libSystem declaration
+  checks and scoped `stat` mode-bit LLVM body checks.
+- Narrow verification: `../../stark test --collection runtime-platform-mac-os
+  --target arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked `testing`, `book-sample`, and `syscall`; all selected run-facts
+  passed on `arm64-apple-macosx26.0.0`, with the Linux-only packaged syscall
+  fact skipped by platform gate.
 
 ---
 

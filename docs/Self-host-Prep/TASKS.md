@@ -246,6 +246,9 @@ historical triage.
     - [x] Recheck the `net`, `file-system`, `json`, `math`, `c`, `compiler-integer-facts`, and `backend-boundary-audit` collection residues.
     - [x] Resolve the `memory-contract-audit` collection residue.
     - [x] Resolve the `raw-pointer-audit` collection residue.
+    - [x] Resolve the `range-notation` collection residue.
+    - [x] Resolve the `runtime-platform-mac-os` collection residue.
+    - [x] Recheck the `testing`, `book-sample`, and `syscall` collection residues.
   - [x] Recheck the lone `compiler.FeatureTests` failure and close it if still reproducible.
 
 - [ ] Close test-scope hygiene.

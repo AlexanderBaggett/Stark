@@ -39,36 +39,45 @@ export fn i32[min max] main()
 
 // Ported from SystemRuntimePlatformMacOSStandardLibraryTests.StdLibSourceMacOSPlatformUsesLibSystemPosixApis.
 //
-// PORT-NOTE: the C# test reads stdlib/src/System/Runtime/Platform/MacOS.stark
-// off disk and compiles it directly for the arm64-apple-macosx target, then
-// scans the emitted LLVM for the libSystem POSIX `declare`s, the `__error`
-// errno accessor, the `os_sync_*` futex shims, and the absence of the Linux
-// syscall path / Windows handles / buffered libc FILE APIs. The compile-only
-// host bridge cannot read that source file nor override the LLVM target triple
-// to macOS, so the macOS-specific `declare` surface and the negative
-// Linux/Windows checks cannot be reproduced. This port compiles a program that
-// imports System.Runtime.Platform and exercises the POSIX file/thread/socket
-// surface so the host stdlib emits those declarations into the program module,
-// then keeps the target-independent presence checks that survive the bridge.
 internal fn bool StdLibSourceMacOSPlatformUsesLibSystemPosixApisImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("macos-platform-libsystem-posix", raw"""
-import System.Runtime.Platform
-module Demo
-
-export unsafe fn i32[min max] main()
-{
-    stack mut u32[0 max] code = System.Runtime.Platform.ProcessId();
-    return (i32[min max])code;
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "macos-platform-libsystem-posix",
+        "../../stdlib/src/System/Runtime/Platform/MacOS.stark",
+        MacOSArm64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    if (!Contains(llvm, "define fastcc noundef i1 @TryTempDirectory(")
+    if (!Contains(llvm, "declare i64 @write(")
+        || !Contains(llvm, "declare i64 @read(")
+        || !Contains(llvm, "declare i32 @open(")
+        || !Contains(llvm, "declare i32 @close(")
+        || !Contains(llvm, "declare i32 @fsync(")
+        || !Contains(llvm, "declare i64 @lseek(")
+        || !Contains(llvm, "declare i32 @stat(")
+        || !Contains(llvm, "declare ptr @getcwd(")
+        || !Contains(llvm, "declare ptr @opendir(")
+        || !Contains(llvm, "declare ptr @readdir(")
+        || !Contains(llvm, "declare i32 @pthread_create(")
+        || !Contains(llvm, "declare i32 @pthread_join(")
+        || !Contains(llvm, "declare i32 @pthread_detach(")
+        || !Contains(llvm, "declare i32 @sched_yield()")
+        || !Contains(llvm, "declare i32 @nanosleep(")
+        || !Contains(llvm, "declare i32 @socket(")
+        || !Contains(llvm, "declare i32 @poll(")
+        || !Contains(llvm, "@malloc(")
+        || !Contains(llvm, "@free(")
+        || !Contains(llvm, "declare void @exit(")
+        || !Contains(llvm, "declare ptr @__error()")
+        || !Contains(llvm, "declare i32 @os_sync_wait_on_address(")
+        || !Contains(llvm, "declare i32 @os_sync_wake_by_address_any(")
+        || !Contains(llvm, "declare i32 @os_sync_wake_by_address_all(")
+        || !Contains(llvm, "call void @exit(")
+        || !Contains(llvm, "call ptr @__error()")
+        || !Contains(llvm, "define fastcc noundef i1 @TryTempDirectory(")
         || !Contains(llvm, "define internal dso_local void @__stark_oom_trap("))
     {
         return false;
@@ -93,50 +102,46 @@ export unsafe fn i32[min max] main()
 
 // Ported from SystemRuntimePlatformMacOSStandardLibraryTests.StdLibSourceMacOSPathMetadataUsesStatModeBits.
 //
-// PORT-NOTE: the C# test reads MacOS.stark off disk, compiles it for the
-// arm64-apple-macosx target, then extracts the per-function LLVM bodies of
-// TryReadPathMode/PathExists/IsDirectory/IsFile/ReadPathMetadata and asserts
-// each decodes the `stat` st_mode bits (the S_IFMT mask 61440, the S_IFDIR
-// 16384 / S_IFREG 32768 type bits, and the 4095 permission mask) rather than
-// calling `access`. The compile-only host bridge cannot read that source file
-// nor target macOS, so the macOS-specific `@stat`/`load i16` st_mode decode
-// cannot be reproduced through the program module. This port compiles a
-// program that imports System.FileSystem and exercises the path-metadata
-// surface, reducing the assertion to a successful compile plus the
-// target-independent absence of the `access` fast path.
 internal fn bool StdLibSourceMacOSPathMetadataUsesStatModeBitsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("macos-path-metadata-stat-mode-bits", raw"""
-import System.FileSystem
-module Demo
-
-export unsafe fn i32[min max] main()
-{
-    if (System.FileSystem.Exists("probe.txt"))
-    {
-        return 1;
-    }
-
-    if (System.FileSystem.IsDirectory("probe.txt"))
-    {
-        return 2;
-    }
-
-    if (System.FileSystem.IsFile("probe.txt"))
-    {
-        return 3;
-    }
-
-    return 0;
-}
-""");
+    stack mut ProgramCompile c = CompileSourceFileForTarget(
+        "macos-path-metadata-stat-mode-bits",
+        "../../stdlib/src/System/Runtime/Platform/MacOS.stark",
+        MacOSArm64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    if (Contains(llvm, "@access("))
+    stack ascii tryReadPathModeBody = LlvmDefinitionBody(llvm, "TryReadPathMode");
+    stack ascii pathExistsBody = LlvmDefinitionBody(llvm, "PathExists");
+    stack ascii isDirectoryBody = LlvmDefinitionBody(llvm, "IsDirectory");
+    stack ascii isFileBody = LlvmDefinitionBody(llvm, "IsFile");
+    stack ascii metadataBody = LlvmDefinitionBody(llvm, "ReadPathMetadata");
+
+    if (!Contains(tryReadPathModeBody, "call i32 @stat(")
+        || !Contains(tryReadPathModeBody, "getelementptr i8, ptr")
+        || !Contains(tryReadPathModeBody, "load i16")
+        || !Contains(tryReadPathModeBody, "call fastcc i32 @UnsignedShort(")
+        || !Contains(pathExistsBody, "call fastcc i1 @TryReadPathMode(")
+        || !Contains(isDirectoryBody, "and i32")
+        || !Contains(isDirectoryBody, "61440")
+        || !Contains(isDirectoryBody, "16384")
+        || !Contains(isFileBody, "and i32")
+        || !Contains(isFileBody, "61440")
+        || !Contains(isFileBody, "32768")
+        || !Contains(metadataBody, "call i32 @stat(")
+        || !Contains(metadataBody, "61440")
+        || !Contains(metadataBody, "4095")
+        || !Contains(metadataBody, "load i64")
+        || !Contains(metadataBody, "store i64"))
+    {
+        return false;
+    }
+
+    if (Contains(tryReadPathModeBody, "@opendir(")
+        || Contains(llvm, "@access("))
     {
         return false;
     }

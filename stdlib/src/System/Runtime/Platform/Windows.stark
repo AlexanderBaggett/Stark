@@ -286,7 +286,7 @@ const WinProcessPipeReadableEvent = 1;
 const WinProcessPipeWritableEvent = 2;
 const WinProcessPipeClosedEvent = 4;
 const WinMaxCommandLineWideUnits = 32768;
-const WinMaxCStringBytes = 32767;
+const WinMaxCStringBytes = 2 ** 15 - 1;
 const WinEnvironmentWideCapacity = 32768;
 const WinEnvironmentUtf8Capacity = 32768;
 

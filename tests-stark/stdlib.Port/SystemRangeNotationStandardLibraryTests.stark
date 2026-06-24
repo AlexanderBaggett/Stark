@@ -1,52 +1,398 @@
-import StdlibPortSupport
-import System.Testing
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.Text
 module SystemRangeNotationStandardLibraryTests
 
+const StdlibSourceRoot = "../../stdlib/src";
+const StdlibTemplateRoot = "../../stdlib/templates";
+
+static mut i32[min max] RangeNotationVisitedFiles = 0;
+static mut i32[min max] RangeNotationViolations = 0;
+
 // Ported from SystemRangeNotationStandardLibraryTests.StdLibSourceUsesCanonicalRangeNotation.
-// PORT-NOTE: The C# original enumerates every *.stark file under stdlib/src and
-// stdlib/templates from the repository root, strips string literals, and scans
-// the remaining code text for forbidden range spellings (e.g. `i8[-128 127]`,
-// `u8[0 255]`, decimal boundary literals such as 2147483647/65535, parenthesized
-// positive powers like `(2 ** n)`, and compact exponents like `2**n`), failing
-// when any stdlib source spells a range non-canonically instead of using
-// `[min max]`, `[0 max]`, or spaced `2 ** n` exponent notation. The compile-only
-// bridge cannot reach the repository file system or scan stdlib source text, so
-// the canonical-notation convention is exercised indirectly: a single program is
-// embedded that declares ranged integers using exactly the canonical forms the
-// test mandates (`[min max]`, `[0 max]`, and spaced `2 ** n` exponents at the
-// i8/i16/i32/i64 and u8/u16/u32/u64 boundaries). The test passes only when that
-// program compiles, standing in for the source-text scan over the on-disk stdlib.
 internal fn bool StdLibSourceUsesCanonicalRangeNotationImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-range-notation-canonical", raw"""
-module RangeNotationCanonical
+    RangeNotationVisitedFiles = 0;
+    RangeNotationViolations = 0;
 
-export unsafe ffi fn i32[min max] main() {
-    // Symbolic full-width ranges use the canonical [min max] spelling.
-    stack i8[min max] signedByte = 0;
-    stack i16[min max] signedShort = 0;
-    stack i32[min max] signedInt = 0;
-    stack i64[min max] signedLong = 0;
+    stack System.IO.IOStatus sourceStatus =
+        System.FileSystem.Glob(StdlibSourceRoot, "**/*.stark", VisitRangeNotationFile);
+    if (!IsOk(sourceStatus))
+    {
+        return false;
+    }
 
-    // Unsigned full-width ranges use the canonical [0 max] spelling.
-    stack u8[min max] unsignedByte = 0;
-    stack u16[min max] unsignedShort = 0;
-    stack u32[0 max] unsignedInt = 0;
-    stack u64[0 max] unsignedLong = 0;
+    stack System.IO.IOStatus templateStatus =
+        System.FileSystem.Glob(StdlibTemplateRoot, "**/*.stark", VisitRangeNotationFile);
+    if (!IsOk(templateStatus))
+    {
+        return false;
+    }
 
-    // Boundary-exact ranges use spaced exponent notation, never decimal literals.
-    stack i32[-(2 ** 31) 2 ** 31 - 1] signedIntExponent = 0;
-    stack i64[-(2 ** 63) 2 ** 63 - 1] signedLongExponent = 0;
-    stack u16[0 2 ** 16 - 1] unsignedShortExponent = 0;
-    stack u64[0 2 ** 63 - 1] capacityRange = 0;
-
-    return signedInt;
+    return RangeNotationVisitedFiles > 0 && RangeNotationViolations == 0;
 }
-""");
-    if (!Succeeds(c))
+
+internal fn System.IO.IOStatus VisitRangeNotationFile(
+    ascii path,
+    System.FileSystem.FileSystemEntryKind kind)
+{
+    if (kind != System.FileSystem.FileSystemEntryKind.File)
+    {
+        return System.IO.IOStatus.Ok;
+    }
+
+    RangeNotationVisitedFiles += 1;
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var readError):
+            return System.IO.IOStatus.Err(readError);
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var sourceOwner):
+            if (SourceHasForbiddenRangeNotation(sourceOwner.View()))
+            {
+                RangeNotationViolations += 1;
+                return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+            }
+    }
+
+    return System.IO.IOStatus.Ok;
+}
+
+internal finite law bool SourceHasForbiddenRangeNotation(ascii source)
+{
+    return ContainsOutsideString(source, "i8[-128 127]")
+        || ContainsOutsideString(source, "i16[-32768 32767]")
+        || ContainsOutsideString(source, "i24[-8388608 8388607]")
+        || ContainsOutsideString(source, "i32[-2147483648 2147483647]")
+        || ContainsOutsideString(source, "i48[-140737488355328 140737488355327]")
+        || ContainsOutsideString(source, "i64[-9223372036854775808 9223372036854775807]")
+        || ContainsOutsideString(source, "u8[0 255]")
+        || ContainsOutsideString(source, "u16[0 65535]")
+        || ContainsOutsideString(source, "u16[0 8192]")
+        || ContainsOutsideString(source, "u8[0 127]")
+        || ContainsOutsideString(source, "-9223372036854775808")
+        || ContainsOutsideString(source, "9223372036854775807")
+        || ContainsOutsideString(source, "-2147483648")
+        || ContainsOutsideString(source, "2147483647")
+        || ContainsOutsideString(source, "-140737488355328")
+        || ContainsOutsideString(source, "140737488355327")
+        || ContainsOutsideString(source, "-8388608")
+        || ContainsOutsideString(source, "8388607")
+        || ContainsOutsideString(source, "-32768")
+        || ContainsOutsideString(source, "32767")
+        || ContainsOutsideString(source, "65535")
+        || ContainsOutsideString(source, "65536")
+        || ContainsParenthesizedPositivePowerOutsideString(source)
+        || ContainsCompactExponentOutsideString(source);
+}
+
+internal finite law bool ContainsOutsideString(ascii source, ascii needle)
+    where overlap(source, needle)
+{
+    stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(source);
+    stack u64[0 2 ** 63 - 1] needleLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(needle);
+    if (needleLength == 0)
+    {
+        return true;
+    }
+
+    stack mut bool inString = false;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < sourceLength)
+    {
+        if (inString)
+        {
+            if (IsActualUnit(source, index, "\\") && index + 1 < sourceLength)
+            {
+                index += 2;
+                continue;
+            }
+
+            if (IsActualUnit(source, index, "\""))
+            {
+                inString = false;
+            }
+
+            index += 1;
+            continue;
+        }
+
+        if (IsActualUnit(source, index, "\""))
+        {
+            inString = true;
+            index += 1;
+            continue;
+        }
+
+        if (StartsWithAt(source, index, needle))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+internal finite law bool ContainsParenthesizedPositivePowerOutsideString(ascii source)
+{
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(source);
+    stack mut bool inString = false;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        if (inString)
+        {
+            if (IsActualUnit(source, index, "\\") && index + 1 < length)
+            {
+                index += 2;
+                continue;
+            }
+
+            if (IsActualUnit(source, index, "\""))
+            {
+                inString = false;
+            }
+
+            index += 1;
+            continue;
+        }
+
+        if (IsActualUnit(source, index, "\""))
+        {
+            inString = true;
+            index += 1;
+            continue;
+        }
+
+        if (ParenthesizedPositivePowerStartsAt(source, index, length))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+internal finite law bool ContainsCompactExponentOutsideString(ascii source)
+{
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(source);
+    stack mut bool inString = false;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        if (inString)
+        {
+            if (IsActualUnit(source, index, "\\") && index + 1 < length)
+            {
+                index += 2;
+                continue;
+            }
+
+            if (IsActualUnit(source, index, "\""))
+            {
+                inString = false;
+            }
+
+            index += 1;
+            continue;
+        }
+
+        if (IsActualUnit(source, index, "\""))
+        {
+            inString = true;
+            index += 1;
+            continue;
+        }
+
+        if (CompactExponentStartsAt(source, index, length))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+internal finite law bool ParenthesizedPositivePowerStartsAt(
+    ascii source,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (!IsActualUnit(source, index, "("))
+    {
+        return false;
+    }
+
+    if (index > 0
+        && (IsActualUnit(source, index - 1, ")") || IsActualUnit(source, index - 1, "-")))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] scan = SkipWhitespace(source, index + 1, length);
+    if (scan >= length || !IsActualUnit(source, scan, "2"))
+    {
+        return false;
+    }
+
+    scan = SkipWhitespace(source, scan + 1, length);
+    if (scan + 1 >= length || !IsActualUnit(source, scan, "*") || !IsActualUnit(source, scan + 1, "*"))
+    {
+        return false;
+    }
+
+    scan = SkipWhitespace(source, scan + 2, length);
+    if (scan >= length || !IsAsciiDigitAt(source, scan))
+    {
+        return false;
+    }
+
+    while willexit (scan < length && IsAsciiDigitAt(source, scan))
+    {
+        scan += 1;
+    }
+
+    scan = SkipWhitespace(source, scan, length);
+    return scan < length && IsActualUnit(source, scan, ")");
+}
+
+internal finite law bool CompactExponentStartsAt(
+    ascii source,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (index + 3 >= length)
+    {
+        return false;
+    }
+
+    if (!IsActualUnit(source, index, "2")
+        || !IsActualUnit(source, index + 1, "*")
+        || !IsActualUnit(source, index + 2, "*"))
+    {
+        return false;
+    }
+
+    if (index > 0 && IsAsciiWordAt(source, index - 1))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] scan = index + 3;
+    if (!IsAsciiDigitAt(source, scan))
+    {
+        return false;
+    }
+
+    while willexit (scan < length && IsAsciiDigitAt(source, scan))
+    {
+        scan += 1;
+    }
+
+    if (scan < length && IsAsciiWordAt(source, scan))
     {
         return false;
     }
 
     return true;
+}
+
+internal finite law bool StartsWithAt(ascii source, u64[0 2 ** 63 - 1] start, ascii needle)
+    where overlap(source, needle)
+{
+    stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(source);
+    stack u64[0 2 ** 63 - 1] needleLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(needle);
+    if (needleLength == 0)
+    {
+        return true;
+    }
+
+    if (start + needleLength > sourceLength)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] offset = 0;
+    while willexit (offset < needleLength)
+    {
+        if (source[(i64[min max])(start + offset), 1] != needle[(i64[min max])offset, 1])
+        {
+            return false;
+        }
+
+        offset += 1;
+    }
+
+    return true;
+}
+
+internal finite law u64[0 2 ** 63 - 1] SkipWhitespace(
+    ascii source,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = index;
+    while willexit (scan < length && IsAsciiWhitespaceAt(source, scan))
+    {
+        scan += 1;
+    }
+
+    return scan;
+}
+
+internal finite law bool IsAsciiWhitespaceAt(ascii source, u64[0 2 ** 63 - 1] index)
+{
+    return IsActualUnit(source, index, " ")
+        || IsActualUnit(source, index, "\t")
+        || IsActualUnit(source, index, "\r")
+        || IsActualUnit(source, index, "\n");
+}
+
+internal finite law bool IsAsciiDigitAt(ascii source, u64[0 2 ** 63 - 1] index)
+{
+    stack ascii unit = source[(i64[min max])index, 1];
+    return unit == "0" || unit == "1" || unit == "2" || unit == "3" || unit == "4"
+        || unit == "5" || unit == "6" || unit == "7" || unit == "8" || unit == "9";
+}
+
+internal finite law bool IsAsciiWordAt(ascii source, u64[0 2 ** 63 - 1] index)
+{
+    stack ascii unit = source[(i64[min max])index, 1];
+    return IsAsciiDigitAt(source, index)
+        || unit == "_"
+        || unit == "A" || unit == "B" || unit == "C" || unit == "D" || unit == "E"
+        || unit == "F" || unit == "G" || unit == "H" || unit == "I" || unit == "J"
+        || unit == "K" || unit == "L" || unit == "M" || unit == "N" || unit == "O"
+        || unit == "P" || unit == "Q" || unit == "R" || unit == "S" || unit == "T"
+        || unit == "U" || unit == "V" || unit == "W" || unit == "X" || unit == "Y"
+        || unit == "Z"
+        || unit == "a" || unit == "b" || unit == "c" || unit == "d" || unit == "e"
+        || unit == "f" || unit == "g" || unit == "h" || unit == "i" || unit == "j"
+        || unit == "k" || unit == "l" || unit == "m" || unit == "n" || unit == "o"
+        || unit == "p" || unit == "q" || unit == "r" || unit == "s" || unit == "t"
+        || unit == "u" || unit == "v" || unit == "w" || unit == "x" || unit == "y"
+        || unit == "z";
+}
+
+internal finite law bool IsActualUnit(ascii value, u64[0 2 ** 63 - 1] index, ascii unit)
+    where overlap(value, unit)
+{
+    return value[(i64[min max])index, 1] == unit;
+}
+
+internal finite law bool IsOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
 }

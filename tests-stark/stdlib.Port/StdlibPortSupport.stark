@@ -18,6 +18,7 @@ module StdlibPortSupport
 const HostTimeoutMilliseconds = 180000;
 
 public const LinuxX64TargetTriple = "x86_64-unknown-linux-gnu";
+public const MacOSArm64TargetTriple = "arm64-apple-macosx26.0.0";
 public const WindowsX64MsvcTargetTriple = "x86_64-pc-windows-msvc";
 
 public struct ProgramCompile
