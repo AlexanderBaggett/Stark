@@ -343,14 +343,10 @@ fn bool UsePromotedCollections()
 // Ported from SystemCollectionsStandardLibraryTests.StdLibSourcePromotedListLowersThroughDynamicStorage.
 internal fn bool StdLibSourcePromotedListLowersThroughDynamicStorageImpl()
 {
-    // PORT-NOTE: the C# test pins TargetInfo=x86_64-unknown-linux-gnu and
-    // StopAfterPassId="emit-llvm" so the libc-free dynamic-storage lowering is
-    // asserted; the host bridge runs the full pipeline with the default target
-    // and exposes the `llvm` artifact. The negative malloc/realloc/free checks
-    // are target-sensitive (macOS bottoms out in libc), so they are retained as
-    // substring assertions but may differ from the Linux-pinned oracle; the
-    // positive runtime/dynamic-reserve and slice-triple checks are preserved.
-    stack mut ProgramCompile c = CompileProgram(
+    // PORT-NOTE: the C# test pins TargetInfo=x86_64-unknown-linux-gnu so the
+    // libc-free dynamic-storage lowering is asserted; keep the same target here
+    // because macOS legitimately bottoms out in libc allocation helpers.
+    stack mut ProgramCompile c = CompileProgramForTarget(
         "promoted-list-dynamic-storage-lowering",
         raw"""
 import System.Collections
@@ -387,7 +383,8 @@ fn u64[0 2 ** 63 - 1] GrowAndSlice()
     values.AsMutableSlice()[3] = 99;
     return (u64[0 2 ** 63 - 1])values.AsSlice()[3];
 }
-""");
+""",
+        LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;

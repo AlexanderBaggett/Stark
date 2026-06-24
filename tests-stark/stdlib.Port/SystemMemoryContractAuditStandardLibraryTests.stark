@@ -1,91 +1,72 @@
 import StdlibPortSupport
+import System.IO
+import System.IO.File
 import System.Memory
 import System.Testing
+import System.Text
 module SystemMemoryContractAuditStandardLibraryTests
 
 // Ported from SystemMemoryContractAuditStandardLibraryTests.StdLibOverlapSensitiveApisDeclareExplicitMemoryContracts.
-// PORT-NOTE: The C# original reads four on-disk stdlib sources from the
-// repository (stdlib/src/System/Memory.stark, System/Text.stark,
-// System/IO/Path.stark, System/Runtime/Buffer.stark) and asserts on raw source
-// text that the overlap-sensitive public APIs exist and declare explicit
-// `where overlap(...)` memory contracts (AppendBytes/AppendCodePoints/CopyBytes/
-// CopyCodePoints in System.Memory, AppendAscii/AppendUnicode/overlap(self,source)/
-// overlap(left,right) in System.Text, TryJoin/TryJoinConst with
-// overlap(destination,left)/overlap(left,right) in System.IO.Path, and the
-// overlap(storage,source)/overlap(self,source) contracts in System.Runtime.Buffer).
-// The compile-only bridge cannot reach the repository file system or scan source
-// text, so the contracts are exercised indirectly: a single program imports
-// System.Memory and calls each overlap-sensitive entry point through an aliasing
-// (potentially-overlapping) view, which forces every `where overlap(...)`
-// contract to be resolved and type-checked during compilation. The test passes
-// only when that program compiles, standing in for the source-text assertions.
 internal fn bool StdLibOverlapSensitiveApisDeclareExplicitMemoryContractsImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("system-memory-contract-audit-overlap-apis", raw"""
-import System.Memory
-module MemoryContractAuditOverlapApis
-
-fn bool Ok(System.Memory.MemoryStatus status) {
-    switch (status) {
-        case System.Memory.MemoryStatus.Err(var error):
-            return false;
-        case System.Memory.MemoryStatus.Ok:
-            return true;
-    }
-}
-
-export unsafe ffi fn i32[min max] main() {
-    stack u64[0 2 ** 63 - 1] byteCount = 4;
-    stack u64[0 2 ** 63 - 1] codePointCount = 4;
-    stack mut dynamic i8[min max] byteStorage = new();
-    stack mut dynamic i32[min max] codePointStorage = new();
-    if (!Ok(System.Memory.ReserveBytes(byteStorage, byteCount))) {
-        return 1;
-    }
-
-    if (!Ok(System.Memory.ReserveCodePoints(codePointStorage, codePointCount))) {
-        return 1;
-    }
-
-    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < byteCount; index += 1) {
-        init byteStorage[byteStorage.Length] = (i8[min max])((index % 7) + 1);
-        init codePointStorage[codePointStorage.Length] = (i32[min max])(65 + (index % 5));
-    }
-
-    // Overlap-sensitive append: pass an aliasing view of the same storage as the
-    // source so the `where overlap(storage, source)` contract is engaged.
-    stack i8[min max][] byteSelf = byteStorage[0, byteStorage.Length];
-    if (!Ok(System.Memory.AppendBytes(byteStorage, byteSelf, byteCount))) {
-        return 2;
-    }
-
-    stack i32[min max][] codePointSelf = codePointStorage[0, codePointStorage.Length];
-    if (!Ok(System.Memory.AppendCodePoints(codePointStorage, codePointSelf, codePointCount))) {
-        return 2;
-    }
-
-    // Overlap-sensitive copy: source and destination are aliasing slices of the
-    // same buffer so the `where overlap(source, destination)` contract is engaged.
-    stack mut i8[min max][8] byteBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    stack i8[min max][] byteSource = byteBuffer[0, 4];
-    stack mut i8[min max][] byteDestination = byteBuffer[2, 4];
-    if (!Ok(System.Memory.CopyBytes(byteSource, byteDestination, byteCount))) {
-        return 3;
-    }
-
-    stack mut i32[min max][8] codePointBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    stack i32[min max][] codePointSource = codePointBuffer[0, 4];
-    stack mut i32[min max][] codePointDestination = codePointBuffer[2, 4];
-    if (!Ok(System.Memory.CopyCodePoints(codePointSource, codePointDestination, codePointCount))) {
-        return 3;
-    }
-
-    return 0;
-}
-""");
-    if (!Succeeds(c))
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Memory.stark"))
     {
-        return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var memoryError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var memorySourceOwner):
+            stack ascii memorySource = memorySourceOwner.View();
+            if (!System.Testing.Contains(memorySource, "public fn MemoryStatus AppendBytes(")
+                || !System.Testing.Contains(memorySource, "where overlap(storage, source)")
+                || !System.Testing.Contains(memorySource, "public fn MemoryStatus AppendCodePoints(")
+                || !System.Testing.Contains(memorySource, "public fn MemoryStatus CopyBytes(")
+                || !System.Testing.Contains(memorySource, "public fn MemoryStatus CopyCodePoints(")
+                || !System.Testing.Contains(memorySource, "where overlap(source, destination)"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Text.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var textError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var textSourceOwner):
+            stack ascii textSource = textSourceOwner.View();
+            if (!System.Testing.Contains(textSource, "fn System.Memory.MemoryStatus AppendAscii(")
+                || !System.Testing.Contains(textSource, "fn System.Memory.MemoryStatus AppendUnicode(")
+                || !System.Testing.Contains(textSource, "where overlap(self, source)")
+                || !System.Testing.Contains(textSource, "where overlap(left, right);"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/IO/Path.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var pathSourceOwner):
+            stack ascii pathSource = pathSourceOwner.View();
+            if (!System.Testing.Contains(pathSource, "fn System.Memory.MemoryStatus TryJoin(")
+                || !System.Testing.Contains(pathSource, "fn System.Memory.MemoryStatus TryJoinConst(")
+                || !System.Testing.Contains(pathSource, "where overlap(destination, left)")
+                || !System.Testing.Contains(pathSource, "where overlap(left, right)"))
+            {
+                return false;
+            }
+    }
+
+    switch (System.IO.File.ReadAllText("../../stdlib/src/System/Runtime/Buffer.stark"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var bufferError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var bufferSourceOwner):
+            stack ascii bufferSource = bufferSourceOwner.View();
+            if (!System.Testing.Contains(bufferSource, "where overlap(storage, source)")
+                || !System.Testing.Contains(bufferSource, "where overlap(self, source)"))
+            {
+                return false;
+            }
     }
 
     return true;

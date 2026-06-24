@@ -18,8 +18,8 @@ ported facts pass on macOS. All 19 suites were baselined with clean
 `rm -rf build && stark test` runs on 2026-06-19. `compiler.FeatureTests` and
 `compiler.LlvmTests` were rechecked by targeted full-project runs on 2026-06-23.
 
-Summary: at least 2818 / 3143 run-facts passing (~90%). 15 of 19 suites are
-known 100% green. At most 325 failures live in 4 suites. Counts are runner
+Summary: at least 2839 / 3143 run-facts passing (~90%). 15 of 19 suites are
+known 100% green. At most 304 failures live in 4 suites. Counts are runner
 `ok`/`FAILED`; `[Theory]` rows expand, so run-fact totals differ slightly from
 static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
 2026-06-19 baseline unless their notes say otherwise.
@@ -29,7 +29,7 @@ static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
 | compiler.Tests | 1090 | **112** | largest suite: semantic/lowering diagnostics, type-checking, ownership, pipeline, runtime, package-image, CLI, examples |
 | compiler.SsaTests | 346 | **61** | SSA lowering / validation / optimization text. ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + Cleanup + ScalarReplacement + InlineSsa + FunctionAddress + ConstantText + TextView + DynamicStorage families are green by targeted filters; count predates recent targeted fixes |
 | compiler.LlvmTests | 493 | 0 | green by 2026-06-23 targeted project rerun |
-| stdlib.Port | 189 | **38** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, and `collections-dictionary` fixes but no full-suite rebaseline |
+| stdlib.Port | 210 | **17** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, `collections-dictionary`, `collections-hash-set-sort`, `collections`, `text`, `promoted-runtime-buffer`, `promoted-console`, `promoted-net-tcp`, `process`, `memory-contract-audit`, and `raw-pointer-audit` fixes but no full-suite rebaseline |
 | compiler.MirTests | 101 | **36** | MIR lowering text; count predates recent switch-pattern, place-lowerer, generic, and lowering-contract targeted fixes |
 | compiler.FeatureTests | 213 | 0 | green by 2026-06-23 targeted project rerun |
 | selfhost.Ir | 122 | 0 | green |
@@ -55,9 +55,9 @@ Suites still needing work:
   rebaseline was run because broad sweeps are intentionally avoided.
 - compiler.Tests: 1090/1202, 112 failing; broad suite needing failure-family
   subcategorization.
-- stdlib.Port: at least 189/227, at most 38 failing after the 2026-06-23
+- stdlib.Port: at least 210/227, at most 17 failing after the 2026-06-23
   targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, and
-  `memory` fixes plus the targeted `collections-dictionary` fix.
+  `memory` fixes plus the targeted collection fixes.
 - compiler.MirTests: 101/137, 36 failing before recent targeted fixes.
 - compiler.Tests package-image typed-body integration ports now use typed-only
   package images and the shared helper restores CLI stdout, emitted-file,
@@ -163,6 +163,98 @@ stdlib.Json.
   `DictionaryKey_Hash` or `DictionaryKey_Equals` fallback dispatch.
 - Narrow verification: `../../stark test --collection collections-dictionary --target
   arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Fixed the `collections-hash-set-sort` collection by restoring body-scoped LLVM
+  checks for sort and custom-key HashSet paths. The sort probes now assert no
+  allocation, fnptr-pair extraction, or indirect closure call inside `SortFixed`,
+  while HashSet accepts inlined `Symbol.Hash`/`Symbol.Equals` and rejects
+  `DictionaryKey_Hash`/`DictionaryKey_Equals` fallback dispatch in the actual
+  probe bodies.
+- Narrow verification: `../../stark test --collection collections-hash-set-sort
+  --target arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked the `collections-stack-queue` collection; all 5 facts passed on
+  `arm64-apple-macosx26.0.0`. Counts were left unchanged because the previous
+  ledger did not identify whether this collection contributed to the failing
+  baseline bucket.
+- Fixed the `collections` collection by pinning the promoted List dynamic-storage
+  LLVM oracle to `x86_64-unknown-linux-gnu`, preserving the libc-free
+  `__stark_runtime_try_realloc` and `__stark_dynamic_try_reserve` assertions and
+  the negative libc allocator checks.
+- Narrow verification: `../../stark test --filter
+  StdLibSourcePromotedListLowersThroughDynamicStorage --target
+  arm64-apple-macosx26.0.0` and `../../stark test --collection collections
+  --target arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Fixed the `text` collection by pinning the promoted text dynamic-storage LLVM
+  oracle to `x86_64-unknown-linux-gnu`, compiling `stdlib/src/System/Text.stark`
+  directly for append, wide-formatting, and wide-parse backend assertions, and
+  restoring the source-text scan for bounded raw-pointer region contracts.
+- Narrow verification: `../../stark test --collection text --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked the `text-runtime` collection; all 3 facts passed on
+  `arm64-apple-macosx26.0.0`. Counts were left unchanged because the previous
+  ledger did not identify whether this collection contributed to the failing
+  baseline bucket.
+- Rechecked the `text-interning` collection; all 3 facts passed on
+  `arm64-apple-macosx26.0.0`. Counts were left unchanged for the same
+  conservative-accounting reason.
+- Fixed the `promoted-runtime-buffer` collection by compiling
+  `stdlib/src/System/Runtime/Buffer.stark` directly for runtime-buffer backend
+  assertions and using function-scoped LLVM body checks for disjoint write
+  guards, tail-region memcpy/memset paths, and allocation-free inline fixed
+  storage.
+- Narrow verification: `../../stark test --collection promoted-runtime-buffer
+  --target arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Fixed the `promoted-console` collection by compiling
+  `stdlib/src/System/Console.stark` and
+  `stdlib/src/System/Runtime/Platform/Linux.stark` directly for backend
+  assertions, restoring scoped LLVM checks for direct platform write paths,
+  small-buffer newline coalescing, and allocation-free byte-line writes.
+- Narrow verification: `../../stark test --collection promoted-console
+  --target arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked the `promoted-io-file-system` collection and restored the C# oracle's
+  source-text assertions for platform raw-pointer file IO regions, fast
+  directory/file entry points, and allocation-free `System.FileSystem` storage.
+  Counts were left unchanged because the previous ledger did not identify whether
+  this collection contributed to the failing baseline bucket.
+- Narrow verification: `../../stark test --collection promoted-io-file-system
+  --target arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Fixed the `promoted-net-tcp` collection by compiling
+  `stdlib/src/System/Net/Tcp.stark` directly for `x86_64-unknown-linux-gnu`,
+  restoring source ABI scans, and updating the dynamic-buffer LLVM body symbol
+  to the current max-count-mangled name while preserving bulk read/write-slice
+  fast-path checks.
+- Narrow verification: `../../stark test --collection promoted-net-tcp --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked the `runtime-buffer` collection; both facts passed on
+  `arm64-apple-macosx26.0.0`. Counts were left unchanged because the previous
+  ledger did not identify whether this collection contributed to the failing
+  baseline bucket.
+- Rechecked the `console` collection; all 5 facts passed on
+  `arm64-apple-macosx26.0.0`. Counts were left unchanged for the same
+  conservative-accounting reason.
+- Fixed the `process` collection by updating the `System.Process.Exit` caller
+  LLVM assertions for the current trap call spelling while still requiring the
+  module-level `__stark_unreachable_trap` definition to carry `cold noreturn`.
+- Narrow verification: `../../stark test --collection process --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked `net`, `file-system`, `json`, `math`, `c`,
+  `compiler-integer-facts`, and `backend-boundary-audit`; all selected facts
+  passed on `arm64-apple-macosx26.0.0`. The `file-system` run skipped the
+  Linux-only runtime facts through platform gates.
+- Fixed the `memory-contract-audit` collection by restoring the C# oracle's
+  direct source-text scans for explicit overlap contracts in `System.Memory`,
+  `System.Text`, `System.IO.Path`, and `System.Runtime.Buffer`.
+- Fixed the `raw-pointer-audit` collection by replacing compile-only reductions
+  with `System.FileSystem.Glob` source-tree scans, preserving the documented
+  raw-pointer boundary allowlist, checking public raw-pointer declarations, and
+  asserting the root module still excludes `System.Text`/`System.Testing` raw
+  surfaces while re-exporting safe public modules.
+- Updated `docs/Internals/StandardLibraryRawPointerBoundaries.md` and the host
+  C# allowlist for the audited `System.Json`, `System.Toml`, and
+  `System.Testing.HostCompiler` internal raw-pointer files.
+- Narrow verification: `../../stark test --collection memory-contract-audit
+  --target arm64-apple-macosx26.0.0` and `../../stark test --collection
+  raw-pointer-audit --target arm64-apple-macosx26.0.0` passed in
+  `tests-stark/stdlib.Port`.
 
 ---
 
@@ -464,7 +556,7 @@ Other suite notes:
 - compiler.Tests: about 30 package-image failures; remainder includes
   AsmDeclarations, LawBodies, CheckMode, BuildUses, EmitLlvm/EmitExecutable,
   TextDiagnostics/SystemText/RuntimeText/LawFunctions, and a long tail.
-- stdlib.Port: at most 38 `StdLibSource*` lowering/intrinsic/syscall-path assertions,
+- stdlib.Port: at most 21 `StdLibSource*` lowering/intrinsic/syscall-path assertions,
   roughly 16 Linux/Windows platform-specific tests, WindowsDispatch 2,
   SourceStd 2, and miscellaneous cases.
 - compiler.MirTests: all named non-aggregate collections are green by targeted

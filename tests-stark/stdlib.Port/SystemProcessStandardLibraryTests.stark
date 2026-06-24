@@ -42,7 +42,8 @@ fn void Stop(i32[min max] code)
     // Stark mirror is LlvmDefinitionBody scoped to the bare symbol name.
     stack ascii stopBody = LlvmDefinitionBody(llvm, "Stop");
     if (!System.Testing.Contains(stopBody, "call fastcc void @System_Process_Exit(")
-        || !System.Testing.Contains(stopBody, "call coldcc void @__stark_unreachable_trap()")
+        || !System.Testing.Contains(stopBody, "call void @__stark_unreachable_trap()")
+        || !System.Testing.Contains(llvm, "define internal dso_local void @__stark_unreachable_trap() unnamed_addr cold noreturn nounwind")
         || !System.Testing.DoesNotContain(stopBody, "ret void"))
     {
         return false;
@@ -664,7 +665,8 @@ fn void Stop()
     stack ascii stopBody = LlvmDefinitionBody(llvm, "Stop");
 
     if (!System.Testing.Contains(stopBody, "call fastcc void @System_Process_Exit(")
-        || !System.Testing.Contains(stopBody, "call coldcc void @__stark_unreachable_trap()")
+        || !System.Testing.Contains(stopBody, "call void @__stark_unreachable_trap()")
+        || !System.Testing.Contains(llvm, "define internal dso_local void @__stark_unreachable_trap() unnamed_addr cold noreturn nounwind")
         || !System.Testing.DoesNotContain(stopBody, "ret void"))
     {
         return false;
