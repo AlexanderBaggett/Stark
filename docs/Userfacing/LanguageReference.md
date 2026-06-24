@@ -46,8 +46,9 @@ Rules:
 `System.*` modules are Stark's standard library. `Vendor.*` modules are a
 separate bundled vendor library for bindings to established native libraries;
 for example, imports such as `import Vendor.Raylib`, `import Vendor.SQLite`,
-`import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.KbTextShape`, or
-`import Vendor.Vulkan` bring bundled native binding surfaces into scope.
+`import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.Miniaudio`,
+`import Vendor.STB.Image`, or `import Vendor.Cgltf` bring bundled native
+binding surfaces into scope.
 Project builds discover `Vendor` artifacts beside `System` artifacts: first
 from the active stage, then target-specific repo `vendor/dist/<target-triple>`
 package images plus flat `vendor/dist` fallback package images or `vendor/src`

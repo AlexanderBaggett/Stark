@@ -2163,15 +2163,27 @@ public sealed class TypeCheckingTests
             module Demo
 
             alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+            alias ScalarCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, i32[min max], rawmutptr<i8[min max]>)>;
 
             unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
             {
                 return;
             }
 
+            unsafe ffi(c) fn void RunScalar(rawmutptr<i8[min max]> context, i32[min max] argumentCount, rawmutptr<i8[min max]> values)
+            {
+                return;
+            }
+
             unsafe ffi(c) fn void Register(AudioCallback callback);
+            unsafe ffi(c) fn void RegisterScalar(ScalarCallback callback);
 
             fn void Store(AudioCallback callback)
+            {
+                return;
+            }
+
+            fn void StoreScalar(ScalarCallback callback)
             {
                 return;
             }
@@ -2180,6 +2192,8 @@ public sealed class TypeCheckingTests
             {
                 Register(FillAudio);
                 Store(FillAudio);
+                RegisterScalar(RunScalar);
+                StoreScalar(RunScalar);
                 return;
             }
             """,
@@ -2200,9 +2214,20 @@ public sealed class TypeCheckingTests
                 Assert.True(promotion.TargetType.FunctionPointerIsUnsafe);
                 Assert.Equal(StarkFfiAbi.C, promotion.TargetType.FunctionPointerAbi);
             });
-        var addressTaken = Assert.Single(typeCheckModel.AddressTakenFunctions);
-        Assert.Equal("FillAudio", addressTaken.Signature.Name);
-        Assert.Equal(StarkFfiAbi.C, addressTaken.Signature.FfiAbi ?? StarkFfiAbi.C);
+        var scalarPromotions = typeCheckModel.FunctionPointerPromotions
+            .Where(static promotion => promotion.Signature.Name == "RunScalar")
+            .ToArray();
+        Assert.Equal(2, scalarPromotions.Length);
+        Assert.All(
+            scalarPromotions,
+            static promotion =>
+            {
+                Assert.Equal(StarkFfiAbi.C, promotion.Signature.FfiAbi ?? StarkFfiAbi.C);
+                Assert.True(promotion.TargetType.FunctionPointerIsUnsafe);
+                Assert.Equal(StarkFfiAbi.C, promotion.TargetType.FunctionPointerAbi);
+            });
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "FillAudio");
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "RunScalar");
 
         var missingUnsafe = Compile(
             """

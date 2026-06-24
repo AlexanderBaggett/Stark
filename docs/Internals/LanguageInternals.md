@@ -324,20 +324,13 @@ C-layout event record, and avoids exposing callback-shaped audio APIs to safe
 Stark callers. This is a legitimate native adapter use: it preserves
 allocation-free event/audio paths without making ordinary Stark code reason
 about C unions, nullable handles, or callback lifetimes.
-`Vendor.KbTextShape` follows the same rule for text engines: HarfBuzz font
-objects, ICU `UBreakIterator`/`UText`, and native allocation stay in
-`KbTextShapeBinding.c`; Stark owns safe `Segmenter`/`Font` handles and writes
-segmentation boundaries or shaped glyphs into caller-provided slices. ICU's
-UTF-8 `UText` path returns native UTF-8 byte offsets, so Stark does not build
-a UTF-16 offset map before slicing text.
-`Vendor.Vulkan` is the direct generated-binding model: the package pins the
-Khronos registry XML, regenerates Stark handle wrappers, C-layout ABI carriers,
-and internal `ffi(c)` loader declarations, then exposes safe API-version,
-global-entry-point, and instance count queries. Its package image carries
-`pkg-config vulkan` or explicit loader-library metadata. No C adapter is used
-for the loader/core slice because the Vulkan C ABI shapes are representable by
-Stark's existing raw-pointer, `[Platform, StructLayout(C)]`, and package-native
-metadata features.
+`Vendor.Miniaudio` and `Vendor.Cgltf` use pinned single-header source drops
+behind small C implementation files, keeping native ownership and callback
+details internal while Stark callers operate on safe handles and caller-owned
+buffers. `Vendor.GLFW` uses a package-owned callback bridge for window events,
+while `Vendor.Raylib`, `Vendor.Raymath`, and `Vendor.Rlgl` use direct
+`[LinkName]` declarations and C-layout aggregate carriers where the native ABI
+is already expressible.
 
 Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
 modules keep the dynamic-storage contracts validated during the comparison
@@ -695,13 +688,13 @@ an unsafe function. Callback signatures containing ABI-sensitive C helper types
 that Stark does not yet model exactly, such as `va_list`, must stay at a raw
 unsafe edge or use a native adapter until a target-aware carrier exists.
 Unsafe explicit conversions between raw pointers and function pointers are the
-escape hatch for native loader APIs such as Vulkan. Type checking accepts only
-an explicit cast in an unsafe context; callers are responsible for proving the
-raw pointer is non-null and names code with the exact ABI/signature carried by
-the `fnptr` type. MIR and SSA carry this as a normal conversion, but LLVM opaque
-pointer emission treats raw-pointer/function-pointer conversions as value-shape
-no-ops: no `ptrtoint`, `inttoptr`, or `bitcast` is emitted, and downstream uses
-format the original `ptr` value directly. This preserves pointer provenance and
+escape hatch for native loader APIs. Type checking accepts only an explicit
+cast in an unsafe context; callers are responsible for proving the raw pointer
+is non-null and names code with the exact ABI/signature carried by the `fnptr`
+type. MIR and SSA carry this as a normal conversion, but LLVM opaque pointer
+emission treats raw-pointer/function-pointer conversions as value-shape no-ops:
+no `ptrtoint`, `inttoptr`, or `bitcast` is emitted, and downstream uses format
+the original `ptr` value directly. This preserves pointer provenance and
 keeps dispatch-table construction free of wrapper calls.
 When a `fnptr` parameter is a bounded raw pointer such as
 `rawptr<T>[arg1]`, the synthetic `arg1` count is part of the callable ABI

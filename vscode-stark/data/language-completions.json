@@ -7,11 +7,53 @@
     "documentation": "Imports a module. Imported declarations are available by final name."
   },
   {
-    "label": "import Vendor.Vulkan",
-    "insertText": "import Vendor.Vulkan",
+    "label": "import Vendor.Raylib",
+    "insertText": "import Vendor.Raylib",
     "kind": "snippet",
-    "detail": "Import bundled Vulkan binding",
-    "documentation": "Imports Stark's generated Vendor.Vulkan loader/core binding."
+    "detail": "Import bundled Raylib binding",
+    "documentation": "Imports Stark's bundled Raylib binding."
+  },
+  {
+    "label": "import Vendor.SQLite",
+    "insertText": "import Vendor.SQLite",
+    "kind": "snippet",
+    "detail": "Import bundled SQLite binding",
+    "documentation": "Imports Stark's bundled SQLite binding."
+  },
+  {
+    "label": "import Vendor.GLFW",
+    "insertText": "import Vendor.GLFW",
+    "kind": "snippet",
+    "detail": "Import bundled GLFW binding",
+    "documentation": "Imports Stark's bundled GLFW binding."
+  },
+  {
+    "label": "import Vendor.SDL3",
+    "insertText": "import Vendor.SDL3",
+    "kind": "snippet",
+    "detail": "Import bundled SDL3 binding",
+    "documentation": "Imports Stark's bundled SDL3 binding."
+  },
+  {
+    "label": "import Vendor.Miniaudio",
+    "insertText": "import Vendor.Miniaudio",
+    "kind": "snippet",
+    "detail": "Import bundled Miniaudio binding",
+    "documentation": "Imports Stark's bundled Miniaudio binding."
+  },
+  {
+    "label": "import Vendor.STB.Image",
+    "insertText": "import Vendor.STB.Image",
+    "kind": "snippet",
+    "detail": "Import bundled STB image binding",
+    "documentation": "Imports Stark's bundled STB image binding."
+  },
+  {
+    "label": "import Vendor.Cgltf",
+    "insertText": "import Vendor.Cgltf",
+    "kind": "snippet",
+    "detail": "Import bundled cgltf binding",
+    "documentation": "Imports Stark's bundled cgltf binding."
   },
   {
     "label": "export import",

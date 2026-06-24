@@ -11,44 +11,12 @@ public sealed partial class VendorBindingAuditTests
     private static readonly VendorBinding[] Bindings =
     [
         new(
-            "LZ4",
-            "vendor/src/Vendor/LZ4.stark",
-            "vendor/build-lz4-package.sh",
-            "vendor/dist/libVendorLZ4.starkpkg",
-            "examples/lz4/LZ4RoundTrip.stark",
-            [],
-            ["liblz4"]),
-        new(
-            "Zlib",
-            "vendor/src/Vendor/Zlib.stark",
-            "vendor/build-zlib-package.sh",
-            "vendor/dist/libVendorZlib.starkpkg",
-            "examples/zlib/ZlibRoundTrip.stark",
-            ["ZlibStreamBinding.c"],
-            ["zlib"]),
-        new(
-            "Curl",
-            "vendor/src/Vendor/Curl.stark",
-            "vendor/build-curl-package.sh",
-            "vendor/dist/libVendorCurl.starkpkg",
-            "examples/curl/CurlGet.stark",
-            ["CurlEasyBinding.c"],
-            ["libcurl"]),
-        new(
             "STB.Image",
             "vendor/src/Vendor/STB/Image.stark",
             "vendor/build-stb-image-package.sh",
             "vendor/dist/libVendorSTBImage.starkpkg",
             "examples/stb-image/StbImageResize.stark",
             ["StbImageImplementation.c"],
-            []),
-        new(
-            "STB.Truetype",
-            "vendor/src/Vendor/STB/Truetype.stark",
-            "vendor/build-stb-truetype-package.sh",
-            "vendor/dist/libVendorSTBTruetype.starkpkg",
-            "examples/stb-truetype/StbTruetypeGlyphAtlas.stark",
-            ["StbTruetypeImplementation.c"],
             []),
         new(
             "Miniaudio",
@@ -75,14 +43,6 @@ public sealed partial class VendorBindingAuditTests
             ["GlfwEventBridge.c"],
             ["glfw3"]),
         new(
-            "KbTextShape",
-            "vendor/src/Vendor/KbTextShape.stark",
-            "vendor/build-kb-text-shape-package.sh",
-            "vendor/dist/libVendorKbTextShape.starkpkg",
-            "examples/kb-text-shape/TextShapeGlyphs.stark",
-            ["KbTextShapeBinding.c"],
-            ["harfbuzz", "icu-uc", "icu-i18n"]),
-        new(
             "SDL3",
             "vendor/src/Vendor/SDL3.stark",
             "vendor/build-sdl3-package.sh",
@@ -90,14 +50,6 @@ public sealed partial class VendorBindingAuditTests
             "examples/sdl3/Sdl3WindowAudio.stark",
             ["Sdl3Binding.c"],
             ["sdl3"]),
-        new(
-            "Vulkan",
-            "vendor/src/Vendor/Vulkan.stark",
-            "vendor/build-vulkan-package.sh",
-            "vendor/dist/libVendorVulkan.starkpkg",
-            "examples/vulkan/VulkanInfo.stark",
-            [],
-            ["vulkan"]),
         new(
             "SQLite",
             "vendor/src/Vendor/SQLite.stark",

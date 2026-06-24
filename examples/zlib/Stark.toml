@@ -1,8 +1,0 @@
-[project]
-name = "zlib"
-version = "0.1.0"
-kind = "executable"
-
-[executable]
-root = "ZlibRoundTrip.stark"
-output = "zlib-round-trip"

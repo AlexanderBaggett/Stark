@@ -5,87 +5,6 @@ native libraries. It is separate from `System` so the standard library can stay
 small and portable while common native bindings are still available without a
 package manager.
 
-## LZ4
-
-Use the bundled LZ4 binding with:
-
-```stark
-import Vendor.LZ4
-```
-
-The binding exposes direct one-shot block compression and decompression over
-caller-owned byte slices. Raw native pointers stay inside the binding; callers
-provide source and destination buffers and receive explicit result sizes or
-`LZ4Error` values. The hot path does not allocate.
-
-Build the package image with:
-
-```bash
-bash vendor/build-lz4-package.sh
-```
-
-The script uses `pkg-config liblz4` when available. If LZ4 is not visible to
-`pkg-config`, set `LZ4_INCLUDE_DIR` and `LZ4_LIBRARY_DIR`:
-
-```bash
-LZ4_INCLUDE_DIR=/usr/include LZ4_LIBRARY_DIR=/usr/lib bash vendor/build-lz4-package.sh
-```
-
-## Zlib
-
-Use the bundled zlib binding with:
-
-```stark
-import Vendor.Zlib
-```
-
-The binding exposes direct one-shot compression/decompression over caller-owned
-byte slices, plus streaming deflate/inflate handles. One-shot calls go straight
-to zlib's C ABI. Streaming uses `ZlibStreamBinding.c` because `z_stream`
-contains nullable C callback fields and macro-shaped initialization that Stark
-should not model as public unsafe state.
-
-Build the package image with:
-
-```bash
-bash vendor/build-zlib-package.sh
-```
-
-The script uses `pkg-config zlib` when available. If zlib is not visible to
-`pkg-config`, set `ZLIB_INCLUDE_DIR` and `ZLIB_LIBRARY_DIR`:
-
-```bash
-ZLIB_INCLUDE_DIR=/usr/include ZLIB_LIBRARY_DIR=/usr/lib bash vendor/build-zlib-package.sh
-```
-
-## Curl
-
-Use the bundled libcurl binding with:
-
-```stark
-import Vendor.Curl
-```
-
-The binding exposes a caller-owned `GetInto(...)` path for hot code that wants
-fixed buffers and no Stark allocation, plus `GetBytes(...)` for convenience
-when an owned dynamic byte response is acceptable. Raw `CURL*`, varargs
-`curl_easy_setopt`, callbacks, and native response buffers stay inside the
-binding or `CurlEasyBinding.c`.
-
-Build the package image with:
-
-```bash
-bash vendor/build-curl-package.sh
-```
-
-The script uses `pkg-config libcurl` when available. If libcurl is not visible
-to `pkg-config`, set `CURL_INCLUDE_DIR` and `CURL_LIBRARY_DIR`; fallback link
-metadata may also need TLS/backend libraries for the local libcurl build:
-
-```bash
-CURL_INCLUDE_DIR=/usr/include CURL_LIBRARY_DIR=/usr/lib bash vendor/build-curl-package.sh
-```
-
 ## Miniaudio
 
 Use the bundled Miniaudio binding with:
@@ -169,37 +88,6 @@ The script uses `pkg-config glfw3` when available. If GLFW is not visible to
 GLFW_INCLUDE_DIR=/usr/include GLFW_LIBRARY_DIR=/usr/lib bash vendor/build-glfw-package.sh
 ```
 
-## KbTextShape
-
-Use the bundled Unicode segmentation and shaping binding with:
-
-```stark
-import Vendor.KbTextShape
-```
-
-The binding uses ICU break iterators for grapheme, word, and line segmentation
-over UTF-8, and HarfBuzz for OpenType glyph shaping. Public Stark code works
-with reusable safe `Segmenter` and `Font` handles, `TextBoundary` and
-`ShapedGlyph` C-layout value records, and caller-owned output slices. Raw
-`hb_*`, `UBreakIterator`, `UText`, nullable handles, and native allocation stay
-inside `KbTextShapeBinding.c`. Segmentation boundaries are UTF-8 byte offsets,
-so they can be used directly with Stark `ascii`/UTF-8 views.
-
-Build the package image with:
-
-```bash
-bash vendor/build-kb-text-shape-package.sh
-```
-
-The script uses `pkg-config harfbuzz`, `pkg-config icu-uc`, and
-`pkg-config icu-i18n` when available. If those packages are not visible to
-`pkg-config`, set `HARFBUZZ_INCLUDE_DIR`, `HARFBUZZ_LIBRARY_DIR`,
-`ICU_INCLUDE_DIR`, and `ICU_LIBRARY_DIR`:
-
-```bash
-HARFBUZZ_INCLUDE_DIR=/usr/include/harfbuzz HARFBUZZ_LIBRARY_DIR=/usr/lib ICU_INCLUDE_DIR=/usr/include ICU_LIBRARY_DIR=/usr/lib bash vendor/build-kb-text-shape-package.sh
-```
-
 ## SDL3
 
 Use the bundled SDL3 binding with:
@@ -236,38 +124,6 @@ Headless examples and tests can use SDL's dummy drivers:
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software stark run
 ```
 
-## Vulkan
-
-Use the bundled Vulkan binding with:
-
-```stark
-import Vendor.Vulkan
-```
-
-The binding is generated from the pinned Khronos Vulkan registry XML in
-`vendor/native/vulkan/vk.xml`. The landed surface exposes safe loader-level
-queries for API version, global entry-point availability, instance layer and
-extension counts, plus generated handle wrappers and the C-layout ABI carriers
-needed for instance creation. Raw `Vk*` dispatchable handles and native
-`vk*` entry points stay internal; public code works with small Stark result
-enums, `ApiVersion`, and safe `VkInstance` wrapper values. The first package
-does not use a C adapter. `VkInstance` owns its native instance and destroys it
-on drop; `DestroyInstance` is available for explicit early release.
-
-Build the package image with:
-
-```bash
-bash vendor/build-vulkan-package.sh
-```
-
-The script uses `pkg-config vulkan` when available. If Vulkan is not visible to
-`pkg-config`, set `VULKAN_SDK`, or set `VULKAN_INCLUDE_DIR` and
-`VULKAN_LIBRARY_DIR`:
-
-```bash
-VULKAN_INCLUDE_DIR=/usr/include VULKAN_LIBRARY_DIR=/usr/lib bash vendor/build-vulkan-package.sh
-```
-
 ## STB Image
 
 Use the bundled STB image binding with:
@@ -292,31 +148,6 @@ bash vendor/build-stb-image-package.sh
 No system package or `pkg-config` dependency is required. The pinned headers
 live under `vendor/native/stb/`; see `vendor/native/stb/VERSION.md` for the
 upstream commit.
-
-## STB Truetype
-
-Use the bundled STB Truetype binding with:
-
-```stark
-import Vendor.STB.Truetype
-```
-
-The binding exposes a safe `Font` handle initialized from caller-provided font
-bytes. `StbTruetypeImplementation.c` copies the font bytes once and owns that
-stable memory for the handle lifetime, so later glyph metric, bitmap, and atlas
-calls do not depend on Stark dynamic storage staying at a fixed address. Glyph
-bitmap and atlas APIs write into caller-owned `u8` buffers and report explicit
-`TrueTypeError` values.
-
-Build the package image with:
-
-```bash
-bash vendor/build-stb-truetype-package.sh
-```
-
-No system package or `pkg-config` dependency is required. The pinned header and
-deterministic Bitstream Vera font fixture live under `vendor/native/stb/`; see
-`vendor/native/stb/VERSION.md` for upstream and fixture details.
 
 ## Raylib
 

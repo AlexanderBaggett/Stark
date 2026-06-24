@@ -1,8 +1,0 @@
-[project]
-name = "curl"
-version = "0.1.0"
-kind = "executable"
-
-[executable]
-root = "CurlGet.stark"
-output = "curl-get"
