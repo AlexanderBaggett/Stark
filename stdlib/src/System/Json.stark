@@ -197,7 +197,7 @@ public struct JsonDocument
     // Reads a Number node as f64. JSON numbers carry an optional leading '-', a
     // fraction, and an exponent, all of which the shared correctly-rounded ascii
     // parser handles directly off the raw token text. ParseF64Ascii signals
-    // Overflow for tokens outside its exact window (significand above 2**53 or
+    // Overflow for tokens outside its exact window (significand above 2 ** 53 or
     // |exp10| > 22) and InvalidFormat for malformed tokens; both surface here as
     // InvalidNumber. (The JSON tokenizer never emits underscores or inf/nan, so
     // the parser accepting those forms is harmless here.)
@@ -941,7 +941,7 @@ internal unsafe fn JsonStatus DecodeEscape(
             return JsonStatus.Err(JsonError.InvalidEscape);
         }
 
-        codePoint = (u64[0 2 ** 63 - 1])(65536 + ((unit - 55296) * 1024) + (low - 56320));
+        codePoint = (u64[0 2 ** 63 - 1])(2 ** 16 + ((unit - 55296) * 1024) + (low - 56320));
     }
     else if (unit >= 56320 && unit <= 57343)
     {
@@ -1014,7 +1014,7 @@ internal unsafe fn JsonStatus AppendUtf8CodePoint(
         return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
     }
 
-    if (codePoint < 65536)
+    if (codePoint < 2 ** 16)
     {
         stack JsonStatus first = AppendDecodedByte(document, (i8[min max])(224 +% (codePoint / 4096)));
         switch (first)
