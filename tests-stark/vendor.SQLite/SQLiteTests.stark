@@ -150,6 +150,70 @@ fn bool QueryIntEquals(mut borrow Database database, ascii sql, i32[min max] exp
     }
 }
 
+[Fact]
+fn bool ExtendedResultConstantsMatchSQLiteHeader()
+{
+    if (SQLITE_ERROR_MISSING_COLLSEQ != 257
+        || SQLITE_ERROR_KEY != 1281
+        || SQLITE_IOERR_READ != 266
+        || SQLITE_IOERR_CODEC != 9226
+        || SQLITE_LOCKED_SHAREDCACHE != 262
+        || SQLITE_BUSY_TIMEOUT != 773
+        || SQLITE_CANTOPEN_SYMLINK != 1550
+        || SQLITE_CORRUPT_INDEX != 779
+        || SQLITE_READONLY_DIRECTORY != 1544
+        || SQLITE_CONSTRAINT_DATATYPE != 3091
+        || SQLITE_NOTICE_RBU != 795
+        || SQLITE_WARNING_AUTOINDEX != 284
+        || SQLITE_AUTH_USER != 279
+        || SQLITE_OK_SYMLINK != 512)
+    {
+        return false;
+    }
+
+    return StatusFromCode(SQLITE_IOERR_READ) == SQLiteStatus.IoError
+        && StatusFromCode(SQLITE_CONSTRAINT_CHECK) == SQLiteStatus.Constraint
+        && StatusFromCode(SQLITE_BUSY_SNAPSHOT) == SQLiteStatus.Busy
+        && Code(StatusFromCode(SQLITE_READONLY_CANTLOCK)) == SQLITE_READONLY;
+}
+
+[Fact]
+fn bool AuthorizerTraceAccessAndLockConstantsMatchSQLiteHeader()
+{
+    return SQLITE_ACCESS_EXISTS == 0
+        && SQLITE_ACCESS_READWRITE == 1
+        && SQLITE_ACCESS_READ == 2
+        && SQLITE_LOCK_NONE == 0
+        && SQLITE_LOCK_EXCLUSIVE == 4
+        && SQLITE_DENY == 1
+        && SQLITE_IGNORE == 2
+        && SQLITE_CREATE_INDEX == 1
+        && SQLITE_DELETE == 9
+        && SQLITE_READ == 20
+        && SQLITE_RECURSIVE == 33
+        && SQLITE_ROLLBACK == 1
+        && SQLITE_FAIL == 3
+        && SQLITE_REPLACE == 5
+        && SQLITE_TRACE_STMT == 1
+        && SQLITE_TRACE_CLOSE == 8;
+}
+
+[Fact]
+fn bool ConfigAndDatabaseConfigConstantsMatchSQLiteHeader()
+{
+    return SQLITE_CONFIG_SINGLETHREAD == 1
+        && SQLITE_CONFIG_GETMUTEX == 11
+        && SQLITE_CONFIG_LOOKASIDE == 13
+        && SQLITE_CONFIG_COVERING_INDEX_SCAN == 20
+        && SQLITE_CONFIG_ROWID_IN_VIEW == 30
+        && SQLITE_DBCONFIG_MAINDBNAME == 1000
+        && SQLITE_DBCONFIG_ENABLE_FKEY == 1002
+        && SQLITE_DBCONFIG_DEFENSIVE == 1010
+        && SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE == 1020
+        && SQLITE_DBCONFIG_FP_DIGITS == 1023
+        && SQLITE_DBCONFIG_MAX == 1023;
+}
+
 unsafe ffi(c) fn void AddOneCallback(
     rawmutptr<i8[min max]> context,
     i32[min max] argumentCount,
