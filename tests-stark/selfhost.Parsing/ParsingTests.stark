@@ -1582,9 +1582,27 @@ fn bool ParsesCallAndIndexPostfix()
     // `v[i]` is an Index over the receiver `v` with index expression `i`.
     stack mut ExprTree indexTree = ParseExpression(indexStream, 0);
     stack u32[0 max] indexRoot = indexTree.RootNode();
-    return indexTree.NodeKindAt(indexRoot) == ExprKind.Index
-        && indexTree.NodeKindAt(indexTree.LeftAt(indexRoot)) == ExprKind.Identifier
-        && indexTree.NodeKindAt(indexTree.RightAt(indexRoot)) == ExprKind.Identifier;
+    if (indexTree.NodeKindAt(indexRoot) != ExprKind.Index
+        || indexTree.NodeKindAt(indexTree.LeftAt(indexRoot)) != ExprKind.Identifier
+        || indexTree.NodeKindAt(indexTree.RightAt(indexRoot)) != ExprKind.Identifier
+        || indexTree.AuxAt(indexRoot) != 0)
+    {
+        return false;
+    }
+
+    stack mut TokenStream sliceStream = new();
+    if (!LexOk(LexText("v[start, len]"), sliceStream))
+    {
+        return false;
+    }
+
+    // `v[start, len]` keeps the start in `Right` and the length in `Aux`.
+    stack mut ExprTree sliceTree = ParseExpression(sliceStream, 0);
+    stack u32[0 max] sliceRoot = sliceTree.RootNode();
+    return sliceTree.NodeKindAt(sliceRoot) == ExprKind.Index
+        && sliceTree.NodeKindAt(sliceTree.LeftAt(sliceRoot)) == ExprKind.Identifier
+        && sliceTree.NodeKindAt(sliceTree.RightAt(sliceRoot)) == ExprKind.Identifier
+        && sliceTree.NodeKindAt(sliceTree.AuxAt(sliceRoot)) == ExprKind.Identifier;
 }
 
 [Fact]
@@ -1675,6 +1693,30 @@ fn bool ParsesNewExpressionArguments()
         && System.Text.Equals(typeName, "Box")
         && typedTree.CallArgCount(typedRoot) == 1
         && typedTree.NodeKindAt(arg) == ExprKind.IntLiteral;
+}
+
+[Fact]
+fn bool ParsesTextAndCharacterLiteralExpressions()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("\"hello\" + '\\n'"), stream))
+    {
+        return false;
+    }
+
+    stack mut ExprTree tree = ParseExpression(stream, 0);
+    stack u32[0 max] root = tree.RootNode();
+    if (tree.NodeKindAt(root) != ExprKind.Binary)
+    {
+        return false;
+    }
+
+    stack u32[0 max] left = tree.LeftAt(root);
+    stack u32[0 max] right = tree.RightAt(root);
+    return tree.NodeKindAt(left) != ExprKind.Error
+        && tree.NodeKindAt(right) != ExprKind.Error
+        && stream.KindAt((u64[0 2 ** 63 - 1])tree.TokenAt(left)) == TokenKind.StringLiteral
+        && stream.KindAt((u64[0 2 ** 63 - 1])tree.TokenAt(right)) == TokenKind.CharacterLiteral;
 }
 
 [Fact]
