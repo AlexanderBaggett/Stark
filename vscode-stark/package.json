@@ -49,6 +49,6 @@
   },
   "scripts": {
     "generate:stdlib": "node scripts/generate-stdlib-completions.js",
-    "check": "node scripts/generate-stdlib-completions.js && node -c extension.js && node -c scripts/generate-stdlib-completions.js && node -c scripts/check-keyword-coverage.js && node -e \"const fs=require('fs'); for (const file of ['package.json','language-configuration.json','syntaxes/stark.tmLanguage.json','snippets/stark.code-snippets','data/language-completions.json','data/stdlib-completions.json']) JSON.parse(fs.readFileSync(file,'utf8'));\" && node scripts/check-keyword-coverage.js"
+    "check": "node scripts/generate-stdlib-completions.js && node -c extension.js && node -c definition-index.js && node -c scripts/generate-stdlib-completions.js && node -c scripts/check-keyword-coverage.js && node -c scripts/test-definition-index.js && node -e \"const fs=require('fs'); for (const file of ['package.json','language-configuration.json','syntaxes/stark.tmLanguage.json','snippets/stark.code-snippets','data/language-completions.json','data/stdlib-completions.json']) JSON.parse(fs.readFileSync(file,'utf8'));\" && node scripts/check-keyword-coverage.js && node scripts/test-definition-index.js"
   }
 }
