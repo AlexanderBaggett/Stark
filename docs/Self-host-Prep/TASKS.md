@@ -88,28 +88,71 @@ Execution constraints:
     - [x] Type call expressions.
     - [x] Type member-chain expressions.
     - [x] Type indexing and slicing expressions.
-    - [ ] Type assignment expressions.
-    - [ ] Type return expressions.
-    - [ ] Type conversions and coercions.
-    - [ ] Implement overload resolution.
-    - [ ] Implement method resolution.
-    - [ ] Implement trait conformance lookup.
-    - [ ] Implement generic use-site instantiation planning.
-    - [ ] Build function effect summaries.
-    - [ ] Enforce function-kind obligations.
-    - [ ] Validate law body restrictions.
-    - [ ] Validate externally visible effects.
-    - [ ] Validate allocation restrictions.
-    - [ ] Validate recursion rules.
-    - [ ] Validate layout-dependent semantics.
-    - [ ] Validate exported surfaces.
-    - [ ] Port ownership validation.
-    - [ ] Port borrow liveness.
-    - [ ] Port drop validity.
-    - [ ] Port move semantics.
-    - [ ] Port initialization guarantees.
-    - [ ] Port range facts.
-    - [ ] Port enum layout facts.
+    - [x] Type assignment expressions.
+    - [x] Type return expressions.
+    - [x] Type conversions and coercions.
+    - [x] Implement overload resolution.
+    - [x] Implement method resolution.
+    - [x] Implement trait conformance lookup.
+    - [x] Implement generic use-site instantiation planning.
+    - [x] Build function effect summaries.
+    - [x] Enforce function-kind obligations.
+    - [x] Validate law body restrictions.
+    - [x] Validate externally visible effects.
+    - [x] Validate allocation restrictions.
+    - [x] Validate recursion rules.
+    - [x] Validate layout-dependent semantics.
+      - [x] Validate layout-control attributes and FFI-safe fields.
+      - [x] Validate recursive inline-layout cycles.
+      - [x] Validate packed-field safe borrows.
+      - [x] Validate concrete layout availability for layout queries.
+    - [x] Validate exported surfaces.
+    - [~] Port ownership validation.
+      - [x] Port structural copyability classification.
+      - [x] Validate direct `where Copyable(...)` call predicates.
+    - [~] Port borrow liveness.
+      - [x] Validate straight-line local borrow conflicts.
+      - [x] Validate straight-line assignment and local-initializer moves across live borrows.
+    - [~] Port drop validity.
+      - [x] Validate destructor declaration shape and local body restrictions.
+      - [~] Validate destructor body memory effects.
+        - [x] Reject direct storage allocation and dynamic-storage mutation in destructor bodies.
+        - [ ] Build destructor effect summaries for transitive call and implicit-drop effects.
+    - [~] Port move semantics.
+      - [x] Validate straight-line direct-call moves before later reads.
+      - [x] Validate straight-line whole-variable assignment and local-initializer moves before later reads.
+    - [~] Port initialization guarantees.
+      - [x] Reject straight-line constructor reads of owning `self` fields before assignment.
+      - [~] Validate branch-complete constructor field assignment.
+        - [x] Validate `if`/`else` constructor field assignment joins.
+        - [ ] Validate exhaustive `switch` constructor field assignment joins.
+        - [x] Validate early-exit constructor paths before merging assignment facts.
+      - [~] Validate local and `out`/`init` write-before-read guarantees.
+        - [x] Reject straight-line local and `out`/`init` reads before assignment.
+        - [ ] Validate branch-complete local and `out`/`init` assignment before reads.
+        - [ ] Validate successful-return write obligations for `out`/`init` outputs.
+    - [~] Port range facts.
+      - [x] Preserve arithmetic integer range endpoint facts through MIR LLVM range attributes.
+      - [x] Propagate value-derived range facts through MIR lowering and joins.
+      - [x] Validate range facts against branch and comparison proofs.
+    - [~] Port enum layout facts.
+      - [x] Build direct-tag enum variant and scalar payload layout fact tables.
+      - [x] Resolve nested non-generic local struct and record enum payload layout facts.
+      - [x] Resolve generic aggregate enum payload layout substitutions.
+      - [x] Preserve C pack, explicit field offsets, and aggregate align attributes in enum payload size and alignment facts.
+      - [x] Preserve enum payload storage misalignment facts where lowered payload storage is under-aligned.
+      - [~] Fold enum layout facts through CTFE `System.Compiler` queries.
+        - [x] Validate enum tag, variant, and payload layout query calls in the binder.
+        - [ ] Fold enum tag layout queries to compile-time constants.
+        - [ ] Fold enum variant payload layout queries to compile-time constants.
+      - [~] Preserve enum layout facts through MIR, package images, ABI, and LLVM lowering.
+        - [x] Define enum layout as a durable type-attached MIR fact category.
+        - [x] Validate enum layout facts as layout facts at MIR phase boundaries.
+        - [ ] Attach typed enum layout rows to MIR lowering fact records.
+        - [ ] Serialize enum layout fact rows in package images.
+        - [ ] Load enum layout fact rows from package images.
+        - [ ] Carry enum tag and payload layout facts into ABI lowering.
+        - [ ] Emit LLVM IR from enum layout facts without recomputing layout.
     - [ ] Port CTFE.
     - [ ] Port compile-time generic value evaluation.
 

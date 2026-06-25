@@ -400,6 +400,69 @@ fn bool BuildTypedDeclarationSymbolsForSource(ascii source, out TokenStream stre
     }
 }
 
+fn bool BuildCopyabilityFactsForSource(ascii source, out TokenStream stream, out CopyabilityFactTable facts)
+{
+    stream = new();
+    facts = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderForBinding(source, parsedStream, header))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(parsedStream, DeclarationStartFromHeader(header)))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, parsedStream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var builtTable):
+            table = builtTable;
+    }
+
+    switch (BuildCopyabilityFacts(decls, table, source, parsedStream))
+    {
+        case BindResult<CopyabilityFactTable>.Err(var factError):
+            return false;
+        case BindResult<CopyabilityFactTable>.Ok(var builtFacts):
+            stream = parsedStream;
+            facts = builtFacts;
+            return true;
+    }
+}
+
+fn bool CopyabilityFactByName(ascii source, borrow TokenStream stream, borrow CopyabilityFactTable facts, ascii name, out bool copyable)
+{
+    copyable = false;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack ascii tokenText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.NameTokenAt(index));
+        if (System.Text.Equals(tokenText, name))
+        {
+            copyable = facts.IsCopyableAt(index);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn bool CopyabilityFactEquals(ascii source, borrow TokenStream stream, borrow CopyabilityFactTable facts, ascii name, bool expected)
+{
+    stack mut bool copyable = false;
+    return CopyabilityFactByName(source, stream, facts, name, copyable) && copyable == expected;
+}
+
 fn bool BuildTypedMemberSymbolsForSource(ascii source, out TokenStream stream, out TypedMemberSymbolTable members)
 {
     stream = new();
@@ -482,6 +545,145 @@ fn bool BuildTypedGenericSymbolsForSource(ascii source, out TokenStream stream, 
             generics = builtGenerics;
             return true;
     }
+}
+
+fn bool BuildTypedTraitConformanceTableForSource(ascii source, out TokenStream stream, out TypedTraitConformanceTable conformances)
+{
+    stream = new();
+    conformances = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
+    {
+        return false;
+    }
+
+    stack mut TypedMemberSymbolTable members = new();
+    switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            members = builtMembers;
+    }
+
+    stack mut TypedGenericParameterSymbolTable generics = new();
+    switch (BuildTypedGenericParameterSymbols(source, parsedStream, declarations, members))
+    {
+        case BindResult<TypedGenericParameterSymbolTable>.Err(var genericError):
+            return false;
+        case BindResult<TypedGenericParameterSymbolTable>.Ok(var builtGenerics):
+            generics = builtGenerics;
+    }
+
+    switch (BuildTypedTraitConformances(source, parsedStream, declarations, members, generics))
+    {
+        case BindResult<TypedTraitConformanceTable>.Err(var conformanceError):
+            return false;
+        case BindResult<TypedTraitConformanceTable>.Ok(var builtConformances):
+            stream = parsedStream;
+            conformances = builtConformances;
+            return true;
+    }
+}
+
+fn bool BuildTypedGenericInstantiationPlansForSource(ascii source, out TokenStream stream, out TypedGenericInstantiationPlanTable plans)
+{
+    stream = new();
+    plans = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
+    {
+        return false;
+    }
+
+    stack mut TypedMemberSymbolTable members = new();
+    switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            members = builtMembers;
+    }
+
+    stack mut TypedGenericParameterSymbolTable generics = new();
+    switch (BuildTypedGenericParameterSymbols(source, parsedStream, declarations, members))
+    {
+        case BindResult<TypedGenericParameterSymbolTable>.Err(var genericError):
+            return false;
+        case BindResult<TypedGenericParameterSymbolTable>.Ok(var builtGenerics):
+            generics = builtGenerics;
+    }
+
+    stack mut GenericUseSiteTable useSites = new();
+    switch (BuildGenericUseSiteSyntaxFacts(parsedStream))
+    {
+        case BindResult<GenericUseSiteTable>.Err(var useSiteError):
+            return false;
+        case BindResult<GenericUseSiteTable>.Ok(var builtUseSites):
+            useSites = builtUseSites;
+    }
+
+    switch (BuildTypedGenericInstantiationPlans(source, parsedStream, useSites, declarations, members, generics))
+    {
+        case BindResult<TypedGenericInstantiationPlanTable>.Err(var planError):
+            return false;
+        case BindResult<TypedGenericInstantiationPlanTable>.Ok(var builtPlans):
+            stream = parsedStream;
+            plans = builtPlans;
+            return true;
+    }
+}
+
+fn bool BuildTypedFunctionEffectSummariesForSource(ascii source, out TokenStream stream, out TypedFunctionEffectSummaryTable summaries)
+{
+    stream = new();
+    summaries = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
+    {
+        return false;
+    }
+
+    stack mut TypedMemberSymbolTable members = new();
+    switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
+    {
+        case BindResult<TypedMemberSymbolTable>.Err(var memberError):
+            return false;
+        case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
+            members = builtMembers;
+    }
+
+    switch (BuildTypedFunctionEffectSummaries(source, parsedStream, declarations, members))
+    {
+        case BindResult<TypedFunctionEffectSummaryTable>.Err(var summaryError):
+            return false;
+        case BindResult<TypedFunctionEffectSummaryTable>.Ok(var builtSummaries):
+            stream = parsedStream;
+            summaries = builtSummaries;
+            return true;
+    }
+}
+
+fn u32[0 max] TypedFunctionEffectIndexByName(borrow TypedFunctionEffectSummaryTable summaries, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = summaries.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])summaries.NameTokenAt(index));
+            if (System.Text.Equals(actual, name))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
 }
 
 fn u32[0 max] TypedModuleSymbolIndexByName(mut borrow TypedModuleSymbolTable symbols, ascii source, borrow TokenStream stream, ascii name)
@@ -591,6 +793,65 @@ fn u32[0 max] TypedGenericParameterSymbolIndexByOwnerAndName(
             stack ascii actualOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.OwnerNameTokenAt(index));
             stack ascii actualSymbol = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])symbols.NameTokenAt(index));
             if (System.Text.Equals(actualOwner, ownerName) && System.Text.Equals(actualSymbol, symbolName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+    borrow TypedTraitConformanceTable table,
+    ascii source,
+    borrow TokenStream stream,
+    ascii ownerName,
+    ascii subjectName,
+    ascii traitName,
+    TypedTraitConformanceKind kind)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && table.KindAt(index) == kind)
+        {
+            stack ascii actualOwner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.OwnerNameTokenAt(index));
+            stack ascii actualSubject = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.SubjectNameTokenAt(index));
+            stack ascii actualTrait = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.TraitNameTokenAt(index));
+            if (System.Text.Equals(actualOwner, ownerName)
+                && System.Text.Equals(actualSubject, subjectName)
+                && System.Text.Equals(actualTrait, traitName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] TypedGenericInstantiationPlanIndexByTargetShape(
+    borrow TypedGenericInstantiationPlanTable plans,
+    ascii source,
+    borrow TokenStream stream,
+    ascii targetName,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeArgumentCount,
+    bool containsOpenGenericArguments)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = plans.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && plans.TypeArgumentCountAt(index) == typeArgumentCount
+            && plans.ComptimeArgumentCountAt(index) == comptimeArgumentCount
+            && plans.ContainsOpenGenericArgumentsAt(index) == containsOpenGenericArguments)
+        {
+            stack ascii actualTarget = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])plans.TargetNameTokenAt(index));
+            if (System.Text.Equals(actualTarget, targetName))
             {
                 found = (u32[0 max])(index + 1);
             }
@@ -1286,6 +1547,181 @@ fn bool TypedGenericParameterSymbolsCaptureFunctionAndMethodGenerics()
 }
 
 [Fact]
+fn bool TypedTraitConformancesCaptureDirectDeclarationBases()
+{
+    stack ascii source = raw"""
+    module App.TraitBases
+    trait Drawable { }
+    trait Hashable { }
+    trait Tagged<T, comptime u8[1 8] N> { }
+
+    struct Widget : Drawable, Tagged<i32[min max], 4>
+    {
+        i32[min max] Width;
+    }
+
+    struct Key : Hashable
+    {
+        u32[0 max] Value;
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedTraitConformanceTable conformances = new();
+    if (!BuildTypedTraitConformanceTableForSource(source, stream, conformances))
+    {
+        return false;
+    }
+
+    stack u32[0 max] widgetDrawableSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Widget",
+        "Widget",
+        "Drawable",
+        TypedTraitConformanceKind.DeclarationBase);
+    stack u32[0 max] widgetTaggedSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Widget",
+        "Widget",
+        "Tagged",
+        TypedTraitConformanceKind.DeclarationBase);
+    stack u32[0 max] keyHashableSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Key",
+        "Key",
+        "Hashable",
+        TypedTraitConformanceKind.DeclarationBase);
+    if (widgetDrawableSlot == 0 || widgetTaggedSlot == 0 || keyHashableSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] widgetDrawableIndex = (u64[0 2 ** 63 - 1])(widgetDrawableSlot - 1);
+    stack u64[0 2 ** 63 - 1] widgetTaggedIndex = (u64[0 2 ** 63 - 1])(widgetTaggedSlot - 1);
+    stack u64[0 2 ** 63 - 1] keyHashableIndex = (u64[0 2 ** 63 - 1])(keyHashableSlot - 1);
+
+    return conformances.Count() == 3
+        && conformances.DeclarationBaseCount() == 3
+        && conformances.GenericConstraintCount() == 0
+        && conformances.SubjectDeclarationSymbolIndexPlusOneAt(widgetDrawableIndex) != 0
+        && conformances.TraitDeclarationSymbolIndexPlusOneAt(widgetDrawableIndex) != 0
+        && conformances.TraitResolvedAt(widgetDrawableIndex)
+        && conformances.HasDeclarationTraitConformance(
+            conformances.SubjectDeclarationSymbolIndexPlusOneAt(widgetDrawableIndex),
+            conformances.TraitDeclarationSymbolIndexPlusOneAt(widgetDrawableIndex))
+        && conformances.TraitHasGenericArgumentsAt(widgetTaggedIndex)
+        && conformances.TraitGenericOpenTokenAt(widgetTaggedIndex) != 0
+        && conformances.TraitGenericCloseTokenAt(widgetTaggedIndex) > conformances.TraitGenericOpenTokenAt(widgetTaggedIndex)
+        && conformances.TraitTypeArgumentCountAt(widgetTaggedIndex) == 1
+        && conformances.TraitComptimeArgumentCountAt(widgetTaggedIndex) == 1
+        && conformances.SubjectDeclarationSymbolIndexPlusOneAt(keyHashableIndex) != 0
+        && conformances.TraitResolvedAt(keyHashableIndex);
+}
+
+[Fact]
+fn bool TypedTraitConformancesCaptureGenericWhereBounds()
+{
+    stack ascii source = raw"""
+    module App.TraitBounds
+    trait Drawable { }
+    trait Hashable { }
+    trait Mapper<T> { }
+
+    struct Buffer<T> where T: Drawable, Hashable
+    {
+        T Value;
+    }
+
+    fn T Pick<T>(T value) where T: Drawable
+    {
+        return value;
+    }
+
+    struct Runner
+    {
+        fn U Map<U>(U value) where U: Mapper<i32[min max]>
+        {
+            return value;
+        }
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedTraitConformanceTable conformances = new();
+    if (!BuildTypedTraitConformanceTableForSource(source, stream, conformances))
+    {
+        return false;
+    }
+
+    stack u32[0 max] bufferDrawableSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Buffer",
+        "T",
+        "Drawable",
+        TypedTraitConformanceKind.GenericConstraint);
+    stack u32[0 max] bufferHashableSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Buffer",
+        "T",
+        "Hashable",
+        TypedTraitConformanceKind.GenericConstraint);
+    stack u32[0 max] pickDrawableSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Pick",
+        "T",
+        "Drawable",
+        TypedTraitConformanceKind.GenericConstraint);
+    stack u32[0 max] mapMapperSlot = TypedTraitConformanceIndexByOwnerSubjectAndTrait(
+        conformances,
+        source,
+        stream,
+        "Map",
+        "U",
+        "Mapper",
+        TypedTraitConformanceKind.GenericConstraint);
+    if (bufferDrawableSlot == 0 || bufferHashableSlot == 0 || pickDrawableSlot == 0 || mapMapperSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] bufferDrawableIndex = (u64[0 2 ** 63 - 1])(bufferDrawableSlot - 1);
+    stack u64[0 2 ** 63 - 1] bufferHashableIndex = (u64[0 2 ** 63 - 1])(bufferHashableSlot - 1);
+    stack u64[0 2 ** 63 - 1] pickDrawableIndex = (u64[0 2 ** 63 - 1])(pickDrawableSlot - 1);
+    stack u64[0 2 ** 63 - 1] mapMapperIndex = (u64[0 2 ** 63 - 1])(mapMapperSlot - 1);
+
+    return conformances.Count() == 4
+        && conformances.DeclarationBaseCount() == 0
+        && conformances.GenericConstraintCount() == 4
+        && conformances.SubjectIsGenericParameterAt(bufferDrawableIndex)
+        && conformances.SubjectGenericParameterSymbolIndexPlusOneAt(bufferDrawableIndex) != 0
+        && conformances.TraitResolvedAt(bufferDrawableIndex)
+        && conformances.HasGenericTraitConstraint(
+            conformances.SubjectGenericParameterSymbolIndexPlusOneAt(bufferDrawableIndex),
+            conformances.TraitDeclarationSymbolIndexPlusOneAt(bufferDrawableIndex))
+        && conformances.SubjectIsGenericParameterAt(bufferHashableIndex)
+        && conformances.TraitResolvedAt(bufferHashableIndex)
+        && conformances.SubjectGenericParameterSymbolIndexPlusOneAt(pickDrawableIndex) != 0
+        && conformances.OwnerMemberSymbolIndexPlusOneAt(mapMapperIndex) != 0
+        && conformances.SubjectGenericParameterSymbolIndexPlusOneAt(mapMapperIndex) != 0
+        && conformances.TraitHasGenericArgumentsAt(mapMapperIndex)
+        && conformances.TraitTypeArgumentCountAt(mapMapperIndex) == 1
+        && conformances.TraitComptimeArgumentCountAt(mapMapperIndex) == 0
+        && conformances.TraitStartTokenAt(mapMapperIndex) < conformances.TraitEndTokenAt(mapMapperIndex);
+}
+
+[Fact]
 fn bool ModuleResolverAddsNamedSourceModule()
 {
     stack ascii source = "module App.Main\n";
@@ -1640,6 +2076,812 @@ fn bool DuplicateLinkNameAttributesAreRejected()
 
     return diags.CountOf(BindDiagnosticCode.DuplicateLinkName) == 1
         && diags.CountOf(BindDiagnosticCode.InvalidLinkName) == 0;
+}
+
+[Fact]
+fn bool ExportedSurfacesRejectMembersMoreVisibleThanOwners()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("internal struct Hidden { public i32[min max] Field; public fn void Leak() { return; } }\ninternal record Header(public i32[min max] Field) { }\npublic struct Api { export unsafe fn void AbiVisible() { return; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ExportedSurfaceInvalid) == 4;
+}
+
+[Fact]
+fn bool ExportedSurfacesAllowPublicInheritanceAndExplicitExportMembersOnExportTypes()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("export struct Api { i32[min max] Value; internal fn void Hidden() { return; } export unsafe fn void AbiVisible() { return; } }\npublic struct SourceApi { public fn void Visible() { return; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ExportedSurfaceInvalid) == 0
+        && diags.CountOf(BindDiagnosticCode.AbiBoundaryEnumType) == 0;
+}
+
+[Fact]
+fn bool ExportedSurfacesRejectEnumTypesAtAbiBoundaries()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("enum Token { End, Integer(i32[min max]), }\nexport fn Token Use(Token token);\nunsafe ffi fn void Take(Token token);\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.AbiBoundaryEnumType) == 3;
+}
+
+[Fact]
+fn bool ExportedSurfacesRejectTransitiveEnumAggregateTypesAtAbiBoundaries()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("enum Token { End, }\nrecord Inner(Token Current) { }\nrecord Outer(Inner Value) { }\nexport fn Outer Use(Outer value);\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.AbiBoundaryEnumType) == 2;
+}
+
+[Fact]
+fn bool LayoutControlRejectsInvalidAttributeShapes()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[StructLayout(C), Pack(3)]\nstruct BadPack { u32[0 max] Value; }\n[StructLayout(C)]\nstruct BadField { ascii Text; }\n[StructLayout(Explicit)]\nstruct MissingOffset { u32[0 max] Value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutControlInvalid) == 2
+        && diags.CountOf(BindDiagnosticCode.FfiLayoutUnsafeField) == 1;
+}
+
+[Fact]
+fn bool LayoutControlRejectsMisplacedFieldOffsets()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[StructLayout(C)]\nstruct BadOffset { [FieldOffset(0)] u32[0 max] Value; }\nstruct AutoOffset { [FieldOffset(0)] u32[0 max] Value; }\n[StructLayout(Explicit)]\nstruct BadOffsetValue { [FieldOffset(-1)] u32[0 max] Value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutControlInvalid) == 3
+        && diags.CountOf(BindDiagnosticCode.FfiLayoutUnsafeField) == 0;
+}
+
+[Fact]
+fn bool LayoutControlAcceptsNestedControlledStructFields()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[StructLayout(C)]\nstruct Point { f32 X; f32 Y; }\n[StructLayout(C), Pack(1), Align(4)]\nstruct Packet { u8[0 max] Tag; Point Position; rawptr<System.C.c_void> UserData; System.C.c_int Count; }\n[StructLayout(Explicit)]\nstruct Word { [FieldOffset(0)] u32[0 max] Whole; [FieldOffset(0)] u16[0 max] Low; [FieldOffset(2)] u16[0 max] High; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutControlInvalid) == 0
+        && diags.CountOf(BindDiagnosticCode.FfiLayoutUnsafeField) == 0;
+}
+
+[Fact]
+fn bool PackedFieldSafeBorrowRejectsMisalignedCallArguments()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[StructLayout(C), Pack(1)]\nstruct Packet { u8[0 max] Tag; u32[0 max] Value; }\nfn void Touch(borrow u32[0 max] value) { return; }\nfn void Run(borrow Packet packet) { Touch(packet.Value); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.PackedFieldSafeBorrow) == 1;
+}
+
+[Fact]
+fn bool PackedFieldSafeBorrowRejectsBorrowReturnsAndLocals()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[StructLayout(C), Pack(1)]\nstruct Packet { u8[0 max] Tag; u32[0 max] Value; }\nfn retborrow u32[0 max] BorrowReturn(borrow Packet packet) { return packet.Value; }\nfn void BorrowLocal(borrow Packet packet) { stack borrow u32[0 max] value = packet.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.PackedFieldSafeBorrow) == 2;
+}
+
+[Fact]
+fn bool PackedFieldSafeBorrowAllowsValueReadsAndRawPointers()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[StructLayout(C), Pack(1)]\nstruct Packet { u8[0 max] Tag; u32[0 max] Value; }\nfn u32[0 max] Read(borrow Packet packet) { return packet.Value; }\nunsafe fn void TouchRaw(rawptr<u32[0 max]> value) { return; }\nunsafe fn void RawRun(borrow Packet packet) { TouchRaw(&packet.Value); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.PackedFieldSafeBorrow) == 0;
+}
+
+[Fact]
+fn bool LayoutQueriesRejectNonConcreteLocalTargets()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("trait Shape { }\nfn u64[0 max] Run() { return comptime System.Compiler.TypeSize<Shape>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 1;
+}
+
+[Fact]
+fn bool LayoutQueriesRejectFieldFactsOnNonStructTargets()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("enum Token { End, }\nfn u64[0 max] Run() { return comptime System.Compiler.FieldOffset<Token, 0>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 1;
+}
+
+[Fact]
+fn bool LayoutQueriesRejectOutOfRangeFieldIndices()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Header { i32[min max] Tag; }\nfn u64[0 max] High() { return comptime System.Compiler.FieldOffset<Header, 2>(); }\nfn u64[0 max] Negative() { return comptime System.Compiler.FieldAlign<Header, -1>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 2;
+}
+
+[Fact]
+fn bool LayoutQueriesAllowConcreteStructAndOpenGenericFacts()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Header { i32[min max] Tag; }\nfinite law u64[0 max] OffsetOf<T, comptime u64[0 max] I>() { return comptime System.Compiler.TypeSize<T>() + comptime System.Compiler.FieldOffset<T, comptime I>(); }\nfn u64[0 max] Run() { return comptime System.Compiler.TypeSize<Header>() + comptime System.Compiler.TypeAlign<Header>() + comptime System.Compiler.FieldOffset<Header, 0>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 0;
+}
+
+[Fact]
+fn bool LayoutQueriesRejectEnumFactsOnNonEnumTargets()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Header { i32[min max] Tag; }\nfn u64[0 max] Tag() { return comptime System.Compiler.EnumTagOffset<Header>(); }\nfn u64[0 max] Payload() { return comptime System.Compiler.EnumVariantPayloadOffset<Header, 0, 0>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 2;
+}
+
+[Fact]
+fn bool LayoutQueriesRejectOutOfRangeEnumIndices()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("enum Packet { Empty, Data(u8[0 max], u32[0 max]), }\nfn u64[0 max] Tag() { return comptime System.Compiler.EnumVariantTag<Packet, 2>(); }\nfn u64[0 max] Payload() { return comptime System.Compiler.EnumVariantPayloadOffset<Packet, 1, 2>(); }\nfn u64[0 max] NegativeVariant() { return comptime System.Compiler.EnumVariantPayloadSize<Packet, -1, 0>(); }\nfn u64[0 max] NegativePayload() { return comptime System.Compiler.EnumVariantPayloadAlign<Packet, 1, -1>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 4;
+}
+
+[Fact]
+fn bool LayoutQueriesAllowConcreteEnumAndOpenGenericFacts()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("enum Packet { Empty, Data(u8[0 max], u32[0 max]), }\nfinite law u64[0 max] PayloadOffsetOf<T, comptime u64[0 max] V, comptime u64[0 max] P>() { return comptime System.Compiler.EnumVariantPayloadOffset<T, comptime V, comptime P>(); }\nfn u64[0 max] Run() { return comptime System.Compiler.EnumTagSize<Packet>() + comptime System.Compiler.EnumVariantPayloadCount<Packet, 1>() + comptime PayloadOffsetOf<Packet, 1, 0>(); }\nfn bool Check() { return comptime System.Compiler.EnumTagIsMisaligned<Packet>() || comptime System.Compiler.EnumVariantPayloadIsMisaligned<Packet, 1, 0>(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LayoutQueryInvalid) == 0;
+}
+
+[Fact]
+fn bool CopyabilityFactsClassifyStructuralTypes()
+{
+    stack ascii source = "module Demo\nenum Kind { Alpha, Beta, }\nenum Token { End, Integer(i32[min max]), }\nstruct Span { Kind Tag; u64[0 max] Start; }\nstruct Owner { dynamic i32[min max] Items; }\nstruct View { Owner[] Items; }\nstruct Board { i32[min max][4] Cells; }\nstruct BadArray { Owner[2] Owners; }\nstruct Callback { fnptr<fn i32[min max](i32[min max])> Fn; }\nstruct WithDtor { i32[min max] Value; mut drop { } }\nrecord Header(Kind Tag, Owner[] Items) { }\nstruct Box<T> { T Value; }\nalias Count = u64[0 max];\nalias OwnerAlias = Owner;\n";
+    stack mut TokenStream stream = new();
+    stack mut CopyabilityFactTable facts = new();
+    if (!BuildCopyabilityFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    return CopyabilityFactEquals(source, stream, facts, "Kind", true)
+        && CopyabilityFactEquals(source, stream, facts, "Token", true)
+        && CopyabilityFactEquals(source, stream, facts, "Span", true)
+        && CopyabilityFactEquals(source, stream, facts, "Owner", false)
+        && CopyabilityFactEquals(source, stream, facts, "View", true)
+        && CopyabilityFactEquals(source, stream, facts, "Board", true)
+        && CopyabilityFactEquals(source, stream, facts, "BadArray", false)
+        && CopyabilityFactEquals(source, stream, facts, "Callback", true)
+        && CopyabilityFactEquals(source, stream, facts, "WithDtor", false)
+        && CopyabilityFactEquals(source, stream, facts, "Header", true)
+        && CopyabilityFactEquals(source, stream, facts, "Box", false)
+        && CopyabilityFactEquals(source, stream, facts, "Count", true)
+        && CopyabilityFactEquals(source, stream, facts, "OwnerAlias", false);
+}
+
+[Fact]
+fn bool CopyableAssertionsAcceptPlainEnumsStructsRecordsAndViews()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[Copyable]\nenum Kind { Alpha, Beta, }\n[Copyable]\nstruct Span { Kind Tag; i32[min max] Value; }\n[Copyable]\nrecord View(Span[] Items, fnptr<fn void()> Callback) { }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.CopyableAssertionInvalid) == 0;
+}
+
+[Fact]
+fn bool CopyableAssertionsRejectOwningFieldsAndDestructors()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[Copyable]\nstruct BadOwner { dynamic i32[min max] Items; }\n[Copyable]\nstruct BadDtor { i32[min max] Value; mut drop { } }\n[Copyable]\nrecord BadHeader(dynamic i32[min max] Items) { }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.CopyableAssertionInvalid) == 3;
+}
+
+[Fact]
+fn bool CopyableLawPredicatesAcceptCopyableValuesAndForwardedBounds()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nfn bool Duplicate<T>(T value) where Copyable(T) { return true; }\nfn bool Forwarded<T>(T value) where Copyable(T) { return Duplicate(value); }\nfn bool Run() { stack Kind kind = Kind.Alpha; return Forwarded(kind); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.CopyableConstraintInvalid) == 0;
+}
+
+[Fact]
+fn bool CopyableLawPredicatesRejectOwningValuesAndMissingForwardedBounds()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Owning { dynamic i64[min max] Items; }\nfn bool Duplicate<T>(T value) where Copyable(T) { return true; }\nfn bool MissingForward<T>(T value) { return Duplicate(value); }\nfn bool UseOwner(Owning value) { return Duplicate(value); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.CopyableConstraintInvalid) == 2;
+}
+
+[Fact]
+fn bool DropValidityRejectsDuplicateDestructorBlocks()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { i32[min max] Value; drop { } mut drop { self.Value = 0; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DuplicateDestructorBlock) == 1;
+}
+
+[Fact]
+fn bool DropValidityRejectsReadonlySelfMutation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { i32[min max] Value; drop { self.Value = 0; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadOnlyDropMutatesSelf) == 1;
+}
+
+[Fact]
+fn bool DropValidityWarnsWhenMutDropDoesNotMutateSelf()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { i32[min max] Value; mut drop { ; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MutDropWithoutSelfMutation) == 1
+        && diags.WarningCount() == 1;
+}
+
+[Fact]
+fn bool DropValidityTreatsSelfMethodCallAsMutation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { i32[min max] Value; fn void Reset(mut borrow Buffer self) { self.Value = 0; return; } mut drop { self.Reset(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MutDropWithoutSelfMutation) == 0;
+}
+
+[Fact]
+fn bool DropValidityRejectsReturnStatement()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { drop { return; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorReturn) == 1;
+}
+
+[Fact]
+fn bool DropValidityRejectsDestructorLocalStorageAllocation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Helper { }\nstruct Buffer { drop { heap Helper helper = new Helper(); arena Helper scratch = new Helper(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorAllocation) == 2;
+}
+
+[Fact]
+fn bool DropValidityRejectsDestructorDynamicStorageAllocation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; mut drop { self.Items = new(8); self.Items.TryReserve(16); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorAllocation) == 2;
+}
+
+[Fact]
+fn bool DropValidityRejectsDestructorDynamicStorageMutation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; mut drop { self.Items.MoveLast(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorDynamicStorageMutation) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadBeforeAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { self.Count = self.Items.Length; self.Items = new(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldIndexedWriteBeforeAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; Buffer() { self.Items[0] = 5; self.Items = new(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { self.Items = new(); self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterCompleteBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { self.Items = new(); } else { self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterPartialBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { self.Items = new(); } else { self.Count = 0; } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterBranchWithoutElse()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterReturnElseAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { return; } else { self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterAssignmentElseReturn()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { self.Items = new(); } else { return; } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterReturnElseWithoutAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { return; } else { self.Count = 0; } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterReturnElseEmpty()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { return; } else { } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsUnreachableReadAfterBothBranchesReturn()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { if (true) { return; } else { return; } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsScalarAndFixedArrayReadsBeforeAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { u64[0 2 ** 63 - 1] Count; u64[0 2 ** 63 - 1] Other; bool[64] Flags; Buffer() { self.Other = self.Count; self.Flags[0] = true; self.Count = 5; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsStraightLineLocalReadBeforeAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run() { stack mut i32[min max] value; return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsStraightLineLocalReadAfterAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run() { stack mut i32[min max] value; value = 4; return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsOutReadBeforeAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value) { stack u32[0 max] seen = value; value = 9; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReadAfterAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value) { value = 9; stack u32[0 max] seen = value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsInitIndexedReadBeforeWrite()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values) { stack u32[0 max] seen = values[0]; init values[0] = 7; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsInitIndexedWriteBeforeRead()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values) { init values[0] = 7; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool BorrowLivenessRejectsStraightLineMoveBeforeLastBorrowUse()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { stack borrow Box alias = box; Consume(box); alias.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.BorrowLiveConflict) == 1;
+}
+
+[Fact]
+fn bool BorrowLivenessAllowsStraightLineMoveAfterLastBorrowUse()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { stack borrow Box alias = box; alias.Value; Consume(box); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.BorrowLiveConflict) == 0;
+}
+
+[Fact]
+fn bool BorrowLivenessRejectsStraightLineOverwriteBeforeLastBorrowUse()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box replacement) { stack borrow Box alias = box; box = replacement; alias.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.BorrowLiveConflict) == 1;
+}
+
+[Fact]
+fn bool BorrowLivenessRejectsStraightLineAssignmentMoveBeforeLastBorrowUse()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box other) { stack borrow Box alias = box; other = box; alias.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.BorrowLiveConflict) == 1;
+}
+
+[Fact]
+fn bool BorrowLivenessRejectsStraightLineLocalMoveBeforeLastBorrowUse()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack borrow Box alias = box; stack Box other = box; alias.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.BorrowLiveConflict) == 1;
+}
+
+[Fact]
+fn bool MoveSemanticsRejectStraightLineReadAfterDirectCallMove()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { Consume(box); box.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 1;
+}
+
+[Fact]
+fn bool MoveSemanticsRejectStraightLineReadAfterAssignmentMove()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box other) { other = box; box.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 1;
+}
+
+[Fact]
+fn bool MoveSemanticsRejectStraightLineReadAfterLocalInitializerMove()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack Box other = box; box.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 1;
+}
+
+[Fact]
+fn bool MoveSemanticsDoNotMoveThroughBorrowParameterCalls()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Observe(borrow Box value) { return; }\nfn void Run(Box box) { Observe(box); box.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 0;
+}
+
+[Fact]
+fn bool MoveSemanticsDoNotMoveCopyableValuesThroughByValueCalls()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Pair { i32[min max] Value; }\nfn void Consume(Pair value) { return; }\nfn void Run(Pair pair) { Consume(pair); pair.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 0;
+}
+
+[Fact]
+fn bool MoveSemanticsDoNotMoveBorrowLocalInitializers()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack borrow Box alias = box; box.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 0;
+}
+
+[Fact]
+fn bool MoveSemanticsDoNotMoveCopyableAssignments()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Pair { i32[min max] Value; }\nfn void Run(Pair left, Pair right) { right = left; left.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 0;
+}
+
+[Fact]
+fn bool MoveSemanticsAllowReadAfterWholeVariableReinitialization()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box, Box replacement) { Consume(box); box = replacement; box.Value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.MoveAfterMove) == 0;
+}
+
+[Fact]
+fn bool RecursiveInlineLayoutRejectsDirectAndMutualStructCycles()
+{
+    stack mut BindDiagnosticList direct = new();
+    if (!BindSource("struct Node { Node Next; }\n", direct))
+    {
+        return false;
+    }
+
+    stack mut BindDiagnosticList mutual = new();
+    if (!BindSource("struct A { B Next; }\nstruct B { A Prev; }\n", mutual))
+    {
+        return false;
+    }
+
+    return direct.CountOf(BindDiagnosticCode.RecursiveInlineLayout) == 1
+        && mutual.CountOf(BindDiagnosticCode.RecursiveInlineLayout) == 2;
+}
+
+[Fact]
+fn bool RecursiveInlineLayoutRejectsEnumPayloadCycles()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("enum List { Empty, Cons(List), }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RecursiveInlineLayout) == 1;
+}
+
+[Fact]
+fn bool RecursiveInlineLayoutRejectsGenericUseSiteCycles()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Box<T> { T Value; }\nstruct Node { Box<Node> Boxed; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RecursiveInlineLayout) == 1;
+}
+
+[Fact]
+fn bool RecursiveInlineLayoutAllowsPointerAndDynamicSelfReferences()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Node { rawmutptr<Node> Next; dynamic Node Children; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RecursiveInlineLayout) == 0;
 }
 
 fn bool BuildCAbiBoundaries(ascii source, out CAbiAggregateBoundaryTable boundaries)
@@ -4296,6 +5538,199 @@ fn bool ReceiverCandidateSetsCaptureStaticMethodMembers()
 }
 
 [Fact]
+fn bool FunctionKindFlagsLawCallingPlainFunction()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("fn void Plain() { }\nlaw fn void Caller() { Plain(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawCallRequiresLaw) == 1
+        && diags.CountOf(BindDiagnosticCode.FiniteCallRequiresFinite) == 0
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool FunctionKindFlagsFiniteCallingPlainFunction()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("fn void Plain() { }\nfinite fn void Caller() { Plain(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.FiniteCallRequiresFinite) == 1
+        && diags.CountOf(BindDiagnosticCode.LawCallRequiresLaw) == 0
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool FunctionKindFlagsFiniteLawCallingMismatchedKinds()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("finite fn void FiniteOnly() { }\nlaw fn void LawOnly() { }\nfinite law fn void Caller() { FiniteOnly(); LawOnly(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawCallRequiresLaw) == 1
+        && diags.CountOf(BindDiagnosticCode.FiniteCallRequiresFinite) == 1
+        && diags.Count() == 2;
+}
+
+[Fact]
+fn bool FunctionKindFlagsLawCallingPlainCallableValue()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("law fn void Caller(fnptr<fn void()> callback) { callback(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawCallRequiresLaw) == 1
+        && diags.CountOf(BindDiagnosticCode.FiniteCallRequiresFinite) == 0
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool FunctionKindAllowsFiniteLawCallingFiniteLawCallableValue()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("finite law fn void Caller(fnptr<finite law void()> callback) { callback(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawCallRequiresLaw) == 0
+        && diags.CountOf(BindDiagnosticCode.FiniteCallRequiresFinite) == 0
+        && diags.Count() == 0;
+}
+
+[Fact]
+fn bool FunctionKindFlagsLawCallingPlainReceiverMethod()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Box { fn void Touch(borrow Box self) { } }\nlaw fn void Caller(Box box) { box.Touch(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawCallRequiresLaw) == 1
+        && diags.CountOf(BindDiagnosticCode.FiniteCallRequiresFinite) == 0
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool LawBodyFlagsOutAndInitParameters()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("law fn void BadOut(out i32[min max] value) { return; }\nlaw fn void BadInit(init i32[min max] value) { return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawParameterOutputType) == 2
+        && diags.CountOf(BindDiagnosticCode.LawReturnOutputType) == 0
+        && diags.Count() == 2;
+}
+
+[Fact]
+fn bool LawBodyFlagsOutAndInitReturnTypes()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("law fn out i32[min max] BadOutReturn() { return 0; }\nlaw fn init i32[min max] BadInitReturn() { return 0; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawReturnOutputType) == 2
+        && diags.CountOf(BindDiagnosticCode.LawParameterOutputType) == 0
+        && diags.Count() == 2;
+}
+
+[Fact]
+fn bool LawBodyFlagsHeapAndStaticLocalStorage()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Box { }\nlaw fn void Bad() { heap Box heapBox = new Box(); static Box saved = new Box(); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawLocalStorageInLaw) == 2
+        && diags.Count() == 2;
+}
+
+[Fact]
+fn bool LawBodyFlagsWritesThroughBorrowedParametersAndGlobals()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Box { i32[min max] Value; }\nstatic i32[min max] Counter = 0;\nlaw fn void Touch(mut borrow Box box, mut i32[min max][] values) { box.Value = 1; values[0] = 2; Counter = 3; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawExternallyVisibleWrite) == 3
+        && diags.Count() == 3;
+}
+
+[Fact]
+fn bool LawBodyAllowsPureLocalMutation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("struct Box { i32[min max] Value; }\nlaw fn i32[min max] Bump() { stack mut Box box = new Box(); box.Value = 2; return box.Value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawExternallyVisibleWrite) == 0
+        && diags.Count() == 0;
+}
+
+[Fact]
+fn bool LawBodyFlagsDynamicStorageAllocation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("law dynamic i32[min max] Make() { return new(4); }\nlaw fn bool Grow(mut borrow dynamic i32[min max] values) { return values.TryReserve(4); }\nlaw fn void Reset(mut borrow dynamic i32[min max] values) { values = new(8); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawDynamicStorageAllocation) == 3
+        && diags.CountOf(BindDiagnosticCode.LawDynamicStorageMutation) == 0
+        && diags.Count() == 3;
+}
+
+[Fact]
+fn bool LawBodyFlagsDynamicStorageMutation()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("law fn i32[min max] Pop(mut borrow dynamic i32[min max] values) { return values.MoveLast(); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawDynamicStorageMutation) == 1
+        && diags.CountOf(BindDiagnosticCode.LawDynamicStorageAllocation) == 0
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool LawEffectsFlagGlobalStateReadsButNotConstReads()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("static i32[min max] Counter = 1;\nconst Limit = 7;\nlaw fn i32[min max] ReadCounter() { return Counter; }\nlaw fn i32[min max] ReadConst() { return Limit; }\nlaw fn void WriteCounter() { Counter = 3; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.LawGlobalStateRead) == 1
+        && diags.CountOf(BindDiagnosticCode.LawExternallyVisibleWrite) == 1
+        && diags.Count() == 2;
+}
+
+[Fact]
 fn bool DirectRuntimeRecursionCollectsWarningCode()
 {
     stack mut BindDiagnosticList diags = new();
@@ -4346,6 +5781,50 @@ fn bool TailBecomeRuntimeRecursionDoesNotWarn()
     }
 
     return diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 0
+        && diags.Count() == 0;
+}
+
+[Fact]
+fn bool FiniteDirectRuntimeRecursionIsError()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("finite fn i32 recur(i32 x) { return recur(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.FiniteRecursiveCycle) == 1
+        && diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 0
+        && diags.ErrorCount() == 1
+        && diags.WarningCount() == 0;
+}
+
+[Fact]
+fn bool FiniteMutualRuntimeRecursionIsError()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("finite fn i32 left(i32 x) { return right(x); }\nfinite fn i32 right(i32 x) { return left(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.FiniteRecursiveCycle) == 2
+        && diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 0
+        && diags.ErrorCount() == 2
+        && diags.WarningCount() == 0;
+}
+
+[Fact]
+fn bool TailBecomeFiniteRuntimeRecursionDoesNotError()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("tail finite fn i32 loop(i32 x) { become loop(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.FiniteRecursiveCycle) == 0
+        && diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 0
         && diags.Count() == 0;
 }
 
@@ -4951,6 +6430,315 @@ fn bool GenericUseSiteFactsClassifySignedIntegerValueArgument()
         && facts.ComptimeValueArgumentCountAt(0) == 1
         && facts.ArgumentKindAt(0, 0) == GenericUseSiteArgumentKind.ComptimeValue
         && stream.KindAt((u64[0 2 ** 63 - 1])valueStart) == TokenKind.Minus;
+}
+
+[Fact]
+fn bool GenericUseSiteFactsCaptureTraitBaseArguments()
+{
+    stack ascii source = "trait Tagged<T, comptime u8[1 8] N> { }\nstruct Widget : Tagged<i32[min max], 4> { }\n";
+    stack mut TokenStream stream = new();
+    stack mut GenericUseSiteTable facts = new();
+    if (!BuildGenericFacts(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack ascii owner = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.OwnerTokenAt(0));
+    return facts.Count() == 1
+        && System.Text.Equals(owner, "Tagged")
+        && facts.ArgumentCountAt(0) == 2
+        && facts.TypeArgumentCountAt(0) == 1
+        && facts.ComptimeValueArgumentCountAt(0) == 1
+        && facts.ArgumentKindAt(0, 0) == GenericUseSiteArgumentKind.Type
+        && facts.ArgumentKindAt(0, 1) == GenericUseSiteArgumentKind.ComptimeValue;
+}
+
+[Fact]
+fn bool TypedGenericInstantiationPlansResolveDeclarationTargetsAndOpenArguments()
+{
+    stack ascii source = "struct Box<T> { }\nstruct Pair<T, comptime u8[1 8] N> { }\nfn Pair<Box<i32[min max]>, comptime N> make<T, comptime u8[1 8] N>(Box<T> input) { stack Pair<T, comptime N> local; }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedGenericInstantiationPlanTable plans = new();
+    if (!BuildTypedGenericInstantiationPlansForSource(source, stream, plans))
+    {
+        return false;
+    }
+
+    stack u32[0 max] pairSlot = TypedGenericInstantiationPlanIndexByTargetShape(plans, source, stream, "Pair", 1, 1, true);
+    stack u32[0 max] boxConcreteSlot = TypedGenericInstantiationPlanIndexByTargetShape(plans, source, stream, "Box", 1, 0, false);
+    stack u32[0 max] boxOpenSlot = TypedGenericInstantiationPlanIndexByTargetShape(plans, source, stream, "Box", 1, 0, true);
+    if (pairSlot == 0 || boxConcreteSlot == 0 || boxOpenSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] pairIndex = (u64[0 2 ** 63 - 1])(pairSlot - 1);
+    stack u64[0 2 ** 63 - 1] boxConcreteIndex = (u64[0 2 ** 63 - 1])(boxConcreteSlot - 1);
+    stack u64[0 2 ** 63 - 1] boxOpenIndex = (u64[0 2 ** 63 - 1])(boxOpenSlot - 1);
+    return plans.Count() == 4
+        && plans.TargetKindAt(pairIndex) == TypedGenericInstantiationTargetKind.Declaration
+        && plans.TargetDeclarationSymbolIndexPlusOneAt(pairIndex) != 0
+        && plans.ExpectedTypeParameterCountAt(pairIndex) == 1
+        && plans.ExpectedComptimeParameterCountAt(pairIndex) == 1
+        && plans.ArityMatchesAt(pairIndex)
+        && plans.ContainsOpenGenericArgumentsAt(pairIndex)
+        && !plans.DirectlyMaterializableAt(pairIndex)
+        && plans.ArgumentKindAt(pairIndex, 1) == GenericUseSiteArgumentKind.ComptimeValue
+        && plans.ArgumentGenericParameterSymbolIndexPlusOneAt(pairIndex, 1) != 0
+        && plans.ArgumentHasNestedGenericAt(pairIndex, 0)
+        && plans.DirectlyMaterializableAt(boxConcreteIndex)
+        && !plans.ContainsOpenGenericArgumentsAt(boxConcreteIndex)
+        && plans.ArgumentIsOpenGenericAt(boxOpenIndex, 0)
+        && !plans.DirectlyMaterializableAt(boxOpenIndex);
+}
+
+[Fact]
+fn bool TypedGenericInstantiationPlansDetectTargetArityMismatches()
+{
+    stack ascii source = "struct Pair<T, U> { }\nfn Pair<i32[min max]> make() { }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedGenericInstantiationPlanTable plans = new();
+    if (!BuildTypedGenericInstantiationPlansForSource(source, stream, plans))
+    {
+        return false;
+    }
+
+    stack u32[0 max] pairSlot = TypedGenericInstantiationPlanIndexByTargetShape(plans, source, stream, "Pair", 1, 0, false);
+    if (pairSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] pairIndex = (u64[0 2 ** 63 - 1])(pairSlot - 1);
+    return plans.Count() == 1
+        && plans.TargetResolvedAt(pairIndex)
+        && plans.TargetIsGenericAt(pairIndex)
+        && !plans.ArityMatchesAt(pairIndex)
+        && !plans.DirectlyMaterializableAt(pairIndex)
+        && !plans.HasUnresolvedArgumentsAt(pairIndex)
+        && plans.ExpectedTypeParameterCountAt(pairIndex) == 2
+        && plans.ExpectedComptimeParameterCountAt(pairIndex) == 0;
+}
+
+[Fact]
+fn bool TypedGenericInstantiationPlansCaptureTraitBaseTargets()
+{
+    stack ascii source = "trait Tagged<T, comptime u8[1 8] N> { }\nstruct Widget : Tagged<i32[min max], 4> { }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedGenericInstantiationPlanTable plans = new();
+    if (!BuildTypedGenericInstantiationPlansForSource(source, stream, plans))
+    {
+        return false;
+    }
+
+    stack u32[0 max] taggedSlot = TypedGenericInstantiationPlanIndexByTargetShape(plans, source, stream, "Tagged", 1, 1, false);
+    if (taggedSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] taggedIndex = (u64[0 2 ** 63 - 1])(taggedSlot - 1);
+    return plans.Count() == 1
+        && plans.TargetKindAt(taggedIndex) == TypedGenericInstantiationTargetKind.Declaration
+        && plans.TargetDeclarationSymbolIndexPlusOneAt(taggedIndex) != 0
+        && plans.ExpectedTypeParameterCountAt(taggedIndex) == 1
+        && plans.ExpectedComptimeParameterCountAt(taggedIndex) == 1
+        && plans.ArityMatchesAt(taggedIndex)
+        && plans.DirectlyMaterializableAt(taggedIndex)
+        && !plans.ContainsOpenGenericArgumentsAt(taggedIndex);
+}
+
+[Fact]
+fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
+{
+    stack ascii source = "fn void Plain() { }\nexport fn void Exported() { }\nfinite law void Law(ascii text) { }\ntail finite law inline hot fn i32[min max] TailHot(i32[min max] value) { return value; }\nstrictfp noinline finite law f32 Precise(f32 value) { return value; }\nunsafe ffi(c) varargs fn i32[min max] Native(rawptr<i8[min max]> data);\n[Backend(Opaque)]\ninline fn void Opaque() { }\nasm fn void Fence();\nstruct Box { finite law i32[min max] Method(borrow Box self) { return 1; } }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedFunctionEffectSummaryTable summaries = new();
+    if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
+    {
+        return false;
+    }
+
+    stack u32[0 max] plainSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Plain");
+    stack u32[0 max] exportedSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Exported");
+    stack u32[0 max] lawSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Law");
+    stack u32[0 max] tailHotSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "TailHot");
+    stack u32[0 max] preciseSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Precise");
+    stack u32[0 max] nativeSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Native");
+    stack u32[0 max] opaqueSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Opaque");
+    stack u32[0 max] fenceSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Fence");
+    stack u32[0 max] methodSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Method");
+    if (plainSlot == 0 || exportedSlot == 0 || lawSlot == 0 || tailHotSlot == 0 || preciseSlot == 0
+        || nativeSlot == 0 || opaqueSlot == 0 || fenceSlot == 0 || methodSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] plain = (u64[0 2 ** 63 - 1])(plainSlot - 1);
+    stack u64[0 2 ** 63 - 1] exported = (u64[0 2 ** 63 - 1])(exportedSlot - 1);
+    stack u64[0 2 ** 63 - 1] lawIndex = (u64[0 2 ** 63 - 1])(lawSlot - 1);
+    stack u64[0 2 ** 63 - 1] tailHot = (u64[0 2 ** 63 - 1])(tailHotSlot - 1);
+    stack u64[0 2 ** 63 - 1] precise = (u64[0 2 ** 63 - 1])(preciseSlot - 1);
+    stack u64[0 2 ** 63 - 1] native = (u64[0 2 ** 63 - 1])(nativeSlot - 1);
+    stack u64[0 2 ** 63 - 1] opaque = (u64[0 2 ** 63 - 1])(opaqueSlot - 1);
+    stack u64[0 2 ** 63 - 1] fence = (u64[0 2 ** 63 - 1])(fenceSlot - 1);
+    stack u64[0 2 ** 63 - 1] method = (u64[0 2 ** 63 - 1])(methodSlot - 1);
+    return summaries.Count() == 9
+        && summaries.OwnerKindAt(plain) == TypedFunctionEffectOwnerKind.Declaration
+        && summaries.HasBodyAt(plain)
+        && summaries.NoUnwindAt(plain)
+        && summaries.UseFastCallingConventionAt(plain)
+        && summaries.InlinePreferenceAt(plain) == TypedFunctionInlinePreference.InlineHint
+        && !summaries.UseFastCallingConventionAt(exported)
+        && summaries.FunctionKindAt(lawIndex) == TypedDeclarationFunctionKind.FiniteLaw
+        && summaries.IsPureAt(lawIndex)
+        && summaries.NoSyncAt(lawIndex)
+        && summaries.NoFreeAt(lawIndex)
+        && summaries.WillReturnAt(lawIndex)
+        && summaries.MustProgressAt(lawIndex)
+        && summaries.ReadsArgumentMemoryAt(lawIndex)
+        && summaries.IsTailCallableAt(tailHot)
+        && summaries.IsHotAt(tailHot)
+        && summaries.InlinePreferenceAt(tailHot) == TypedFunctionInlinePreference.Inline
+        && summaries.IsStrictFpAt(precise)
+        && summaries.InlinePreferenceAt(precise) == TypedFunctionInlinePreference.NoInline
+        && summaries.IsFfiAt(native)
+        && summaries.IsVarargsAt(native)
+        && !summaries.HasBodyAt(native)
+        && !summaries.UseFastCallingConventionAt(native)
+        && summaries.BackendOptimizationModeAt(opaque) == TypedFunctionBackendOptimizationMode.Opaque
+        && summaries.InlinePreferenceAt(opaque) == TypedFunctionInlinePreference.NoInline
+        && summaries.IsAsmAt(fence)
+        && summaries.IsFfiAt(fence)
+        && !summaries.WillReturnAt(fence)
+        && !summaries.MustProgressAt(fence)
+        && summaries.OwnerKindAt(method) == TypedFunctionEffectOwnerKind.MemberMethod
+        && summaries.IsPureAt(method)
+        && summaries.ReadsArgumentMemoryAt(method);
+}
+
+[Fact]
+fn bool TypedFunctionEffectSummariesCaptureNoRecurseFacts()
+{
+    stack ascii source = "fn i32 Leaf(i32 value) { return value; }\nfn i32 Caller(i32 value) { return Leaf(value); }\nfn i32 SelfRecursive(i32 value) { return SelfRecursive(value); }\nfn i32 MutualA(i32 value) { return MutualB(value); }\nfn i32 MutualB(i32 value) { return MutualA(value); }\nfn i32 CallsCallback(fnptr<fn i32(i32)> cb, i32 value) { return cb(value); }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedFunctionEffectSummaryTable summaries = new();
+    if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
+    {
+        return false;
+    }
+
+    stack u32[0 max] leafSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Leaf");
+    stack u32[0 max] callerSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Caller");
+    stack u32[0 max] selfSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "SelfRecursive");
+    stack u32[0 max] mutualASlot = TypedFunctionEffectIndexByName(summaries, source, stream, "MutualA");
+    stack u32[0 max] mutualBSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "MutualB");
+    stack u32[0 max] callbackSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "CallsCallback");
+    if (leafSlot == 0 || callerSlot == 0 || selfSlot == 0 || mutualASlot == 0 || mutualBSlot == 0 || callbackSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] leaf = (u64[0 2 ** 63 - 1])(leafSlot - 1);
+    stack u64[0 2 ** 63 - 1] caller = (u64[0 2 ** 63 - 1])(callerSlot - 1);
+    stack u64[0 2 ** 63 - 1] selfRecursive = (u64[0 2 ** 63 - 1])(selfSlot - 1);
+    stack u64[0 2 ** 63 - 1] mutualA = (u64[0 2 ** 63 - 1])(mutualASlot - 1);
+    stack u64[0 2 ** 63 - 1] mutualB = (u64[0 2 ** 63 - 1])(mutualBSlot - 1);
+    stack u64[0 2 ** 63 - 1] callback = (u64[0 2 ** 63 - 1])(callbackSlot - 1);
+    return summaries.NoRecurseAt(leaf)
+        && summaries.NoRecurseAt(caller)
+        && !summaries.NoRecurseAt(selfRecursive)
+        && !summaries.NoRecurseAt(mutualA)
+        && !summaries.NoRecurseAt(mutualB)
+        && !summaries.NoRecurseAt(callback);
+}
+
+[Fact]
+fn bool TypedFunctionEffectSummariesCaptureBodyShape()
+{
+    stack ascii source = "struct Widget { }\nfn void Callee() { }\nfn void Work(i32[min max] input) { stack i32[min max] value = input; value = value + 1; if (value > 0) { value = value + 2; } while (value < 10) { value = value + 1; } Callee(); new Widget(); return; }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedFunctionEffectSummaryTable summaries = new();
+    if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
+    {
+        return false;
+    }
+
+    stack u32[0 max] workSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Work");
+    if (workSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] work = (u64[0 2 ** 63 - 1])(workSlot - 1);
+    return summaries.HasBodyAt(work)
+        && summaries.BodyOpenTokenAt(work) != 0
+        && summaries.StatementCountAt(work) >= 7
+        && summaries.TopLevelStatementCountAt(work) == 7
+        && summaries.LocalDeclarationCountAt(work) == 1
+        && summaries.AssignmentExpressionCountAt(work) >= 3
+        && summaries.CallExpressionCountAt(work) == 1
+        && summaries.NewExpressionCountAt(work) == 1
+        && summaries.ReturnCountAt(work) == 1
+        && summaries.LoopCountAt(work) == 1
+        && summaries.BranchCountAt(work) == 1
+        && summaries.BodyContainsAssignmentAt(work)
+        && summaries.BodyContainsCallAt(work)
+        && summaries.BodyContainsNewAt(work)
+        && summaries.BodyContainsLoopAt(work)
+        && summaries.BodyContainsBranchAt(work)
+        && summaries.BodyContainsReturnAt(work);
+}
+
+[Fact]
+fn bool TypedFunctionEffectSummariesCaptureOtherMemoryFacts()
+{
+    stack ascii source = "static i32[min max] Counter = 0;\nconst Limit = 7;\nstruct Box { }\nfn i32[min max] ReadCounter() { return Counter; }\nfn i32[min max] ReadConst() { return Limit; }\nfn void WriteCounter() { Counter = 1; return; }\nfn i32[min max] LocalOnly(i32[min max] value) { stack mut i32[min max] local = value; local = local + 1; return local; }\nfn void HeapLocal() { heap Box box = new Box(); return; }\nfn dynamic i32[min max] MakeDynamic() { return new(4); }\nfn bool ReserveDynamic(mut borrow dynamic i32[min max] values) { return values.TryReserve(4); }\nfn void ArenaDynamic() { stack dynamic i32[min max] values = new(arena, 4); return; }\n";
+    stack mut TokenStream stream = new();
+    stack mut TypedFunctionEffectSummaryTable summaries = new();
+    if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
+    {
+        return false;
+    }
+
+    stack u32[0 max] readSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "ReadCounter");
+    stack u32[0 max] constSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "ReadConst");
+    stack u32[0 max] writeSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "WriteCounter");
+    stack u32[0 max] localSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "LocalOnly");
+    stack u32[0 max] heapSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "HeapLocal");
+    stack u32[0 max] makeSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "MakeDynamic");
+    stack u32[0 max] reserveSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "ReserveDynamic");
+    stack u32[0 max] arenaSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "ArenaDynamic");
+    if (readSlot == 0 || constSlot == 0 || writeSlot == 0 || localSlot == 0
+        || heapSlot == 0 || makeSlot == 0 || reserveSlot == 0 || arenaSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] readIndex = (u64[0 2 ** 63 - 1])(readSlot - 1);
+    stack u64[0 2 ** 63 - 1] constIndex = (u64[0 2 ** 63 - 1])(constSlot - 1);
+    stack u64[0 2 ** 63 - 1] writeIndex = (u64[0 2 ** 63 - 1])(writeSlot - 1);
+    stack u64[0 2 ** 63 - 1] localIndex = (u64[0 2 ** 63 - 1])(localSlot - 1);
+    stack u64[0 2 ** 63 - 1] heapIndex = (u64[0 2 ** 63 - 1])(heapSlot - 1);
+    stack u64[0 2 ** 63 - 1] makeIndex = (u64[0 2 ** 63 - 1])(makeSlot - 1);
+    stack u64[0 2 ** 63 - 1] reserveIndex = (u64[0 2 ** 63 - 1])(reserveSlot - 1);
+    stack u64[0 2 ** 63 - 1] arenaIndex = (u64[0 2 ** 63 - 1])(arenaSlot - 1);
+    return summaries.ReadsOtherMemoryAt(readIndex)
+        && !summaries.WritesOtherMemoryAt(readIndex)
+        && !summaries.ReadsOtherMemoryAt(constIndex)
+        && !summaries.WritesOtherMemoryAt(constIndex)
+        && !summaries.ReadsOtherMemoryAt(writeIndex)
+        && summaries.WritesOtherMemoryAt(writeIndex)
+        && !summaries.ReadsOtherMemoryAt(localIndex)
+        && !summaries.WritesOtherMemoryAt(localIndex)
+        && summaries.ReadsOtherMemoryAt(heapIndex)
+        && summaries.WritesOtherMemoryAt(heapIndex)
+        && summaries.ReadsOtherMemoryAt(makeIndex)
+        && summaries.WritesOtherMemoryAt(makeIndex)
+        && summaries.ReadsOtherMemoryAt(reserveIndex)
+        && summaries.WritesOtherMemoryAt(reserveIndex)
+        && summaries.ReadsOtherMemoryAt(arenaIndex)
+        && summaries.WritesOtherMemoryAt(arenaIndex);
 }
 
 [Fact]

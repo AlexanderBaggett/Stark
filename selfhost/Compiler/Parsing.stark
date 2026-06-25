@@ -4030,8 +4030,7 @@ public struct StatementList
         return self.Expressions.RightAt(node);
     }
 
-    // The auxiliary child of expression node `node` (currently the else-branch
-    // of a conditional expression), or 0 when none.
+    // The auxiliary slot of expression node `node`, or 0 when none.
     public law u32[0 max] ExprAuxAt(borrow StatementList self, u32[0 max] node)
     {
         return self.Expressions.AuxAt(node);
@@ -4227,8 +4226,8 @@ finite law u32[0 max] SkipStatementBody(borrow TokenStream stream, u32[0 max] st
 }
 
 // True for a token that can begin a type: a user-type identifier or one of the
-// built-in scalar type tokens. Used to find a parameter/local's type-primary
-// token (the first such token at bracket depth 0).
+// built-in type tokens. Used to find a parameter/local's type-primary token
+// (the first such token at bracket depth 0).
 public finite law bool IsTypeStartToken(TokenKind kind)
 {
     switch (kind)
@@ -4251,9 +4250,17 @@ public finite law bool IsTypeStartToken(TokenKind kind)
             return true;
         case TokenKind.UnicodeOwned:
             return true;
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
         case TokenKind.Fnptr:
             return true;
         case TokenKind.Closure:
+            return true;
+        case TokenKind.Dyn:
+            return true;
+        case TokenKind.Dynamic:
             return true;
         default:
             return false;
@@ -5344,6 +5351,10 @@ public enum ExprKind
     // `new(arena, ...)`; they are syntax selectors, not value identifiers.
     New,
     StorageSelector,
+    // `Conversion` carries the opening `(` token, the target type-primary token
+    // in `Left`, the converted operand in `Right`, and the target close `)` in
+    // `Aux`. The target type span is `(Token + 1)..Aux`.
+    Conversion,
     // `Assign` carries the assignment-operator token, the assignment target in
     // `Left`, and the assigned value in `Right`.
     Assign,
@@ -5365,8 +5376,9 @@ public struct ExprTree
     internal dynamic u32[0 max] Lefts;
     internal dynamic u32[0 max] Rights;
     // Per-node auxiliary slot: for `Call` and `New` nodes it holds the argument
-    // count; for `Conditional` it holds the else-branch node; for slice `Index`
-    // nodes it holds the length expression; unused (0) for other kinds.
+    // count; for `Conversion` it holds the conversion target's closing `)`;
+    // for `Conditional` it holds the else-branch node; for slice `Index` nodes
+    // it holds the length expression; unused (0) for other kinds.
     internal dynamic u32[0 max] Aux;
     // Flat argument list: a `Call` or `New` node's `Right` is the 1-based index
     // of its first argument node here, and `Aux` is how many it spans.
@@ -5469,7 +5481,7 @@ public struct ExprTree
         return count;
     }
 
-    // The auxiliary child of `node` (a `Conditional`'s else-branch node), or 0.
+    // The auxiliary slot of `node`, or 0 when none.
     public law u32[0 max] AuxAt(borrow ExprTree self, u32[0 max] node)
     {
         stack mut u32[0 max] child = 0;
@@ -6022,12 +6034,161 @@ fn ExprParse ParsePostfixExpr(borrow TokenStream stream, mut borrow ExprTree tre
     return result;
 }
 
-// Parses a unary-prefixed expression (`-`/`!`/`~`) or a postfix expression.
+finite law bool IsConversionTypeQualifier(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Borrow:
+            return true;
+        case TokenKind.Retborrow:
+            return true;
+        case TokenKind.Storeborrow:
+            return true;
+        case TokenKind.Frozen:
+            return true;
+        case TokenKind.Shared:
+            return true;
+        case TokenKind.Out:
+            return true;
+        case TokenKind.Init:
+            return true;
+        case TokenKind.Mut:
+            return true;
+        default:
+            return false;
+    }
+}
+
+finite law bool IsConversionNonArrayTypeStart(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
+        case TokenKind.IntegerType:
+            return true;
+        case TokenKind.FloatType:
+            return true;
+        case TokenKind.Bool:
+            return true;
+        case TokenKind.AsciiView:
+            return true;
+        case TokenKind.UnicodeView:
+            return true;
+        case TokenKind.AsciiOwned:
+            return true;
+        case TokenKind.UnicodeOwned:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn u32[0 max] ConversionTypePrimaryToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (IsConversionNonArrayTypeStart(kind))
+        {
+            return scan;
+        }
+
+        if (!IsConversionTypeQualifier(kind))
+        {
+            return 0;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+fn u32[0 max] ParseConversionTargetCloseParen(borrow TokenStream stream, u32[0 max] lparen)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])lparen) != TokenKind.LParen)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] targetStart = (u32[0 max])(lparen + 1);
+    stack mut u32[0 max] primary = ConversionTypePrimaryToken(stream, targetStart, (u32[0 max])stream.Count());
+    if (primary == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = targetStart;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            if (depth == 0)
+            {
+                return scan;
+            }
+
+            depth = (u32[0 max])(depth - 1);
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+// Parses a conversion, unary-prefixed expression, or postfix expression.
 fn ExprParse ParseUnaryExpr(borrow TokenStream stream, mut borrow ExprTree tree, u32[0 max] pos)
 {
     stack mut ExprParse result = new();
     stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])pos);
-    if (kind == TokenKind.Minus || kind == TokenKind.Bang || kind == TokenKind.Tilde)
+    if (kind == TokenKind.LParen)
+    {
+        stack u32[0 max] conversionClose = ParseConversionTargetCloseParen(stream, pos);
+        if (conversionClose != 0)
+        {
+            stack ExprParse operand = ParseUnaryExpr(stream, tree, (u32[0 max])(conversionClose + 1));
+            stack u32[0 max] primaryToken = ConversionTypePrimaryToken(stream, (u32[0 max])(pos + 1), conversionClose);
+            result.Node = tree.AddRaw(ExprKind.Conversion, pos, primaryToken, operand.Node, conversionClose);
+            result.Pos = operand.Pos;
+            return result;
+        }
+    }
+
+    if (kind == TokenKind.Minus
+        || kind == TokenKind.Bang
+        || kind == TokenKind.Tilde
+        || kind == TokenKind.Plus
+        || kind == TokenKind.WrapSub
+        || kind == TokenKind.And
+        || kind == TokenKind.Star
+        || kind == TokenKind.Try
+        || kind == TokenKind.Comptime
+        || kind == TokenKind.Init)
     {
         stack ExprParse operand = ParseUnaryExpr(stream, tree, (u32[0 max])(pos + 1));
         result.Node = tree.AddNode(ExprKind.Unary, pos, operand.Node, 0);

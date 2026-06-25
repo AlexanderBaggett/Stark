@@ -292,6 +292,51 @@ fn bool ValueFactTransferImportsParameterGlobalAndReturnFacts()
 }
 
 [Fact]
+fn bool BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId two = MirConstInt(instrs, 2);
+    stack MirValueId three = MirConstInt(instrs, 3);
+    stack MirValueId five = MirAdd(instrs, two, three);
+    stack MirValueId minusOne = MirSub(instrs, two, three);
+    stack MirValueId six = MirMul(instrs, two, three);
+    stack MirValueId less = MirCmpLt(instrs, two, three);
+    stack MirValueId flag = MirZExt(instrs, less);
+    stack MirValueId merged = MirPhi2(instrs, five, MirBlockIdOf(1), three, MirBlockIdOf(2));
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts fiveFacts = ValueFactsForMirValue(valueFacts, five);
+    stack ValueFacts minusOneFacts = ValueFactsForMirValue(valueFacts, minusOne);
+    stack ValueFacts sixFacts = ValueFactsForMirValue(valueFacts, six);
+    stack ValueFacts flagFacts = ValueFactsForMirValue(valueFacts, flag);
+    stack ValueFacts mergedFacts = ValueFactsForMirValue(valueFacts, merged);
+    return valueFacts.Count() == instrs.Count()
+        && fiveFacts.HasIntegerRange()
+        && fiveFacts.IntegerRangeLower() == 5
+        && fiveFacts.IntegerRangeUpperExclusive() == 6
+        && minusOneFacts.HasIntegerRange()
+        && minusOneFacts.IntegerRangeLower() == -1
+        && minusOneFacts.IntegerRangeUpperExclusive() == 0
+        && sixFacts.HasIntegerRange()
+        && sixFacts.IntegerRangeLower() == 6
+        && sixFacts.IntegerRangeUpperExclusive() == 7
+        && flagFacts.HasIntegerRange()
+        && flagFacts.IntegerRangeLower() == 0
+        && flagFacts.IntegerRangeUpperExclusive() == 2
+        && mergedFacts.HasIntegerRange()
+        && mergedFacts.IntegerRangeLower() == 3
+        && mergedFacts.IntegerRangeUpperExclusive() == 6;
+}
+
+[Fact]
 fn bool ValueFactTransferPolicyHelpersRecordEmptyRows()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -414,6 +459,21 @@ fn bool IrFactValueDescriptorsMatchCurrentValueFacts()
 }
 
 [Fact]
+fn bool IrFactEnumLayoutDescriptorPreservesPackageBoundaryContract()
+{
+    stack IrFactCategoryDescriptor enumLayout = DescribeIrFactCategory(IrFactCategory.EnumLayout);
+    return enumLayout.AttachPoint() == IrFactAttachPoint.Type
+        && enumLayout.PhaseOwner() == IrFactPhaseOwner.Backend
+        && enumLayout.Durability() == IrFactDurability.Durable
+        && enumLayout.Producer() == IrFactProducer.TypeChecker
+        && enumLayout.Consumer() == IrFactConsumer.PackageWriter
+        && enumLayout.ValidationRule() == IrFactValidationRule.PackageRoundTrip
+        && enumLayout.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop
+        && IrFactCategoryIsLayoutFact(IrFactCategory.EnumLayout)
+        && IrFactCategoryRequiresPackageSerialization(IrFactCategory.EnumLayout);
+}
+
+[Fact]
 fn bool IrFactDurableDescriptorsRequirePackageSerialization()
 {
     stack mut u32[0 max] durable = 0;
@@ -428,6 +488,7 @@ fn bool IrFactDurableDescriptorsRequirePackageSerialization()
 
     return durable == 8
         && IrFactCategoryRequiresPackageSerialization(IrFactCategory.CallableAbi)
+        && IrFactCategoryRequiresPackageSerialization(IrFactCategory.EnumLayout)
         && IrFactCategoryRequiresPackageSerialization(IrFactCategory.PackageCompatibility)
         && !IrFactCategoryRequiresPackageSerialization(IrFactCategory.ValueIntegerRange)
         && !IrFactCategoryRequiresPackageSerialization(IrFactCategory.DiagnosticSourceLocation);
@@ -480,6 +541,7 @@ fn bool IrFactValidationClassifiesMissingFactFamilies()
         && MissingFactStatusForCategory(IrFactCategory.AliasProofCarrier) == IrFactValidationStatus.MissingAliasFact
         && MissingFactStatusForCategory(IrFactCategory.TypeLayout) == IrFactValidationStatus.MissingLayoutFact
         && MissingFactStatusForCategory(IrFactCategory.FieldLayout) == IrFactValidationStatus.MissingLayoutFact
+        && MissingFactStatusForCategory(IrFactCategory.EnumLayout) == IrFactValidationStatus.MissingLayoutFact
         && MissingFactStatusForCategory(IrFactCategory.PackageCompatibility) == IrFactValidationStatus.MissingDurablePackageFact;
 }
 
@@ -561,6 +623,7 @@ fn bool IrFactValidationChecksCAbiCarrierAndLayoutFacts()
         && ValidateCAbiAggregateCarrierFactAtBoundary(types, carrierFacts, TypeIdOf(3)) == IrFactValidationStatus.StaleHandle
         && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(1), IrFactCategory.TypeLayout) == IrFactValidationStatus.Ok
         && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(2), IrFactCategory.StructLayout) == IrFactValidationStatus.Ok
+        && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(2), IrFactCategory.EnumLayout) == IrFactValidationStatus.Ok
         && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(3), IrFactCategory.TypeLayout) == IrFactValidationStatus.StaleHandle;
 }
 
@@ -1183,6 +1246,48 @@ fn bool CompileFunctionRangeSignatureLowersToLlvmRangeAttributes()
 }
 
 [Fact]
+fn bool CompileFunctionArithmeticRangeSignatureLowersToLlvmRangeAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64[1 + 1 2 ** 4] id(i64[2 * 3 10 + 1] x) { return x }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define range(i64 2, 17) i64 @main(i64 range(i64 6, 12) %p0) {\nb1:\n  ret i64 %p0\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleArithmeticCallArgumentLowersToLlvmRangeAttribute()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 10] id(i64[0 10] x) { return x } fn i64[0 10] main() { return id(2 + 3) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define range(i64 0, 11) i64 @f1(i64 range(i64 0, 11) %p0) {\nb1:\n  ret i64 %p0\n}\ndefine range(i64 0, 11) i64 @f2() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = call i64 @f1(i64 range(i64 5, 6) %v3), !range !0\n  ret i64 %v4\n}\n!0 = !{i64 0, i64 11}\n");
+}
+
+[Fact]
+fn bool CompileFunctionRejectsUnprovenReturnRangeAttributes()
+{
+    stack mut OwnedAscii good = new();
+    stack mut OwnedAscii literalTooWide = new();
+    stack mut OwnedAscii paramTooWide = new();
+    return CompileFunctionToLlvm("fn i64[0 10] good() { return 7 }", good)
+        && LlvmTextEquals(good, "define range(i64 0, 11) i64 @main() {\nb1:\n  %v1 = add i64 0, 7\n  ret i64 %v1\n}\n")
+        && !CompileFunctionToLlvm("fn i64[0 10] bad() { return 99 }", literalTooWide)
+        && !CompileFunctionToLlvm("fn i64[0 10] bad(i64[0 max] x) { return x }", paramTooWide);
+}
+
+[Fact]
+fn bool CompileModuleBranchReturnRangeUsesComparisonProof()
+{
+    stack mut OwnedAscii proven = new();
+    stack bool provenOk = CompileModuleFromAst("fn i64[0 10] bounded(i64[0 max] x) { if x < 11 return x else return 0 }", proven);
+    stack mut OwnedAscii tooWide = new();
+    stack bool tooWideOk = CompileModuleFromAst("fn i64[0 10] bounded(i64[0 max] x) { if x < 12 return x else return 0 }", tooWide);
+    return provenOk
+        && System.Text.Contains(proven.View(), "define range(i64 0, 11) i64 @f1")
+        && !tooWideOk;
+}
+
+[Fact]
 fn bool CompileFunctionFiniteLawLowersToStructuredEffectAttributes()
 {
     stack mut OwnedAscii sink = new();
@@ -1331,7 +1436,7 @@ fn bool CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("finite law fn id(x) { return x } fn main() { return id(7) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 %v1)\n  ret i64 %v2\n}\n");
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 range(i64 7, 8) %v1)\n  ret i64 %v2\n}\n");
 }
 
 [Fact]
@@ -3655,7 +3760,7 @@ fn bool CompilesModuleWithCallFromAst()
     stack bool ok = CompileModuleFromAst("fn double(x) { return x + x } fn main() { return double(5) }", sink);
     stack mut OwnedAscii ghost = new();
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call i64 @f1(i64 %v1)\n  ret i64 %v2\n}\n")
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call i64 @f1(i64 range(i64 5, 6) %v1)\n  ret i64 %v2\n}\n")
         && !CompileModuleFromAst("fn main() { return ghost() }", ghost);
 }
 
@@ -3668,7 +3773,7 @@ fn bool CompilesTailBecomeFromAst()
     stack mut OwnedAscii nonTailTarget = new();
     stack mut OwnedAscii mismatchedAbi = new();
     return ok
-        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0) {\nb1:\n  ret i64 %p0\n}\ndefine tailcc i64 @f2(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\ndefine i64 @f3() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call tailcc i64 @f2(i64 %v1)\n  ret i64 %v2\n}\n")
+        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0) {\nb1:\n  ret i64 %p0\n}\ndefine tailcc i64 @f2(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\ndefine i64 @f3() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call tailcc i64 @f2(i64 range(i64 5, 6) %v1)\n  ret i64 %v2\n}\n")
         && !CompileModuleFromAst("tail fn done(x) { return x } fn bad(x) { become done(x) }", nonTailFunction)
         && !CompileModuleFromAst("fn plain(x) { return x } tail fn bad(x) { become plain(x) }", nonTailTarget)
         && !CompileModuleFromAst("tail fn one(x) { return x } tail fn two(x, y) { become one(x) }", mismatchedAbi);
@@ -3692,9 +3797,9 @@ fn bool CompilesThreeAndFourArgumentTailBecomeFromAst()
     stack mut OwnedAscii four = new();
     stack bool fourOk = CompileModuleFromAstChecked("tail fn add4(a, b, c, d) { return a + b + c + d } tail fn bounce4(a, b, c, d) { become add4(a, b, c, d) } fn main() { return bounce4(1, 2, 3, 4) }", four);
     stack bool threeTail = System.Text.Contains(three.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2)\n  ret i64");
-    stack bool threeCall = System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3)");
+    stack bool threeCall = System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 range(i64 1, 2) %v1, i64 range(i64 2, 3) %v2, i64 range(i64 3, 4) %v3)");
     stack bool fourTail = System.Text.Contains(four.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2, i64 %p3)\n  ret i64");
-    stack bool fourCall = System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3, i64 %v4)");
+    stack bool fourCall = System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 range(i64 1, 2) %v1, i64 range(i64 2, 3) %v2, i64 range(i64 3, 4) %v3, i64 range(i64 4, 5) %v4)");
     if (!threeOk)
     {
         WriteLine("threeOk false");
@@ -3815,7 +3920,7 @@ fn bool CompilesTailRecursiveBranchFromAst()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAstChecked("tail fn count(n, acc) { if n == 0 return acc else become count(n - 1, acc + 1) } fn main() { return count(3, 0) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 0\n  %v3 = icmp eq i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p1\nb3:\n  %v6 = add i64 0, 1\n  %v7 = sub i64 %p0, %v6\n  %v9 = add i64 0, 1\n  %v10 = add i64 %p1, %v9\n  %v11 = musttail call tailcc i64 @f1(i64 %v7, i64 %v10)\n  ret i64 %v11\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 0\n  %v3 = call tailcc i64 @f1(i64 %v1, i64 %v2)\n  ret i64 %v3\n}\n");
+        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 0\n  %v3 = icmp eq i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p1\nb3:\n  %v6 = add i64 0, 1\n  %v7 = sub i64 %p0, %v6\n  %v9 = add i64 0, 1\n  %v10 = add i64 %p1, %v9\n  %v11 = musttail call tailcc i64 @f1(i64 %v7, i64 %v10)\n  ret i64 %v11\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 0\n  %v3 = call tailcc i64 @f1(i64 range(i64 3, 4) %v1, i64 range(i64 0, 1) %v2)\n  ret i64 %v3\n}\n");
 }
 
 [Fact]
@@ -3981,7 +4086,7 @@ fn bool CompilesTwoArgumentCallFromAst()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("fn add(a, b) { return a + b } fn main() { return add(3, 4) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 4\n  %v3 = call i64 @f1(i64 %v1, i64 %v2)\n  ret i64 %v3\n}\n");
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 4\n  %v3 = call i64 @f1(i64 range(i64 3, 4) %v1, i64 range(i64 4, 5) %v2)\n  ret i64 %v3\n}\n");
 }
 
 [Fact]
