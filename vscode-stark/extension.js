@@ -1,6 +1,10 @@
 "use strict";
 
 const vscode = require("vscode");
+const {
+    createDefinitionIndex,
+    resolveDefinition,
+} = require("./definition-index");
 
 const languageCompletions = require("./data/language-completions.json");
 const stdlibCompletions = require("./data/stdlib-completions.json");
@@ -223,6 +227,126 @@ function rootCompletions(document) {
     return items;
 }
 
+function isStarkDocument(document) {
+    return document.languageId === "stark" || document.uri.path.endsWith(".stark");
+}
+
+async function starkWorkspaceDocuments() {
+    const documents = new Map();
+    const uris = await vscode.workspace.findFiles("**/*.stark", "**/{.git,node_modules}/**");
+
+    await Promise.all(uris.map(async uri => {
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        documents.set(uri.toString(), {
+            uri: uri.toString(),
+            text: Buffer.from(bytes).toString("utf8"),
+        });
+    }));
+
+    for (const document of vscode.workspace.textDocuments) {
+        if (isStarkDocument(document)) {
+            documents.set(document.uri.toString(), {
+                uri: document.uri.toString(),
+                text: document.getText(),
+            });
+        }
+    }
+
+    return [...documents.values()];
+}
+
+function createStarkDefinitionProvider(context) {
+    let index = createDefinitionIndex([]);
+    let dirty = true;
+    let rebuildPromise = null;
+    let rebuildTimer = null;
+
+    async function rebuildIndex() {
+        const documents = await starkWorkspaceDocuments();
+        index = createDefinitionIndex(documents);
+        dirty = false;
+        rebuildPromise = null;
+        return index;
+    }
+
+    function ensureIndex() {
+        if (!dirty) {
+            return Promise.resolve(index);
+        }
+
+        if (!rebuildPromise) {
+            rebuildPromise = rebuildIndex();
+        }
+
+        return rebuildPromise;
+    }
+
+    function scheduleRebuild() {
+        dirty = true;
+        if (rebuildTimer) {
+            clearTimeout(rebuildTimer);
+        }
+
+        rebuildTimer = setTimeout(() => {
+            rebuildPromise = rebuildIndex().catch(error => {
+                dirty = true;
+                rebuildPromise = null;
+                console.error("Failed to rebuild Stark definition index", error);
+            });
+        }, 250);
+    }
+
+    const watcher = vscode.workspace.createFileSystemWatcher("**/*.stark");
+    context.subscriptions.push(
+        watcher,
+        watcher.onDidCreate(scheduleRebuild),
+        watcher.onDidChange(scheduleRebuild),
+        watcher.onDidDelete(scheduleRebuild),
+        vscode.workspace.onDidOpenTextDocument(document => {
+            if (isStarkDocument(document)) {
+                scheduleRebuild();
+            }
+        }),
+        vscode.workspace.onDidSaveTextDocument(document => {
+            if (isStarkDocument(document)) {
+                scheduleRebuild();
+            }
+        }),
+        vscode.workspace.onDidChangeTextDocument(event => {
+            if (isStarkDocument(event.document)) {
+                scheduleRebuild();
+            }
+        }),
+        vscode.workspace.onDidChangeWorkspaceFolders(scheduleRebuild),
+    );
+
+    rebuildPromise = rebuildIndex().catch(error => {
+        dirty = true;
+        rebuildPromise = null;
+        console.error("Failed to build Stark definition index", error);
+    });
+
+    return {
+        async provideDefinition(document, position) {
+            const currentIndex = await ensureIndex();
+            const definitions = resolveDefinition(currentIndex, {
+                uri: document.uri.toString(),
+                text: document.getText(),
+                line: position.line,
+                character: position.character,
+            });
+
+            return definitions.map(definition => new vscode.Location(
+                vscode.Uri.parse(definition.uri),
+                new vscode.Range(
+                    new vscode.Position(definition.range.start.line, definition.range.start.character),
+                    new vscode.Position(definition.range.end.line, definition.range.end.character),
+                ),
+            ));
+        },
+    };
+}
+
 function activate(context) {
     const provider = {
         provideCompletionItems(document, position) {
@@ -252,6 +376,11 @@ function activate(context) {
         { language: "stark" },
         provider,
         ".",
+    ));
+
+    context.subscriptions.push(vscode.languages.registerDefinitionProvider(
+        { language: "stark" },
+        createStarkDefinitionProvider(context),
     ));
 }
 
