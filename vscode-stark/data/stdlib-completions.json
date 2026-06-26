@@ -153,6 +153,18 @@
     "documentation": "System.C\n\nVisibility: public"
   },
   {
+    "label": "VaList",
+    "insertText": "VaList",
+    "kind": "alias",
+    "module": "System.C",
+    "source": "compiler-known",
+    "detail": "compiler-known C va_list ABI carrier",
+    "signature": "System.C.VaList",
+    "visibility": "public",
+    "qualifiedName": "System.C.VaList",
+    "documentation": "`System.C.VaList` models C `va_list` only as an unsafe `ffi(c)` parameter, an `ffi(c)` function-pointer parameter, or a direct raw-pointer pointee."
+  },
+  {
     "label": "CCharBuffer",
     "insertText": "CCharBuffer",
     "kind": "struct",

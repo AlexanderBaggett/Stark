@@ -2459,8 +2459,6 @@ internal sealed class TypeChecker
 
                 try
                 {
-                    var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
-                    ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
                     var isUnsafe = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal));
                     var isFfi = functionSyntax.Modifiers.Any(FfiAbiSyntaxFacts.IsFfiModifier);
                     var isVarargs = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal));
@@ -2491,6 +2489,9 @@ internal sealed class TypeChecker
                             ffiAbi = abiResolution.Abi;
                         }
                     }
+
+                    var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
+                    ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
 
                     if ((isFfi || isAsm) && !isUnsafe)
                     {
@@ -2529,7 +2530,8 @@ internal sealed class TypeChecker
                             parameterType,
                             parameter.type_(),
                             $"parameter '{parameter.Identifier().GetText()}'",
-                            allowDirectInlineClosureParameter: true);
+                            allowDirectInlineClosureParameter: true,
+                            allowDirectCVaListParameter: isFfi && SupportsCVaListAbiParameter(ffiAbi));
                         if (isAbiBoundary)
                         {
                             ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
@@ -24319,7 +24321,8 @@ internal sealed class TypeChecker
         StarkTypeSymbol type,
         ParserRuleContext context,
         string usage,
-        bool allowDirectInlineClosureParameter = false)
+        bool allowDirectInlineClosureParameter = false,
+        bool allowDirectCVaListParameter = false)
     {
         if (TryFindCompileTimeOnlyTypeDependency(type, out var dependencyName, out var dependencyKind))
         {
@@ -24345,6 +24348,14 @@ internal sealed class TypeChecker
                 context);
         }
 
+        if (TryFindInvalidCVaListUse(type, allowDirectCVaListParameter, out var invalidCVaListType))
+        {
+            ReportError(
+                "STK3051",
+                $"Type '{invalidCVaListType.DisplayName}' is a target-specific C ABI carrier and is valid only as an unsafe ffi(c)-compatible function parameter, an ffi(c)-compatible function-pointer parameter, or the direct pointee of rawptr<System.C.VaList>/rawmutptr<System.C.VaList>. It cannot be stored, returned, constructed, or used as an ordinary Stark value.",
+                context);
+        }
+
         if (TryFindInvalidDynTraitVtableUse(type, out var invalidVtableType))
         {
             ReportError(
@@ -24363,6 +24374,11 @@ internal sealed class TypeChecker
         }
 
         return type;
+    }
+
+    private static bool SupportsCVaListAbiParameter(StarkFfiAbi? abi)
+    {
+        return FfiAbiSyntaxFacts.AbiSupportsCVarargs(abi);
     }
 
     private static bool TryFindInvalidDynTraitVtableUse(StarkTypeSymbol type, out StarkTypeSymbol invalidVtableType)
@@ -24545,6 +24561,87 @@ internal sealed class TypeChecker
         }
 
         invalidCVoidType = StarkTypeSymbols.Error;
+        return false;
+    }
+
+    private static bool TryFindInvalidCVaListUse(
+        StarkTypeSymbol type,
+        bool allowDirectCAbiParameter,
+        out StarkTypeSymbol invalidCVaListType)
+    {
+        return TryFindInvalidCVaListUse(
+            type,
+            allowDirectCAbiParameter,
+            isDirectRawPointerPointee: false,
+            out invalidCVaListType);
+    }
+
+    private static bool TryFindInvalidCVaListUse(
+        StarkTypeSymbol type,
+        bool allowDirectCAbiParameter,
+        bool isDirectRawPointerPointee,
+        out StarkTypeSymbol invalidCVaListType)
+    {
+        if (type.Kind == StarkTypeKind.CVaList)
+        {
+            invalidCVaListType = type;
+            return !(allowDirectCAbiParameter || isDirectRawPointerPointee);
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            return TryFindInvalidCVaListUse(
+                type.ElementType,
+                allowDirectCAbiParameter: false,
+                isDirectRawPointerPointee: true,
+                out invalidCVaListType);
+        }
+
+        if (type.ElementType is not null
+            && TryFindInvalidCVaListUse(type.ElementType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindInvalidCVaListUse(type.FunctionPointerReturnType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+        {
+            return true;
+        }
+
+        var allowsFunctionPointerCVaListParameter = type.Kind == StarkTypeKind.FunctionPointer
+            && SupportsCVaListAbiParameter(type.FunctionPointerAbi);
+        foreach (var parameterType in type.FunctionPointerParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVaListUse(parameterType, allowsFunctionPointerCVaListParameter, isDirectRawPointerPointee: false, out invalidCVaListType))
+            {
+                return true;
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindInvalidCVaListUse(type.ClosureReturnType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+        {
+            return true;
+        }
+
+        foreach (var parameterType in type.ClosureParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVaListUse(parameterType, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+            {
+                return true;
+            }
+        }
+
+        foreach (var typeArgument in type.TypeArguments ?? [])
+        {
+            if (TryFindInvalidCVaListUse(typeArgument, allowDirectCAbiParameter: false, isDirectRawPointerPointee: false, out invalidCVaListType))
+            {
+                return true;
+            }
+        }
+
+        invalidCVaListType = StarkTypeSymbols.Error;
         return false;
     }
 

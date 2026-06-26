@@ -7640,8 +7640,8 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Theory]
-    [InlineData("x86_64-unknown-linux-gnu", "declare i64 @NativeLong(i64) nounwind", "call i64 @NativeLong(i64 1)")]
-    [InlineData("x86_64-pc-windows-msvc", "declare i32 @NativeLong(i64) nounwind", "call i32 @NativeLong(i64 1)")]
+    [InlineData("x86_64-unknown-linux-gnu", "declare i64 @NativeLong(i64) nounwind", "call i64 @NativeLong(i64 range(i64 1, 2) 1)")]
+    [InlineData("x86_64-pc-windows-msvc", "declare i32 @NativeLong(i64) nounwind", "call i32 @NativeLong(i64 range(i64 1, 2) 1)")]
     public void SystemCPrimitiveAliasesLowerToTargetLlvmTypes(
         string targetTriple,
         string expectedNativeLongDeclaration,
@@ -7670,6 +7670,35 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains(expectedNativeLongCall, llvm);
         Assert.Contains("declare void @NativeFree(ptr) nounwind", llvm);
         Assert.Contains("call void @NativeFree(ptr %arg_ptr)", llvm);
+    }
+
+    [Fact]
+    public void SystemCVaListLowersAsTargetCAbiPointerCarrier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_char> NativeFormat(
+                rawptr<System.C.c_char> format,
+                System.C.VaList args);
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_char> ForwardFormat(
+                rawptr<System.C.c_char> format,
+                System.C.VaList args)
+            {
+                return NativeFormat(format, args);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare ptr @NativeFormat(ptr readonly, ptr) nounwind", llvm);
+        Assert.Contains("define ptr @ForwardFormat(ptr readonly %arg_format, ptr %arg_args)", llvm);
+        Assert.Contains("call ptr @NativeFormat(ptr readonly %arg_format, ptr %arg_args)", llvm);
     }
 
     [Fact]

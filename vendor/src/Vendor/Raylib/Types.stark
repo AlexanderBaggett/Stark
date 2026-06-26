@@ -339,10 +339,7 @@ public alias RenderTexture2D = RenderTexture;
 public alias Camera = Camera3D;
 public alias ModelAnimPose = rawmutptr<Transform>;
 
-// Raylib's trace-log callback takes a C va_list. Stark does not yet expose a
-// target-aware va_list carrier, so keep that one as an explicitly unsafe raw
-// callback edge instead of pretending it is an ordinary typed callback.
-public alias TraceLogCallback = rawptr<i8[min max]>;
+public alias TraceLogCallback = fnptr<unsafe ffi(c) fn void(i32[min max], ascii, System.C.VaList)>;
 public alias LoadFileDataCallback = fnptr<unsafe ffi(c) fn rawmutptr<u8[0 max]>(ascii, rawmutptr<i32[min max]>)>;
 public alias SaveFileDataCallback = fnptr<unsafe ffi(c) fn bool(ascii, rawmutptr<i8[min max]>, i32[min max])>;
 public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;

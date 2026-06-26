@@ -42,6 +42,7 @@ Initial aliases:
 | `System.C.c_size_t` | `size_t` |
 | `System.C.c_ptrdiff_t` | `ptrdiff_t` |
 | `System.C.c_void` | `void`, only as a raw pointer pointee |
+| `System.C.VaList` | `va_list`, only as a C ABI parameter carrier |
 
 Examples:
 
@@ -55,6 +56,10 @@ public unsafe ffi(c) fn rawmutptr<System.C.c_void> malloc(
     System.C.c_size_t bytes);
 
 public unsafe ffi(c) fn void free(rawmutptr<System.C.c_void> ptr);
+
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> vformat(
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
 ```
 
 Use `System.C.c_char` only when the C header says `char`. Use
@@ -187,7 +192,43 @@ Conversions between `rawptr<System.C.c_void>` and `rawptr<T>` are explicit raw
 pointer conversions and remain unsafe where Stark already requires unsafe raw
 pointer conversion.
 
-## 7. FFI And Platform Layout Use
+## 7. `VaList`
+
+`System.C.VaList` is a target-specific C ABI carrier for C `va_list`. It is for
+fixed-arity C APIs that receive an existing varargs list, not for declaring
+Stark variadic bodies.
+
+Valid uses:
+
+```stark
+unsafe ffi(c) fn rawmutptr<System.C.c_char> vmprintf(
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
+
+alias TraceCallback =
+    fnptr<unsafe ffi(c) fn void(rawptr<System.C.c_char>, System.C.VaList)>;
+
+unsafe fn rawptr<System.C.VaList> KeepOpaque(rawptr<System.C.VaList> args)
+{
+    return args;
+}
+```
+
+Invalid uses:
+
+```stark
+stack System.C.VaList args;                  // error
+unsafe ffi(c) fn System.C.VaList BadReturn(); // error
+struct BadCarrier
+{
+    System.C.VaList Args;                    // error
+}
+```
+
+The C# compiler lowers a direct `System.C.VaList` parameter to the target C ABI
+carrier. On currently supported C varargs ABIs this is an opaque LLVM `ptr`.
+
+## 8. FFI And Platform Layout Use
 
 The intended use is to mirror external C declarations:
 
@@ -216,7 +257,7 @@ struct StatLike
 The layout engine resolves each field alias for the active target before
 computing field offsets, padding, alignment, and ABI lowering.
 
-## 8. Package Images
+## 9. Package Images
 
 The compiler should keep both facts:
 
@@ -228,7 +269,7 @@ primitive plus the original alias spelling. If Stark later supports
 target-independent package images, those images must serialize the symbolic
 `System.C` alias and resolve it when imported for a concrete target.
 
-## 9. Diagnostics
+## 10. Diagnostics
 
 Recommended diagnostics:
 
@@ -236,12 +277,13 @@ Recommended diagnostics:
 |---|
 | Target descriptor does not define a required C type mapping. |
 | `System.C.c_void` used as a value, field, array element, generic argument requiring a value type, or function return. |
+| `System.C.VaList` used outside an unsafe `ffi(c)`-compatible parameter, `ffi(c)` function-pointer parameter, or direct raw-pointer pointee. |
 | Plain `System.C.c_char` signedness requested but missing from the target descriptor. |
 | C alias used in a non-FFI public API where a stable Stark type would be clearer. This may start as a warning. |
 | Attempted implicit conversion from C string pointer to Stark text. |
 | Attempted implicit conversion between `rawptr<c_void>` and a typed raw pointer. |
 
-## 10. Work Items
+## 11. Work Items
 
 - [x] Implement target-mapped `System.C` primitive aliases and `c_void`:
       target data-model facts, alias definitions, `c_void` as an incomplete
@@ -260,9 +302,13 @@ Recommended diagnostics:
       aggregate behavior.
 - [x] Add coverage for ILP32, LP64, LLP64, `c_char` signedness, `c_void`,
       package images, FFI declarations, and platform ABI aggregates.
+- [x] Add `System.C.VaList` as a target-aware C ABI carrier for `va_list`
+      parameters, including invalid-use diagnostics, LLVM pointer-carrier
+      lowering, package/source spelling preservation, and SQLite va_list API
+      coverage.
 - [x] Update user-facing FFI docs and Stark language skill references.
 
-## 11. Implementation Evidence
+## 12. Implementation Evidence
 
 - Compiler-known target data model: `src/Compiler/StarkCDataModelFacts.cs`.
 - Type resolution and `System.C.c_char_is_signed` compile-time fact:

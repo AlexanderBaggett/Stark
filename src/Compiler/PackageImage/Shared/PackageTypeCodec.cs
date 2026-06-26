@@ -612,6 +612,7 @@ internal static partial class PackageImageLoader
             "ascii" => StarkTypeSymbols.Ascii,
             "unicode" => StarkTypeSymbols.Unicode,
             "cvoid" => StarkTypeSymbols.CVoid,
+            "cvalist" => StarkTypeSymbols.CVaList,
             "null" => StarkTypeSymbols.Null,
             "integer" => StarkTypeSymbols.Integer(
                 type.BitWidth ?? 32,
@@ -849,6 +850,7 @@ internal static partial class PackageImageLoader
             "ascii" => "ascii",
             "unicode" => "unicode",
             "cvoid" => "System.C.c_void",
+            "cvalist" => "System.C.VaList",
             "null" => "null",
             "integer" => PackageImageIntegerTypeText.Render(type.BitWidth, type.RangeMin, type.RangeMax, type.IsUnsigned == true),
             "float" => $"f{type.BitWidth}",

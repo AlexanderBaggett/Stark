@@ -2796,6 +2796,20 @@ fn System.C.CStringResult<System.C.c_int> PrintName(ascii name)
 
 See 13.5 for the `System.C` C-string types.
 
+C APIs that receive an already-built `va_list` use `System.C.VaList`, not
+`ffi varargs`. `VaList` is a target-specific C ABI carrier for fixed-arity
+`vprintf`-style functions and callbacks. It is valid only as an unsafe
+`ffi(c)`-compatible function parameter, an `ffi(c)`-compatible function-pointer
+parameter, or the direct pointee of `rawptr<System.C.VaList>` /
+`rawmutptr<System.C.VaList>`. It cannot be stored, returned, constructed, or
+used as an ordinary Stark value.
+
+```stark
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vmprintf(
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
+```
+
 ### 13.2 Assembly Functions
 
 Assembly functions are Stark's current low level inline assembly boundary. They
@@ -2970,7 +2984,7 @@ C headers spell integer and pointer-size types as `int`, `long`, `size_t`, and s
 | `System.C.c_short` | `short` | `System.C.c_size_t` | `size_t` |
 | `System.C.c_ushort` | `unsigned short` | `System.C.c_ptrdiff_t` | `ptrdiff_t` |
 | `System.C.c_int` | `int` | `System.C.c_void` | `void` (raw pointee only) |
-| `System.C.c_uint` | `unsigned int` | | |
+| `System.C.c_uint` | `unsigned int` | `System.C.VaList` | `va_list` (ABI parameter carrier only) |
 | `System.C.c_long` | `long` | | |
 
 These are **target-resolved aliases**: the compiler maps each one onto an ordinary Stark sized primitive for the active target before layout, type checking, and codegen. They do not create a second integer type system, hidden conversions, or distinct ABI identities. For example, `System.C.c_int` resolves to `i32[min max]`, and `System.C.c_long` resolves to `i32[min max]` on ILP32/LLP64 targets but `i64[min max]` on LP64 targets. Two aliases that resolve to the same primitive are the same runtime type on that target.
@@ -3000,6 +3014,8 @@ unsafe fn i64[min max] StableCount()
 `c_char` signedness is target-dependent. Plain `System.C.c_char` follows the target's `char` signedness (exposed as the compile-time bool `System.C.c_char_is_signed`); `System.C.c_schar` is always signed 8-bit and `System.C.c_uchar` is always unsigned 8-bit. Use `c_char` only where the header says `char`. For byte buffers that are not text, use `System.C.c_uchar` or `u8[0 max]`. `c_char` signedness is a C ABI fact, not an encoding fact, and there is no implicit conversion between `rawptr<System.C.c_char>` and Stark `ascii`.
 
 `System.C.c_void` is an incomplete foreign pointee. It is valid only as the direct pointee of a raw pointer (`rawptr<System.C.c_void>` / `rawmutptr<System.C.c_void>`); using it as a value, field, array element, or function return is a compile-time error (STK3050). C functions that return `void` use Stark's ordinary `void` return type. Conversions between `rawptr<System.C.c_void>` and a typed raw pointer are explicit raw pointer conversions and stay unsafe.
+
+`System.C.VaList` models C `va_list` at ABI edges. It is valid only as an unsafe `ffi(c)`-compatible function parameter, an `ffi(c)`-compatible function-pointer parameter, or the direct pointee of `rawptr<System.C.VaList>` / `rawmutptr<System.C.VaList>`; using it as a normal value, local, field, array element, or return type is a compile-time error (STK3051). Stark code still cannot construct a C `va_list` or define a C-style variadic body.
 
 For ABI aggregates, C aliases preserve layout intent; the layout engine resolves each field alias for the active target before computing offsets (see 8.7):
 
