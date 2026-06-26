@@ -78,7 +78,8 @@ public sealed partial class VendorBindingAuditTests
         foreach (var sourcePath in Directory.EnumerateFiles(vendorSourceRoot, "*.stark", SearchOption.AllDirectories))
         {
             var relativePath = Path.GetRelativePath(repositoryRoot, sourcePath).Replace('\\', '/');
-            if (relativePath.StartsWith("vendor/src/Vendor/Raylib", StringComparison.Ordinal))
+            if (relativePath.StartsWith("vendor/src/Vendor/Raylib", StringComparison.Ordinal)
+                || relativePath.StartsWith("vendor/src/Vendor/SQLite", StringComparison.Ordinal))
             {
                 continue;
             }
@@ -98,7 +99,7 @@ public sealed partial class VendorBindingAuditTests
 
         Assert.True(
             failures.Count == 0,
-            "Non-Raylib Vendor bindings must keep raw pointers and unsafe native entry points behind safe Stark wrappers."
+            "Vendor bindings without an explicit documented raw submodule must keep raw pointers and unsafe native entry points behind safe Stark wrappers."
             + Environment.NewLine
             + string.Join(Environment.NewLine, failures));
     }
@@ -794,6 +795,203 @@ public sealed partial class VendorBindingAuditTests
         Assert.True(File.Exists(Path.Combine(targetNativeRoot, "rlgl.h")));
     }
 
+    [Fact]
+    public void SQLiteAuditInventoryMatchesRecordedCoverage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var auditText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "docs",
+            "Self-host-Prep",
+            "29-missing-vendor-api-bindings.md"));
+        var sqliteTypesText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "vendor",
+            "src",
+            "Vendor",
+            "SQLite",
+            "Types.stark"));
+        var sqliteSelfHostedTestsText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "tests-stark",
+            "vendor.SQLite",
+            "SQLiteTests.stark"));
+
+        Assert.Contains("SQLite `3.53.2`", auditText, StringComparison.Ordinal);
+        Assert.Contains("public const ascii SQLITE_VERSION = \"3.53.2\";", sqliteTypesText, StringComparison.Ordinal);
+        Assert.Contains("public const SQLITE_VERSION_NUMBER = 3053002;", sqliteTypesText, StringComparison.Ordinal);
+        Assert.Contains(
+            "lists 304 public function entries, 495 constants, and 29 public object/type entries",
+            auditText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "The missing surface is 3 functions, 0 constants, and 0 object/type carrier names.",
+            auditText,
+            StringComparison.Ordinal);
+
+        var objects = ExtractMarkdownInventoryEntries(
+            ReadMarkdownSection(auditText, "### Complete SQLite Object Inventory"),
+            "SQLite object inventory");
+        var functions = ExtractMarkdownInventoryEntries(
+            ReadMarkdownSection(auditText, "### Complete SQLite Function Inventory"),
+            "SQLite function inventory");
+        var constants = ExtractMarkdownInventoryEntries(
+            ReadMarkdownSection(auditText, "### Complete SQLite Constant Inventory"),
+            "SQLite constant inventory");
+
+        Assert.Equal(29, objects.Count);
+        Assert.Equal(304, functions.Count);
+        Assert.Equal(495, constants.Count);
+
+        Assert.Empty(objects.Where(static entry => InventoryStatusIsMissing(entry.Value)).Select(static entry => entry.Key));
+        Assert.Empty(constants.Where(static entry => InventoryStatusIsMissing(entry.Value)).Select(static entry => entry.Key));
+
+        var missingFunctions = functions
+            .Where(static entry => InventoryStatusIsMissing(entry.Value))
+            .Select(static entry => entry.Key)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            ["sqlite3_str_vappendf", "sqlite3_vmprintf", "sqlite3_vsnprintf"],
+            missingFunctions);
+        Assert.Contains(
+            "`va_list` printf families (`sqlite3_vmprintf`, `sqlite3_vsnprintf`, `sqlite3_str_vappendf`) remain pending",
+            auditText,
+            StringComparison.Ordinal);
+
+        var sqliteApiRoutineFields = SQLiteApiRoutineFieldRegex().Matches(sqliteTypesText)
+            .Select(static match => match.Groups[1].Value)
+            .ToArray();
+        Assert.Equal(277, sqliteApiRoutineFields.Length);
+        Assert.Equal("AggregateContext", sqliteApiRoutineFields[0]);
+        Assert.Contains("CreateWindowFunction", sqliteApiRoutineFields);
+        Assert.Contains("SetErrmsg", sqliteApiRoutineFields);
+        Assert.Contains("DbStatus64", sqliteApiRoutineFields);
+        Assert.Equal("CArrayBindV2", sqliteApiRoutineFields[^1]);
+        Assert.Contains(
+            "`sqlite3_api_routines` - covered as full C-layout `SQLite3ApiRoutinesNative` field table",
+            auditText,
+            StringComparison.Ordinal);
+
+        var sqlitePublicAliases = ExtractPublicAliasNames(sqliteTypesText);
+        Assert.Contains("SQLiteExtensionDatabase", sqlitePublicAliases);
+        Assert.Contains("SQLiteExtensionErrorMessagePointer", sqlitePublicAliases);
+        Assert.Contains("SQLiteExtensionApi", sqlitePublicAliases);
+        Assert.Contains("SQLiteLoadExtensionEntry", sqlitePublicAliases);
+        Assert.Contains("SQLiteAutoExtensionCallback", sqlitePublicAliases);
+        Assert.Contains(
+            "loadable-extension and auto-extension entrypoint ABI aliases",
+            auditText,
+            StringComparison.Ordinal);
+        Assert.Contains("SQLiteByteView", ExtractPublicStructNames(sqliteTypesText));
+        Assert.Contains("public enum SQLiteByteViewResult", sqliteTypesText, StringComparison.Ordinal);
+        Assert.Contains(
+            "owned byte-copy wrappers and unsafe zero-copy borrowed byte views",
+            auditText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PublicOwnerViewAndResultTypesHaveExpectedShape",
+            sqliteSelfHostedTestsText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PublicCallbackAliasesHaveExpectedAbiShape",
+            sqliteSelfHostedTestsText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PublicNonGenericFunctionItemsBatch0AreReferenceable",
+            sqliteSelfHostedTestsText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PublicNonGenericFunctionItemsBatch4AreReferenceable",
+            sqliteSelfHostedTestsText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PublicContractFunctionItemsAreReferenceable",
+            sqliteSelfHostedTestsText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PublicCallbackAndGenericFunctionItemsAreReferenceable",
+            sqliteSelfHostedTestsText,
+            StringComparison.Ordinal);
+        Assert.Equal(493, Regex.Matches(sqliteSelfHostedTestsText, "stack fnptr<").Count);
+        Assert.Contains(
+            "Stark self-hosted source tests now cover SQLite constant parity",
+            auditText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "493 public wrapper function items",
+            auditText,
+            StringComparison.Ordinal);
+
+        var sqlitePublicConstants = ExtractPublicConstNames(sqliteTypesText)
+            .Where(static name => name.StartsWith("SQLITE_", StringComparison.Ordinal))
+            .ToHashSet(StringComparer.Ordinal);
+        var documentedNonScalarConstants = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "SQLITE_DBSTATUS",
+            "SQLITE_STMTSTATUS",
+            "SQLITE_TRACE",
+            "SQLITE_TRANSIENT"
+        };
+        var constantsThatMustBePublic = constants.Keys.Except(documentedNonScalarConstants, StringComparer.Ordinal);
+
+        Assert.Empty(constantsThatMustBePublic.Except(sqlitePublicConstants, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Empty(sqlitePublicConstants.Except(constants.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Equal(
+            documentedNonScalarConstants.OrderBy(static name => name, StringComparer.Ordinal),
+            constants.Keys.Except(sqlitePublicConstants, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.Contains("`SQLITE_DBSTATUS`, `SQLITE_STMTSTATUS`, and `SQLITE_TRACE` are official reference-index keywords", auditText, StringComparison.Ordinal);
+        Assert.Contains("`SQLITE_STATIC` is exposed as the zero destructor-sentinel value", auditText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SQLiteRawModuleOwnsAbiDeclarations()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sqliteRootText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "vendor",
+            "src",
+            "Vendor",
+            "SQLite.stark"));
+        var sqliteCoreText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "vendor",
+            "src",
+            "Vendor",
+            "SQLite",
+            "Core.stark"));
+        var sqliteRawText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "vendor",
+            "src",
+            "Vendor",
+            "SQLite",
+            "Raw.stark"));
+        var sqliteRawSelfHostedTestsText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "tests-stark",
+            "vendor.SQLite",
+            "SQLiteRawTests.stark"));
+        var auditText = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "docs",
+            "Self-host-Prep",
+            "29-missing-vendor-api-bindings.md"));
+
+        Assert.DoesNotContain("export import Vendor.SQLite.Raw", sqliteRootText, StringComparison.Ordinal);
+        Assert.Contains("import Vendor.SQLite.Raw", sqliteCoreText, StringComparison.Ordinal);
+        Assert.Contains("module Vendor.SQLite.Raw", sqliteRawText, StringComparison.Ordinal);
+        Assert.Contains("export import Vendor.SQLite.Types", sqliteRawText, StringComparison.Ordinal);
+
+        Assert.DoesNotMatch(new Regex(@"^\s*(?:public|internal)\s+unsafe\s+ffi", RegexOptions.Multiline), sqliteCoreText);
+        Assert.Equal(313, Regex.Matches(sqliteRawText, @"^public unsafe ffi", RegexOptions.Multiline).Count);
+        Assert.Equal(8, Regex.Matches(sqliteRawText, @"^public unsafe ffi varargs", RegexOptions.Multiline).Count);
+        Assert.Contains("RawAbiFunctionItemsAreReferenceable", sqliteRawSelfHostedTestsText, StringComparison.Ordinal);
+        Assert.Contains("`Vendor.SQLite.Raw`", auditText, StringComparison.Ordinal);
+        Assert.Contains("safe `Vendor.SQLite` root does not re-export `Vendor.SQLite.Raw`", auditText, StringComparison.Ordinal);
+    }
+
     private static async Task<bool> RequiredPkgConfigPackagesExistAsync(IReadOnlyList<string> packageNames)
     {
         if (packageNames.Count == 0)
@@ -938,6 +1136,50 @@ public sealed partial class VendorBindingAuditTests
             .ToHashSet(StringComparer.Ordinal);
     }
 
+    private static string ReadMarkdownSection(string markdownText, string heading)
+    {
+        var start = markdownText.IndexOf(heading, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Missing markdown heading '{heading}'.");
+
+        var contentStart = markdownText.IndexOf('\n', start);
+        Assert.True(contentStart >= 0, $"Markdown heading '{heading}' has no body.");
+        contentStart++;
+
+        var nextHeading = markdownText.IndexOf("\n### ", contentStart, StringComparison.Ordinal);
+        return nextHeading >= 0
+            ? markdownText[contentStart..nextHeading]
+            : markdownText[contentStart..];
+    }
+
+    private static IReadOnlyDictionary<string, string> ExtractMarkdownInventoryEntries(string sectionText, string inventoryName)
+    {
+        var entries = new Dictionary<string, string>(StringComparer.Ordinal);
+        var duplicates = new List<string>();
+
+        foreach (Match match in MarkdownInventoryEntryRegex().Matches(sectionText))
+        {
+            var name = match.Groups[1].Value;
+            var status = match.Groups[2].Value;
+            if (!entries.TryAdd(name, status))
+            {
+                duplicates.Add(name);
+            }
+        }
+
+        Assert.True(entries.Count > 0, $"{inventoryName} did not contain any markdown inventory entries.");
+        Assert.Empty(duplicates.OrderBy(static name => name, StringComparer.Ordinal));
+        return entries;
+    }
+
+    private static bool InventoryStatusIsMissing(string status)
+    {
+        return status.StartsWith("missing", StringComparison.OrdinalIgnoreCase)
+            || status.Contains(" - missing", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [GeneratedRegex(@"^- `([^`]+)` - (.+)$", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex MarkdownInventoryEntryRegex();
+
     [GeneratedRegex(@"^\s*public\s+(?:inline\s+)?(?:finite\s+law\s+|finite\s+|law\s+|fn\s+)?[^{;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex PublicFunctionNameRegex();
 
@@ -971,11 +1213,14 @@ public sealed partial class VendorBindingAuditTests
     [GeneratedRegex(@"^\s*public\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex PublicStructRegex();
 
-    [GeneratedRegex(@"^\s*public\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*public\s+const\s+(?:[^\r\n=]+?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex PublicConstRegex();
 
     [GeneratedRegex(@"^\s*public\s+alias\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex PublicAliasRegex();
+
+    [GeneratedRegex(@"^\s*SQLiteExtensionApiRoutine\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex SQLiteApiRoutineFieldRegex();
 
     private sealed record VendorBinding(
         string Name,

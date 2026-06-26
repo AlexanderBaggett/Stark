@@ -1,0 +1,246 @@
+import System.Console
+import System.IO.File
+import System.IO.Path
+import System.Memory
+import Vendor.SQLite
+module SQLiteSnapshots
+
+fn bool TextResultEquals(SQLiteTextResult result, ascii expected)
+{
+    switch (result)
+    {
+        case SQLiteTextResult.Err(var error):
+            return false;
+        case SQLiteTextResult.Ok(var text):
+            return text.View() == expected;
+    }
+}
+
+fn bool IntResultIsNullHandle(SQLiteIntResult result)
+{
+    switch (result)
+    {
+        case SQLiteIntResult.Err(var error):
+            return error == SQLiteError.NullHandle;
+        case SQLiteIntResult.Ok(var value):
+            return false;
+    }
+}
+
+fn bool DeleteIfExists(ascii path)
+{
+    stack System.IO.IOStatus status = Delete(path);
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return error == System.IO.IOError.NotFound;
+    }
+}
+
+fn bool SnapshotResultIsSQLiteStatus(SQLiteSnapshotResult result, SQLiteStatus status)
+{
+    switch (result)
+    {
+        case SQLiteSnapshotResult.Err(var error):
+            return error == SQLiteError.SQLite(status);
+        case SQLiteSnapshotResult.Ok(var snapshot):
+            return false;
+    }
+}
+
+fn bool StatusResultIsSQLiteStatus(SQLiteStatusResult result, SQLiteStatus status)
+{
+    switch (result)
+    {
+        case SQLiteStatusResult.Err(var error):
+            return error == SQLiteError.SQLite(status);
+        case SQLiteStatusResult.Ok:
+            return false;
+    }
+}
+
+fn bool AppendAscii(mut borrow System.Text.OwnedAscii destination, ascii text)
+{
+    return destination.AppendAscii(text) == MemoryStatus.Ok;
+}
+
+fn bool DeleteSqliteFiles(ascii databasePath)
+{
+    stack mut System.Text.OwnedAscii walPath = new();
+    stack mut System.Text.OwnedAscii sharedMemoryPath = new();
+    if (!AppendAscii(walPath, databasePath)
+        || !AppendAscii(walPath, "-wal")
+        || !AppendAscii(sharedMemoryPath, databasePath)
+        || !AppendAscii(sharedMemoryPath, "-shm"))
+    {
+        return false;
+    }
+
+    return DeleteIfExists(databasePath)
+        && DeleteIfExists(walPath.View())
+        && DeleteIfExists(sharedMemoryPath.View());
+}
+
+fn bool QueryTextEquals(mut borrow Database database, ascii sql, ascii expected)
+{
+    switch (Prepare(database, sql))
+    {
+        case SQLiteStatementResult.Err(var error):
+            return false;
+        case SQLiteStatementResult.Ok(var statementValue):
+            stack mut Statement statement = statementValue;
+            stack mut bool matches = false;
+            switch (Step(statement))
+            {
+                case SQLiteStepResult.Row:
+                    matches = TextResultEquals(ColumnText(statement, 0), expected);
+                default:
+                    matches = false;
+            }
+
+            if (Finalize(statement) != SQLiteStatusResult.Ok)
+            {
+                return false;
+            }
+
+            return matches;
+    }
+}
+
+fn bool RunSnapshotDatabaseScenario(ascii databasePath)
+{
+    switch (OpenReadWriteCreate(databasePath))
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return false;
+        case SQLiteDatabaseResult.Ok(var writerValue):
+            stack mut Database writer = writerValue;
+            if (Execute(writer, "PRAGMA journal_mode=WAL;") != SQLiteStatusResult.Ok
+                || Execute(writer, "CREATE TABLE snapshot_items(id INTEGER PRIMARY KEY, value TEXT NOT NULL);") != SQLiteStatusResult.Ok
+                || Execute(writer, "INSERT INTO snapshot_items(id, value) VALUES(1, 'before');") != SQLiteStatusResult.Ok
+                || Execute(writer, "BEGIN;") != SQLiteStatusResult.Ok)
+            {
+                stack SQLiteStatusResult ignoredClose = Close(writer);
+                return false;
+            }
+
+            switch (GetSnapshot(writer, "main"))
+            {
+                case SQLiteSnapshotResult.Err(var error):
+                    stack SQLiteStatusResult ignoredRollback = Execute(writer, "ROLLBACK;");
+                    stack SQLiteStatusResult ignoredClose = Close(writer);
+                    return false;
+                case SQLiteSnapshotResult.Ok(var snapshotValue):
+                    stack mut SQLiteSnapshot snapshot = snapshotValue;
+                    if (Execute(writer, "COMMIT;") != SQLiteStatusResult.Ok
+                        || Execute(writer, "UPDATE snapshot_items SET value = 'after' WHERE id = 1;") != SQLiteStatusResult.Ok
+                        || !QueryTextEquals(writer, "SELECT value FROM snapshot_items WHERE id = 1;", "after"))
+                    {
+                        stack SQLiteStatusResult ignoredRollback = Execute(writer, "ROLLBACK;");
+                        stack SQLiteStatusResult ignoredClose = Close(writer);
+                        return false;
+                    }
+
+                    switch (OpenReadWrite(databasePath))
+                    {
+                        case SQLiteDatabaseResult.Err(var error):
+                            stack SQLiteStatusResult ignoredClose = Close(writer);
+                            return false;
+                        case SQLiteDatabaseResult.Ok(var readerValue):
+                            stack mut Database reader = readerValue;
+                            if (Execute(reader, "PRAGMA application_id;") != SQLiteStatusResult.Ok
+                                || Execute(reader, "BEGIN;") != SQLiteStatusResult.Ok
+                                || OpenSnapshot(reader, "main", snapshot) != SQLiteStatusResult.Ok
+                                || !QueryTextEquals(reader, "SELECT value FROM snapshot_items WHERE id = 1;", "before")
+                                || Execute(reader, "COMMIT;") != SQLiteStatusResult.Ok)
+                            {
+                                stack SQLiteStatusResult ignoredReaderRollback = Execute(reader, "ROLLBACK;");
+                                stack SQLiteStatusResult ignoredReaderClose = Close(reader);
+                                stack SQLiteStatusResult ignoredWriterClose = Close(writer);
+                                return false;
+                            }
+
+                            if (Close(reader) != SQLiteStatusResult.Ok)
+                            {
+                                stack SQLiteStatusResult ignoredWriterClose = Close(writer);
+                                return false;
+                            }
+                    }
+
+                    return Close(writer) == SQLiteStatusResult.Ok;
+            }
+    }
+}
+
+fn bool RunSnapshotEnabledExample()
+{
+    switch (TempDirectory())
+    {
+        case MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case MemoryResult<System.Text.OwnedAscii>.Ok(var tempDirectoryValue):
+            stack mut System.Text.OwnedAscii tempDirectory = tempDirectoryValue;
+            switch (TempPathIn(tempDirectory.View(), "stark-sqlite-snapshot-", 0, ".db"))
+            {
+                case MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                    return false;
+                case MemoryResult<System.Text.OwnedAscii>.Ok(var databasePathValue):
+                    stack mut System.Text.OwnedAscii databasePath = databasePathValue;
+                    stack bool scenarioSucceeded = RunSnapshotDatabaseScenario(databasePath.View());
+                    stack bool cleanupSucceeded = DeleteSqliteFiles(databasePath.View());
+                    return scenarioSucceeded && cleanupSucceeded;
+            }
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack mut SQLiteSnapshot emptyLeft = new();
+    stack mut SQLiteSnapshot emptyRight = new();
+    if (!IntResultIsNullHandle(CompareSnapshots(emptyLeft, emptyRight)))
+    {
+        return 1;
+    }
+
+    switch (OpenInMemory())
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return 2;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+            if (OpenSnapshot(database, "main", emptyLeft) != SQLiteStatusResult.Err(SQLiteError.NullHandle))
+            {
+                return 3;
+            }
+
+            WriteLine("SQLite snapshot example:");
+            if (!SnapshotAvailable())
+            {
+                if (!SnapshotResultIsSQLiteStatus(GetSnapshot(database, "main"), SQLiteStatus.NotFound)
+                    || !StatusResultIsSQLiteStatus(RecoverSnapshots(database, "main"), SQLiteStatus.NotFound))
+                {
+                    return 4;
+                }
+
+                WriteLine("snapshot extension unavailable in this SQLite build");
+            }
+            else
+            {
+                if (!RunSnapshotEnabledExample())
+                {
+                    return 5;
+                }
+
+                WriteLine("snapshot extension available in this SQLite build");
+            }
+
+            if (Close(database) != SQLiteStatusResult.Ok)
+            {
+                return 6;
+            }
+
+            return 0;
+    }
+}

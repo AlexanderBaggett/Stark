@@ -22,6 +22,130 @@ internal struct SQLite3BackupNative
     i8[min max] Opaque;
 }
 
+internal struct SQLite3SnapshotNative
+{
+    i8[min max] Opaque;
+}
+
+public struct SQLite3MutexNative
+{
+    internal i8[min max] Opaque;
+}
+
+internal struct SQLite3StringNative
+{
+    i8[min max] Opaque;
+}
+
+public struct SQLite3FileNative
+{
+    internal i8[min max] Opaque;
+}
+
+public alias SQLiteSystemCallCallback = fnptr<unsafe ffi(c) fn void()>;
+public alias SQLiteVfsOpenCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>,
+    rawmutptr<SQLite3FileNative>,
+    System.C.c_int,
+    rawmutptr<System.C.c_int>)>;
+public alias SQLiteVfsDeleteCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>,
+    System.C.c_int)>;
+public alias SQLiteVfsAccessCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>,
+    System.C.c_int,
+    rawmutptr<System.C.c_int>)>;
+public alias SQLiteVfsFullPathnameCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>,
+    System.C.c_int,
+    rawmutptr<System.C.c_char>)>;
+public alias SQLiteVfsDynamicLibraryOpenCallback = fnptr<unsafe ffi(c) fn rawmutptr<System.C.c_void>(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>)>;
+public alias SQLiteVfsDynamicLibraryErrorCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<SQLite3VfsNative>,
+    System.C.c_int,
+    rawmutptr<System.C.c_char>)>;
+public alias SQLiteVfsDynamicLibrarySymbolCallback = fnptr<unsafe ffi(c) fn SQLiteSystemCallCallback(
+    rawmutptr<SQLite3VfsNative>,
+    rawmutptr<System.C.c_void>,
+    rawptr<System.C.c_char>)>;
+public alias SQLiteVfsDynamicLibraryCloseCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<SQLite3VfsNative>,
+    rawmutptr<System.C.c_void>)>;
+public alias SQLiteVfsRandomnessCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    System.C.c_int,
+    rawmutptr<System.C.c_char>)>;
+public alias SQLiteVfsSleepCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3VfsNative>, System.C.c_int)>;
+public alias SQLiteVfsCurrentTimeCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3VfsNative>, rawmutptr<f64>)>;
+public alias SQLiteVfsGetLastErrorCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    System.C.c_int,
+    rawmutptr<System.C.c_char>)>;
+public alias SQLiteVfsCurrentTimeInt64Callback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3VfsNative>, rawmutptr<i64[min max]>)>;
+public alias SQLiteVfsSetSystemCallCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>,
+    SQLiteSystemCallCallback)>;
+public alias SQLiteVfsGetSystemCallCallback = fnptr<unsafe ffi(c) fn SQLiteSystemCallCallback(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>)>;
+public alias SQLiteVfsNextSystemCallCallback = fnptr<unsafe ffi(c) fn rawptr<System.C.c_char>(
+    rawmutptr<SQLite3VfsNative>,
+    rawptr<System.C.c_char>)>;
+
+[StructLayout(C)]
+public struct SQLite3VfsNative
+{
+    System.C.c_int Version;
+    System.C.c_int OsFileSize;
+    System.C.c_int MaxPathname;
+    rawmutptr<SQLite3VfsNative> Next;
+    rawptr<System.C.c_char> Name;
+    rawmutptr<System.C.c_void> ApplicationData;
+    SQLiteVfsOpenCallback Open;
+    SQLiteVfsDeleteCallback Delete;
+    SQLiteVfsAccessCallback Access;
+    SQLiteVfsFullPathnameCallback FullPathname;
+    SQLiteVfsDynamicLibraryOpenCallback DynamicLibraryOpen;
+    SQLiteVfsDynamicLibraryErrorCallback DynamicLibraryError;
+    SQLiteVfsDynamicLibrarySymbolCallback DynamicLibrarySymbol;
+    SQLiteVfsDynamicLibraryCloseCallback DynamicLibraryClose;
+    SQLiteVfsRandomnessCallback Randomness;
+    SQLiteVfsSleepCallback Sleep;
+    SQLiteVfsCurrentTimeCallback CurrentTime;
+    SQLiteVfsGetLastErrorCallback LastError;
+    SQLiteVfsCurrentTimeInt64Callback CurrentTimeInt64;
+    SQLiteVfsSetSystemCallCallback SetSystemCall;
+    SQLiteVfsGetSystemCallCallback GetSystemCall;
+    SQLiteVfsNextSystemCallCallback NextSystemCall;
+}
+
+public struct SQLite3ModuleNative
+{
+    internal i8[min max] Opaque;
+}
+
+public struct SQLite3VirtualTableNative
+{
+    internal i8[min max] Opaque;
+}
+
+public struct SQLite3VirtualTableCursorNative
+{
+    internal i8[min max] Opaque;
+}
+
+public struct SQLite3IndexInfoNative
+{
+    internal i8[min max] Opaque;
+}
+
 public struct SQLite3ContextNative
 {
     internal i8[min max] Opaque;
@@ -32,27 +156,599 @@ public struct SQLite3ValueNative
     internal i8[min max] Opaque;
 }
 
+public alias SQLiteExtensionApiRoutine = fnptr<unsafe ffi(c) fn void()>;
+
+[StructLayout(C)]
+public struct SQLite3ApiRoutinesNative
+{
+    SQLiteExtensionApiRoutine AggregateContext;
+    SQLiteExtensionApiRoutine AggregateCount;
+    SQLiteExtensionApiRoutine BindBlob;
+    SQLiteExtensionApiRoutine BindDouble;
+    SQLiteExtensionApiRoutine BindInt;
+    SQLiteExtensionApiRoutine BindInt64;
+    SQLiteExtensionApiRoutine BindNull;
+    SQLiteExtensionApiRoutine BindParameterCount;
+    SQLiteExtensionApiRoutine BindParameterIndex;
+    SQLiteExtensionApiRoutine BindParameterName;
+    SQLiteExtensionApiRoutine BindText;
+    SQLiteExtensionApiRoutine BindText16;
+    SQLiteExtensionApiRoutine BindValue;
+    SQLiteExtensionApiRoutine BusyHandler;
+    SQLiteExtensionApiRoutine BusyTimeout;
+    SQLiteExtensionApiRoutine Changes;
+    SQLiteExtensionApiRoutine Close;
+    SQLiteExtensionApiRoutine CollationNeeded;
+    SQLiteExtensionApiRoutine CollationNeeded16;
+    SQLiteExtensionApiRoutine ColumnBlob;
+    SQLiteExtensionApiRoutine ColumnBytes;
+    SQLiteExtensionApiRoutine ColumnBytes16;
+    SQLiteExtensionApiRoutine ColumnCount;
+    SQLiteExtensionApiRoutine ColumnDatabaseName;
+    SQLiteExtensionApiRoutine ColumnDatabaseName16;
+    SQLiteExtensionApiRoutine ColumnDeclType;
+    SQLiteExtensionApiRoutine ColumnDeclType16;
+    SQLiteExtensionApiRoutine ColumnDouble;
+    SQLiteExtensionApiRoutine ColumnInt;
+    SQLiteExtensionApiRoutine ColumnInt64;
+    SQLiteExtensionApiRoutine ColumnName;
+    SQLiteExtensionApiRoutine ColumnName16;
+    SQLiteExtensionApiRoutine ColumnOriginName;
+    SQLiteExtensionApiRoutine ColumnOriginName16;
+    SQLiteExtensionApiRoutine ColumnTableName;
+    SQLiteExtensionApiRoutine ColumnTableName16;
+    SQLiteExtensionApiRoutine ColumnText;
+    SQLiteExtensionApiRoutine ColumnText16;
+    SQLiteExtensionApiRoutine ColumnType;
+    SQLiteExtensionApiRoutine ColumnValue;
+    SQLiteExtensionApiRoutine CommitHook;
+    SQLiteExtensionApiRoutine Complete;
+    SQLiteExtensionApiRoutine Complete16;
+    SQLiteExtensionApiRoutine CreateCollation;
+    SQLiteExtensionApiRoutine CreateCollation16;
+    SQLiteExtensionApiRoutine CreateFunction;
+    SQLiteExtensionApiRoutine CreateFunction16;
+    SQLiteExtensionApiRoutine CreateModule;
+    SQLiteExtensionApiRoutine DataCount;
+    SQLiteExtensionApiRoutine DbHandle;
+    SQLiteExtensionApiRoutine DeclareVtab;
+    SQLiteExtensionApiRoutine EnableSharedCache;
+    SQLiteExtensionApiRoutine Errcode;
+    SQLiteExtensionApiRoutine Errmsg;
+    SQLiteExtensionApiRoutine Errmsg16;
+    SQLiteExtensionApiRoutine Exec;
+    SQLiteExtensionApiRoutine Expired;
+    SQLiteExtensionApiRoutine Finalize;
+    SQLiteExtensionApiRoutine Free;
+    SQLiteExtensionApiRoutine FreeTable;
+    SQLiteExtensionApiRoutine GetAutocommit;
+    SQLiteExtensionApiRoutine GetAuxData;
+    SQLiteExtensionApiRoutine GetTable;
+    SQLiteExtensionApiRoutine GlobalRecover;
+    SQLiteExtensionApiRoutine Interrupt;
+    SQLiteExtensionApiRoutine LastInsertRowId;
+    SQLiteExtensionApiRoutine Libversion;
+    SQLiteExtensionApiRoutine LibversionNumber;
+    SQLiteExtensionApiRoutine Malloc;
+    SQLiteExtensionApiRoutine Mprintf;
+    SQLiteExtensionApiRoutine Open;
+    SQLiteExtensionApiRoutine Open16;
+    SQLiteExtensionApiRoutine Prepare;
+    SQLiteExtensionApiRoutine Prepare16;
+    SQLiteExtensionApiRoutine Profile;
+    SQLiteExtensionApiRoutine ProgressHandler;
+    SQLiteExtensionApiRoutine Realloc;
+    SQLiteExtensionApiRoutine Reset;
+    SQLiteExtensionApiRoutine ResultBlob;
+    SQLiteExtensionApiRoutine ResultDouble;
+    SQLiteExtensionApiRoutine ResultError;
+    SQLiteExtensionApiRoutine ResultError16;
+    SQLiteExtensionApiRoutine ResultInt;
+    SQLiteExtensionApiRoutine ResultInt64;
+    SQLiteExtensionApiRoutine ResultNull;
+    SQLiteExtensionApiRoutine ResultText;
+    SQLiteExtensionApiRoutine ResultText16;
+    SQLiteExtensionApiRoutine ResultText16be;
+    SQLiteExtensionApiRoutine ResultText16le;
+    SQLiteExtensionApiRoutine ResultValue;
+    SQLiteExtensionApiRoutine RollbackHook;
+    SQLiteExtensionApiRoutine SetAuthorizer;
+    SQLiteExtensionApiRoutine SetAuxData;
+    SQLiteExtensionApiRoutine Snprintf;
+    SQLiteExtensionApiRoutine Step;
+    SQLiteExtensionApiRoutine TableColumnMetadata;
+    SQLiteExtensionApiRoutine ThreadCleanup;
+    SQLiteExtensionApiRoutine TotalChanges;
+    SQLiteExtensionApiRoutine Trace;
+    SQLiteExtensionApiRoutine TransferBindings;
+    SQLiteExtensionApiRoutine UpdateHook;
+    SQLiteExtensionApiRoutine UserData;
+    SQLiteExtensionApiRoutine ValueBlob;
+    SQLiteExtensionApiRoutine ValueBytes;
+    SQLiteExtensionApiRoutine ValueBytes16;
+    SQLiteExtensionApiRoutine ValueDouble;
+    SQLiteExtensionApiRoutine ValueInt;
+    SQLiteExtensionApiRoutine ValueInt64;
+    SQLiteExtensionApiRoutine ValueNumericType;
+    SQLiteExtensionApiRoutine ValueText;
+    SQLiteExtensionApiRoutine ValueText16;
+    SQLiteExtensionApiRoutine ValueText16be;
+    SQLiteExtensionApiRoutine ValueText16le;
+    SQLiteExtensionApiRoutine ValueType;
+    SQLiteExtensionApiRoutine Vmprintf;
+    SQLiteExtensionApiRoutine OverloadFunction;
+    SQLiteExtensionApiRoutine PrepareV2;
+    SQLiteExtensionApiRoutine Prepare16V2;
+    SQLiteExtensionApiRoutine ClearBindings;
+    SQLiteExtensionApiRoutine CreateModuleV2;
+    SQLiteExtensionApiRoutine BindZeroBlob;
+    SQLiteExtensionApiRoutine BlobBytes;
+    SQLiteExtensionApiRoutine BlobClose;
+    SQLiteExtensionApiRoutine BlobOpen;
+    SQLiteExtensionApiRoutine BlobRead;
+    SQLiteExtensionApiRoutine BlobWrite;
+    SQLiteExtensionApiRoutine CreateCollationV2;
+    SQLiteExtensionApiRoutine FileControl;
+    SQLiteExtensionApiRoutine MemoryHighWater;
+    SQLiteExtensionApiRoutine MemoryUsed;
+    SQLiteExtensionApiRoutine MutexAlloc;
+    SQLiteExtensionApiRoutine MutexEnter;
+    SQLiteExtensionApiRoutine MutexFree;
+    SQLiteExtensionApiRoutine MutexLeave;
+    SQLiteExtensionApiRoutine MutexTry;
+    SQLiteExtensionApiRoutine OpenV2;
+    SQLiteExtensionApiRoutine ReleaseMemory;
+    SQLiteExtensionApiRoutine ResultErrorNoMemory;
+    SQLiteExtensionApiRoutine ResultErrorTooBig;
+    SQLiteExtensionApiRoutine Sleep;
+    SQLiteExtensionApiRoutine SoftHeapLimit;
+    SQLiteExtensionApiRoutine VfsFind;
+    SQLiteExtensionApiRoutine VfsRegister;
+    SQLiteExtensionApiRoutine VfsUnregister;
+    SQLiteExtensionApiRoutine Threadsafe;
+    SQLiteExtensionApiRoutine ResultZeroBlob;
+    SQLiteExtensionApiRoutine ResultErrorCode;
+    SQLiteExtensionApiRoutine TestControl;
+    SQLiteExtensionApiRoutine Randomness;
+    SQLiteExtensionApiRoutine ContextDbHandle;
+    SQLiteExtensionApiRoutine ExtendedResultCodes;
+    SQLiteExtensionApiRoutine Limit;
+    SQLiteExtensionApiRoutine NextStmt;
+    SQLiteExtensionApiRoutine Sql;
+    SQLiteExtensionApiRoutine Status;
+    SQLiteExtensionApiRoutine BackupFinish;
+    SQLiteExtensionApiRoutine BackupInit;
+    SQLiteExtensionApiRoutine BackupPageCount;
+    SQLiteExtensionApiRoutine BackupRemaining;
+    SQLiteExtensionApiRoutine BackupStep;
+    SQLiteExtensionApiRoutine CompileoptionGet;
+    SQLiteExtensionApiRoutine CompileoptionUsed;
+    SQLiteExtensionApiRoutine CreateFunctionV2;
+    SQLiteExtensionApiRoutine DbConfig;
+    SQLiteExtensionApiRoutine DbMutex;
+    SQLiteExtensionApiRoutine DbStatus;
+    SQLiteExtensionApiRoutine ExtendedErrcode;
+    SQLiteExtensionApiRoutine Log;
+    SQLiteExtensionApiRoutine SoftHeapLimit64;
+    SQLiteExtensionApiRoutine Sourceid;
+    SQLiteExtensionApiRoutine StmtStatus;
+    SQLiteExtensionApiRoutine Strnicmp;
+    SQLiteExtensionApiRoutine UnlockNotify;
+    SQLiteExtensionApiRoutine WalAutoCheckpoint;
+    SQLiteExtensionApiRoutine WalCheckpoint;
+    SQLiteExtensionApiRoutine WalHook;
+    SQLiteExtensionApiRoutine BlobReopen;
+    SQLiteExtensionApiRoutine VtabConfig;
+    SQLiteExtensionApiRoutine VtabOnConflict;
+    SQLiteExtensionApiRoutine CloseV2;
+    SQLiteExtensionApiRoutine DbFilename;
+    SQLiteExtensionApiRoutine DbReadonly;
+    SQLiteExtensionApiRoutine DbReleaseMemory;
+    SQLiteExtensionApiRoutine Errstr;
+    SQLiteExtensionApiRoutine StmtBusy;
+    SQLiteExtensionApiRoutine StmtReadonly;
+    SQLiteExtensionApiRoutine Stricmp;
+    SQLiteExtensionApiRoutine UriBoolean;
+    SQLiteExtensionApiRoutine UriInt64;
+    SQLiteExtensionApiRoutine UriParameter;
+    SQLiteExtensionApiRoutine Vsnprintf;
+    SQLiteExtensionApiRoutine WalCheckpointV2;
+    SQLiteExtensionApiRoutine AutoExtension;
+    SQLiteExtensionApiRoutine BindBlob64;
+    SQLiteExtensionApiRoutine BindText64;
+    SQLiteExtensionApiRoutine CancelAutoExtension;
+    SQLiteExtensionApiRoutine LoadExtension;
+    SQLiteExtensionApiRoutine Malloc64;
+    SQLiteExtensionApiRoutine Msize;
+    SQLiteExtensionApiRoutine Realloc64;
+    SQLiteExtensionApiRoutine ResetAutoExtension;
+    SQLiteExtensionApiRoutine ResultBlob64;
+    SQLiteExtensionApiRoutine ResultText64;
+    SQLiteExtensionApiRoutine Strglob;
+    SQLiteExtensionApiRoutine ValueDup;
+    SQLiteExtensionApiRoutine ValueFree;
+    SQLiteExtensionApiRoutine ResultZeroBlob64;
+    SQLiteExtensionApiRoutine BindZeroBlob64;
+    SQLiteExtensionApiRoutine ValueSubtype;
+    SQLiteExtensionApiRoutine ResultSubtype;
+    SQLiteExtensionApiRoutine Status64;
+    SQLiteExtensionApiRoutine Strlike;
+    SQLiteExtensionApiRoutine DbCacheFlush;
+    SQLiteExtensionApiRoutine SystemErrno;
+    SQLiteExtensionApiRoutine TraceV2;
+    SQLiteExtensionApiRoutine ExpandedSql;
+    SQLiteExtensionApiRoutine SetLastInsertRowId;
+    SQLiteExtensionApiRoutine PrepareV3;
+    SQLiteExtensionApiRoutine Prepare16V3;
+    SQLiteExtensionApiRoutine BindPointer;
+    SQLiteExtensionApiRoutine ResultPointer;
+    SQLiteExtensionApiRoutine ValuePointer;
+    SQLiteExtensionApiRoutine VtabNoChange;
+    SQLiteExtensionApiRoutine ValueNoChange;
+    SQLiteExtensionApiRoutine VtabCollation;
+    SQLiteExtensionApiRoutine KeywordCount;
+    SQLiteExtensionApiRoutine KeywordName;
+    SQLiteExtensionApiRoutine KeywordCheck;
+    SQLiteExtensionApiRoutine StrNew;
+    SQLiteExtensionApiRoutine StrFinish;
+    SQLiteExtensionApiRoutine StrAppendf;
+    SQLiteExtensionApiRoutine StrVappendf;
+    SQLiteExtensionApiRoutine StrAppend;
+    SQLiteExtensionApiRoutine StrAppendall;
+    SQLiteExtensionApiRoutine StrAppendchar;
+    SQLiteExtensionApiRoutine StrReset;
+    SQLiteExtensionApiRoutine StrErrcode;
+    SQLiteExtensionApiRoutine StrLength;
+    SQLiteExtensionApiRoutine StrValue;
+    SQLiteExtensionApiRoutine CreateWindowFunction;
+    SQLiteExtensionApiRoutine NormalizedSql;
+    SQLiteExtensionApiRoutine StmtIsExplain;
+    SQLiteExtensionApiRoutine ValueFromBind;
+    SQLiteExtensionApiRoutine DropModules;
+    SQLiteExtensionApiRoutine HardHeapLimit64;
+    SQLiteExtensionApiRoutine UriKey;
+    SQLiteExtensionApiRoutine FilenameDatabase;
+    SQLiteExtensionApiRoutine FilenameJournal;
+    SQLiteExtensionApiRoutine FilenameWal;
+    SQLiteExtensionApiRoutine CreateFilename;
+    SQLiteExtensionApiRoutine FreeFilename;
+    SQLiteExtensionApiRoutine DatabaseFileObject;
+    SQLiteExtensionApiRoutine TxnState;
+    SQLiteExtensionApiRoutine Changes64;
+    SQLiteExtensionApiRoutine TotalChanges64;
+    SQLiteExtensionApiRoutine AutovacuumPages;
+    SQLiteExtensionApiRoutine ErrorOffset;
+    SQLiteExtensionApiRoutine VtabRhsValue;
+    SQLiteExtensionApiRoutine VtabDistinct;
+    SQLiteExtensionApiRoutine VtabIn;
+    SQLiteExtensionApiRoutine VtabInFirst;
+    SQLiteExtensionApiRoutine VtabInNext;
+    SQLiteExtensionApiRoutine Deserialize;
+    SQLiteExtensionApiRoutine Serialize;
+    SQLiteExtensionApiRoutine DbName;
+    SQLiteExtensionApiRoutine ValueEncoding;
+    SQLiteExtensionApiRoutine IsInterrupted;
+    SQLiteExtensionApiRoutine StmtExplain;
+    SQLiteExtensionApiRoutine GetClientData;
+    SQLiteExtensionApiRoutine SetClientData;
+    SQLiteExtensionApiRoutine SetLockTimeout;
+    SQLiteExtensionApiRoutine SetErrmsg;
+    SQLiteExtensionApiRoutine DbStatus64;
+    SQLiteExtensionApiRoutine StrTruncate;
+    SQLiteExtensionApiRoutine StrFree;
+    SQLiteExtensionApiRoutine CArrayBind;
+    SQLiteExtensionApiRoutine CArrayBindV2;
+}
+
+public struct SQLite3PcacheNative
+{
+    internal i8[min max] Opaque;
+}
+
+public alias SQLiteExtensionDatabase = rawmutptr<i8[min max]>;
+public alias SQLiteExtensionErrorMessagePointer = rawmutptr<System.C.c_char>;
+public alias SQLiteExtensionApi = rawptr<SQLite3ApiRoutinesNative>;
+public alias SQLiteLoadExtensionEntry = fnptr<unsafe ffi(c) fn System.C.c_int(
+    SQLiteExtensionDatabase,
+    rawmutptr<SQLiteExtensionErrorMessagePointer>,
+    SQLiteExtensionApi)>;
+
 public alias SQLiteFunctionContext = rawmutptr<i8[min max]>;
 public alias SQLiteFunctionArguments = rawmutptr<i8[min max]>;
+public alias SQLiteDatabaseCallback = rawmutptr<i8[min max]>;
 public alias SQLiteScalarCallback = fnptr<unsafe ffi(c) fn void(
     SQLiteFunctionContext,
     i32[min max],
     SQLiteFunctionArguments)>;
+public alias SQLiteAggregateStepCallback = fnptr<unsafe ffi(c) fn void(
+    SQLiteFunctionContext,
+    i32[min max],
+    SQLiteFunctionArguments)>;
+public alias SQLiteAggregateFinalCallback = fnptr<unsafe ffi(c) fn void(SQLiteFunctionContext)>;
+public alias SQLiteWindowValueCallback = fnptr<unsafe ffi(c) fn void(SQLiteFunctionContext)>;
+public alias SQLiteWindowInverseCallback = fnptr<unsafe ffi(c) fn void(
+    SQLiteFunctionContext,
+    i32[min max],
+    SQLiteFunctionArguments)>;
+public alias SQLitePointerDestructor = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>)>;
+public alias SQLiteClientDataDestructor = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>)>;
+public alias SQLiteLogCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    System.C.c_int,
+    rawptr<System.C.c_char>)>;
+public alias SQLiteSqlLogCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    SQLiteDatabaseCallback,
+    rawptr<System.C.c_char>,
+    System.C.c_int)>;
+public alias SQLiteMemoryAlarmCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    i64[min max],
+    System.C.c_int)>;
+public alias SQLiteVirtualTableModuleDestructor = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>)>;
+public alias SQLiteCollationCompareCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<i8[min max]>,
+    System.C.c_int,
+    rawptr<System.C.c_void>,
+    System.C.c_int,
+    rawptr<System.C.c_void>)>;
+public alias SQLiteCollationNeededCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    SQLiteDatabaseCallback,
+    System.C.c_int,
+    rawptr<System.C.c_char>)>;
+public alias SQLiteCollationNeeded16Callback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    SQLiteDatabaseCallback,
+    System.C.c_int,
+    rawptr<System.C.c_void>)>;
+public alias SQLiteAutoExtensionCallback = SQLiteLoadExtensionEntry;
+public alias SQLiteBusyCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<i8[min max]>, System.C.c_int)>;
+public alias SQLiteAuthorizerCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<i8[min max]>,
+    System.C.c_int,
+    rawptr<System.C.c_char>,
+    rawptr<System.C.c_char>,
+    rawptr<System.C.c_char>,
+    rawptr<System.C.c_char>)>;
+public alias SQLiteTraceCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, rawptr<System.C.c_char>)>;
+public alias SQLiteProfileCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, rawptr<System.C.c_char>, u64[0 max])>;
+public alias SQLiteTraceV2Callback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    System.C.c_uint,
+    rawmutptr<i8[min max]>,
+    rawmutptr<System.C.c_void>,
+    rawmutptr<System.C.c_void>)>;
+public alias SQLiteProgressCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<i8[min max]>)>;
+public alias SQLiteCommitCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<i8[min max]>)>;
+public alias SQLiteRollbackCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>)>;
+public alias SQLiteAutovacuumPagesCallback = fnptr<unsafe ffi(c) fn System.C.c_uint(
+    rawmutptr<i8[min max]>,
+    rawptr<System.C.c_char>,
+    System.C.c_uint,
+    System.C.c_uint,
+    System.C.c_uint)>;
+public alias SQLiteUpdateCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    System.C.c_int,
+    rawptr<System.C.c_char>,
+    rawptr<System.C.c_char>,
+    i64[min max])>;
+public alias SQLiteWalCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<i8[min max]>,
+    SQLiteDatabaseCallback,
+    rawptr<System.C.c_char>,
+    System.C.c_int)>;
+public alias SQLiteUnlockNotifyCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<rawmutptr<i8[min max]>>, System.C.c_int)>;
+public alias SQLitePreupdateCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<i8[min max]>,
+    SQLiteDatabaseCallback,
+    System.C.c_int,
+    rawptr<System.C.c_char>,
+    rawptr<System.C.c_char>,
+    i64[min max],
+    i64[min max])>;
+
+public alias SQLiteMemoryMallocCallback = fnptr<unsafe ffi(c) fn rawmutptr<System.C.c_void>(System.C.c_int)>;
+public alias SQLiteMemoryFreeCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_void>)>;
+public alias SQLiteMemoryReallocCallback = fnptr<unsafe ffi(c) fn rawmutptr<System.C.c_void>(rawmutptr<System.C.c_void>, System.C.c_int)>;
+public alias SQLiteMemorySizeCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<System.C.c_void>)>;
+public alias SQLiteMemoryRoundupCallback = fnptr<unsafe ffi(c) fn System.C.c_int(System.C.c_int)>;
+public alias SQLiteMemoryInitCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<System.C.c_void>)>;
+public alias SQLiteMemoryShutdownCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_void>)>;
+
+public alias SQLiteMutexInitCallback = fnptr<unsafe ffi(c) fn System.C.c_int()>;
+public alias SQLiteMutexEndCallback = fnptr<unsafe ffi(c) fn System.C.c_int()>;
+public alias SQLiteMutexAllocCallback = fnptr<unsafe ffi(c) fn rawmutptr<SQLite3MutexNative>(System.C.c_int)>;
+public alias SQLiteMutexFreeCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3MutexNative>)>;
+public alias SQLiteMutexEnterCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3MutexNative>)>;
+public alias SQLiteMutexTryCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3MutexNative>)>;
+public alias SQLiteMutexLeaveCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3MutexNative>)>;
+public alias SQLiteMutexHeldCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3MutexNative>)>;
+public alias SQLiteMutexNotHeldCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3MutexNative>)>;
+
+public alias SQLiteIoCloseCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>)>;
+public alias SQLiteIoReadCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3FileNative>,
+    rawmutptr<System.C.c_void>,
+    System.C.c_int,
+    i64[min max])>;
+public alias SQLiteIoWriteCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3FileNative>,
+    rawptr<System.C.c_void>,
+    System.C.c_int,
+    i64[min max])>;
+public alias SQLiteIoTruncateCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, i64[min max])>;
+public alias SQLiteIoSyncCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, System.C.c_int)>;
+public alias SQLiteIoFileSizeCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, rawmutptr<i64[min max]>)>;
+public alias SQLiteIoLockCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, System.C.c_int)>;
+public alias SQLiteIoUnlockCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, System.C.c_int)>;
+public alias SQLiteIoCheckReservedLockCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, rawmutptr<System.C.c_int>)>;
+public alias SQLiteIoFileControlCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, System.C.c_int, rawmutptr<System.C.c_void>)>;
+public alias SQLiteIoSectorSizeCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>)>;
+public alias SQLiteIoDeviceCharacteristicsCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>)>;
+public alias SQLiteIoSharedMemoryMapCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3FileNative>,
+    System.C.c_int,
+    System.C.c_int,
+    System.C.c_int,
+    rawmutptr<rawmutptr<System.C.c_void>>)>;
+public alias SQLiteIoSharedMemoryLockCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3FileNative>,
+    System.C.c_int,
+    System.C.c_int,
+    System.C.c_int)>;
+public alias SQLiteIoSharedMemoryBarrierCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3FileNative>)>;
+public alias SQLiteIoSharedMemoryUnmapCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3FileNative>, System.C.c_int)>;
+public alias SQLiteIoFetchCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3FileNative>,
+    i64[min max],
+    System.C.c_int,
+    rawmutptr<rawmutptr<System.C.c_void>>)>;
+public alias SQLiteIoUnfetchCallback = fnptr<unsafe ffi(c) fn System.C.c_int(
+    rawmutptr<SQLite3FileNative>,
+    i64[min max],
+    rawmutptr<System.C.c_void>)>;
+
+public alias SQLitePcacheInitCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<System.C.c_void>)>;
+public alias SQLitePcacheShutdownCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_void>)>;
+public alias SQLitePcacheCreateCallback = fnptr<unsafe ffi(c) fn rawmutptr<SQLite3PcacheNative>(
+    System.C.c_int,
+    System.C.c_int,
+    System.C.c_int)>;
+public alias SQLitePcacheCacheSizeCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3PcacheNative>, System.C.c_int)>;
+public alias SQLitePcachePageCountCallback = fnptr<unsafe ffi(c) fn System.C.c_int(rawmutptr<SQLite3PcacheNative>)>;
+public alias SQLitePcacheFetchCallback = fnptr<unsafe ffi(c) fn rawmutptr<SQLitePcachePage>(
+    rawmutptr<SQLite3PcacheNative>,
+    System.C.c_uint,
+    System.C.c_int)>;
+public alias SQLitePcacheUnpinCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<SQLite3PcacheNative>,
+    rawmutptr<SQLitePcachePage>,
+    System.C.c_int)>;
+public alias SQLitePcacheRekeyCallback = fnptr<unsafe ffi(c) fn void(
+    rawmutptr<SQLite3PcacheNative>,
+    rawmutptr<SQLitePcachePage>,
+    System.C.c_uint,
+    System.C.c_uint)>;
+public alias SQLitePcacheTruncateCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3PcacheNative>, System.C.c_uint)>;
+public alias SQLitePcacheDestroyCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3PcacheNative>)>;
+public alias SQLitePcacheShrinkCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3PcacheNative>)>;
+
+[StructLayout(C)]
+public struct SQLiteMemoryMethods
+{
+    SQLiteMemoryMallocCallback Malloc;
+    SQLiteMemoryFreeCallback Free;
+    SQLiteMemoryReallocCallback Realloc;
+    SQLiteMemorySizeCallback Size;
+    SQLiteMemoryRoundupCallback Roundup;
+    SQLiteMemoryInitCallback Init;
+    SQLiteMemoryShutdownCallback Shutdown;
+    rawmutptr<System.C.c_void> AppData;
+}
+
+[StructLayout(C)]
+public struct SQLiteMutexMethods
+{
+    SQLiteMutexInitCallback MutexInit;
+    SQLiteMutexEndCallback MutexEnd;
+    SQLiteMutexAllocCallback MutexAlloc;
+    SQLiteMutexFreeCallback MutexFree;
+    SQLiteMutexEnterCallback MutexEnter;
+    SQLiteMutexTryCallback MutexTry;
+    SQLiteMutexLeaveCallback MutexLeave;
+    SQLiteMutexHeldCallback MutexHeld;
+    SQLiteMutexNotHeldCallback MutexNotHeld;
+}
+
+[StructLayout(C)]
+public struct SQLiteIoMethods
+{
+    System.C.c_int Version;
+    SQLiteIoCloseCallback Close;
+    SQLiteIoReadCallback Read;
+    SQLiteIoWriteCallback Write;
+    SQLiteIoTruncateCallback Truncate;
+    SQLiteIoSyncCallback Sync;
+    SQLiteIoFileSizeCallback FileSize;
+    SQLiteIoLockCallback Lock;
+    SQLiteIoUnlockCallback Unlock;
+    SQLiteIoCheckReservedLockCallback CheckReservedLock;
+    SQLiteIoFileControlCallback FileControl;
+    SQLiteIoSectorSizeCallback SectorSize;
+    SQLiteIoDeviceCharacteristicsCallback DeviceCharacteristics;
+    SQLiteIoSharedMemoryMapCallback SharedMemoryMap;
+    SQLiteIoSharedMemoryLockCallback SharedMemoryLock;
+    SQLiteIoSharedMemoryBarrierCallback SharedMemoryBarrier;
+    SQLiteIoSharedMemoryUnmapCallback SharedMemoryUnmap;
+    SQLiteIoFetchCallback Fetch;
+    SQLiteIoUnfetchCallback Unfetch;
+}
+
+[StructLayout(C)]
+public struct SQLitePcachePage
+{
+    rawmutptr<System.C.c_void> Buffer;
+    rawmutptr<System.C.c_void> Extra;
+}
+
+[StructLayout(C)]
+public struct SQLitePcacheMethods2
+{
+    System.C.c_int Version;
+    rawmutptr<System.C.c_void> Argument;
+    SQLitePcacheInitCallback Init;
+    SQLitePcacheShutdownCallback Shutdown;
+    SQLitePcacheCreateCallback Create;
+    SQLitePcacheCacheSizeCallback CacheSize;
+    SQLitePcachePageCountCallback PageCount;
+    SQLitePcacheFetchCallback Fetch;
+    SQLitePcacheUnpinCallback Unpin;
+    SQLitePcacheRekeyCallback Rekey;
+    SQLitePcacheTruncateCallback Truncate;
+    SQLitePcacheDestroyCallback Destroy;
+    SQLitePcacheShrinkCallback Shrink;
+}
+
+public struct SQLiteCArrayBlob
+{
+    public u8[0 max][] Bytes;
+}
+
+[StructLayout(C)]
+internal struct SQLiteCArrayBlobInput
+{
+    rawptr<System.C.c_void> Data;
+    u64[0 max] ByteLength;
+}
 
 internal unsafe ffi(c) fn System.C.c_int sqlite3_close_v2(rawmutptr<SQLite3Native> database);
 internal unsafe ffi(c) fn System.C.c_int sqlite3_finalize(rawmutptr<SQLite3StatementNative> statement);
 internal unsafe ffi(c) fn System.C.c_int sqlite3_blob_close(rawmutptr<SQLite3BlobNative> blob);
 internal unsafe ffi(c) fn System.C.c_int sqlite3_backup_finish(rawmutptr<SQLite3BackupNative> backup);
+internal unsafe ffi(c) fn void stark_sqlite_snapshot_free(rawmutptr<SQLite3SnapshotNative> snapshot);
 internal unsafe ffi(c) fn void sqlite3_free(rawmutptr<System.C.c_void> memory);
+internal unsafe ffi(c) fn void sqlite3_free_table(rawmutptr<System.C.c_void> table);
+internal unsafe ffi(c) fn void sqlite3_free_filename(rawptr<System.C.c_char> filename);
 internal unsafe ffi(c) fn void sqlite3_value_free(rawmutptr<SQLite3ValueNative> value);
+internal unsafe ffi(c) fn void sqlite3_mutex_free(rawmutptr<SQLite3MutexNative> mutex);
+internal unsafe ffi(c) fn void sqlite3_str_free(rawmutptr<SQLite3StringNative> builder);
 
 public struct Database
 {
     internal rawmutptr<SQLite3Native> Handle;
+    internal System.C.OwnedCStr MainDatabaseName;
+    internal dynamic u64[0 max] LookasideWords;
+    internal u16[0 65528] LookasideSlotSize;
+    internal u32[0 2147483647] LookasideSlotCount;
 
     Database()
     {
         self.Handle = null;
+        self.MainDatabaseName = new();
+        self.LookasideWords = new();
+        self.LookasideSlotSize = 0;
+        self.LookasideSlotCount = 0;
     }
 
     mut drop
@@ -134,6 +830,124 @@ public struct Backup
     }
 }
 
+public struct SQLiteSnapshot
+{
+    internal rawmutptr<SQLite3SnapshotNative> Handle;
+
+    SQLiteSnapshot()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteSnapshot self)
+    {
+        return self.Handle != null;
+    }
+
+    public fn void Close(mut borrow SQLiteSnapshot self)
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_sqlite_snapshot_free(self.Handle);
+                self.Handle = null;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public struct SQLiteTable
+{
+    internal rawmutptr<System.C.c_void> Data;
+    internal u32[0 2147483647] Rows;
+    internal u32[0 2147483647] Columns;
+
+    SQLiteTable()
+    {
+        self.Data = null;
+        self.Rows = 0;
+        self.Columns = 0;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteTable self)
+    {
+        return self.Data != null;
+    }
+
+    public inline finite law u32[0 2147483647] RowCount(borrow SQLiteTable self)
+    {
+        return self.Rows;
+    }
+
+    public inline finite law u32[0 2147483647] ColumnCount(borrow SQLiteTable self)
+    {
+        return self.Columns;
+    }
+
+    public fn void Close(mut borrow SQLiteTable self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                sqlite3_free_table(self.Data);
+                self.Data = null;
+                self.Rows = 0;
+                self.Columns = 0;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public struct SQLiteFilename
+{
+    internal rawptr<System.C.c_char> Handle;
+
+    SQLiteFilename()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteFilename self)
+    {
+        return self.Handle != null;
+    }
+
+    public fn void Close(mut borrow SQLiteFilename self)
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_free_filename(self.Handle);
+                self.Handle = null;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
 public struct SQLiteOwnedBytes
 {
     internal rawmutptr<u8[0 max]> Data;
@@ -206,6 +1020,63 @@ public struct SQLiteOwnedBytes
     }
 }
 
+public struct SQLiteByteView
+{
+    internal rawptr<u8[0 max]> Pointer;
+    internal u64[0 max] ByteLength;
+
+    SQLiteByteView()
+    {
+        self.Pointer = null;
+        self.ByteLength = 0;
+    }
+
+    public inline finite law u64[0 max] Length(borrow SQLiteByteView self)
+    {
+        return self.ByteLength;
+    }
+
+    public inline finite law bool IsEmpty(borrow SQLiteByteView self)
+    {
+        return self.ByteLength == 0;
+    }
+
+    public unsafe inline finite law rawptr<u8[0 max]> Data(borrow SQLiteByteView self)
+    {
+        return self.Pointer;
+    }
+
+    public unsafe fn SQLiteStatusResult CopyTo(borrow SQLiteByteView self, borrow mut u8[0 max][] destination)
+    {
+        if (destination.Length < self.ByteLength)
+        {
+            return SQLiteStatusResult.Err(SQLiteError.TooLarge);
+        }
+
+        if (self.ByteLength == 0)
+        {
+            return SQLiteStatusResult.Ok;
+        }
+
+        if (self.Pointer == null)
+        {
+            return SQLiteStatusResult.Err(SQLiteError.NullValue);
+        }
+
+        unsafe
+        {
+            stack mut u64[0 max] index = 0;
+            while willexit (index < self.ByteLength)
+            {
+                destination[index] = *(&self.Pointer[index]);
+                index += 1;
+            }
+        }
+
+        return SQLiteStatusResult.Ok;
+    }
+}
+
 public struct SQLiteOwnedValue
 {
     internal rawmutptr<SQLite3ValueNative> Handle;
@@ -237,6 +1108,174 @@ public struct SQLiteOwnedValue
     mut drop
     {
         self.Close();
+    }
+}
+
+public struct SQLiteMutex
+{
+    internal rawmutptr<SQLite3MutexNative> Handle;
+
+    SQLiteMutex()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteMutex self)
+    {
+        return self.Handle != null;
+    }
+
+    public fn void Close(mut borrow SQLiteMutex self)
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_mutex_free(self.Handle);
+                self.Handle = null;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public struct SQLiteMutexView
+{
+    internal rawmutptr<SQLite3MutexNative> Handle;
+
+    SQLiteMutexView()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteMutexView self)
+    {
+        return self.Handle != null;
+    }
+}
+
+public struct SQLiteFileObjectView
+{
+    internal rawmutptr<SQLite3FileNative> Handle;
+
+    SQLiteFileObjectView()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteFileObjectView self)
+    {
+        return self.Handle != null;
+    }
+}
+
+public struct SQLiteVfsView
+{
+    internal rawmutptr<SQLite3VfsNative> Handle;
+
+    SQLiteVfsView()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteVfsView self)
+    {
+        return self.Handle != null;
+    }
+}
+
+public struct SQLiteVirtualTableModuleView
+{
+    internal rawptr<SQLite3ModuleNative> Handle;
+
+    SQLiteVirtualTableModuleView()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteVirtualTableModuleView self)
+    {
+        return self.Handle != null;
+    }
+}
+
+public struct SQLiteStringBuilder
+{
+    internal rawmutptr<SQLite3StringNative> Handle;
+
+    SQLiteStringBuilder()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsOpen(borrow SQLiteStringBuilder self)
+    {
+        return self.Handle != null;
+    }
+
+    public fn void Close(mut borrow SQLiteStringBuilder self)
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_str_free(self.Handle);
+                self.Handle = null;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public struct SQLitePointerType
+{
+    internal System.C.OwnedCStr Name;
+
+    SQLitePointerType()
+    {
+        self.Name = new();
+    }
+
+    public inline finite law bool IsEmpty(borrow SQLitePointerType self)
+    {
+        return self.Name.IsEmpty();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow SQLitePointerType self)
+    {
+        return self.Name.Length();
+    }
+}
+
+public struct SQLiteClientDataKey
+{
+    internal System.C.OwnedCStr Name;
+
+    SQLiteClientDataKey()
+    {
+        self.Name = new();
+    }
+
+    public inline finite law bool IsEmpty(borrow SQLiteClientDataKey self)
+    {
+        return self.Name.IsEmpty();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow SQLiteClientDataKey self)
+    {
+        return self.Name.Length();
     }
 }
 
@@ -333,15 +1372,87 @@ public enum SQLiteBackupResult
     [Err] Err(SQLiteError),
 }
 
+public enum SQLiteSnapshotResult
+{
+    [Ok] Ok(SQLiteSnapshot),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteTableResult
+{
+    [Ok] Ok(SQLiteTable),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteFilenameResult
+{
+    [Ok] Ok(SQLiteFilename),
+    [Err] Err(SQLiteError),
+}
+
 public enum SQLiteBytesResult
 {
     [Ok] Ok(SQLiteOwnedBytes),
     [Err] Err(SQLiteError),
 }
 
+public enum SQLiteByteViewResult
+{
+    [Ok] Ok(SQLiteByteView),
+    [Err] Err(SQLiteError),
+}
+
 public enum SQLiteOwnedValueResult
 {
     [Ok] Ok(SQLiteOwnedValue),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteMutexResult
+{
+    [Ok] Ok(SQLiteMutex),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteMutexViewResult
+{
+    [Ok] Ok(SQLiteMutexView),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteFileObjectResult
+{
+    [Ok] Ok(SQLiteFileObjectView),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteVfsResult
+{
+    [Ok] Ok(SQLiteVfsView),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteVirtualTableModuleResult
+{
+    [Ok] Ok(SQLiteVirtualTableModuleView),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteStringBuilderResult
+{
+    [Ok] Ok(SQLiteStringBuilder),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLitePointerTypeResult
+{
+    [Ok] Ok(SQLitePointerType),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteClientDataKeyResult
+{
+    [Ok] Ok(SQLiteClientDataKey),
     [Err] Err(SQLiteError),
 }
 
@@ -375,10 +1486,41 @@ public enum SQLiteI64Result
     [Err] Err(SQLiteError),
 }
 
+public enum SQLiteDoubleResult
+{
+    [Ok] Ok(f64),
+    [Err] Err(SQLiteError),
+}
+
 public enum SQLitePointerResult
 {
     [Ok] Ok(rawptr<System.C.c_void>),
     [Err] Err(SQLiteError),
+}
+
+public enum SQLiteMutablePointerResult
+{
+    [Ok] Ok(rawmutptr<System.C.c_void>),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLitePreupdateValueResult
+{
+    [Ok] Ok(rawmutptr<SQLite3ValueNative>),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteValueResult
+{
+    [Ok] Ok(rawmutptr<SQLite3ValueNative>),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteValueStepResult
+{
+    Row(rawmutptr<SQLite3ValueNative>),
+    Done,
+    Err(SQLiteError),
 }
 
 public enum SQLiteStepResult
@@ -672,6 +1814,179 @@ public const SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE = 1021;
 public const SQLITE_DBCONFIG_ENABLE_COMMENTS = 1022;
 public const SQLITE_DBCONFIG_FP_DIGITS = 1023;
 public const SQLITE_DBCONFIG_MAX = 1023;
+
+public const SQLITE_FCNTL_LOCKSTATE = 1;
+public const SQLITE_FCNTL_GET_LOCKPROXYFILE = 2;
+public const SQLITE_FCNTL_SET_LOCKPROXYFILE = 3;
+public const SQLITE_FCNTL_LAST_ERRNO = 4;
+public const SQLITE_FCNTL_SIZE_HINT = 5;
+public const SQLITE_FCNTL_CHUNK_SIZE = 6;
+public const SQLITE_FCNTL_FILE_POINTER = 7;
+public const SQLITE_FCNTL_SYNC_OMITTED = 8;
+public const SQLITE_FCNTL_WIN32_AV_RETRY = 9;
+public const SQLITE_FCNTL_PERSIST_WAL = 10;
+public const SQLITE_FCNTL_OVERWRITE = 11;
+public const SQLITE_FCNTL_VFSNAME = 12;
+public const SQLITE_FCNTL_POWERSAFE_OVERWRITE = 13;
+public const SQLITE_FCNTL_PRAGMA = 14;
+public const SQLITE_FCNTL_BUSYHANDLER = 15;
+public const SQLITE_FCNTL_TEMPFILENAME = 16;
+public const SQLITE_FCNTL_MMAP_SIZE = 18;
+public const SQLITE_FCNTL_TRACE = 19;
+public const SQLITE_FCNTL_HAS_MOVED = 20;
+public const SQLITE_FCNTL_SYNC = 21;
+public const SQLITE_FCNTL_COMMIT_PHASETWO = 22;
+public const SQLITE_FCNTL_WIN32_SET_HANDLE = 23;
+public const SQLITE_FCNTL_WAL_BLOCK = 24;
+public const SQLITE_FCNTL_ZIPVFS = 25;
+public const SQLITE_FCNTL_RBU = 26;
+public const SQLITE_FCNTL_VFS_POINTER = 27;
+public const SQLITE_FCNTL_JOURNAL_POINTER = 28;
+public const SQLITE_FCNTL_WIN32_GET_HANDLE = 29;
+public const SQLITE_FCNTL_PDB = 30;
+public const SQLITE_FCNTL_BEGIN_ATOMIC_WRITE = 31;
+public const SQLITE_FCNTL_COMMIT_ATOMIC_WRITE = 32;
+public const SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE = 33;
+public const SQLITE_FCNTL_LOCK_TIMEOUT = 34;
+public const SQLITE_FCNTL_DATA_VERSION = 35;
+public const SQLITE_FCNTL_SIZE_LIMIT = 36;
+public const SQLITE_FCNTL_CKPT_DONE = 37;
+public const SQLITE_FCNTL_RESERVE_BYTES = 38;
+public const SQLITE_FCNTL_CKPT_START = 39;
+public const SQLITE_FCNTL_EXTERNAL_READER = 40;
+public const SQLITE_FCNTL_CKSM_FILE = 41;
+public const SQLITE_FCNTL_RESET_CACHE = 42;
+public const SQLITE_FCNTL_NULL_IO = 43;
+public const SQLITE_FCNTL_BLOCK_ON_CONNECT = 44;
+public const SQLITE_FCNTL_FILESTAT = 45;
+
+public const SQLITE_SYNC_NORMAL = 2;
+public const SQLITE_SYNC_FULL = 3;
+public const SQLITE_SYNC_DATAONLY = 16;
+
+public const SQLITE_SHM_UNLOCK = 1;
+public const SQLITE_SHM_LOCK = 2;
+public const SQLITE_SHM_SHARED = 4;
+public const SQLITE_SHM_EXCLUSIVE = 8;
+public const SQLITE_SHM_NLOCK = 8;
+
+public const SQLITE_IOCAP_ATOMIC = 1;
+public const SQLITE_IOCAP_ATOMIC512 = 2;
+public const SQLITE_IOCAP_ATOMIC1K = 4;
+public const SQLITE_IOCAP_ATOMIC2K = 8;
+public const SQLITE_IOCAP_ATOMIC4K = 16;
+public const SQLITE_IOCAP_ATOMIC8K = 32;
+public const SQLITE_IOCAP_ATOMIC16K = 64;
+public const SQLITE_IOCAP_ATOMIC32K = 128;
+public const SQLITE_IOCAP_ATOMIC64K = 256;
+public const SQLITE_IOCAP_SAFE_APPEND = 512;
+public const SQLITE_IOCAP_SEQUENTIAL = 1024;
+public const SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN = 2048;
+public const SQLITE_IOCAP_POWERSAFE_OVERWRITE = 4096;
+public const SQLITE_IOCAP_IMMUTABLE = 8192;
+public const SQLITE_IOCAP_BATCH_ATOMIC = 16384;
+public const SQLITE_IOCAP_SUBPAGE_READ = 32768;
+
+public const SQLITE_INDEX_SCAN_UNIQUE = 1;
+public const SQLITE_INDEX_SCAN_HEX = 2;
+public const SQLITE_INDEX_CONSTRAINT_EQ = 2;
+public const SQLITE_INDEX_CONSTRAINT_GT = 4;
+public const SQLITE_INDEX_CONSTRAINT_LE = 8;
+public const SQLITE_INDEX_CONSTRAINT_LT = 16;
+public const SQLITE_INDEX_CONSTRAINT_GE = 32;
+public const SQLITE_INDEX_CONSTRAINT_MATCH = 64;
+public const SQLITE_INDEX_CONSTRAINT_LIKE = 65;
+public const SQLITE_INDEX_CONSTRAINT_GLOB = 66;
+public const SQLITE_INDEX_CONSTRAINT_REGEXP = 67;
+public const SQLITE_INDEX_CONSTRAINT_NE = 68;
+public const SQLITE_INDEX_CONSTRAINT_ISNOT = 69;
+public const SQLITE_INDEX_CONSTRAINT_ISNOTNULL = 70;
+public const SQLITE_INDEX_CONSTRAINT_ISNULL = 71;
+public const SQLITE_INDEX_CONSTRAINT_IS = 72;
+public const SQLITE_INDEX_CONSTRAINT_LIMIT = 73;
+public const SQLITE_INDEX_CONSTRAINT_OFFSET = 74;
+public const SQLITE_INDEX_CONSTRAINT_FUNCTION = 150;
+
+public const SQLITE_MUTEX_FAST = 0;
+public const SQLITE_MUTEX_RECURSIVE = 1;
+public const SQLITE_MUTEX_STATIC_MAIN = 2;
+public const SQLITE_MUTEX_STATIC_MEM = 3;
+public const SQLITE_MUTEX_STATIC_MEM2 = 4;
+public const SQLITE_MUTEX_STATIC_OPEN = 4;
+public const SQLITE_MUTEX_STATIC_PRNG = 5;
+public const SQLITE_MUTEX_STATIC_LRU = 6;
+public const SQLITE_MUTEX_STATIC_LRU2 = 7;
+public const SQLITE_MUTEX_STATIC_PMEM = 7;
+public const SQLITE_MUTEX_STATIC_APP1 = 8;
+public const SQLITE_MUTEX_STATIC_APP2 = 9;
+public const SQLITE_MUTEX_STATIC_APP3 = 10;
+public const SQLITE_MUTEX_STATIC_VFS1 = 11;
+public const SQLITE_MUTEX_STATIC_VFS2 = 12;
+public const SQLITE_MUTEX_STATIC_VFS3 = 13;
+
+public const ascii SQLITE_VERSION = "3.53.2";
+public const SQLITE_VERSION_NUMBER = 3053002;
+public const ascii SQLITE_SOURCE_ID = "2026-06-03 19:12:13 d6e03d8c777cfa2d35e3b60d8ec3e0187f3e9f99d8e2ee9cac695fd6fcdfalt1";
+public const ascii SQLITE_SCM_BRANCH = "branch-3.53";
+public const ascii SQLITE_SCM_TAGS = "release version-3.53.2";
+public const ascii SQLITE_SCM_DATETIME = "2026-06-03T19:12:13.350Z";
+
+public const SQLITE_SETLK_BLOCK_ON_CONNECT = 1;
+public const SQLITE_ANY = 5;
+public const SQLITE_STATIC = 0;
+
+public const SQLITE_WIN32_DATA_DIRECTORY_TYPE = 1;
+public const SQLITE_WIN32_TEMP_DIRECTORY_TYPE = 2;
+
+public const SQLITE_TESTCTRL_FIRST = 5;
+public const SQLITE_TESTCTRL_PRNG_SAVE = 5;
+public const SQLITE_TESTCTRL_PRNG_RESTORE = 6;
+public const SQLITE_TESTCTRL_PRNG_RESET = 7;
+public const SQLITE_TESTCTRL_FK_NO_ACTION = 7;
+public const SQLITE_TESTCTRL_BITVEC_TEST = 8;
+public const SQLITE_TESTCTRL_FAULT_INSTALL = 9;
+public const SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS = 10;
+public const SQLITE_TESTCTRL_PENDING_BYTE = 11;
+public const SQLITE_TESTCTRL_ASSERT = 12;
+public const SQLITE_TESTCTRL_ALWAYS = 13;
+public const SQLITE_TESTCTRL_RESERVE = 14;
+public const SQLITE_TESTCTRL_JSON_SELFCHECK = 14;
+public const SQLITE_TESTCTRL_OPTIMIZATIONS = 15;
+public const SQLITE_TESTCTRL_ISKEYWORD = 16;
+public const SQLITE_TESTCTRL_GETOPT = 16;
+public const SQLITE_TESTCTRL_SCRATCHMALLOC = 17;
+public const SQLITE_TESTCTRL_INTERNAL_FUNCTIONS = 17;
+public const SQLITE_TESTCTRL_LOCALTIME_FAULT = 18;
+public const SQLITE_TESTCTRL_EXPLAIN_STMT = 19;
+public const SQLITE_TESTCTRL_ONCE_RESET_THRESHOLD = 19;
+public const SQLITE_TESTCTRL_NEVER_CORRUPT = 20;
+public const SQLITE_TESTCTRL_VDBE_COVERAGE = 21;
+public const SQLITE_TESTCTRL_BYTEORDER = 22;
+public const SQLITE_TESTCTRL_ISINIT = 23;
+public const SQLITE_TESTCTRL_SORTER_MMAP = 24;
+public const SQLITE_TESTCTRL_IMPOSTER = 25;
+public const SQLITE_TESTCTRL_PARSER_COVERAGE = 26;
+public const SQLITE_TESTCTRL_RESULT_INTREAL = 27;
+public const SQLITE_TESTCTRL_PRNG_SEED = 28;
+public const SQLITE_TESTCTRL_EXTRA_SCHEMA_CHECKS = 29;
+public const SQLITE_TESTCTRL_SEEK_COUNT = 30;
+public const SQLITE_TESTCTRL_TRACEFLAGS = 31;
+public const SQLITE_TESTCTRL_TUNE = 32;
+public const SQLITE_TESTCTRL_LOGEST = 33;
+public const SQLITE_TESTCTRL_USELONGDOUBLE = 34;
+public const SQLITE_TESTCTRL_ATOF = 34;
+public const SQLITE_TESTCTRL_LAST = 34;
+
+public const SQLITE_VTAB_CONSTRAINT_SUPPORT = 1;
+public const SQLITE_VTAB_INNOCUOUS = 2;
+public const SQLITE_VTAB_DIRECTONLY = 3;
+public const SQLITE_VTAB_USES_ALL_SCHEMAS = 4;
+
+public const SQLITE_CARRAY_INT32 = 0;
+public const SQLITE_CARRAY_INT64 = 1;
+public const SQLITE_CARRAY_DOUBLE = 2;
+public const SQLITE_CARRAY_TEXT = 3;
+public const SQLITE_CARRAY_BLOB = 4;
 
 public const SQLITE_INTEGER = 1;
 public const SQLITE_FLOAT = 2;

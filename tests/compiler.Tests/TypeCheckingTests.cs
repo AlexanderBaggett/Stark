@@ -1015,6 +1015,35 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void GenericFunctionItemsWithNestedCallbackParametersPassOwnershipValidation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias NativeCallback = fnptr<unsafe ffi(c) fn i32[min max](rawmutptr<i8[min max]>, i32[min max])>;
+
+            unsafe fn i32[min max] Register<T>(NativeCallback callback, storeborrow mut T data)
+            {
+                return 0;
+            }
+
+            unsafe fn i32[min max] Run()
+            {
+                stack fnptr<unsafe fn i32[min max](NativeCallback, storeborrow mut i32[min max])> op = Register<i32[min max]>;
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "ownership-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal("Register", promotion.Signature.DisplaySourceName);
+    }
+
+    [Fact]
     public void NonCapturingLambdasTypeCheckAsExplicitFunctionPointers()
     {
         var result = Compile(
