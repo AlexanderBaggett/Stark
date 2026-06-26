@@ -2078,8 +2078,11 @@ public sealed class ExamplesCompileRunTests
         Assert.Contains("public unsafe ffi varargs fn void sqlite3_log", rawSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe ffi(c) fn System.C.c_int sqlite3_memory_alarm", rawSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe ffi varargs fn rawmutptr<System.C.c_char> sqlite3_mprintf", rawSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vmprintf", rawSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe ffi varargs fn rawmutptr<System.C.c_char> sqlite3_snprintf", rawSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vsnprintf", rawSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe ffi varargs fn void sqlite3_str_appendf", rawSourceText, StringComparison.Ordinal);
+        Assert.Contains("public unsafe ffi(c) fn void sqlite3_str_vappendf", rawSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe ffi varargs fn System.C.c_int sqlite3_test_control", rawSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe fn SQLiteStatusResult ConfigureSingleThreadMode", coreSourceText, StringComparison.Ordinal);
         Assert.Contains("public unsafe fn SQLiteStatusResult ConfigureMultiThreadMode", coreSourceText, StringComparison.Ordinal);

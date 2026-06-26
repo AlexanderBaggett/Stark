@@ -14,6 +14,9 @@ unsafe fn bool RawAbiFunctionItemsAreReferenceable()
         stack fnptr<unsafe ffi(c) fn i64[min max]()> function3 = sqlite3_memory_used;
         stack fnptr<unsafe ffi(c) fn System.C.c_int(System.C.c_int)> function4 = sqlite3_release_memory;
         stack fnptr<unsafe ffi(c) fn System.C.c_int(rawptr<System.C.c_char>)> function5 = sqlite3_complete;
+        stack fnptr<unsafe ffi(c) fn rawmutptr<System.C.c_char>(rawptr<System.C.c_char>, System.C.VaList)> function6 = sqlite3_vmprintf;
+        stack fnptr<unsafe ffi(c) fn rawmutptr<System.C.c_char>(System.C.c_int, rawmutptr<System.C.c_char>, rawptr<System.C.c_char>, System.C.VaList)> function7 = sqlite3_vsnprintf;
+        stack fnptr<unsafe ffi(c) fn void(rawmutptr<SQLite3StringNative>, rawptr<System.C.c_char>, System.C.VaList)> function8 = sqlite3_str_vappendf;
     }
 
     return true;

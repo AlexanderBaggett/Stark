@@ -147,11 +147,18 @@ public unsafe ffi(c) fn System.C.c_int sqlite3_memory_alarm(
     rawmutptr<System.C.c_void> userData,
     i64[min max] threshold);
 public unsafe ffi varargs fn rawmutptr<System.C.c_char> sqlite3_mprintf(rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vmprintf(rawptr<System.C.c_char> format, System.C.VaList args);
 public unsafe ffi varargs fn rawmutptr<System.C.c_char> sqlite3_snprintf(
     System.C.c_int byteCount,
     rawmutptr<System.C.c_char> buffer,
     rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vsnprintf(
+    System.C.c_int byteCount,
+    rawmutptr<System.C.c_char> buffer,
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
 public unsafe ffi varargs fn void sqlite3_str_appendf(rawmutptr<SQLite3StringNative> builder, rawptr<System.C.c_char> format);
+public unsafe ffi(c) fn void sqlite3_str_vappendf(rawmutptr<SQLite3StringNative> builder, rawptr<System.C.c_char> format, System.C.VaList args);
 public unsafe ffi varargs fn System.C.c_int sqlite3_test_control(System.C.c_int operation);
 public unsafe ffi(c) fn System.C.c_int sqlite3_open(
     rawptr<System.C.c_char> filename,
@@ -730,4 +737,3 @@ public unsafe ffi(c) fn void sqlite3_result_subtype(rawmutptr<SQLite3ContextNati
 public unsafe ffi(c) fn void sqlite3_result_value(rawmutptr<SQLite3ContextNative> context, rawmutptr<SQLite3ValueNative> value);
 public unsafe ffi(c) fn void sqlite3_result_zeroblob(rawmutptr<SQLite3ContextNative> context, System.C.c_int byteCount);
 public unsafe ffi(c) fn System.C.c_int sqlite3_result_zeroblob64(rawmutptr<SQLite3ContextNative> context, u64[0 max] byteCount);
-

@@ -455,7 +455,32 @@ signatures. Compatibility is checked on the lowered ABI return, parameter kinds,
 parameter LLVM types, and varargs flag, because that is the boundary LLVM and
 the native linker observe.
 
-### 3.2 C ABI Aggregate Carriers
+### 3.2 C `va_list` Carrier
+
+`System.C.VaList` is a compiler-known C ABI carrier, not an ordinary source
+struct. Type resolution recognizes the `System.C.VaList` spelling through the
+same compiler-known `System.C` alias path as `c_int`, `c_size_t`, and `c_void`.
+
+The type checker permits `System.C.VaList` only in places where the frontend can
+preserve the C ABI contract:
+
+- a direct parameter of an unsafe `ffi(c)`-compatible function
+- a direct parameter of an `ffi(c)`-compatible `fnptr`
+- the direct pointee of `rawptr<System.C.VaList>` or
+  `rawmutptr<System.C.VaList>`
+
+Direct locals, fields, arrays, returns, ordinary Stark function parameters, and
+non-FFI callback parameters are rejected with STK3051. This keeps `va_list`
+from becoming part of Stark's own calling convention or layout model.
+
+LLVM ABI emission lowers a direct `System.C.VaList` parameter to the active
+target's C ABI carrier. On the currently supported C varargs ABIs this is an
+opaque pointer (`ptr`), matching the shape Clang exposes for `va_list`
+parameters on those targets. Package images preserve the source alias spelling
+so downstream source bridges re-emit `System.C.VaList` rather than an
+implementation pointer type.
+
+### 3.3 C ABI Aggregate Carriers
 
 `[StructLayout(C)]` controls memory layout; `ffi(c)` controls the call ABI. When
 both apply to a by-value aggregate parameter or return, ABI lowering classifies

@@ -121,6 +121,7 @@ internal static class LlvmAggregateEmissionSupport
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: false, targetInfo),
             StarkTypeKind.Float when normalizedType.BitWidth is int bitWidth
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: true, targetInfo),
+            StarkTypeKind.CVaList => TryGetTargetAwarePointerLayout(targetInfo),
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(targetInfo),
             StarkTypeKind.LlvmVector when normalizedType.ElementType is not null && normalizedType.FixedLength is int vectorLength
                 => TryGetTargetAwareLlvmVectorLayout(normalizedType.ElementType, vectorLength, targetInfo, namedTypes, enumLayouts, activeNamedTypes),

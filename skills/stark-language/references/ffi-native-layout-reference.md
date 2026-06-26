@@ -50,6 +50,21 @@ vararg boundaries. A `%s` conversion takes `rawptr<System.C.c_char>` or
 `rawmutptr<System.C.c_char>`, never Stark `ascii`/`unicode` (compile-time error
 STK3009); convert with `System.C.FromAscii(...)` and pass `OwnedCStr.Data()`.
 
+C APIs that receive an existing C `va_list` use fixed-arity `ffi(c)`
+declarations with `System.C.VaList`, not `ffi varargs`:
+
+```stark
+unsafe ffi(c) fn rawmutptr<System.C.c_char> vformat(
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
+```
+
+`System.C.VaList` is a target-specific C ABI carrier. It is valid only as an
+unsafe `ffi(c)`-compatible function parameter, an `ffi(c)` function-pointer
+parameter, or the direct pointee of `rawptr<System.C.VaList>` /
+`rawmutptr<System.C.VaList>`. Do not store it, return it, construct it, or put
+it in ordinary Stark wrapper signatures.
+
 ## Calling Conventions
 
 An `ffi` function uses the target's C ABI by default. A bare `unsafe ffi fn`
@@ -105,6 +120,8 @@ unsafe ffi(c) fn void free(rawmutptr<System.C.c_void> ptr);
   `char`, and `c_uchar`/`u8[0 max]` for non-text bytes.
 - `c_void` is valid only as `rawptr<c_void>` / `rawmutptr<c_void>`; C `void`
   returns use Stark `void`.
+- `VaList` is the C `va_list` carrier for fixed-arity `vprintf`-style APIs and
+  callbacks. It stays at the FFI edge and lowers to the target C ABI carrier.
 - To leave the platform-width surface, bind into a Stark-typed local or cast the
   alias value to a Stark width. A qualified alias is not a valid C-style cast
   target, so `(System.C.c_size_t)value` does not parse — write

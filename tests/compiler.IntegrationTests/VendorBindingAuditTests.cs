@@ -449,8 +449,7 @@ public sealed partial class VendorBindingAuditTests
         Assert.Contains("public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;", typesBinding, StringComparison.Ordinal);
         Assert.Contains("public alias SaveFileTextCallback = fnptr<unsafe ffi(c) fn bool(ascii, ascii)>;", typesBinding, StringComparison.Ordinal);
         Assert.Contains("public alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;", typesBinding, StringComparison.Ordinal);
-        Assert.Contains("Raylib's trace-log callback takes a C va_list", typesBinding, StringComparison.Ordinal);
-        Assert.Contains("public alias TraceLogCallback = rawptr<i8[min max]>;", typesBinding, StringComparison.Ordinal);
+        Assert.Contains("public alias TraceLogCallback = fnptr<unsafe ffi(c) fn void(i32[min max], ascii, System.C.VaList)>;", typesBinding, StringComparison.Ordinal);
 
         foreach (var name in new[]
         {
@@ -598,7 +597,7 @@ public sealed partial class VendorBindingAuditTests
             "Text.stark:public unsafe ffi fn rawptr<rawptr<i8[min max]>> TextSplit(ascii text, i8[min max] delimiter, rawmutptr<i32[min max]> count);",
             "Text.stark:public unsafe ffi fn void TextAppend(rawmutptr<i8[min max]> text, ascii append, rawmutptr<i32[min max]> position);",
             "Types.stark:public alias ModelAnimPose = rawmutptr<Transform>;",
-            "Types.stark:public alias TraceLogCallback = rawptr<i8[min max]>;",
+            "Types.stark:public alias TraceLogCallback = fnptr<unsafe ffi(c) fn void(i32[min max], ascii, System.C.VaList)>;",
             "Types.stark:public alias LoadFileDataCallback = fnptr<unsafe ffi(c) fn rawmutptr<u8[0 max]>(ascii, rawmutptr<i32[min max]>)>;",
             "Types.stark:public alias SaveFileDataCallback = fnptr<unsafe ffi(c) fn bool(ascii, rawmutptr<i8[min max]>, i32[min max])>;",
             "Types.stark:public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;",
@@ -825,7 +824,7 @@ public sealed partial class VendorBindingAuditTests
             auditText,
             StringComparison.Ordinal);
         Assert.Contains(
-            "The missing surface is 3 functions, 0 constants, and 0 object/type carrier names.",
+            "The missing official C surface is 0 functions, 0 constants, and 0 object/type carrier names.",
             auditText,
             StringComparison.Ordinal);
 
@@ -851,13 +850,8 @@ public sealed partial class VendorBindingAuditTests
             .Select(static entry => entry.Key)
             .OrderBy(static name => name, StringComparer.Ordinal)
             .ToArray();
-        Assert.Equal(
-            ["sqlite3_str_vappendf", "sqlite3_vmprintf", "sqlite3_vsnprintf"],
-            missingFunctions);
-        Assert.Contains(
-            "`va_list` printf families (`sqlite3_vmprintf`, `sqlite3_vsnprintf`, `sqlite3_str_vappendf`) remain pending",
-            auditText,
-            StringComparison.Ordinal);
+        Assert.Empty(missingFunctions);
+        Assert.Contains("covers all 304 official SQLite function names", auditText, StringComparison.Ordinal);
 
         var sqliteApiRoutineFields = SQLiteApiRoutineFieldRegex().Matches(sqliteTypesText)
             .Select(static match => match.Groups[1].Value)
@@ -985,7 +979,7 @@ public sealed partial class VendorBindingAuditTests
         Assert.Contains("export import Vendor.SQLite.Types", sqliteRawText, StringComparison.Ordinal);
 
         Assert.DoesNotMatch(new Regex(@"^\s*(?:public|internal)\s+unsafe\s+ffi", RegexOptions.Multiline), sqliteCoreText);
-        Assert.Equal(313, Regex.Matches(sqliteRawText, @"^public unsafe ffi", RegexOptions.Multiline).Count);
+        Assert.Equal(316, Regex.Matches(sqliteRawText, @"^public unsafe ffi", RegexOptions.Multiline).Count);
         Assert.Equal(8, Regex.Matches(sqliteRawText, @"^public unsafe ffi varargs", RegexOptions.Multiline).Count);
         Assert.Contains("RawAbiFunctionItemsAreReferenceable", sqliteRawSelfHostedTestsText, StringComparison.Ordinal);
         Assert.Contains("`Vendor.SQLite.Raw`", auditText, StringComparison.Ordinal);

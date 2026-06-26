@@ -407,6 +407,61 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("rawptr<System.C.c_void>", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void SystemCVaListIsValidOnlyAtCAbiEdges()
+    {
+        var good = Compile(
+            """
+            module Demo
+
+            alias TraceCallback = fnptr<unsafe ffi(c) fn void(rawptr<System.C.c_char>, System.C.VaList)>;
+
+            unsafe ffi(c) fn void NativeTrace(rawptr<System.C.c_char> format, System.C.VaList args);
+
+            unsafe fn rawptr<System.C.VaList> Identity(rawptr<System.C.VaList> args)
+            {
+                return args;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(good.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var nativeTrace = typeCheckModel.Functions["NativeTrace"];
+        Assert.Equal(StarkTypeKind.CVaList, nativeTrace.Parameters[1].Type.Kind);
+        Assert.Equal("System.C.VaList", nativeTrace.Parameters[1].Type.CSourceAliasName);
+
+        var bad = Compile(
+            """
+            module Demo
+
+            alias BadCallback = fnptr<fn void(System.C.VaList)>;
+
+            unsafe ffi(c) fn System.C.VaList BadReturn();
+
+            struct BadField
+            {
+                System.C.VaList Args;
+            }
+
+            unsafe fn void BadLocal()
+            {
+                stack System.C.VaList args;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3051"
+                && diagnostic.Message.Contains("System.C.VaList", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("target-specific C ABI carrier", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("x86_64-unknown-linux-gnu", true)]
     [InlineData("aarch64-unknown-linux-gnu", false)]
