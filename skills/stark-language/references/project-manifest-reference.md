@@ -20,9 +20,6 @@ kind = "executable"
 root = "../hello.stark"
 output = "hello"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 
@@ -41,9 +38,6 @@ kind = "library"
 [library]
 root = "MathCore.stark"
 output = "MathCore"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }
 ```
 
 Test project:
@@ -59,11 +53,16 @@ root = "MathTests.stark"
 output = "math-tests"
 
 [dependencies]
-stdlib = { path = "../../stdlib" }
 math-core = { path = "../math-core" }
 ```
 
 Test projects compile to executables. Return `0` for success.
+
+Project manifests do not list the bundled standard library or official vendor
+library as dependencies. `System.*` imports resolve through the `stdlib`
+bundled-library search path, and `Vendor.*` imports resolve through the
+`vendor` bundled-library search path. Use `[dependencies]` only for ordinary
+project/package dependencies outside those bundled roots.
 
 ## Native-Backed Library
 
@@ -216,7 +215,7 @@ export fn i32[min max] main()
 ```
 
 Imports are source-level name resolution. Package dependencies are manifest
-entries. You usually need both:
+entries. For non-bundled packages, you usually need both:
 
 ```stark
 import Geometry
@@ -227,6 +226,9 @@ module App
 [dependencies]
 geometry = { path = "../geometry" }
 ```
+
+`System.*` and `Vendor.*` imports are the exception: they are routed through
+bundled-library discovery and do not get `[dependencies]` entries.
 
 ## Output Layout
 

@@ -7,9 +7,6 @@ kind = "test"
 root = "StdlibPortTests.stark"
 output = "stdlib-port-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

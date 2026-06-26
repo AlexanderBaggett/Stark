@@ -7,9 +7,6 @@ kind = "test"
 root = "CollectionFilteringTests.stark"
 output = "stdlib-collections-slice-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

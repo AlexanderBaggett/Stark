@@ -7,9 +7,6 @@ kind = "test"
 root = "TestingAssertionTests.stark"
 output = "stdlib-testing-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

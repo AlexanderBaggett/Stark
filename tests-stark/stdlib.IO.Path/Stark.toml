@@ -7,9 +7,6 @@ kind = "test"
 root = "PathExtensionTests.stark"
 output = "stdlib-io-path-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

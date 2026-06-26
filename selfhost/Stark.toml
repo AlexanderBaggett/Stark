@@ -7,9 +7,6 @@ kind = "library"
 root = "Compiler.stark"
 output = "StarkCompiler"
 
-[dependencies]
-stdlib = { path = "../stdlib" }
-
 [profiles.dev]
 opt = 0
 

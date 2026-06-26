@@ -7,9 +7,6 @@ kind = "test"
 root = "LlvmEmissionTests.stark"
 output = "compiler-llvm-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

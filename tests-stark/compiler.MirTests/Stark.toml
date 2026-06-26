@@ -7,9 +7,6 @@ kind = "test"
 root = "CompilerMirTests.stark"
 output = "compiler-mir-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

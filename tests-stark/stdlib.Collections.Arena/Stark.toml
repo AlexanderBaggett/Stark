@@ -7,9 +7,6 @@ kind = "test"
 root = "ArenaTests.stark"
 output = "stdlib-collections-arena-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 
