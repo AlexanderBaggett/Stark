@@ -1,6 +1,7 @@
 import Compiler.AsmFacts
 import Compiler.Ir
 import Compiler.Mir
+import Compiler.Lexing
 import System.Memory
 import System.Text
 import System.Runtime.Buffer
@@ -90,7 +91,8 @@ fn bool ValueFactsDefaultToAbsent()
         && !vf.HasCallingAbi()
         && !vf.HasNoAlias()
         && !vf.Volatile()
-        && !vf.HasIntegerRange();
+        && !vf.HasIntegerRange()
+        && !vf.HasNullability();
 }
 
 [Fact]
@@ -102,6 +104,7 @@ fn bool ValueFactsSetAndQuery()
     vf.SetCallingAbi(AbiKind.CAbi);
     vf.MarkNoAlias();
     vf.SetIntegerRange(2, 9);
+    vf.MarkKnownNull();
     return vf.HasAlignment()
         && vf.AlignmentBytes() == 8
         && vf.HasCallingAbi()
@@ -109,6 +112,9 @@ fn bool ValueFactsSetAndQuery()
         && vf.HasIntegerRange()
         && vf.IntegerRangeLower() == 2
         && vf.IntegerRangeUpperExclusive() == 9
+        && vf.HasNullability()
+        && vf.KnownNull()
+        && !vf.KnownNonNull()
         && !vf.Volatile();
 }
 
@@ -121,9 +127,11 @@ fn bool ValueFactsInheritCarriesPresentFactsOnly()
     src.SetAlignment(16);
     src.MarkNoAlias();
     src.SetIntegerRange(0, 11);
+    src.MarkKnownNonNull();
 
     stack mut ValueFacts dst = new();
     dst.MarkVolatile();
+    dst.MarkKnownNull();
     dst.InheritFrom(src);
 
     return dst.HasAlignment()
@@ -132,6 +140,9 @@ fn bool ValueFactsInheritCarriesPresentFactsOnly()
         && dst.HasIntegerRange()
         && dst.IntegerRangeLower() == 0
         && dst.IntegerRangeUpperExclusive() == 11
+        && dst.HasNullability()
+        && !dst.KnownNull()
+        && dst.KnownNonNull()
         && dst.Volatile()
         && !dst.HasCallingAbi();
 }
@@ -190,6 +201,7 @@ fn bool ValueFactTransferFillsSkippedHandlesWithEmptyFacts()
     stack mut IrTable<ValueFacts> facts = new();
     stack mut ValueFacts generated = new();
     generated.MarkNoAlias();
+    generated.MarkKnownNull();
 
     if (!RecordGeneratedValueFactsForMirValue(facts, MirValueIdOf(3), generated))
     {
@@ -201,8 +213,11 @@ fn bool ValueFactTransferFillsSkippedHandlesWithEmptyFacts()
     stack ValueFacts third = ValueFactsForMirValue(facts, MirValueIdOf(3));
     return facts.Count() == 3
         && !first.HasNoAlias()
+        && !first.HasNullability()
         && !second.HasNoAlias()
-        && third.HasNoAlias();
+        && !second.HasNullability()
+        && third.HasNoAlias()
+        && third.KnownNull();
 }
 
 [Fact]
@@ -292,6 +307,78 @@ fn bool ValueFactTransferImportsParameterGlobalAndReturnFacts()
 }
 
 [Fact]
+fn bool BuildMirValueRangeFactsImportsTypedCallReturnFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId call = MirCallTyped(instrs, MirType.I32, MirFuncIdOf(2));
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts emptyReturn = new();
+    stack u32[0 max] addedFirstReturn = functionReturnFacts.Add(emptyReturn);
+    stack mut ValueFacts f2Facts = new();
+    f2Facts.SetIntegerRange(12, 13);
+    f2Facts.SetAlignment(4);
+    f2Facts.SetCallingAbi(AbiKind.CAbi);
+    f2Facts.MarkNoAlias();
+    f2Facts.MarkVolatile();
+    stack u32[0 max] addedSecondReturn = functionReturnFacts.Add(f2Facts);
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts callFacts = ValueFactsForMirValue(valueFacts, call);
+    return addedFirstReturn == 1
+        && addedSecondReturn == 2
+        && valueFacts.Count() == 1
+        && MirValueType(instrs, call.Index()) == MirType.I32
+        && callFacts.HasIntegerRange()
+        && callFacts.IntegerRangeLower() == 12
+        && callFacts.IntegerRangeUpperExclusive() == 13
+        && callFacts.HasAlignment()
+        && callFacts.AlignmentBytes() == 4
+        && callFacts.HasCallingAbi()
+        && callFacts.CallingAbi() == AbiKind.CAbi
+        && callFacts.HasNoAlias()
+        && callFacts.Volatile();
+}
+
+[Fact]
+fn bool BuildMirValueRangeFactsImportsPointerCallReturnBackendFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId call = MirCallTyped(instrs, MirType.Ptr, MirFuncIdOf(1));
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts returnFacts = new();
+    returnFacts.SetAlignment(8);
+    returnFacts.MarkNoAlias();
+    returnFacts.MarkKnownNonNull();
+    stack u32[0 max] addedReturn = functionReturnFacts.Add(returnFacts);
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts callFacts = ValueFactsForMirValue(valueFacts, call);
+    return addedReturn == 1
+        && valueFacts.Count() == 1
+        && MirValueType(instrs, call.Index()) == MirType.Ptr
+        && callFacts.HasAlignment()
+        && callFacts.AlignmentBytes() == 8
+        && callFacts.HasNoAlias()
+        && callFacts.HasNullability()
+        && !callFacts.KnownNull()
+        && callFacts.KnownNonNull();
+}
+
+[Fact]
 fn bool BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -316,6 +403,7 @@ fn bool BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi()
     stack ValueFacts fiveFacts = ValueFactsForMirValue(valueFacts, five);
     stack ValueFacts minusOneFacts = ValueFactsForMirValue(valueFacts, minusOne);
     stack ValueFacts sixFacts = ValueFactsForMirValue(valueFacts, six);
+    stack ValueFacts lessFacts = ValueFactsForMirValue(valueFacts, less);
     stack ValueFacts flagFacts = ValueFactsForMirValue(valueFacts, flag);
     stack ValueFacts mergedFacts = ValueFactsForMirValue(valueFacts, merged);
     return valueFacts.Count() == instrs.Count()
@@ -328,12 +416,74 @@ fn bool BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi()
         && sixFacts.HasIntegerRange()
         && sixFacts.IntegerRangeLower() == 6
         && sixFacts.IntegerRangeUpperExclusive() == 7
+        && lessFacts.HasIntegerRange()
+        && lessFacts.IntegerRangeLower() == 0
+        && lessFacts.IntegerRangeUpperExclusive() == 2
         && flagFacts.HasIntegerRange()
         && flagFacts.IntegerRangeLower() == 0
         && flagFacts.IntegerRangeUpperExclusive() == 2
         && mergedFacts.HasIntegerRange()
         && mergedFacts.IntegerRangeLower() == 3
         && mergedFacts.IntegerRangeUpperExclusive() == 6;
+}
+
+[Fact]
+fn bool BuildMirValueRangeFactsDerivesExactExtendedIntegerOps()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId twenty = MirConstIntTyped(instrs, MirType.I32, 20);
+    stack MirValueId six = MirConstIntTyped(instrs, MirType.I32, 6);
+    stack MirValueId sdiv = MirSDivTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId udiv = MirUDivTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId srem = MirSRemTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId andValue = MirAndTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId orValue = MirOrTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId xorValue = MirXorTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId shl = MirShlTyped(instrs, MirType.I32, twenty, six);
+    stack MirValueId ashr = MirAShrTyped(instrs, MirType.I32, twenty, six);
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts sdivFacts = ValueFactsForMirValue(valueFacts, sdiv);
+    stack ValueFacts udivFacts = ValueFactsForMirValue(valueFacts, udiv);
+    stack ValueFacts sremFacts = ValueFactsForMirValue(valueFacts, srem);
+    stack ValueFacts andFacts = ValueFactsForMirValue(valueFacts, andValue);
+    stack ValueFacts orFacts = ValueFactsForMirValue(valueFacts, orValue);
+    stack ValueFacts xorFacts = ValueFactsForMirValue(valueFacts, xorValue);
+    stack ValueFacts shlFacts = ValueFactsForMirValue(valueFacts, shl);
+    stack ValueFacts ashrFacts = ValueFactsForMirValue(valueFacts, ashr);
+    return valueFacts.Count() == instrs.Count()
+        && sdivFacts.HasIntegerRange()
+        && sdivFacts.IntegerRangeLower() == 3
+        && sdivFacts.IntegerRangeUpperExclusive() == 4
+        && udivFacts.HasIntegerRange()
+        && udivFacts.IntegerRangeLower() == 3
+        && udivFacts.IntegerRangeUpperExclusive() == 4
+        && sremFacts.HasIntegerRange()
+        && sremFacts.IntegerRangeLower() == 2
+        && sremFacts.IntegerRangeUpperExclusive() == 3
+        && andFacts.HasIntegerRange()
+        && andFacts.IntegerRangeLower() == 4
+        && andFacts.IntegerRangeUpperExclusive() == 5
+        && orFacts.HasIntegerRange()
+        && orFacts.IntegerRangeLower() == 22
+        && orFacts.IntegerRangeUpperExclusive() == 23
+        && xorFacts.HasIntegerRange()
+        && xorFacts.IntegerRangeLower() == 18
+        && xorFacts.IntegerRangeUpperExclusive() == 19
+        && shlFacts.HasIntegerRange()
+        && shlFacts.IntegerRangeLower() == 1280
+        && shlFacts.IntegerRangeUpperExclusive() == 1281
+        && ashrFacts.HasIntegerRange()
+        && ashrFacts.IntegerRangeLower() == 0
+        && ashrFacts.IntegerRangeUpperExclusive() == 1;
 }
 
 [Fact]
@@ -416,7 +566,7 @@ fn bool ValueFactTransferTranslateUsesProvidedFacts()
 fn bool IrFactCategoryIndexCoversConcreteDescriptors()
 {
     stack u32[0 max] count = IrConcreteFactCategoryCount();
-    if (count != 16 || IrFactCategoryAt(count) != IrFactCategory.Unknown)
+    if (count != 17 || IrFactCategoryAt(count) != IrFactCategory.Unknown)
     {
         return false;
     }
@@ -447,6 +597,7 @@ fn bool IrFactValueDescriptorsMatchCurrentValueFacts()
 {
     stack IrFactCategoryDescriptor align = DescribeIrFactCategory(IrFactCategory.ValueAlignment);
     stack IrFactCategoryDescriptor range = DescribeIrFactCategory(IrFactCategory.ValueIntegerRange);
+    stack IrFactCategoryDescriptor nullability = DescribeIrFactCategory(IrFactCategory.ValueNullability);
     stack IrFactCategoryDescriptor volatileFact = DescribeIrFactCategory(IrFactCategory.ValueVolatile);
     return align.AttachPoint() == IrFactAttachPoint.Value
         && align.PhaseOwner() == IrFactPhaseOwner.Mir
@@ -454,6 +605,9 @@ fn bool IrFactValueDescriptorsMatchCurrentValueFacts()
         && range.AttachPoint() == IrFactAttachPoint.Value
         && range.Durability() == IrFactDurability.Recomputable
         && range.ValidationRule() == IrFactValidationRule.Recompute
+        && nullability.AttachPoint() == IrFactAttachPoint.Value
+        && nullability.Durability() == IrFactDurability.Recomputable
+        && nullability.LoweringPolicy() == IrFactLoweringPolicy.Preserve
         && volatileFact.Consumer() == IrFactConsumer.LlvmEmission
         && volatileFact.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop;
 }
@@ -471,6 +625,322 @@ fn bool IrFactEnumLayoutDescriptorPreservesPackageBoundaryContract()
         && enumLayout.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop
         && IrFactCategoryIsLayoutFact(IrFactCategory.EnumLayout)
         && IrFactCategoryRequiresPackageSerialization(IrFactCategory.EnumLayout);
+}
+
+fn u32[0 max] MirEnumLayoutFactVariantIndexByName(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    ascii source,
+    borrow TokenStream stream,
+    ascii variantName)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        if (found == 0 && fact.RowKind() == MirEnumLayoutFactRowKind.Variant)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fact.VariantNameToken());
+            if (System.Text.Equals(actual, variantName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+fn u32[0 max] MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    ascii source,
+    borrow TokenStream stream,
+    ascii variantName,
+    u32[0 max] payloadOrdinal)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        if (found == 0
+            && fact.RowKind() == MirEnumLayoutFactRowKind.Payload
+            && fact.PayloadOrdinal() == payloadOrdinal)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fact.VariantNameToken());
+            if (System.Text.Equals(actual, variantName))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+[Fact]
+fn bool MirEnumLayoutFactsPreserveTypedRows()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] dataVariantSlot = MirEnumLayoutFactVariantIndexByName(facts, source, stream, "Data");
+    stack u32[0 max] emptyVariantSlot = MirEnumLayoutFactVariantIndexByName(facts, source, stream, "Empty");
+    stack u32[0 max] otherVariantSlot = MirEnumLayoutFactVariantIndexByName(facts, source, stream, "Other");
+    stack u32[0 max] dataPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(facts, source, stream, "Data", 0);
+    stack u32[0 max] otherPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(facts, source, stream, "Other", 0);
+    if (dataVariantSlot == 0 || emptyVariantSlot == 0 || otherVariantSlot == 0 || dataPayloadSlot == 0 || otherPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack MirEnumLayoutFact dataVariant = facts.Get(dataVariantSlot);
+    stack MirEnumLayoutFact emptyVariant = facts.Get(emptyVariantSlot);
+    stack MirEnumLayoutFact otherVariant = facts.Get(otherVariantSlot);
+    stack MirEnumLayoutFact dataPayload = facts.Get(dataPayloadSlot);
+    stack MirEnumLayoutFact otherPayload = facts.Get(otherPayloadSlot);
+    stack TypeId dataOwner = dataVariant.OwnerType();
+    stack TypeId otherPayloadOwner = otherPayload.OwnerType();
+    stack ascii ownerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])dataVariant.OwnerNameToken());
+
+    return facts.Count() == 5
+        && dataOwner.Index() == 1
+        && otherPayloadOwner.Equals(dataOwner)
+        && System.Text.Equals(ownerName, "Packet")
+        && dataVariant.RowKind() == MirEnumLayoutFactRowKind.Variant
+        && dataVariant.VariantTag() == 1
+        && dataVariant.PayloadCount() == 1
+        && dataVariant.SizeBytes() == 1
+        && dataVariant.AlignmentBytes() == 1
+        && dataVariant.BitWidth() == 8
+        && dataVariant.HasConcreteLayout()
+        && emptyVariant.VariantTag() == 0
+        && emptyVariant.PayloadCount() == 0
+        && otherVariant.VariantTag() == 2
+        && dataPayload.RowKind() == MirEnumLayoutFactRowKind.Payload
+        && dataPayload.StorageFieldOrdinal() == 1
+        && dataPayload.OffsetBytes() == 1
+        && dataPayload.SizeBytes() == 1
+        && dataPayload.AlignmentBytes() == 1
+        && dataPayload.HasConcreteLayout()
+        && otherPayload.RowKind() == MirEnumLayoutFactRowKind.Payload
+        && otherPayload.StorageFieldOrdinal() == 2
+        && otherPayload.OffsetBytes() == 4
+        && otherPayload.SizeBytes() == 4
+        && otherPayload.AlignmentBytes() == 4
+        && otherPayload.HasConcreteLayout();
+}
+
+[Fact]
+fn bool MirEnumLayoutFactsBuildAbiSummaryAndCarrier()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack mut MirEnumAbiLayoutFacts layout = new();
+    if (!TryBuildMirEnumAbiLayoutFacts(facts, TypeIdOf(1), layout))
+    {
+        return false;
+    }
+
+    stack mut CAbiAggregateCarrierFacts carrier = new();
+    if (!TryBuildMirEnumCAbiCarrierFacts(facts, TypeIdOf(1), carrier))
+    {
+        return false;
+    }
+
+    stack ascii ownerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])layout.OwnerNameToken());
+    stack TypeId layoutOwner = layout.OwnerType();
+    return layout.Present()
+        && layoutOwner.Index() == 1
+        && System.Text.Equals(ownerName, "Packet")
+        && layout.VariantCount() == 3
+        && layout.PayloadFieldCount() == 2
+        && layout.TagOffsetBytes() == 0
+        && layout.TagSizeBytes() == 1
+        && layout.TagAlignmentBytes() == 1
+        && !layout.TagIsMisaligned()
+        && layout.SizeBytes() == 8
+        && layout.AlignmentBytes() == 4
+        && layout.HasConcreteLayout()
+        && !layout.HasMisalignedStorage()
+        && !MirEnumAbiRequiresIndirectParameter(layout)
+        && !MirEnumAbiRequiresIndirectReturn(layout)
+        && carrier.Present()
+        && carrier.IsDirect()
+        && !carrier.IsIndirect()
+        && carrier.ByteSize() == 8
+        && carrier.ByteAlignment() == 4
+        && carrier.LlvmParameterCarrierCount() == 1
+        && carrier.CarrierKindAt(0) == AbiCarrierKind.I64
+        && carrier.CarrierKindAt(1) == AbiCarrierKind.None;
+}
+
+[Fact]
+fn bool MirEnumLayoutFactsEmitLlvmStorageTypeFromRows()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii llvmType = new();
+    switch (EmitLlvmEnumStorageType(facts, TypeIdOf(1), llvmType))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return LlvmTextEquals(llvmType, "{ i8, i8, [2 x i8], i32 }");
+}
+
+[Fact]
+fn bool MirEnumLayoutFactsComputeLlvmFieldIndicesFromRows()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] dataVariantSlot = MirEnumLayoutFactVariantIndexByName(facts, source, stream, "Data");
+    stack u32[0 max] dataPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(facts, source, stream, "Data", 0);
+    stack u32[0 max] otherPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(facts, source, stream, "Other", 0);
+    if (dataVariantSlot == 0 || dataPayloadSlot == 0 || otherPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack MirEnumLayoutFact dataVariant = facts.Get(dataVariantSlot);
+    stack MirEnumLayoutFact dataPayload = facts.Get(dataPayloadSlot);
+    stack MirEnumLayoutFact otherPayload = facts.Get(otherPayloadSlot);
+    stack mut u32[0 max] tagIndex = 99;
+    stack mut u32[0 max] dataIndex = 99;
+    stack mut u32[0 max] otherIndex = 99;
+
+    return TryGetLlvmEnumFactFieldIndex(facts, TypeIdOf(1), dataVariant, tagIndex)
+        && TryGetLlvmEnumFactFieldIndex(facts, TypeIdOf(1), dataPayload, dataIndex)
+        && TryGetLlvmEnumFactFieldIndex(facts, TypeIdOf(1), otherPayload, otherIndex)
+        && tagIndex == 0
+        && dataIndex == 1
+        && otherIndex == 3;
+}
+
+[Fact]
+fn bool MirEnumLayoutFactsEmitLlvmValueOpsFromRows()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] otherVariantSlot = MirEnumLayoutFactVariantIndexByName(facts, source, stream, "Other");
+    stack u32[0 max] otherPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(facts, source, stream, "Other", 0);
+    if (otherVariantSlot == 0 || otherPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack MirEnumLayoutFact otherVariant = facts.Get(otherVariantSlot);
+    stack MirEnumLayoutFact otherPayload = facts.Get(otherPayloadSlot);
+    stack mut OwnedAscii llvm = new();
+    switch (EmitLlvmEnumVariantTagConstructor(facts, TypeIdOf(1), otherVariant.VariantOrdinal(), "%packet.tagged", llvm))
+    {
+        case MemoryStatus.Err(var tagError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    switch (EmitLlvmEnumPayloadInsert(facts, TypeIdOf(1), otherPayload.VariantOrdinal(), otherPayload.PayloadOrdinal(), "%packet.value", "%packet.tagged", "%payload", llvm))
+    {
+        case MemoryStatus.Err(var payloadError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    switch (EmitLlvmEnumValueStore(facts, TypeIdOf(1), "%packet.value", "%slot", llvm))
+    {
+        case MemoryStatus.Err(var storeError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    switch (EmitLlvmEnumValueLoad(facts, TypeIdOf(1), "%loaded", "%slot", llvm))
+    {
+        case MemoryStatus.Err(var loadError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    switch (EmitLlvmEnumTagRead(facts, TypeIdOf(1), "%tag", "%loaded", llvm))
+    {
+        case MemoryStatus.Err(var tagReadError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return LlvmTextEquals(
+        llvm,
+        "  %packet.tagged = insertvalue { i8, i8, [2 x i8], i32 } zeroinitializer, i8 2, 0\n  %packet.value = insertvalue { i8, i8, [2 x i8], i32 } %packet.tagged, i32 %payload, 3\n  store { i8, i8, [2 x i8], i32 } %packet.value, ptr %slot, align 4\n  %loaded = load { i8, i8, [2 x i8], i32 }, ptr %slot, align 4\n  %tag = extractvalue { i8, i8, [2 x i8], i32 } %loaded, 0\n");
 }
 
 [Fact]
@@ -557,6 +1027,7 @@ fn bool IrFactValidationChecksMirValueFactsAtBoundary()
     facts.MarkNoAlias();
     facts.MarkVolatile();
     facts.SetIntegerRange(1, 2);
+    facts.MarkKnownNonNull();
 
     if (!RecordGeneratedValueFactsForMirValue(valueFacts, source, facts))
     {
@@ -567,7 +1038,9 @@ fn bool IrFactValidationChecksMirValueFactsAtBoundary()
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueNoAlias) == IrFactValidationStatus.Ok
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueVolatile) == IrFactValidationStatus.Ok
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueIntegerRange) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueNullability) == IrFactValidationStatus.Ok
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueNoAlias) == IrFactValidationStatus.MissingAliasFact
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueNullability) == IrFactValidationStatus.MissingRequiredFact
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, MirValueIdOf(3), IrFactCategory.ValueNoAlias) == IrFactValidationStatus.StaleHandle;
 }
 
@@ -702,6 +1175,17 @@ fn bool MirReturnBlockRecordsReturnedValue()
     return b.Index() == 1
         && MirBlockTerminator(blocks, b) == MirTermKind.Return
         && got.Equals(v);
+}
+
+[Fact]
+fn bool MirReturnVoidBlockRecordsEmptyTerminator()
+{
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId b = MirReturnVoidBlock(blocks);
+    stack MirValueId got = MirBlockReturnValue(blocks, b);
+    return b.Index() == 1
+        && MirBlockTerminator(blocks, b) == MirTermKind.ReturnVoid
+        && !got.IsValid();
 }
 
 [Fact]
@@ -948,6 +1432,22 @@ fn bool EmitsLlvmReturnsParameterDirectly()
     {
         case MemoryStatus.Ok:
             return LlvmTextEquals(sink, "define i64 @id(i64 %p0) {\nb1:\n  ret i64 %p0\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmVoidDefinitionWithParams()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId entry = MirReturnVoidBlock(blocks);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmVoidDefinitionWithParams(instrs, blocks, "noop", 0, entry.Index(), 1, 0, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define void @noop() {\nb1:\n  ret void\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -1431,12 +1931,55 @@ fn bool CompileModuleWholePointerParamsEmitSeparateStorageAssume()
 }
 
 [Fact]
+fn bool CompileModulePointerCallArgumentsPreserveAbiAndAliasFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn i64 touch(borrow i32 left, borrow i32 right) { return 1 } fn i64 main(borrow i32 left, borrow i32 right) { return touch(left, right) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = call i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)\n  ret i64 %v3\n}\n")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileModuleTailPointerCallArgumentsPreserveAbiAndAliasFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("tail fn touch(borrow i32 left, borrow i32 right) { return 1 } tail fn bounce(borrow i32 left, borrow i32 right) { become touch(left, right) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define tailcc i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)")
+        && System.Text.Contains(sink.View(), "%v3 = musttail call tailcc i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)")
+        && System.Text.Contains(sink.View(), "call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = musttail")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileModulePointerCallArgumentsRequireCallerAliasProof()
+{
+    stack mut OwnedAscii overlapped = new();
+    stack mut OwnedAscii repeated = new();
+    stack mut OwnedAscii calleeOverlap = new();
+    return !CompileModuleFromAst("fn i64 touch(borrow i32 left, borrow i32 right) { return 1 } fn i64 main(borrow i32 left, borrow i32 right) where overlap(left, right) { return touch(left, right) }", overlapped)
+        && !CompileModuleFromAst("fn i64 touch(borrow i32 left, borrow i32 right) { return 1 } fn i64 main(borrow i32 left) { return touch(left, left) }", repeated)
+        && CompileModuleFromAst("fn i64 touch(borrow i32 left, borrow i32 right) where overlap(left, right) { return 1 } fn i64 main(borrow i32 left, borrow i32 right) where overlap(left, right) { return touch(left, right) }", calleeOverlap);
+}
+
+[Fact]
+fn bool CompileModulePointerCallArgumentKindsMustMatchCallee()
+{
+    stack mut OwnedAscii pointerToScalar = new();
+    stack mut OwnedAscii scalarToPointer = new();
+    return !CompileModuleFromAst("fn i64 id(i64 value) { return value } fn i64 main(borrow i32 value) { return id(value) }", pointerToScalar)
+        && !CompileModuleFromAst("fn i64 touch(borrow i32 value) { return 1 } fn i64 main() { return touch(1) }", scalarToPointer);
+}
+
+[Fact]
 fn bool CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes()
 {
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("finite law fn id(x) { return x } fn main() { return id(7) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 range(i64 7, 8) %v1)\n  ret i64 %v2\n}\n");
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 range(i64 7, 8) %v1) memory(none) nosync nofree willreturn mustprogress norecurse\n  ret i64 %v2\n}\n")
+        && ClangVerifiesLlvmText(sink);
 }
 
 [Fact]
@@ -1454,7 +1997,7 @@ fn bool CompileModuleFiniteEffectsPropagateThroughProvenDirectCalls()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("finite fn one() { return 1 } finite fn two() { return one() }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1() willreturn mustprogress norecurse {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() willreturn mustprogress norecurse {\nb1:\n  %v1 = call i64 @f1()\n  ret i64 %v1\n}\n");
+        && LlvmTextEquals(sink, "define i64 @f1() willreturn mustprogress norecurse {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() willreturn mustprogress norecurse {\nb1:\n  %v1 = call i64 @f1() willreturn mustprogress norecurse\n  ret i64 %v1\n}\n");
 }
 
 [Fact]
@@ -1463,7 +2006,30 @@ fn bool CompileModuleLawEffectsPropagateThroughProvenDirectCalls()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("law fn id(x) { return x } law fn wrap(x) { return id(x) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2(i64 %p0) memory(read) nosync nofree norecurse {\nb1:\n  %v2 = call i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  %v2 = call i64 @f1(i64 %p0) memory(none) nosync nofree norecurse\n  ret i64 %v2\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleTailFiniteLawCallSitesLowerEffectAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("tail finite law fn id(x) { return x } tail finite law fn bounce(x) { become id(x) } fn main() { return bounce(7) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v2 = musttail call tailcc i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse\n  ret i64 %v2")
+        && System.Text.Contains(sink.View(), "%v2 = call tailcc i64 @f2(i64 range(i64 7, 8) %v1) memory(none) nosync nofree willreturn mustprogress norecurse")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileModuleForwardDirectCallsUsePrecomputedEffectFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("finite law fn wrap(x) { return id(x) } fn main() { return wrap(7) } finite law fn id(x) { return x }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse")
+        && System.Text.Contains(sink.View(), "%v2 = call i64 @f3(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse")
+        && System.Text.Contains(sink.View(), "%v2 = call i64 @f1(i64 range(i64 7, 8) %v1) memory(none) nosync nofree willreturn mustprogress norecurse")
+        && ClangVerifiesLlvmText(sink);
 }
 
 [Fact]
@@ -1481,6 +2047,27 @@ fn bool EmitsLlvmTailCallTerminator()
     {
         case MemoryStatus.Ok:
             return LlvmTextEquals(sink, "define tailcc i64 @fwd(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmTypedTailCallTerminator()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<u32[0 max]> tailFlags = new();
+    stack u32[0 max] f1Tail = tailFlags.Add(1);
+    stack MirValueId p0 = MirParamTyped(instrs, MirType.I32, 0);
+    stack MirValueId tail = MirTailCall1Typed(instrs, MirType.I32, MirFuncIdOf(1), p0);
+    stack MirBlockId entry = MirTailCallBlock(blocks, tail);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParamsTail(instrs, tailFlags, blocks, "fwd_i32", 1, entry.Index(), 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return MirValueType(instrs, tail.Index()) == MirType.I32
+                && LlvmTextEquals(sink, "define tailcc i32 @fwd_i32(i32 %p0) {\nb1:\n  %v2 = musttail call tailcc i32 @f1(i32 %p0)\n  ret i32 %v2\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -1539,6 +2126,8 @@ fn bool MirComparisonRecordsOpcodeAndOperands()
     stack MirValueId opB = MirOperandBOf(instrs, eq);
     return MirOpcodeOf(instrs, eq) == MirOp.CmpEq
         && MirOpcodeOf(instrs, ge) == MirOp.CmpGe
+        && MirValueType(instrs, eq.Index()) == MirType.I1
+        && MirValueType(instrs, ge.Index()) == MirType.I1
         && opA.Equals(a)
         && opB.Equals(b);
 }
@@ -1643,6 +2232,7 @@ fn bool BinaryRoundTripsBlocks()
     stack MirBlockId condB = MirCondBlock(blocks, v, retB, brB);
     stack MirValueId tail = MirTailCall1(instrs, MirFuncIdOf(1), v);
     stack MirBlockId tailB = MirTailCallBlock(blocks, tail);
+    stack MirBlockId voidB = MirReturnVoidBlock(blocks);
     stack mut IrTable<u8[0 max]> buf = new();
     SerializeBlocks(blocks, buf);
     stack mut IrTable<MirBlock> back = new();
@@ -1651,15 +2241,17 @@ fn bool BinaryRoundTripsBlocks()
     stack MirBlockId condThen = MirBlockCondThen(back, MirBlockIdOf(3));
     stack MirBlockId condElse = MirBlockCondElse(back, MirBlockIdOf(3));
     stack MirValueId tailPayload = MirBlockTailCallValue(back, MirBlockIdOf(4));
-    return back.Count() == 4
+    return back.Count() == 5
         && MirBlockTerminator(back, MirBlockIdOf(1)) == MirTermKind.Return
         && MirBlockTerminator(back, MirBlockIdOf(2)) == MirTermKind.Branch
         && MirBlockTerminator(back, MirBlockIdOf(3)) == MirTermKind.CondBranch
         && MirBlockTerminator(back, MirBlockIdOf(4)) == MirTermKind.TailCall
+        && MirBlockTerminator(back, MirBlockIdOf(5)) == MirTermKind.ReturnVoid
         && brTarget.Equals(MirBlockIdOf(1))
         && condThen.Equals(MirBlockIdOf(1))
         && condElse.Equals(MirBlockIdOf(2))
-        && tailPayload.Equals(tail);
+        && tailPayload.Equals(tail)
+        && voidB.Index() == 5;
 }
 
 [Fact]
@@ -1682,17 +2274,22 @@ fn bool BinaryRoundTripsFunctions()
 [Fact]
 fn bool BinaryRoundTripsGlobals()
 {
-    // The globals table survives a binary round-trip, including a negative initializer.
+    // The globals table survives a binary round-trip, including typed initializers.
     stack mut IrTable<MirGlobal> globals = new();
     stack u32[0 max] g1 = MirDefineGlobal(globals, 100);
     stack u32[0 max] g2 = MirDefineGlobal(globals, -7);
+    stack u32[0 max] g3 = MirDefineGlobalTyped(globals, MirType.I32, 55);
     stack mut IrTable<u8[0 max]> buf = new();
     SerializeGlobals(globals, buf);
     stack mut IrTable<MirGlobal> back = new();
     DeserializeGlobals(buf, back);
-    return back.Count() == 2
+    return back.Count() == 3
+        && buf.Count() == 31
+        && MirGlobalType(back, 1) == MirType.I64
+        && MirGlobalType(back, 3) == MirType.I32
         && MirGlobalInitialValue(back, 1) == 100
-        && MirGlobalInitialValue(back, 2) == -7;
+        && MirGlobalInitialValue(back, 2) == -7
+        && MirGlobalInitialValue(back, 3) == 55;
 }
 
 [Fact]
@@ -2115,7 +2712,7 @@ fn bool BinaryRoundTripsPackageImage()
     stack MirValueId s = MirAdd(instrs, a, b);
     stack MirBlockId blk = MirReturnBlock(blocks, s);
     stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
-    stack u32[0 max] g = MirDefineGlobal(globals, -9);
+    stack u32[0 max] g = MirDefineGlobalTyped(globals, MirType.I32, -9);
     stack mut IrTable<u8[0 max]> buf = new();
     SerializePackageImage(instrs, blocks, funcs, globals, buf);
     stack mut IrTable<MirInstruction> bi = new();
@@ -2132,6 +2729,7 @@ fn bool BinaryRoundTripsPackageImage()
         && MirOpcodeOf(bi, MirValueIdOf(3)) == MirOp.Add
         && MirBlockTerminator(bb, MirBlockIdOf(1)) == MirTermKind.Return
         && entry.Equals(MirBlockIdOf(1))
+        && MirGlobalType(bg, 1) == MirType.I32
         && MirGlobalInitialValue(bg, 1) == -9;
 }
 
@@ -2190,6 +2788,116 @@ fn bool SectionedPackageImageRoundTripsAndInspects()
         && MirGlobalInitialValue(bg, 1) == 34
         && LlvmTextEquals(text, "package: STARKPKG, 3 instructions, 1 blocks, 1 functions, 1 globals\n")
         && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":3,\"blocks\":1,\"functions\":1,\"globals\":1}\n");
+}
+
+[Fact]
+fn bool SectionedPackageImageRoundTripsEnumLayoutFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack MirValueId value = MirConstInt(instrs, 0);
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack MirFuncId functionId = MirDefineFunction(funcs, block, block, 1, value, 1);
+
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> enumFacts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, enumFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> enumFactBytes = new();
+    SerializeEnumLayoutFacts(enumFacts, enumFactBytes);
+    stack mut IrTable<MirEnumLayoutFact> directlyRestoredFacts = new();
+    if (!DeserializeEnumLayoutFacts(enumFactBytes, directlyRestoredFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializeSectionedPackageImageWithEnumLayoutFacts(instrs, blocks, funcs, globals, enumFacts, image);
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    if (!DeserializePackageImage(image, bi, bb, bf, bg))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirEnumLayoutFact> restoredFacts = new();
+    if (!DeserializePackageImageEnumLayoutFacts(image, restoredFacts))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    switch (InspectPackageImage(image, text))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImageJson(image, json))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack u32[0 max] sourceDataPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(enumFacts, source, stream, "Data", 0);
+    stack u32[0 max] directDataPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(directlyRestoredFacts, source, stream, "Data", 0);
+    stack u32[0 max] restoredDataPayloadSlot = MirEnumLayoutFactPayloadIndexByVariantAndOrdinal(restoredFacts, source, stream, "Data", 0);
+    if (sourceDataPayloadSlot == 0 || directDataPayloadSlot == 0 || restoredDataPayloadSlot == 0)
+    {
+        return false;
+    }
+
+    stack MirEnumLayoutFact sourceDataPayload = enumFacts.Get(sourceDataPayloadSlot);
+    stack MirEnumLayoutFact directDataPayload = directlyRestoredFacts.Get(directDataPayloadSlot);
+    stack MirEnumLayoutFact restoredDataPayload = restoredFacts.Get(restoredDataPayloadSlot);
+    stack TypeId sourcePayloadOwner = sourceDataPayload.OwnerType();
+    stack TypeId directPayloadOwner = directDataPayload.OwnerType();
+    stack TypeId restoredPayloadOwner = restoredDataPayload.OwnerType();
+    return PackageImageIsValid(image)
+        && ReadU32(image, 13) == 5
+        && functionId.Index() == 1
+        && bi.Count() == 1
+        && bb.Count() == 1
+        && bf.Count() == 1
+        && bg.Count() == 0
+        && enumFacts.Count() == 5
+        && directlyRestoredFacts.Count() == 5
+        && restoredFacts.Count() == 5
+        && sourcePayloadOwner.Equals(directPayloadOwner)
+        && sourcePayloadOwner.Equals(restoredPayloadOwner)
+        && sourceDataPayload.RowKind() == directDataPayload.RowKind()
+        && sourceDataPayload.RowKind() == restoredDataPayload.RowKind()
+        && sourceDataPayload.PayloadKind() == directDataPayload.PayloadKind()
+        && sourceDataPayload.PayloadKind() == restoredDataPayload.PayloadKind()
+        && sourceDataPayload.TypeKind() == directDataPayload.TypeKind()
+        && sourceDataPayload.TypeKind() == restoredDataPayload.TypeKind()
+        && restoredDataPayload.VariantTag() == 1
+        && restoredDataPayload.OffsetBytes() == 1
+        && restoredDataPayload.SizeBytes() == 1
+        && restoredDataPayload.AlignmentBytes() == 1
+        && restoredDataPayload.HasConcreteLayout()
+        && LlvmTextEquals(text, "package: STARKPKG, 1 instructions, 1 blocks, 1 functions, 0 globals, 5 enum layout facts\n")
+        && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":1,\"blocks\":1,\"functions\":1,\"globals\":0,\"enumLayoutFacts\":5}\n");
 }
 
 internal fn void AppendImageByte(mut borrow IrTable<u8[0 max]> image, u8[0 max] value)
@@ -3228,7 +3936,64 @@ fn bool BinaryRoundTripsInstructionStream()
         && MirOpcodeOf(back, MirValueIdOf(3)) == MirOp.Add
         && opA.Equals(MirValueIdOf(1))
         && opB.Equals(MirValueIdOf(2))
-        && MirOpcodeOf(back, MirValueIdOf(4)) == MirOp.CmpLt;
+        && MirOpcodeOf(back, MirValueIdOf(4)) == MirOp.CmpLt
+        && MirValueType(back, 4) == MirType.I1;
+}
+
+[Fact]
+fn bool MirExplicitWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack i64[min max] i32Min = (i64[min max])(-(2 ** 31));
+    stack i64[min max] i32Max = 2147483647;
+    stack i64[min max] i32MaxUpper = (i64[min max])(2 ** 31);
+    stack MirValueId maxValue = MirConstIntTyped(instrs, MirType.I32, i32Max);
+    stack MirValueId oneValue = MirConstIntTyped(instrs, MirType.I32, 1);
+    stack MirValueId wrapped = MirWrappingAddTyped(instrs, MirType.I32, maxValue, oneValue);
+    stack MirValueId saturated = MirSaturatingAddTyped(instrs, MirType.I32, maxValue, oneValue);
+    stack MirValueId unusedRet = MirReturn(instrs, saturated);
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    if (!RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, maxValue)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, oneValue)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, wrapped)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, saturated))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 4, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+
+    stack mut OwnedAscii llvm = new();
+    switch (EmitLlvmTypedFunction(instrs, "wrapsat", 1, 5, llvm))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack ValueFacts wrappedFacts = ValueFactsForMirValue(valueFacts, wrapped);
+    stack ValueFacts saturatedFacts = ValueFactsForMirValue(valueFacts, saturated);
+    return back.Count() == 4
+        && MirOpcodeOf(back, MirValueIdOf(3)) == MirOp.WrappingAdd
+        && MirOpcodeOf(back, MirValueIdOf(4)) == MirOp.SaturatingAdd
+        && MirValueType(back, 3) == MirType.I32
+        && MirValueType(back, 4) == MirType.I32
+        && wrappedFacts.HasIntegerRange()
+        && wrappedFacts.IntegerRangeLower() == i32Min
+        && wrappedFacts.IntegerRangeUpperExclusive() == i32Min + 1
+        && saturatedFacts.HasIntegerRange()
+        && saturatedFacts.IntegerRangeLower() == i32Max
+        && saturatedFacts.IntegerRangeUpperExclusive() == i32MaxUpper
+        && System.Text.Contains(llvm.View(), "%v3 = add i32 %v1, %v2")
+        && System.Text.Contains(llvm.View(), "%v4.wide = add i64 %v4.wleft, %v4.wright")
+        && System.Text.Contains(llvm.View(), "%v4.clamp = select")
+        && System.Text.Contains(llvm.View(), "%v4 = trunc i64 %v4.clamp to i32")
+        && !System.Text.Contains(llvm.View(), "nuw")
+        && !System.Text.Contains(llvm.View(), "nsw");
 }
 
 [Fact]
@@ -3323,6 +4088,78 @@ fn bool EmitsLlvmTypedI32Function()
 }
 
 [Fact]
+fn bool EmitsLlvmTypedI32ComparisonFunction()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstIntTyped(instrs, MirType.I32, 2);
+    stack MirValueId b = MirConstIntTyped(instrs, MirType.I32, 3);
+    stack MirValueId less = MirCmpLt(instrs, a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, less);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "lessi32", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i1 @lessi32() {\nentry:\n  %v1 = add i32 0, 2\n  %v2 = add i32 0, 3\n  %v3 = icmp slt i32 %v1, %v2\n  ret i1 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmTypedI32ExtendedArithmeticFunction()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstIntTyped(instrs, MirType.I32, 20);
+    stack MirValueId b = MirConstIntTyped(instrs, MirType.I32, 6);
+    stack MirValueId sdiv = MirSDivTyped(instrs, MirType.I32, a, b);
+    stack MirValueId udiv = MirUDivTyped(instrs, MirType.I32, a, b);
+    stack MirValueId srem = MirSRemTyped(instrs, MirType.I32, a, b);
+    stack MirValueId andValue = MirAndTyped(instrs, MirType.I32, a, b);
+    stack MirValueId orValue = MirOrTyped(instrs, MirType.I32, a, b);
+    stack MirValueId xorValue = MirXorTyped(instrs, MirType.I32, a, b);
+    stack MirValueId shl = MirShlTyped(instrs, MirType.I32, a, b);
+    stack MirValueId ashr = MirAShrTyped(instrs, MirType.I32, a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, ashr);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "exti32", 1, 11, sink))
+    {
+        case MemoryStatus.Ok:
+            return MirValueType(instrs, sdiv.Index()) == MirType.I32
+                && MirValueType(instrs, udiv.Index()) == MirType.I32
+                && MirValueType(instrs, srem.Index()) == MirType.I32
+                && MirValueType(instrs, andValue.Index()) == MirType.I32
+                && MirValueType(instrs, orValue.Index()) == MirType.I32
+                && MirValueType(instrs, xorValue.Index()) == MirType.I32
+                && MirValueType(instrs, shl.Index()) == MirType.I32
+                && MirValueType(instrs, ashr.Index()) == MirType.I32
+                && LlvmTextEquals(sink, "define i32 @exti32() {\nentry:\n  %v1 = add i32 0, 20\n  %v2 = add i32 0, 6\n  %v3 = sdiv i32 %v1, %v2\n  %v4 = udiv i32 %v1, %v2\n  %v5 = srem i32 %v1, %v2\n  %v6 = and i32 %v1, %v2\n  %v7 = or i32 %v1, %v2\n  %v8 = xor i32 %v1, %v2\n  %v9 = shl i32 %v1, %v2\n  %v10 = ashr i32 %v1, %v2\n  ret i32 %v10\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmTypedI32CallFunction()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstIntTyped(instrs, MirType.I32, 4);
+    stack MirValueId b = MirConstIntTyped(instrs, MirType.I32, 5);
+    stack MirValueId result = MirCall2Typed(instrs, MirType.I32, MirFuncIdOf(3), a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, result);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "typed_call", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return MirOpcodeOf(instrs, result) == MirOp.Call
+                && MirCalleeOf(instrs, result).Equals(MirFuncIdOf(3))
+                && MirValueType(instrs, result.Index()) == MirType.I32
+                && LlvmTextEquals(sink, "define i32 @typed_call() {\nentry:\n  %v1 = add i32 0, 4\n  %v2 = add i32 0, 5\n  %v3 = call i32 @f3(i32 %v1, i32 %v2)\n  ret i32 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool EmitsLlvmTypedI64FunctionMatchesDefault()
 {
     // The typed emitter over default (i64) values reproduces the i64 output.
@@ -3336,6 +4173,77 @@ fn bool EmitsLlvmTypedI64FunctionMatchesDefault()
     {
         case MemoryStatus.Ok:
             return LlvmTextEquals(sink, "define i64 @addi64() {\nentry:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmTypedFunctionWithParameterTypesAndFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId p0 = MirParamTyped(instrs, MirType.I32, 0);
+    stack MirValueId p1 = MirParamTyped(instrs, MirType.Ptr, 1);
+    stack MirValueId one = MirConstIntTyped(instrs, MirType.I32, 1);
+    stack MirValueId sum = MirAddTyped(instrs, MirType.I32, p0, one);
+    stack MirValueId unusedRet = MirReturn(instrs, sum);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut ValueFacts p0Facts = new();
+    p0Facts.SetIntegerRange(0, 128);
+    stack ValueFacts p1Facts = new();
+    stack u32[0 max] addedP0Facts = paramFacts.Add(p0Facts);
+    stack u32[0 max] addedP1Facts = paramFacts.Add(p1Facts);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunctionWithParamFacts(instrs, "typedparams", 2, paramFacts, 1, 5, sink))
+    {
+        case MemoryStatus.Ok:
+            return MirParamTypeOf(instrs, 0) == MirType.I32
+                && MirParamTypeOf(instrs, 1) == MirType.Ptr
+                && MirParamTypeOf(instrs, 99) == MirType.I64
+                && MirParamIndexOf(instrs, p0) == 0
+                && MirParamIndexOf(instrs, p1) == 1
+                && MirValueType(instrs, p0.Index()) == MirType.I32
+                && MirValueType(instrs, p1.Index()) == MirType.Ptr
+                && LlvmTextEquals(sink, "define i32 @typedparams(i32 range(i32 0, 128) %p0, ptr %p1) {\nentry:\n  %v3 = add i32 0, 1\n  %v4 = add i32 %p0, %v3\n  ret i32 %v4\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirNullPointerConstantRoundTripsFactsAndTypedLlvm()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId nullValue = MirConstNullPtr(instrs);
+    stack MirValueId unusedRet = MirReturn(instrs, nullValue);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 2, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts facts = ValueFactsForMirValue(valueFacts, nullValue);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "null_ptr", 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return MirOpcodeOf(instrs, nullValue) == MirOp.ConstInt
+                && MirImmediateOf(instrs, nullValue) == 0
+                && MirValueType(instrs, nullValue.Index()) == MirType.Ptr
+                && back.Count() == 2
+                && MirOpcodeOf(back, MirValueIdOf(1)) == MirOp.ConstInt
+                && MirValueType(back, 1) == MirType.Ptr
+                && facts.HasNullability()
+                && facts.KnownNull()
+                && !facts.KnownNonNull()
+                && LlvmTextEquals(sink, "define ptr @null_ptr() {\nentry:\n  %v1 = inttoptr i64 0 to ptr\n  ret ptr %v1\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -3429,9 +4337,13 @@ fn bool MirLoadGlobalRecordsTarget()
     // keeps a non-load value from being misread.
     stack mut IrTable<MirInstruction> instrs = new();
     stack MirValueId v = MirLoadGlobal(instrs, 5);
+    stack MirValueId typed = MirLoadGlobalTyped(instrs, MirType.I32, 6);
     stack MirValueId p = MirParam(instrs, 0);
     return MirOpcodeOf(instrs, v) == MirOp.LoadGlobal
         && MirLoadedGlobalOf(instrs, v) == 5
+        && MirOpcodeOf(instrs, typed) == MirOp.LoadGlobal
+        && MirLoadedGlobalOf(instrs, typed) == 6
+        && MirValueType(instrs, typed.Index()) == MirType.I32
         && MirLoadedGlobalOf(instrs, p) == 0;
 }
 
@@ -3460,11 +4372,17 @@ fn bool MirStoreGlobalRecordsTargetAndValue()
     stack mut IrTable<MirInstruction> instrs = new();
     stack MirValueId c = MirConstInt(instrs, 4);
     stack MirValueId st = MirStoreGlobal(instrs, 3, c);
+    stack MirValueId c32 = MirConstIntTyped(instrs, MirType.I32, 11);
+    stack MirValueId typed = MirStoreGlobalTyped(instrs, MirType.I32, 8, c32);
     stack MirValueId storedVal = MirOperandAOf(instrs, st);
     return MirOpcodeOf(instrs, st) == MirOp.StoreGlobal
         && MirStoredGlobalOf(instrs, st) == 3
         && MirLoadedGlobalOf(instrs, st) == 0
-        && storedVal.Equals(c);
+        && storedVal.Equals(c)
+        && MirOpcodeOf(instrs, typed) == MirOp.StoreGlobal
+        && MirStoredGlobalOf(instrs, typed) == 8
+        && MirOperandAOf(instrs, typed).Equals(c32)
+        && MirValueType(instrs, typed.Index()) == MirType.I32;
 }
 
 [Fact]
@@ -3488,31 +4406,59 @@ fn bool EmitsLlvmGlobalStore()
 }
 
 [Fact]
+fn bool EmitsLlvmTypedGlobalLoadStore()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId loaded = MirLoadGlobalTyped(instrs, MirType.I32, 2);
+    stack MirValueId c = MirConstIntTyped(instrs, MirType.I32, 9);
+    stack MirValueId stored = MirStoreGlobalTyped(instrs, MirType.I32, 2, c);
+    stack MirValueId ret = MirReturn(instrs, loaded);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "typed_globals", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i32 @typed_globals() {\nentry:\n  %v1 = load i32, ptr @g2\n  %v2 = add i32 0, 9\n  store i32 %v2, ptr @g2\n  ret i32 %v1\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool MirGlobalRecordsInitialValue()
 {
     // A global records its 1-based id and integer initializer.
     stack mut IrTable<MirGlobal> globals = new();
     stack u32[0 max] g1 = MirDefineGlobal(globals, 7);
     stack u32[0 max] g2 = MirDefineGlobal(globals, -3);
+    stack u32[0 max] g3 = MirDefineGlobalTyped(globals, MirType.I32, 17);
+    stack u32[0 max] rejected = MirDefineGlobalTyped(globals, MirType.I1, 2);
     return g1 == 1
         && g2 == 2
+        && g3 == 3
+        && rejected == 0
+        && globals.Count() == 3
+        && MirGlobalType(globals, g1) == MirType.I64
+        && MirGlobalType(globals, g3) == MirType.I32
         && MirGlobalInitialValue(globals, g1) == 7
         && MirGlobalInitialValue(globals, g2) == -3
+        && MirGlobalInitialValue(globals, g3) == 17
         && MirGlobalInitialValue(globals, 99) == 0;
 }
 
 [Fact]
 fn bool EmitsLlvmGlobals()
 {
-    // Globals emit one `@gN = global i64 V` line each, in id order (negative ok).
+    // Globals emit one `@gN = global <type> V` line each, in id order.
     stack mut IrTable<MirGlobal> globals = new();
     stack u32[0 max] unused1 = MirDefineGlobal(globals, 7);
     stack u32[0 max] unused2 = MirDefineGlobal(globals, -3);
+    stack u32[0 max] unused3 = MirDefineGlobalTyped(globals, MirType.I32, 12);
+    stack u32[0 max] unused4 = MirDefineGlobalTyped(globals, MirType.Ptr, 0);
     stack mut OwnedAscii sink = new();
     switch (EmitLlvmGlobals(globals, sink))
     {
         case MemoryStatus.Ok:
-            return LlvmTextEquals(sink, "@g1 = global i64 7\n@g2 = global i64 -3\n");
+            return LlvmTextEquals(sink, "@g1 = global i64 7\n@g2 = global i64 -3\n@g3 = global i32 12\n@g4 = global ptr null\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -4133,7 +5079,7 @@ fn bool BinaryRoundTripsFourArgumentTailCall()
     stack MirValueId a1 = MirConstInt(instrs, 20);
     stack MirValueId a2 = MirConstInt(instrs, 30);
     stack MirValueId a3 = MirConstInt(instrs, 40);
-    stack MirValueId call = MirTailCall4(instrs, MirFuncIdOf(2), a0, a1, a2, a3);
+    stack MirValueId call = MirTailCall4Typed(instrs, MirType.I32, MirFuncIdOf(2), a0, a1, a2, a3);
     stack mut IrTable<u8[0 max]> buf = new();
     SerializeInstructions(instrs, 1, 5, buf);
     stack mut IrTable<MirInstruction> back = new();
@@ -4141,6 +5087,7 @@ fn bool BinaryRoundTripsFourArgumentTailCall()
     stack MirInstruction callBack = back.Get(5);
     return back.Count() == 5
         && MirOpcodeOf(back, MirValueIdOf(5)) == MirOp.TailCall
+        && MirValueType(back, 5) == MirType.I32
         && MirImmediateOf(back, MirValueIdOf(5)) == 2
         && callBack.OperandAIndex() == 1
         && callBack.OperandBIndex() == 2

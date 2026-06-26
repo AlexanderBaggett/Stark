@@ -45,6 +45,29 @@ public sealed class ImportedModuleAmbiguityRegressionTests
         }
         """;
 
+    private const string EnumTypesSource =
+        """
+        module Types
+
+        public enum Flag
+        {
+            Off,
+            On,
+        }
+        """;
+
+    private const string EnumAppSource =
+        """
+        import Mid
+
+        module Main
+
+        export fn i32[min max] main()
+        {
+            return UseImportedEnumValue();
+        }
+        """;
+
     [Fact]
     public void BareNameAmbiguousAcrossImportsReportsLocatedDiagnosticInsteadOfCrashing()
     {
@@ -132,19 +155,61 @@ public sealed class ImportedModuleAmbiguityRegressionTests
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK3003");
     }
 
+    [Fact]
+    public void ImportedSourceEnumValueFromImportedTypeCompilesThroughLowerMir()
+    {
+        const string enumMid =
+            """
+            import Types
+
+            module Mid
+
+            public fn i32[min max] UseImportedEnumValue()
+            {
+                stack Flag flag = Flag.On;
+                return 1;
+            }
+            """;
+
+        var result = Run(
+            enumMid,
+            EnumAppSource,
+            emitLlvm: true,
+            ("Types.stark", EnumTypesSource));
+
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK9999");
+    }
+
     private static CompilationResult Run(string midSource, bool emitLlvm)
+    {
+        return Run(midSource, AppSource, emitLlvm);
+    }
+
+    private static CompilationResult Run(
+        string midSource,
+        string appSource,
+        bool emitLlvm,
+        params (string FileName, string Source)[] extraSources)
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-imported-ambiguity-");
         try
         {
             File.WriteAllText(Path.Combine(tempDirectory.FullName, "ModA.stark"), ModuleASource);
             File.WriteAllText(Path.Combine(tempDirectory.FullName, "ModB.stark"), ModuleBSource);
+            foreach (var (fileName, source) in extraSources)
+            {
+                File.WriteAllText(Path.Combine(tempDirectory.FullName, fileName), source);
+            }
+
             File.WriteAllText(Path.Combine(tempDirectory.FullName, "Mid.stark"), midSource);
             var appPath = Path.Combine(tempDirectory.FullName, "Main.stark");
-            File.WriteAllText(appPath, AppSource);
+            File.WriteAllText(appPath, appSource);
 
             return DefaultCompilerPipeline.Create().Run(
-                new CompilationInput(AppSource, appPath),
+                new CompilationInput(appSource, appPath),
                 new CompilerOptions(
                     EmitLlvmIr: emitLlvm,
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));

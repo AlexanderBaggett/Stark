@@ -2458,6 +2458,54 @@ fn bool DropValidityRejectsDestructorDynamicStorageMutation()
 }
 
 [Fact]
+fn bool DropValidityRejectsDestructorTransitiveAllocationCall()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Scratch { }\nfn void Allocate() { heap Scratch scratch = new Scratch(); return; }\nfn void Wrapper() { Allocate(); return; }\nstruct Buffer { drop { Wrapper(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorAllocation) == 1;
+}
+
+[Fact]
+fn bool DropValidityRejectsDestructorTransitiveDynamicMutationCall()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn void Mutate(mut borrow dynamic i32[min max] items) { items.MoveLast(); return; }\nfn void Wrapper(mut borrow dynamic i32[min max] items) { Mutate(items); return; }\nstruct Buffer { dynamic i32[min max] Items; mut drop { Wrapper(self.Items); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorDynamicStorageMutation) == 1;
+}
+
+[Fact]
+fn bool DropValidityRejectsDestructorTransitiveMethodEffects()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; fn void Drain(mut borrow Buffer self) { self.Items.MoveLast(); return; } mut drop { self.Drain(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorDynamicStorageMutation) == 1;
+}
+
+[Fact]
+fn bool DropValidityRejectsDestructorImplicitLocalDropEffects()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Scratch { }\nfn void Allocate() { heap Scratch scratch = new Scratch(); return; }\nstruct Helper { drop { Allocate(); } }\nstruct Buffer { drop { stack Helper helper = new Helper(); } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DestructorAllocation) == 2;
+}
+
+[Fact]
 fn bool ConstructorInitializationRejectsDynamicFieldReadBeforeAssignment()
 {
     stack mut BindDiagnosticList diags = new();
@@ -2602,6 +2650,138 @@ fn bool ConstructorInitializationAllowsScalarAndFixedArrayReadsBeforeAssignment(
 }
 
 [Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterCompleteDefaultSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { switch (true) { case true: self.Items = new(); default: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterPartialSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { switch (true) { case true: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterSwitchDefaultWithoutAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { switch (true) { case true: self.Items = new(); default: self.Count = 0; } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterReturnSwitchSection()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { switch (true) { case true: return; default: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterConsecutiveSwitchLabelsAssign()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { switch (true) { case true: default: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterExhaustiveBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer(bool condition) { switch (condition) { case true: self.Items = new(); case false: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterGuardedBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer(bool condition) { switch (condition) { case true when false: self.Items = new(); case false: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterExhaustiveEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer(Kind kind) { switch (kind) { case Kind.Alpha: self.Items = new(); case Kind.Beta: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterExhaustiveIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer(u8[0 3] kind) { switch (kind) { case 0..1: self.Items = new(); case 2: self.Items = new(); case 3: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
+fn bool ConstructorInitializationRejectsDynamicFieldReadAfterPartialIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer(u8[0 3] kind) { switch (kind) { case 0..2: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 1;
+}
+
+[Fact]
+fn bool ConstructorInitializationAllowsDynamicFieldReadAfterExhaustiveSelfIntegerSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nstruct Buffer { u8[0 3] Kind; dynamic i32[min max] Items; u64[0 2 ** 63 - 1] Count; Buffer() { switch (self.Kind) { case 0..1: self.Items = new(); case 2..3: self.Items = new(); } self.Count = self.Items.Length; } }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ConstructorFieldReadBeforeAssignment) == 0;
+}
+
+[Fact]
 fn bool InitializationRejectsStraightLineLocalReadBeforeAssignment()
 {
     stack mut BindDiagnosticList diags = new();
@@ -2650,6 +2830,84 @@ fn bool InitializationAllowsOutReadAfterAssignment()
 }
 
 [Fact]
+fn bool InitializationRejectsOutReturnWithoutAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value) { return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReturnAfterAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value) { value = 9; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsOutFallthroughWithoutAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value) { }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutForwardedThroughDirectCall()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(out u32[0 max] value) { value = 1; return; }\nunsafe fn void Write(out u32[0 max] value) { Fill(value); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReadAfterForwardedDirectCall()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(out u32[0 max] value) { value = 1; return; }\nunsafe fn void Write(out u32[0 max] value) { Fill(value); stack u32[0 max] seen = value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutForwardedThroughFunctionPointerCall()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(fnptr<fn void(out u32[0 max])> op, out u32[0 max] value) { op(value); stack u32[0 max] seen = value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
 fn bool InitializationRejectsInitIndexedReadBeforeWrite()
 {
     stack mut BindDiagnosticList diags = new();
@@ -2665,12 +2923,502 @@ fn bool InitializationRejectsInitIndexedReadBeforeWrite()
 fn bool InitializationAllowsInitIndexedWriteBeforeRead()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values) { init values[0] = 7; return; }\n", diags))
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values) { init values[0] = 7; stack u32[0 max] seen = values[0]; return; }\n", diags))
     {
         return false;
     }
 
     return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsInitReturnWithoutAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values) { return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsInitForwardedThroughDirectCall()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values) { init values[0] = 7; return; }\nunsafe fn void Relay(init u32[0 max][] values) { Fill(values); return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterCompleteBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; if (condition) { value = 1; } else { value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterPartialBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; if (condition) { value = 1; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterReturnElseAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; if (condition) { return 0; } else { value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsUnreachableLocalReadAfterBothBranchesReturn()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; if (condition) { return 0; } else { return 1; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReadAfterCompleteBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { if (condition) { value = 1; } else { value = 2; } stack u32[0 max] seen = value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsOutReadAfterPartialBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { if (condition) { value = 1; } stack u32[0 max] seen = value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationRejectsOutReturnAfterPartialBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { if (condition) { value = 1; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReturnAfterCompleteBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { if (condition) { value = 1; } else { value = 2; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsInitIndexedReadAfterCompleteBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values, bool condition) { if (condition) { init values[0] = 1; } else { init values[0] = 2; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsInitIndexedReadAfterPartialBranchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values, bool condition) { if (condition) { init values[0] = 1; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterCompleteDefaultSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; switch (condition) { case true: value = 1; default: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterExhaustiveBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; switch (condition) { case true: value = 1; case false: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterConsecutiveBoolSwitchLabelsAssign()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; switch (condition) { case true: case false: value = 1; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterGuardedBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; switch (condition) { case true when false: value = 1; case false: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterExhaustiveEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nfn i32[min max] Run(Kind kind) { stack mut i32[min max] value; switch (kind) { case Kind.Alpha: value = 1; case Kind.Beta: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterPayloadEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Token { End, Number(i32[min max]), }\nfn i32[min max] Run(Token token) { stack mut i32[min max] value; switch (token) { case Token.End: value = 1; case Token.Number(_): value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterEnumSwitchCatchAllAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, Gamma, }\nfn i32[min max] Run(Kind kind) { stack mut i32[min max] value; switch (kind) { case Kind.Alpha: value = 1; case _: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterMemberEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nstruct Holder { Kind Current; }\nfn i32[min max] Run(Holder holder) { stack mut i32[min max] value; switch (holder.Current) { case Kind.Alpha: value = 1; case Kind.Beta: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterPartialEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nfn i32[min max] Run(Kind kind) { stack mut i32[min max] value; switch (kind) { case Kind.Alpha: value = 1; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterGuardedEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nfn i32[min max] Run(Kind kind) { stack mut i32[min max] value; switch (kind) { case Kind.Alpha when false: value = 1; case Kind.Beta: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterExhaustiveIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(u8[0 3] kind) { stack mut i32[min max] value; switch (kind) { case 0..1: value = 1; case 2: value = 2; case 3: value = 3; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterPartialIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(u8[0 3] kind) { stack mut i32[min max] value; switch (kind) { case 0..2: value = 1; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterGuardedIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(u8[0 3] kind) { stack mut i32[min max] value; switch (kind) { case 0..2: value = 1; case 3 when false: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsLocalReadAfterIntegerSwitchCatchAllAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(u8[0 10] kind) { stack mut i32[min max] value; switch (kind) { case 0: value = 1; case _: value = 2; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReturnAfterExhaustiveIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, u8[0 3] kind) { switch (kind) { case 0..1: value = 1; case 2..3: value = 2; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsOutReturnAfterPartialIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, u8[0 3] kind) { switch (kind) { case 0..2: value = 1; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsInitIndexedReadAfterExhaustiveIntegerRangeSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values, u8[0 3] kind) { switch (kind) { case 0..1: init values[0] = 1; case 2..3: init values[0] = 2; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsLocalReadAfterPartialSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; switch (condition) { case true: value = 1; } return value; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationRejectsSwitchSectionLocalReadBeforeAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nfn i32[min max] Run(bool condition) { stack mut i32[min max] value; switch (condition) { case true: return value; default: value = 2; } return 0; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReadAfterCompleteDefaultSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { switch (condition) { case true: value = 1; default: value = 2; } stack u32[0 max] seen = value; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReturnAfterExhaustiveBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { switch (condition) { case true: value = 1; case false: value = 2; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsOutReturnAfterGuardedBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Write(out u32[0 max] value, bool condition) { switch (condition) { case true when false: value = 1; case false: value = 2; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsOutReturnAfterExhaustiveEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nunsafe fn void Write(out u32[0 max] value, Kind kind) { switch (kind) { case Kind.Alpha: value = 1; case Kind.Beta: value = 2; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 0
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsOutReturnAfterPartialEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nunsafe fn void Write(out u32[0 max] value, Kind kind) { switch (kind) { case Kind.Alpha: value = 1; } return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.OutputNotInitializedOnReturn) == 1
+        && diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsInitIndexedReadAfterCompleteDefaultSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values, bool condition) { switch (condition) { case true: init values[0] = 1; default: init values[0] = 2; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsInitIndexedReadAfterExhaustiveBoolSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values, bool condition) { switch (condition) { case true: init values[0] = 1; case false: init values[0] = 2; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationAllowsInitIndexedReadAfterExhaustiveEnumSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nenum Kind { Alpha, Beta, }\nunsafe fn void Fill(init u32[0 max][] values, Kind kind) { switch (kind) { case Kind.Alpha: init values[0] = 1; case Kind.Beta: init values[0] = 2; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 0;
+}
+
+[Fact]
+fn bool InitializationRejectsInitIndexedReadAfterPartialSwitchAssignment()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("module Demo\nunsafe fn void Fill(init u32[0 max][] values, bool condition) { switch (condition) { case true: init values[0] = 1; } stack u32[0 max] seen = values[0]; return; }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.ReadBeforeInitialization) == 1;
 }
 
 [Fact]
@@ -5990,7 +6738,7 @@ fn bool FlagsBecomeAbiGenericArgumentMismatch()
 [Fact]
 fn bool AcceptsDeadOnReturnMemoryBackedFunctionParameter()
 {
-    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { return true; }\n";
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { value = 0; return true; }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -6009,7 +6757,7 @@ fn bool AcceptsDeadOnReturnMemoryBackedFunctionParameter()
 [Fact]
 fn bool FlagsDeadOnReturnUnknownFunctionParameter()
 {
-    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(missing) { return true; }\n";
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(missing) { value = 0; return true; }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -6049,7 +6797,7 @@ fn bool FlagsDeadOnReturnNonMemoryBackedFunctionParameter()
 [Fact]
 fn bool FlagsDeadOnReturnDuplicateFunctionParameter()
 {
-    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value, value) { return true; }\n";
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value, value) { value = 0; return true; }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -6129,7 +6877,7 @@ fn bool FlagsFunctionPointerDeadOnReturnDuplicateSyntheticArg()
 [Fact]
 fn bool FlagsDirectDeadOnReturnCallForwardingMismatch()
 {
-    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { return true; }\nfn bool wrapper(out u32[0 max] value) { return destroy(value); }\n";
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { value = 0; return true; }\nfn bool wrapper(out u32[0 max] value) { return destroy(value); }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -6149,7 +6897,7 @@ fn bool FlagsDirectDeadOnReturnCallForwardingMismatch()
 [Fact]
 fn bool AcceptsDirectDeadOnReturnCallWhenCallerPropagatesContract()
 {
-    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { return true; }\nfn bool wrapper(out u32[0 max] value) where dead_on_return(value) { return destroy(value); }\n";
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { value = 0; return true; }\nfn bool wrapper(out u32[0 max] value) where dead_on_return(value) { return destroy(value); }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {

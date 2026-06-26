@@ -1,0 +1,4458 @@
+import Compiler.Artifacts
+import Compiler.Ir
+import Compiler.Mir
+import Compiler.Pipeline
+import System.Memory
+module Compiler.Lowering
+
+public enum HirMirBoundaryKind
+{
+    Unknown,
+    HighLevelIrToMidLevelIr,
+}
+
+public enum HirFunctionBodyLoweringKind
+{
+    Unknown,
+    DeclarationOnly,
+    StarkCfg,
+    AsmBypass,
+}
+
+public enum HighLevelIrLiteralKind
+{
+    Unknown,
+    Integer,
+    Bool,
+    Null,
+    Float,
+    Text,
+    Character,
+}
+
+public enum HighLevelIrBinaryOpKind
+{
+    Unknown,
+    Add,
+    Sub,
+    Mul,
+    WrappingAdd,
+    WrappingSub,
+    WrappingMul,
+    SaturatingAdd,
+    SaturatingSub,
+    SaturatingMul,
+    SDiv,
+    UDiv,
+    SRem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    AShr,
+    CmpEq,
+    CmpNe,
+    CmpLt,
+    CmpLe,
+    CmpGt,
+    CmpGe,
+}
+
+public finite law ascii HirMirBoundaryKindName(HirMirBoundaryKind kind)
+{
+    switch (kind)
+    {
+        case HirMirBoundaryKind.Unknown:
+            return "";
+        case HirMirBoundaryKind.HighLevelIrToMidLevelIr:
+            return "high-level-ir-to-mid-level-ir";
+    }
+}
+
+public finite law ascii HirFunctionBodyLoweringKindName(HirFunctionBodyLoweringKind kind)
+{
+    switch (kind)
+    {
+        case HirFunctionBodyLoweringKind.Unknown:
+            return "";
+        case HirFunctionBodyLoweringKind.DeclarationOnly:
+            return "DeclarationOnly";
+        case HirFunctionBodyLoweringKind.StarkCfg:
+            return "StarkCfg";
+        case HirFunctionBodyLoweringKind.AsmBypass:
+            return "AsmBypass";
+    }
+}
+
+public finite law ascii HighLevelIrLiteralKindName(HighLevelIrLiteralKind kind)
+{
+    switch (kind)
+    {
+        case HighLevelIrLiteralKind.Unknown:
+            return "";
+        case HighLevelIrLiteralKind.Integer:
+            return "integer";
+        case HighLevelIrLiteralKind.Bool:
+            return "bool";
+        case HighLevelIrLiteralKind.Null:
+            return "null";
+        case HighLevelIrLiteralKind.Float:
+            return "float";
+        case HighLevelIrLiteralKind.Text:
+            return "text";
+        case HighLevelIrLiteralKind.Character:
+            return "character";
+    }
+}
+
+public finite law ascii HighLevelIrBinaryOpKindName(HighLevelIrBinaryOpKind kind)
+{
+    switch (kind)
+    {
+        case HighLevelIrBinaryOpKind.Unknown:
+            return "";
+        case HighLevelIrBinaryOpKind.Add:
+            return "add";
+        case HighLevelIrBinaryOpKind.Sub:
+            return "sub";
+        case HighLevelIrBinaryOpKind.Mul:
+            return "mul";
+        case HighLevelIrBinaryOpKind.WrappingAdd:
+            return "wrapping-add";
+        case HighLevelIrBinaryOpKind.WrappingSub:
+            return "wrapping-sub";
+        case HighLevelIrBinaryOpKind.WrappingMul:
+            return "wrapping-mul";
+        case HighLevelIrBinaryOpKind.SaturatingAdd:
+            return "saturating-add";
+        case HighLevelIrBinaryOpKind.SaturatingSub:
+            return "saturating-sub";
+        case HighLevelIrBinaryOpKind.SaturatingMul:
+            return "saturating-mul";
+        case HighLevelIrBinaryOpKind.SDiv:
+            return "sdiv";
+        case HighLevelIrBinaryOpKind.UDiv:
+            return "udiv";
+        case HighLevelIrBinaryOpKind.SRem:
+            return "srem";
+        case HighLevelIrBinaryOpKind.And:
+            return "and";
+        case HighLevelIrBinaryOpKind.Or:
+            return "or";
+        case HighLevelIrBinaryOpKind.Xor:
+            return "xor";
+        case HighLevelIrBinaryOpKind.Shl:
+            return "shl";
+        case HighLevelIrBinaryOpKind.AShr:
+            return "ashr";
+        case HighLevelIrBinaryOpKind.CmpEq:
+            return "cmp-eq";
+        case HighLevelIrBinaryOpKind.CmpNe:
+            return "cmp-ne";
+        case HighLevelIrBinaryOpKind.CmpLt:
+            return "cmp-lt";
+        case HighLevelIrBinaryOpKind.CmpLe:
+            return "cmp-le";
+        case HighLevelIrBinaryOpKind.CmpGt:
+            return "cmp-gt";
+        case HighLevelIrBinaryOpKind.CmpGe:
+            return "cmp-ge";
+    }
+}
+
+public struct HirBackendFactSet
+{
+    internal bool HasRangeFactsValue;
+    internal bool HasAliasFactsValue;
+    internal bool HasAbiFactsValue;
+    internal bool HasLayoutFactsValue;
+    internal bool HasOwnershipFactsValue;
+    internal bool HasAssemblyFactsValue;
+    internal bool HasArenaFactsValue;
+    internal bool HasDropFactsValue;
+
+    HirBackendFactSet()
+    {
+        self.HasRangeFactsValue = false;
+        self.HasAliasFactsValue = false;
+        self.HasAbiFactsValue = false;
+        self.HasLayoutFactsValue = false;
+        self.HasOwnershipFactsValue = false;
+        self.HasAssemblyFactsValue = false;
+        self.HasArenaFactsValue = false;
+        self.HasDropFactsValue = false;
+    }
+
+    public inline finite law bool HasRangeFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasRangeFactsValue;
+    }
+
+    public inline finite law bool HasAliasFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasAliasFactsValue;
+    }
+
+    public inline finite law bool HasAbiFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasAbiFactsValue;
+    }
+
+    public inline finite law bool HasLayoutFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasLayoutFactsValue;
+    }
+
+    public inline finite law bool HasOwnershipFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasOwnershipFactsValue;
+    }
+
+    public inline finite law bool HasAssemblyFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasAssemblyFactsValue;
+    }
+
+    public inline finite law bool HasArenaFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasArenaFactsValue;
+    }
+
+    public inline finite law bool HasDropFacts(borrow HirBackendFactSet self)
+    {
+        return self.HasDropFactsValue;
+    }
+}
+
+public inline finite law HirBackendFactSet HirBackendFactSetOf(
+    bool hasRangeFacts,
+    bool hasAliasFacts,
+    bool hasAbiFacts,
+    bool hasLayoutFacts,
+    bool hasOwnershipFacts,
+    bool hasAssemblyFacts,
+    bool hasArenaFacts,
+    bool hasDropFacts)
+{
+    return new HirBackendFactSet()
+    {
+        HasRangeFactsValue = hasRangeFacts,
+        HasAliasFactsValue = hasAliasFacts,
+        HasAbiFactsValue = hasAbiFacts,
+        HasLayoutFactsValue = hasLayoutFacts,
+        HasOwnershipFactsValue = hasOwnershipFacts,
+        HasAssemblyFactsValue = hasAssemblyFacts,
+        HasArenaFactsValue = hasArenaFacts,
+        HasDropFactsValue = hasDropFacts
+    };
+}
+
+public inline finite law HirBackendFactSet RequiredMirLoweringBackendFacts()
+{
+    return HirBackendFactSetOf(true, true, true, true, true, true, true, true);
+}
+
+public inline finite law bool HirBackendFactsCoverMirLowering(HirBackendFactSet facts)
+{
+    return facts.HasRangeFacts()
+        && facts.HasAliasFacts()
+        && facts.HasAbiFacts()
+        && facts.HasLayoutFacts()
+        && facts.HasOwnershipFacts()
+        && facts.HasAssemblyFacts()
+        && facts.HasArenaFacts()
+        && facts.HasDropFacts();
+}
+
+internal finite law i64[min max] LoweringI64MinValue()
+{
+    return (i64[min max])(-(2 ** 63));
+}
+
+internal finite law i64[min max] LoweringI64MaxValue()
+{
+    return 9223372036854775807;
+}
+
+internal finite law i64[min max] LoweringI32MinValue()
+{
+    return (i64[min max])(-(2 ** 31));
+}
+
+internal finite law i64[min max] LoweringI32MaxValue()
+{
+    return 2147483647;
+}
+
+internal fn ValueFacts HighLevelIrExactIntegerFacts(i64[min max] value)
+{
+    stack mut ValueFacts facts = new();
+    if (value == LoweringI64MaxValue())
+    {
+        facts.SetIntegerRange(value, LoweringI64MinValue());
+    }
+    else
+    {
+        facts.SetIntegerRange(value, value + 1);
+    }
+
+    return facts;
+}
+
+public struct HighLevelIrLiteral
+{
+    internal SymbolId SymbolValue;
+    internal HighLevelIrLiteralKind KindValue;
+    internal MirType TypeValue;
+    internal i64[min max] IntegerValueValue;
+    internal ValueFacts FactsValue;
+
+    HighLevelIrLiteral()
+    {
+        self.SymbolValue = new();
+        self.KindValue = HighLevelIrLiteralKind.Unknown;
+        self.TypeValue = MirType.I64;
+        self.IntegerValueValue = 0;
+        self.FactsValue = new();
+    }
+
+    public inline finite law SymbolId Symbol(borrow HighLevelIrLiteral self)
+    {
+        return self.SymbolValue;
+    }
+
+    public inline finite law HighLevelIrLiteralKind Kind(borrow HighLevelIrLiteral self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law MirType Type(borrow HighLevelIrLiteral self)
+    {
+        return self.TypeValue;
+    }
+
+    public inline finite law i64[min max] IntegerValue(borrow HighLevelIrLiteral self)
+    {
+        return self.IntegerValueValue;
+    }
+
+    public inline finite law ValueFacts Facts(borrow HighLevelIrLiteral self)
+    {
+        return self.FactsValue;
+    }
+}
+
+public inline finite law HighLevelIrLiteral HighLevelIrLiteralWithFacts(
+    SymbolId symbol,
+    HighLevelIrLiteralKind kind,
+    MirType type,
+    i64[min max] integerValue,
+    ValueFacts facts)
+{
+    return new HighLevelIrLiteral()
+    {
+        SymbolValue = symbol,
+        KindValue = kind,
+        TypeValue = type,
+        IntegerValueValue = integerValue,
+        FactsValue = facts
+    };
+}
+
+public fn HighLevelIrLiteral HighLevelIrIntegerLiteralOf(
+    SymbolId symbol,
+    MirType type,
+    i64[min max] value)
+{
+    return HighLevelIrLiteralWithFacts(
+        symbol,
+        HighLevelIrLiteralKind.Integer,
+        type,
+        value,
+        HighLevelIrExactIntegerFacts(value));
+}
+
+public fn HighLevelIrLiteral HighLevelIrBoolLiteralOf(SymbolId symbol, bool value)
+{
+    stack mut i64[min max] integerValue = 0;
+    if (value)
+    {
+        integerValue = 1;
+    }
+
+    return HighLevelIrLiteralWithFacts(
+        symbol,
+        HighLevelIrLiteralKind.Bool,
+        MirType.I1,
+        integerValue,
+        HighLevelIrExactIntegerFacts(integerValue));
+}
+
+public fn HighLevelIrLiteral HighLevelIrNullPointerLiteralOf(SymbolId symbol)
+{
+    stack mut ValueFacts facts = new();
+    facts.MarkKnownNull();
+    return HighLevelIrLiteralWithFacts(
+        symbol,
+        HighLevelIrLiteralKind.Null,
+        MirType.Ptr,
+        0,
+        facts);
+}
+
+public inline finite law HighLevelIrLiteral HighLevelIrUnsupportedLiteralOf(
+    SymbolId symbol,
+    HighLevelIrLiteralKind kind,
+    MirType type)
+{
+    return HighLevelIrLiteralWithFacts(symbol, kind, type, 0, new ValueFacts());
+}
+
+internal finite law bool HighLevelIrLiteralTypeIsLowerable(HighLevelIrLiteral literal)
+{
+    switch (literal.KindValue)
+    {
+        case HighLevelIrLiteralKind.Integer:
+            if (literal.TypeValue == MirType.I64)
+            {
+                return true;
+            }
+
+            if (literal.TypeValue == MirType.I32)
+            {
+                return literal.IntegerValueValue >= LoweringI32MinValue()
+                    && literal.IntegerValueValue <= LoweringI32MaxValue();
+            }
+
+            return false;
+        case HighLevelIrLiteralKind.Bool:
+            return literal.TypeValue == MirType.I1
+                && (literal.IntegerValueValue == 0 || literal.IntegerValueValue == 1);
+        case HighLevelIrLiteralKind.Null:
+            return literal.TypeValue == MirType.Ptr
+                && literal.IntegerValueValue == 0;
+        case HighLevelIrLiteralKind.Unknown:
+            return false;
+        case HighLevelIrLiteralKind.Float:
+            return false;
+        case HighLevelIrLiteralKind.Text:
+            return false;
+        case HighLevelIrLiteralKind.Character:
+            return false;
+    }
+}
+
+public struct HighLevelIrParameter
+{
+    internal SymbolId SymbolValue;
+    internal u32[0 max] ParameterIndexValue;
+    internal MirType TypeValue;
+    internal ValueFacts FactsValue;
+
+    HighLevelIrParameter()
+    {
+        self.SymbolValue = new();
+        self.ParameterIndexValue = 0;
+        self.TypeValue = MirType.I64;
+        self.FactsValue = new();
+    }
+
+    public inline finite law SymbolId Symbol(borrow HighLevelIrParameter self)
+    {
+        return self.SymbolValue;
+    }
+
+    public inline finite law u32[0 max] ParameterIndex(borrow HighLevelIrParameter self)
+    {
+        return self.ParameterIndexValue;
+    }
+
+    public inline finite law MirType Type(borrow HighLevelIrParameter self)
+    {
+        return self.TypeValue;
+    }
+
+    public inline finite law ValueFacts Facts(borrow HighLevelIrParameter self)
+    {
+        return self.FactsValue;
+    }
+}
+
+public inline finite law HighLevelIrParameter HighLevelIrParameterOf(
+    SymbolId symbol,
+    u32[0 max] parameterIndex,
+    MirType type,
+    ValueFacts facts)
+{
+    return new HighLevelIrParameter()
+    {
+        SymbolValue = symbol,
+        ParameterIndexValue = parameterIndex,
+        TypeValue = type,
+        FactsValue = facts
+    };
+}
+
+internal finite law bool HighLevelIrParameterTypeIsLowerable(HighLevelIrParameter parameter)
+{
+    switch (parameter.TypeValue)
+    {
+        case MirType.I1:
+            return true;
+        case MirType.I32:
+            return true;
+        case MirType.I64:
+            return true;
+        case MirType.Ptr:
+            return true;
+    }
+}
+
+internal finite law bool HighLevelIrMirTypeIsLowerable(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return true;
+        case MirType.I32:
+            return true;
+        case MirType.I64:
+            return true;
+        case MirType.Ptr:
+            return true;
+    }
+}
+
+internal finite law bool HighLevelIrTypeAllowsNullabilityFacts(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return false;
+        case MirType.I32:
+            return false;
+        case MirType.I64:
+            return false;
+        case MirType.Ptr:
+            return true;
+    }
+}
+
+internal finite law bool HighLevelIrValueFactsFitType(MirType type, ValueFacts facts)
+{
+    if (facts.HasNullability() && !HighLevelIrTypeAllowsNullabilityFacts(type))
+    {
+        return false;
+    }
+
+    if (!facts.HasIntegerRange())
+    {
+        return true;
+    }
+
+    stack i64[min max] lower = facts.IntegerRangeLower();
+    stack i64[min max] upperExclusive = facts.IntegerRangeUpperExclusive();
+    switch (type)
+    {
+        case MirType.I1:
+            return lower >= 0 && upperExclusive > lower && upperExclusive <= 2;
+        case MirType.I32:
+            return upperExclusive != LoweringI64MinValue()
+                && lower >= LoweringI32MinValue()
+                && upperExclusive > lower
+                && upperExclusive <= 2147483648;
+        case MirType.I64:
+            return true;
+        case MirType.Ptr:
+            return false;
+    }
+}
+
+internal finite law bool HighLevelIrValueFactsSubsetOf(ValueFacts actual, ValueFacts expected)
+{
+    if (expected.HasAlignment())
+    {
+        if (!actual.HasAlignment())
+        {
+            return false;
+        }
+
+        stack u32[0 max] expectedAlignment = expected.AlignmentBytes();
+        stack u32[0 max] actualAlignment = actual.AlignmentBytes();
+        if (expectedAlignment != 0
+            && (actualAlignment < expectedAlignment || (actualAlignment % expectedAlignment) != 0))
+        {
+            return false;
+        }
+    }
+
+    if (expected.HasCallingAbi()
+        && (!actual.HasCallingAbi() || actual.CallingAbi() != expected.CallingAbi()))
+    {
+        return false;
+    }
+
+    if (expected.HasNoAlias() && !actual.HasNoAlias())
+    {
+        return false;
+    }
+
+    if (expected.Volatile() && !actual.Volatile())
+    {
+        return false;
+    }
+
+    if (expected.KnownNull() && !actual.KnownNull())
+    {
+        return false;
+    }
+
+    if (expected.KnownNonNull() && !actual.KnownNonNull())
+    {
+        return false;
+    }
+
+    if (!expected.HasIntegerRange())
+    {
+        return true;
+    }
+
+    if (!actual.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack i64[min max] expectedUpperExclusive = expected.IntegerRangeUpperExclusive();
+    if (expectedUpperExclusive == LoweringI64MinValue())
+    {
+        return actual.IntegerRangeLower() >= expected.IntegerRangeLower();
+    }
+
+    if (actual.IntegerRangeUpperExclusive() == LoweringI64MinValue())
+    {
+        return false;
+    }
+
+    return actual.IntegerRangeLower() >= expected.IntegerRangeLower()
+        && actual.IntegerRangeUpperExclusive() <= expectedUpperExclusive;
+}
+
+internal finite law bool HighLevelIrGlobalTypeIsLowerable(MirType type)
+{
+    return HighLevelIrMirTypeIsLowerable(type);
+}
+
+internal finite law bool HighLevelIrGlobalInitializerFitsType(MirType type, i64[min max] value)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return value == 0 || value == 1;
+        case MirType.I32:
+            return value >= LoweringI32MinValue()
+                && value <= LoweringI32MaxValue();
+        case MirType.I64:
+            return true;
+        case MirType.Ptr:
+            return true;
+    }
+}
+
+internal finite law bool HighLevelIrGlobalInitializerSatisfiesFacts(
+    MirType type,
+    i64[min max] value,
+    ValueFacts facts)
+{
+    if (!HighLevelIrValueFactsFitType(type, facts))
+    {
+        return false;
+    }
+
+    if (facts.HasIntegerRange())
+    {
+        stack i64[min max] upperExclusive = facts.IntegerRangeUpperExclusive();
+        if (upperExclusive == LoweringI64MinValue())
+        {
+            if (value < facts.IntegerRangeLower())
+            {
+                return false;
+            }
+        }
+        else if (value < facts.IntegerRangeLower() || value >= upperExclusive)
+        {
+            return false;
+        }
+    }
+
+    if (facts.KnownNull() && value != 0)
+    {
+        return false;
+    }
+
+    if (facts.KnownNonNull() && value == 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+public struct HighLevelIrGlobalDeclaration
+{
+    internal SymbolId SymbolValue;
+    internal MirType TypeValue;
+    internal i64[min max] InitialValueValue;
+    internal ValueFacts FactsValue;
+
+    HighLevelIrGlobalDeclaration()
+    {
+        self.SymbolValue = new();
+        self.TypeValue = MirType.I64;
+        self.InitialValueValue = 0;
+        self.FactsValue = new();
+    }
+}
+
+public inline finite law HighLevelIrGlobalDeclaration HighLevelIrGlobalDeclarationOf(
+    SymbolId symbol,
+    MirType type,
+    i64[min max] initialValue,
+    ValueFacts facts)
+{
+    return new HighLevelIrGlobalDeclaration()
+    {
+        SymbolValue = symbol,
+        TypeValue = type,
+        InitialValueValue = initialValue,
+        FactsValue = facts
+    };
+}
+
+public inline finite law SymbolId HighLevelIrGlobalDeclarationSymbol(
+    borrow HighLevelIrGlobalDeclaration global)
+{
+    return global.SymbolValue;
+}
+
+public inline finite law MirType HighLevelIrGlobalDeclarationType(
+    borrow HighLevelIrGlobalDeclaration global)
+{
+    return global.TypeValue;
+}
+
+public inline finite law i64[min max] HighLevelIrGlobalDeclarationInitialValue(
+    borrow HighLevelIrGlobalDeclaration global)
+{
+    return global.InitialValueValue;
+}
+
+public inline finite law ValueFacts HighLevelIrGlobalDeclarationFacts(
+    borrow HighLevelIrGlobalDeclaration global)
+{
+    return global.FactsValue;
+}
+
+public struct HighLevelIrLocalAlias
+{
+    internal SymbolId SymbolValue;
+    internal MirType TypeValue;
+    internal MirValueId InitialValueValue;
+
+    HighLevelIrLocalAlias()
+    {
+        self.SymbolValue = new();
+        self.TypeValue = MirType.I64;
+        self.InitialValueValue = new();
+    }
+
+    public inline finite law SymbolId Symbol(borrow HighLevelIrLocalAlias self)
+    {
+        return self.SymbolValue;
+    }
+
+    public inline finite law MirType Type(borrow HighLevelIrLocalAlias self)
+    {
+        return self.TypeValue;
+    }
+
+    public inline finite law MirValueId InitialValue(borrow HighLevelIrLocalAlias self)
+    {
+        return self.InitialValueValue;
+    }
+}
+
+public inline finite law HighLevelIrLocalAlias HighLevelIrLocalAliasOf(
+    SymbolId symbol,
+    MirType type,
+    MirValueId initialValue)
+{
+    return new HighLevelIrLocalAlias()
+    {
+        SymbolValue = symbol,
+        TypeValue = type,
+        InitialValueValue = initialValue
+    };
+}
+
+internal fn bool HighLevelIrLocalAliasTypeMatchesValue(
+    HighLevelIrLocalAlias local,
+    borrow IrTable<MirInstruction> instructions)
+{
+    if (!local.InitialValueValue.IsValid())
+    {
+        return false;
+    }
+
+    return MirValueType(instructions, local.InitialValueValue.Index()) == local.TypeValue;
+}
+
+public struct HighLevelIrGlobalReference
+{
+    internal SymbolId SymbolValue;
+    internal SymbolId GlobalSymbolValue;
+    internal MirType TypeValue;
+
+    HighLevelIrGlobalReference()
+    {
+        self.SymbolValue = new();
+        self.GlobalSymbolValue = new();
+        self.TypeValue = MirType.I64;
+    }
+}
+
+public inline finite law HighLevelIrGlobalReference HighLevelIrGlobalReferenceOf(
+    SymbolId symbol,
+    SymbolId globalSymbol,
+    MirType type)
+{
+    return new HighLevelIrGlobalReference()
+    {
+        SymbolValue = symbol,
+        GlobalSymbolValue = globalSymbol,
+        TypeValue = type
+    };
+}
+
+public inline finite law SymbolId HighLevelIrGlobalReferenceSymbol(
+    borrow HighLevelIrGlobalReference reference)
+{
+    return reference.SymbolValue;
+}
+
+public inline finite law SymbolId HighLevelIrGlobalReferenceGlobalSymbol(
+    borrow HighLevelIrGlobalReference reference)
+{
+    return reference.GlobalSymbolValue;
+}
+
+public inline finite law MirType HighLevelIrGlobalReferenceType(
+    borrow HighLevelIrGlobalReference reference)
+{
+    return reference.TypeValue;
+}
+
+public struct HighLevelIrGlobalStore
+{
+    internal SymbolId GlobalSymbolValue;
+    internal MirType TypeValue;
+    internal MirValueId ValueValue;
+
+    HighLevelIrGlobalStore()
+    {
+        self.GlobalSymbolValue = new();
+        self.TypeValue = MirType.I64;
+        self.ValueValue = new();
+    }
+}
+
+public inline finite law HighLevelIrGlobalStore HighLevelIrGlobalStoreOf(
+    SymbolId globalSymbol,
+    MirType type,
+    MirValueId value)
+{
+    return new HighLevelIrGlobalStore()
+    {
+        GlobalSymbolValue = globalSymbol,
+        TypeValue = type,
+        ValueValue = value
+    };
+}
+
+public inline finite law SymbolId HighLevelIrGlobalStoreGlobalSymbol(
+    borrow HighLevelIrGlobalStore store)
+{
+    return store.GlobalSymbolValue;
+}
+
+public inline finite law MirType HighLevelIrGlobalStoreType(
+    borrow HighLevelIrGlobalStore store)
+{
+    return store.TypeValue;
+}
+
+public inline finite law MirValueId HighLevelIrGlobalStoreValue(
+    borrow HighLevelIrGlobalStore store)
+{
+    return store.ValueValue;
+}
+
+public struct HighLevelIrAssignment
+{
+    internal SymbolId TargetSymbolValue;
+    internal MirType TypeValue;
+    internal MirValueId ValueValue;
+
+    HighLevelIrAssignment()
+    {
+        self.TargetSymbolValue = new();
+        self.TypeValue = MirType.I64;
+        self.ValueValue = new();
+    }
+
+    public inline finite law SymbolId TargetSymbol(borrow HighLevelIrAssignment self)
+    {
+        return self.TargetSymbolValue;
+    }
+
+    public inline finite law MirType Type(borrow HighLevelIrAssignment self)
+    {
+        return self.TypeValue;
+    }
+
+    public inline finite law MirValueId Value(borrow HighLevelIrAssignment self)
+    {
+        return self.ValueValue;
+    }
+}
+
+public inline finite law HighLevelIrAssignment HighLevelIrAssignmentOf(
+    SymbolId targetSymbol,
+    MirType type,
+    MirValueId value)
+{
+    return new HighLevelIrAssignment()
+    {
+        TargetSymbolValue = targetSymbol,
+        TypeValue = type,
+        ValueValue = value
+    };
+}
+
+public inline finite law SymbolId HighLevelIrAssignmentTargetSymbol(borrow HighLevelIrAssignment assignment)
+{
+    return assignment.TargetSymbolValue;
+}
+
+public inline finite law MirType HighLevelIrAssignmentType(borrow HighLevelIrAssignment assignment)
+{
+    return assignment.TypeValue;
+}
+
+public inline finite law MirValueId HighLevelIrAssignmentValue(borrow HighLevelIrAssignment assignment)
+{
+    return assignment.ValueValue;
+}
+
+internal fn bool HighLevelIrAssignmentTypeMatchesValue(
+    HighLevelIrAssignment assignment,
+    borrow IrTable<MirInstruction> instructions)
+{
+    if (!assignment.ValueValue.IsValid())
+    {
+        return false;
+    }
+
+    return MirValueType(instructions, assignment.ValueValue.Index()) == assignment.TypeValue;
+}
+
+public struct HighLevelIrCompoundAssignment
+{
+    internal SymbolId TargetSymbolValue;
+    internal HighLevelIrBinaryOpKind KindValue;
+    internal MirType TypeValue;
+    internal MirValueId RightValue;
+
+    HighLevelIrCompoundAssignment()
+    {
+        self.TargetSymbolValue = new();
+        self.KindValue = HighLevelIrBinaryOpKind.Unknown;
+        self.TypeValue = MirType.I64;
+        self.RightValue = new();
+    }
+}
+
+public inline finite law HighLevelIrCompoundAssignment HighLevelIrCompoundAssignmentOf(
+    SymbolId targetSymbol,
+    HighLevelIrBinaryOpKind kind,
+    MirType type,
+    MirValueId right)
+{
+    return new HighLevelIrCompoundAssignment()
+    {
+        TargetSymbolValue = targetSymbol,
+        KindValue = kind,
+        TypeValue = type,
+        RightValue = right
+    };
+}
+
+public inline finite law SymbolId HighLevelIrCompoundAssignmentTargetSymbol(
+    borrow HighLevelIrCompoundAssignment assignment)
+{
+    return assignment.TargetSymbolValue;
+}
+
+public inline finite law HighLevelIrBinaryOpKind HighLevelIrCompoundAssignmentKind(
+    borrow HighLevelIrCompoundAssignment assignment)
+{
+    return assignment.KindValue;
+}
+
+public inline finite law MirType HighLevelIrCompoundAssignmentType(
+    borrow HighLevelIrCompoundAssignment assignment)
+{
+    return assignment.TypeValue;
+}
+
+public inline finite law MirValueId HighLevelIrCompoundAssignmentRight(
+    borrow HighLevelIrCompoundAssignment assignment)
+{
+    return assignment.RightValue;
+}
+
+public struct HighLevelIrReturn
+{
+    internal MirType TypeValue;
+    internal MirValueId ValueValue;
+
+    HighLevelIrReturn()
+    {
+        self.TypeValue = MirType.I64;
+        self.ValueValue = new();
+    }
+}
+
+public inline finite law HighLevelIrReturn HighLevelIrReturnOf(MirType type, MirValueId value)
+{
+    return new HighLevelIrReturn()
+    {
+        TypeValue = type,
+        ValueValue = value
+    };
+}
+
+public inline finite law MirType HighLevelIrReturnType(borrow HighLevelIrReturn ret)
+{
+    return ret.TypeValue;
+}
+
+public inline finite law MirValueId HighLevelIrReturnValue(borrow HighLevelIrReturn ret)
+{
+    return ret.ValueValue;
+}
+
+public struct HighLevelIrVoidReturn
+{
+    HighLevelIrVoidReturn()
+    {
+    }
+}
+
+public inline finite law HighLevelIrVoidReturn HighLevelIrVoidReturnOf()
+{
+    return new HighLevelIrVoidReturn();
+}
+
+internal fn bool HighLevelIrReturnTypeMatchesValue(
+    HighLevelIrReturn ret,
+    borrow IrTable<MirInstruction> instructions)
+{
+    if (!ret.ValueValue.IsValid())
+    {
+        return false;
+    }
+
+    return MirValueType(instructions, ret.ValueValue.Index()) == ret.TypeValue;
+}
+
+public struct HighLevelIrCall
+{
+    internal SymbolId SymbolValue;
+    internal MirFuncId CalleeValue;
+    internal MirType TypeValue;
+    internal u32[0 max] ArgumentCountValue;
+    internal MirValueId Argument0Value;
+    internal MirValueId Argument1Value;
+    internal MirValueId Argument2Value;
+    internal MirValueId Argument3Value;
+    internal ValueFacts FactsValue;
+
+    HighLevelIrCall()
+    {
+        self.SymbolValue = new();
+        self.CalleeValue = new();
+        self.TypeValue = MirType.I64;
+        self.ArgumentCountValue = 0;
+        self.Argument0Value = new();
+        self.Argument1Value = new();
+        self.Argument2Value = new();
+        self.Argument3Value = new();
+        self.FactsValue = new();
+    }
+}
+
+public inline finite law HighLevelIrCall HighLevelIrCallOf(
+    SymbolId symbol,
+    MirFuncId callee,
+    MirType type,
+    u32[0 max] argumentCount,
+    MirValueId argument0,
+    MirValueId argument1,
+    MirValueId argument2,
+    MirValueId argument3,
+    ValueFacts facts)
+{
+    return new HighLevelIrCall()
+    {
+        SymbolValue = symbol,
+        CalleeValue = callee,
+        TypeValue = type,
+        ArgumentCountValue = argumentCount,
+        Argument0Value = argument0,
+        Argument1Value = argument1,
+        Argument2Value = argument2,
+        Argument3Value = argument3,
+        FactsValue = facts
+    };
+}
+
+public inline finite law SymbolId HighLevelIrCallSymbol(borrow HighLevelIrCall call)
+{
+    return call.SymbolValue;
+}
+
+public inline finite law MirFuncId HighLevelIrCallCallee(borrow HighLevelIrCall call)
+{
+    return call.CalleeValue;
+}
+
+public inline finite law MirType HighLevelIrCallType(borrow HighLevelIrCall call)
+{
+    return call.TypeValue;
+}
+
+public inline finite law u32[0 max] HighLevelIrCallArgumentCount(borrow HighLevelIrCall call)
+{
+    return call.ArgumentCountValue;
+}
+
+public fn MirValueId HighLevelIrCallArgumentAt(borrow HighLevelIrCall call, u32[0 max] index)
+{
+    switch (index)
+    {
+        case 0:
+            return call.Argument0Value;
+        case 1:
+            return call.Argument1Value;
+        case 2:
+            return call.Argument2Value;
+        case 3:
+            return call.Argument3Value;
+        default:
+            return MirValueIdOf(0);
+    }
+}
+
+public inline finite law ValueFacts HighLevelIrCallFacts(borrow HighLevelIrCall call)
+{
+    return call.FactsValue;
+}
+
+public struct HighLevelIrBecome
+{
+    internal MirFuncId CalleeValue;
+    internal MirType TypeValue;
+    internal u32[0 max] ArgumentCountValue;
+    internal MirValueId Argument0Value;
+    internal MirValueId Argument1Value;
+    internal MirValueId Argument2Value;
+    internal MirValueId Argument3Value;
+    internal ValueFacts FactsValue;
+
+    HighLevelIrBecome()
+    {
+        self.CalleeValue = new();
+        self.TypeValue = MirType.I64;
+        self.ArgumentCountValue = 0;
+        self.Argument0Value = new();
+        self.Argument1Value = new();
+        self.Argument2Value = new();
+        self.Argument3Value = new();
+        self.FactsValue = new();
+    }
+}
+
+public inline finite law HighLevelIrBecome HighLevelIrBecomeOf(
+    MirFuncId callee,
+    MirType type,
+    u32[0 max] argumentCount,
+    MirValueId argument0,
+    MirValueId argument1,
+    MirValueId argument2,
+    MirValueId argument3,
+    ValueFacts facts)
+{
+    return new HighLevelIrBecome()
+    {
+        CalleeValue = callee,
+        TypeValue = type,
+        ArgumentCountValue = argumentCount,
+        Argument0Value = argument0,
+        Argument1Value = argument1,
+        Argument2Value = argument2,
+        Argument3Value = argument3,
+        FactsValue = facts
+    };
+}
+
+public inline finite law MirFuncId HighLevelIrBecomeCallee(borrow HighLevelIrBecome tail)
+{
+    return tail.CalleeValue;
+}
+
+public inline finite law MirType HighLevelIrBecomeType(borrow HighLevelIrBecome tail)
+{
+    return tail.TypeValue;
+}
+
+public inline finite law u32[0 max] HighLevelIrBecomeArgumentCount(borrow HighLevelIrBecome tail)
+{
+    return tail.ArgumentCountValue;
+}
+
+public fn MirValueId HighLevelIrBecomeArgumentAt(borrow HighLevelIrBecome tail, u32[0 max] index)
+{
+    switch (index)
+    {
+        case 0:
+            return tail.Argument0Value;
+        case 1:
+            return tail.Argument1Value;
+        case 2:
+            return tail.Argument2Value;
+        case 3:
+            return tail.Argument3Value;
+        default:
+            return MirValueIdOf(0);
+    }
+}
+
+public inline finite law ValueFacts HighLevelIrBecomeFacts(borrow HighLevelIrBecome tail)
+{
+    return tail.FactsValue;
+}
+
+internal finite law bool HighLevelIrCallTypeIsLowerable(HighLevelIrCall call)
+{
+    return HighLevelIrMirTypeIsLowerable(call.TypeValue)
+        && HighLevelIrValueFactsFitType(call.TypeValue, call.FactsValue);
+}
+
+internal finite law bool HighLevelIrBecomeTypeIsLowerable(HighLevelIrBecome tail)
+{
+    return HighLevelIrMirTypeIsLowerable(tail.TypeValue)
+        && HighLevelIrValueFactsFitType(tail.TypeValue, tail.FactsValue);
+}
+
+internal fn MirBuilderStatus HighLevelIrArgumentValueStatus(
+    MirValueId argument,
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    if (!argument.IsValid()
+        || !instructions.Contains(argument.Index())
+        || !MirFunctionBuilderOwnsValue(builder, argument)
+        || !valueFacts.Contains(argument.Index()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!HighLevelIrValueFactsFitType(
+        MirValueType(instructions, argument.Index()),
+        ValueFactsForMirValue(valueFacts, argument)))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    return MirBuilderStatus.Ok;
+}
+
+internal fn MirBuilderStatus HighLevelIrCallArgumentStatus(
+    HighLevelIrCall call,
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts,
+    u32[0 max] index)
+{
+    if (index >= call.ArgumentCountValue)
+    {
+        return MirBuilderStatus.Ok;
+    }
+
+    return HighLevelIrArgumentValueStatus(
+        HighLevelIrCallArgumentAt(call, index),
+        builder,
+        instructions,
+        valueFacts);
+}
+
+internal fn MirBuilderStatus HighLevelIrBecomeArgumentStatus(
+    HighLevelIrBecome tail,
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts,
+    u32[0 max] index)
+{
+    if (index >= tail.ArgumentCountValue)
+    {
+        return MirBuilderStatus.Ok;
+    }
+
+    return HighLevelIrArgumentValueStatus(
+        HighLevelIrBecomeArgumentAt(tail, index),
+        builder,
+        instructions,
+        valueFacts);
+}
+
+internal fn MirBuilderStatus ValidateHighLevelIrCallArguments(
+    HighLevelIrCall call,
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    if (call.ArgumentCountValue > 4)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    switch (HighLevelIrCallArgumentStatus(call, builder, instructions, valueFacts, 0))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (HighLevelIrCallArgumentStatus(call, builder, instructions, valueFacts, 1))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (HighLevelIrCallArgumentStatus(call, builder, instructions, valueFacts, 2))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    return HighLevelIrCallArgumentStatus(call, builder, instructions, valueFacts, 3);
+}
+
+internal fn MirBuilderStatus ValidateHighLevelIrBecomeArguments(
+    HighLevelIrBecome tail,
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    if (tail.ArgumentCountValue > 4)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    switch (HighLevelIrBecomeArgumentStatus(tail, builder, instructions, valueFacts, 0))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (HighLevelIrBecomeArgumentStatus(tail, builder, instructions, valueFacts, 1))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (HighLevelIrBecomeArgumentStatus(tail, builder, instructions, valueFacts, 2))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    return HighLevelIrBecomeArgumentStatus(tail, builder, instructions, valueFacts, 3);
+}
+
+public struct HighLevelIrBinaryOp
+{
+    internal SymbolId SymbolValue;
+    internal HighLevelIrBinaryOpKind KindValue;
+    internal MirType TypeValue;
+    internal MirValueId LeftValue;
+    internal MirValueId RightValue;
+
+    HighLevelIrBinaryOp()
+    {
+        self.SymbolValue = new();
+        self.KindValue = HighLevelIrBinaryOpKind.Unknown;
+        self.TypeValue = MirType.I64;
+        self.LeftValue = new();
+        self.RightValue = new();
+    }
+}
+
+public inline finite law HighLevelIrBinaryOp HighLevelIrBinaryOpOf(
+    SymbolId symbol,
+    HighLevelIrBinaryOpKind kind,
+    MirType type,
+    MirValueId left,
+    MirValueId right)
+{
+    return new HighLevelIrBinaryOp()
+    {
+        SymbolValue = symbol,
+        KindValue = kind,
+        TypeValue = type,
+        LeftValue = left,
+        RightValue = right
+    };
+}
+
+public inline finite law SymbolId HighLevelIrBinaryOpSymbol(borrow HighLevelIrBinaryOp op)
+{
+    return op.SymbolValue;
+}
+
+public inline finite law HighLevelIrBinaryOpKind HighLevelIrBinaryOpKindAt(borrow HighLevelIrBinaryOp op)
+{
+    return op.KindValue;
+}
+
+public inline finite law MirType HighLevelIrBinaryOpType(borrow HighLevelIrBinaryOp op)
+{
+    return op.TypeValue;
+}
+
+public inline finite law MirValueId HighLevelIrBinaryOpLeft(borrow HighLevelIrBinaryOp op)
+{
+    return op.LeftValue;
+}
+
+public inline finite law MirValueId HighLevelIrBinaryOpRight(borrow HighLevelIrBinaryOp op)
+{
+    return op.RightValue;
+}
+
+internal finite law bool HighLevelIrBinaryOpHasIntegerResult(HighLevelIrBinaryOpKind kind)
+{
+    return kind == HighLevelIrBinaryOpKind.Add
+        || kind == HighLevelIrBinaryOpKind.Sub
+        || kind == HighLevelIrBinaryOpKind.Mul
+        || kind == HighLevelIrBinaryOpKind.WrappingAdd
+        || kind == HighLevelIrBinaryOpKind.WrappingSub
+        || kind == HighLevelIrBinaryOpKind.WrappingMul
+        || kind == HighLevelIrBinaryOpKind.SaturatingAdd
+        || kind == HighLevelIrBinaryOpKind.SaturatingSub
+        || kind == HighLevelIrBinaryOpKind.SaturatingMul
+        || kind == HighLevelIrBinaryOpKind.SDiv
+        || kind == HighLevelIrBinaryOpKind.UDiv
+        || kind == HighLevelIrBinaryOpKind.SRem
+        || kind == HighLevelIrBinaryOpKind.And
+        || kind == HighLevelIrBinaryOpKind.Or
+        || kind == HighLevelIrBinaryOpKind.Xor
+        || kind == HighLevelIrBinaryOpKind.Shl
+        || kind == HighLevelIrBinaryOpKind.AShr;
+}
+
+internal finite law bool HighLevelIrBinaryOpIsComparison(HighLevelIrBinaryOpKind kind)
+{
+    return kind == HighLevelIrBinaryOpKind.CmpEq
+        || kind == HighLevelIrBinaryOpKind.CmpNe
+        || kind == HighLevelIrBinaryOpKind.CmpLt
+        || kind == HighLevelIrBinaryOpKind.CmpLe
+        || kind == HighLevelIrBinaryOpKind.CmpGt
+        || kind == HighLevelIrBinaryOpKind.CmpGe;
+}
+
+internal finite law bool HighLevelIrArithmeticTypeIsLowerable(MirType type)
+{
+    return type == MirType.I32 || type == MirType.I64;
+}
+
+internal finite law bool HighLevelIrBinaryOpIsDivisionOrRemainder(HighLevelIrBinaryOpKind kind)
+{
+    return kind == HighLevelIrBinaryOpKind.SDiv
+        || kind == HighLevelIrBinaryOpKind.UDiv
+        || kind == HighLevelIrBinaryOpKind.SRem;
+}
+
+internal finite law bool HighLevelIrBinaryOpIsSignedDivisionOrRemainder(HighLevelIrBinaryOpKind kind)
+{
+    return kind == HighLevelIrBinaryOpKind.SDiv
+        || kind == HighLevelIrBinaryOpKind.SRem;
+}
+
+internal finite law bool HighLevelIrBinaryOpIsShift(HighLevelIrBinaryOpKind kind)
+{
+    return kind == HighLevelIrBinaryOpKind.Shl
+        || kind == HighLevelIrBinaryOpKind.AShr;
+}
+
+internal finite law bool HighLevelIrComparisonOperandTypeIsLowerable(
+    HighLevelIrBinaryOpKind kind,
+    MirType type)
+{
+    if (type == MirType.I32 || type == MirType.I64)
+    {
+        return true;
+    }
+
+    return type == MirType.I1
+        && (kind == HighLevelIrBinaryOpKind.CmpEq || kind == HighLevelIrBinaryOpKind.CmpNe);
+}
+
+internal fn bool HighLevelIrBinaryOpTypeIsLowerable(
+    HighLevelIrBinaryOp op,
+    borrow IrTable<MirInstruction> instructions)
+{
+    if (!op.LeftValue.IsValid() || !op.RightValue.IsValid())
+    {
+        return false;
+    }
+
+    stack MirType leftType = MirValueType(instructions, op.LeftValue.Index());
+    stack MirType rightType = MirValueType(instructions, op.RightValue.Index());
+    if (leftType != rightType)
+    {
+        return false;
+    }
+
+    if (HighLevelIrBinaryOpHasIntegerResult(op.KindValue))
+    {
+        return op.TypeValue == leftType
+            && HighLevelIrArithmeticTypeIsLowerable(op.TypeValue);
+    }
+
+    if (HighLevelIrBinaryOpIsComparison(op.KindValue))
+    {
+        return op.TypeValue == MirType.I1
+            && HighLevelIrComparisonOperandTypeIsLowerable(op.KindValue, leftType);
+    }
+
+    return false;
+}
+
+internal fn bool HighLevelIrBinaryOperandFactsFitTypes(
+    HighLevelIrBinaryOp op,
+    borrow IrTable<MirInstruction> instructions,
+    ValueFacts leftFacts,
+    ValueFacts rightFacts)
+{
+    return HighLevelIrValueFactsFitType(
+            MirValueType(instructions, op.LeftValue.Index()),
+            leftFacts)
+        && HighLevelIrValueFactsFitType(
+            MirValueType(instructions, op.RightValue.Index()),
+            rightFacts);
+}
+
+internal finite law i64[min max] HighLevelIrI64MinValue()
+{
+    return (i64[min max])(-(2 ** 63));
+}
+
+internal finite law i64[min max] HighLevelIrI64MaxValue()
+{
+    return 9223372036854775807;
+}
+
+internal finite bool TryReadHighLevelIrSingleIntegerFact(ValueFacts facts, out i64[min max] value)
+{
+    value = 0;
+    if (!facts.HasIntegerRange())
+    {
+        return false;
+    }
+
+    stack i64[min max] lower = facts.IntegerRangeLower();
+    stack i64[min max] upperExclusive = facts.IntegerRangeUpperExclusive();
+    if (upperExclusive == HighLevelIrI64MinValue())
+    {
+        if (lower != HighLevelIrI64MaxValue())
+        {
+            return false;
+        }
+
+        value = lower;
+        return true;
+    }
+
+    if (lower == HighLevelIrI64MaxValue())
+    {
+        return false;
+    }
+
+    if (upperExclusive != lower + 1)
+    {
+        return false;
+    }
+
+    value = lower;
+    return true;
+}
+
+internal finite law bool HighLevelIrShiftAmountIsValid(MirType type, i64[min max] value)
+{
+    if (value < 0)
+    {
+        return false;
+    }
+
+    switch (type)
+    {
+        case MirType.I32:
+            return value < 32;
+        case MirType.I64:
+            return value < 64;
+        case MirType.I1:
+            return value < 1;
+        case MirType.Ptr:
+            return false;
+    }
+}
+
+internal fn bool HighLevelIrBinaryOpBackendFactsAreValid(
+    HighLevelIrBinaryOp op,
+    ValueFacts leftFacts,
+    ValueFacts rightFacts)
+{
+    stack mut i64[min max] right = 0;
+    if (HighLevelIrBinaryOpIsDivisionOrRemainder(op.KindValue)
+        && TryReadHighLevelIrSingleIntegerFact(rightFacts, right))
+    {
+        if (right == 0)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] left = 0;
+        if (HighLevelIrBinaryOpIsSignedDivisionOrRemainder(op.KindValue)
+            && right == -1
+            && TryReadHighLevelIrSingleIntegerFact(leftFacts, left)
+            && left == HighLevelIrI64MinValue())
+        {
+            return false;
+        }
+    }
+
+    if (HighLevelIrBinaryOpIsShift(op.KindValue)
+        && TryReadHighLevelIrSingleIntegerFact(rightFacts, right)
+        && !HighLevelIrShiftAmountIsValid(op.TypeValue, right))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal finite law bool HighLevelIrCompoundAssignmentKindIsLowerable(HighLevelIrBinaryOpKind kind)
+{
+    return kind == HighLevelIrBinaryOpKind.Add
+        || kind == HighLevelIrBinaryOpKind.Sub
+        || kind == HighLevelIrBinaryOpKind.Mul
+        || kind == HighLevelIrBinaryOpKind.SDiv
+        || kind == HighLevelIrBinaryOpKind.UDiv
+        || kind == HighLevelIrBinaryOpKind.SRem
+        || kind == HighLevelIrBinaryOpKind.And
+        || kind == HighLevelIrBinaryOpKind.Or
+        || kind == HighLevelIrBinaryOpKind.Xor
+        || kind == HighLevelIrBinaryOpKind.WrappingAdd
+        || kind == HighLevelIrBinaryOpKind.WrappingSub
+        || kind == HighLevelIrBinaryOpKind.WrappingMul
+        || kind == HighLevelIrBinaryOpKind.SaturatingAdd
+        || kind == HighLevelIrBinaryOpKind.SaturatingSub
+        || kind == HighLevelIrBinaryOpKind.SaturatingMul;
+}
+
+internal fn MirValueId EmitHighLevelIrBinaryOpInstruction(
+    HighLevelIrBinaryOpKind kind,
+    MirType type,
+    MirValueId left,
+    MirValueId right,
+    mut borrow IrTable<MirInstruction> instructions)
+{
+    switch (kind)
+    {
+        case HighLevelIrBinaryOpKind.Add:
+            return MirAddTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.Sub:
+            return MirSubTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.Mul:
+            return MirMulTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.WrappingAdd:
+            return MirWrappingAddTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.WrappingSub:
+            return MirWrappingSubTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.WrappingMul:
+            return MirWrappingMulTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.SaturatingAdd:
+            return MirSaturatingAddTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.SaturatingSub:
+            return MirSaturatingSubTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.SaturatingMul:
+            return MirSaturatingMulTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.SDiv:
+            return MirSDivTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.UDiv:
+            return MirUDivTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.SRem:
+            return MirSRemTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.And:
+            return MirAndTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.Or:
+            return MirOrTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.Xor:
+            return MirXorTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.Shl:
+            return MirShlTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.AShr:
+            return MirAShrTyped(instructions, type, left, right);
+        case HighLevelIrBinaryOpKind.CmpEq:
+            return MirCmpEq(instructions, left, right);
+        case HighLevelIrBinaryOpKind.CmpNe:
+            return MirCmpNe(instructions, left, right);
+        case HighLevelIrBinaryOpKind.CmpLt:
+            return MirCmpLt(instructions, left, right);
+        case HighLevelIrBinaryOpKind.CmpLe:
+            return MirCmpLe(instructions, left, right);
+        case HighLevelIrBinaryOpKind.CmpGt:
+            return MirCmpGt(instructions, left, right);
+        case HighLevelIrBinaryOpKind.CmpGe:
+            return MirCmpGe(instructions, left, right);
+        case HighLevelIrBinaryOpKind.Unknown:
+            return MirValueIdOf(0);
+    }
+}
+
+public struct HighLevelIrFunction
+{
+    internal u32[0 max] NameSymbolValue;
+    internal u32[0 max] SignatureIndexPlusOneValue;
+    internal u32[0 max] EffectIndexPlusOneValue;
+    internal bool HasBodyValue;
+    internal HirFunctionBodyLoweringKind BodyLoweringKindValue;
+    internal bool HasBodyTemplateValue;
+    internal bool HasGenericTypeSubstitutionValue;
+    internal bool HasGenericValueSubstitutionValue;
+    internal HirBackendFactSet BackendFactsValue;
+
+    HighLevelIrFunction()
+    {
+        self.NameSymbolValue = 0;
+        self.SignatureIndexPlusOneValue = 0;
+        self.EffectIndexPlusOneValue = 0;
+        self.HasBodyValue = false;
+        self.BodyLoweringKindValue = HirFunctionBodyLoweringKind.Unknown;
+        self.HasBodyTemplateValue = false;
+        self.HasGenericTypeSubstitutionValue = false;
+        self.HasGenericValueSubstitutionValue = false;
+        self.BackendFactsValue = new();
+    }
+
+    public inline finite law u32[0 max] NameSymbol(borrow HighLevelIrFunction self)
+    {
+        return self.NameSymbolValue;
+    }
+
+    public inline finite law u32[0 max] SignatureIndexPlusOne(borrow HighLevelIrFunction self)
+    {
+        return self.SignatureIndexPlusOneValue;
+    }
+
+    public inline finite law u32[0 max] EffectIndexPlusOne(borrow HighLevelIrFunction self)
+    {
+        return self.EffectIndexPlusOneValue;
+    }
+
+    public inline finite law bool HasBody(borrow HighLevelIrFunction self)
+    {
+        return self.HasBodyValue;
+    }
+
+    public inline finite law HirFunctionBodyLoweringKind BodyLoweringKind(borrow HighLevelIrFunction self)
+    {
+        return self.BodyLoweringKindValue;
+    }
+
+    public inline finite law bool HasBodyTemplate(borrow HighLevelIrFunction self)
+    {
+        return self.HasBodyTemplateValue;
+    }
+
+    public inline finite law bool HasGenericTypeSubstitution(borrow HighLevelIrFunction self)
+    {
+        return self.HasGenericTypeSubstitutionValue;
+    }
+
+    public inline finite law bool HasGenericValueSubstitution(borrow HighLevelIrFunction self)
+    {
+        return self.HasGenericValueSubstitutionValue;
+    }
+
+    public inline finite law HirBackendFactSet BackendFacts(borrow HighLevelIrFunction self)
+    {
+        return self.BackendFactsValue;
+    }
+
+    public inline finite law bool HasAllMirLoweringFacts(borrow HighLevelIrFunction self)
+    {
+        return HirBackendFactsCoverMirLowering(self.BackendFactsValue);
+    }
+}
+
+public inline finite law HighLevelIrFunction HighLevelIrFunctionOf(
+    u32[0 max] nameSymbol,
+    u32[0 max] signatureIndexPlusOne,
+    u32[0 max] effectIndexPlusOne,
+    bool hasBody,
+    HirFunctionBodyLoweringKind bodyLoweringKind,
+    bool hasBodyTemplate,
+    bool hasGenericTypeSubstitution,
+    bool hasGenericValueSubstitution,
+    HirBackendFactSet backendFacts)
+{
+    return new HighLevelIrFunction()
+    {
+        NameSymbolValue = nameSymbol,
+        SignatureIndexPlusOneValue = signatureIndexPlusOne,
+        EffectIndexPlusOneValue = effectIndexPlusOne,
+        HasBodyValue = hasBody,
+        BodyLoweringKindValue = bodyLoweringKind,
+        HasBodyTemplateValue = hasBodyTemplate,
+        HasGenericTypeSubstitutionValue = hasGenericTypeSubstitution,
+        HasGenericValueSubstitutionValue = hasGenericValueSubstitution,
+        BackendFactsValue = backendFacts
+    };
+}
+
+public struct HighLevelIrModule
+{
+    internal u32[0 max] ModuleNameSymbolValue;
+    internal dynamic HighLevelIrGlobalDeclaration Globals;
+    internal dynamic HighLevelIrFunction Functions;
+    internal dynamic u32[0 max] AddressTakenFunctionSymbols;
+
+    HighLevelIrModule()
+    {
+        self.ModuleNameSymbolValue = 0;
+        self.Globals = new();
+        self.Functions = new();
+        self.AddressTakenFunctionSymbols = new();
+    }
+
+    public inline finite law u32[0 max] ModuleNameSymbol(borrow HighLevelIrModule self)
+    {
+        return self.ModuleNameSymbolValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionCount(borrow HighLevelIrModule self)
+    {
+        return self.Functions.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] GlobalCount(borrow HighLevelIrModule self)
+    {
+        return self.Globals.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] AddressTakenFunctionCount(borrow HighLevelIrModule self)
+    {
+        return self.AddressTakenFunctionSymbols.Length;
+    }
+
+    public law HighLevelIrGlobalDeclaration GlobalAt(borrow HighLevelIrModule self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Globals.Length)
+        {
+            return new HighLevelIrGlobalDeclaration();
+        }
+
+        return self.Globals[index];
+    }
+
+    public law HighLevelIrFunction FunctionAt(borrow HighLevelIrModule self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Functions.Length)
+        {
+            return new HighLevelIrFunction();
+        }
+
+        return self.Functions[index];
+    }
+
+    public law u32[0 max] AddressTakenFunctionSymbolAt(
+        borrow HighLevelIrModule self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.AddressTakenFunctionSymbols.Length)
+        {
+            return 0;
+        }
+
+        return self.AddressTakenFunctionSymbols[index];
+    }
+}
+
+public inline finite law HighLevelIrModule HighLevelIrModuleOf(u32[0 max] moduleNameSymbol)
+{
+    return new HighLevelIrModule()
+    {
+        ModuleNameSymbolValue = moduleNameSymbol
+    };
+}
+
+public fn System.Memory.MemoryStatus AppendHighLevelIrGlobalDeclaration(
+    mut borrow HighLevelIrModule hirModule,
+    HighLevelIrGlobalDeclaration global)
+{
+    if (!hirModule.Globals.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init hirModule.Globals[hirModule.Globals.Length] = global;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendHighLevelIrFunction(
+    mut borrow HighLevelIrModule hirModule,
+    HighLevelIrFunction function)
+{
+    if (!hirModule.Functions.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init hirModule.Functions[hirModule.Functions.Length] = function;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus AppendHighLevelIrAddressTakenFunction(
+    mut borrow HighLevelIrModule hirModule,
+    u32[0 max] functionNameSymbol)
+{
+    if (!hirModule.AddressTakenFunctionSymbols.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init hirModule.AddressTakenFunctionSymbols[hirModule.AddressTakenFunctionSymbols.Length] = functionNameSymbol;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public struct HirMirLoweringBoundary
+{
+    internal HirMirBoundaryKind KindValue;
+    internal CompilerArtifactKind InputArtifactValue;
+    internal CompilerArtifactKind OutputArtifactValue;
+    internal HirBackendFactSet RequiredBackendFactsValue;
+
+    HirMirLoweringBoundary()
+    {
+        self.KindValue = HirMirBoundaryKind.Unknown;
+        self.InputArtifactValue = CompilerArtifactKind.Unknown;
+        self.OutputArtifactValue = CompilerArtifactKind.Unknown;
+        self.RequiredBackendFactsValue = new();
+    }
+
+    public inline finite law HirMirBoundaryKind Kind(borrow HirMirLoweringBoundary self)
+    {
+        return self.KindValue;
+    }
+
+    public inline finite law CompilerArtifactKind InputArtifact(borrow HirMirLoweringBoundary self)
+    {
+        return self.InputArtifactValue;
+    }
+
+    public inline finite law CompilerArtifactKind OutputArtifact(borrow HirMirLoweringBoundary self)
+    {
+        return self.OutputArtifactValue;
+    }
+
+    public inline finite law HirBackendFactSet RequiredBackendFacts(borrow HirMirLoweringBoundary self)
+    {
+        return self.RequiredBackendFactsValue;
+    }
+}
+
+public inline finite law HirMirLoweringBoundary SelfHostHirMirLoweringBoundary()
+{
+    return new HirMirLoweringBoundary()
+    {
+        KindValue = HirMirBoundaryKind.HighLevelIrToMidLevelIr,
+        InputArtifactValue = CompilerArtifactKind.HighLevelIr,
+        OutputArtifactValue = CompilerArtifactKind.MidLevelIr,
+        RequiredBackendFactsValue = RequiredMirLoweringBackendFacts()
+    };
+}
+
+public struct MirLoweringPassShell
+{
+    internal CompilerPassId PassValue;
+    internal CompilerPhase PhaseValue;
+    internal PassExecutionMode ExecutionModeValue;
+    internal CompilerArtifactKind InputArtifactValue;
+    internal CompilerArtifactKind OutputArtifactValue;
+    internal HirBackendFactSet RequiredBackendFactsValue;
+
+    MirLoweringPassShell()
+    {
+        self.PassValue = CompilerPassId.Unknown;
+        self.PhaseValue = CompilerPhase.Unknown;
+        self.ExecutionModeValue = PassExecutionMode.SkipOnErrors;
+        self.InputArtifactValue = CompilerArtifactKind.Unknown;
+        self.OutputArtifactValue = CompilerArtifactKind.Unknown;
+        self.RequiredBackendFactsValue = new();
+    }
+
+    public inline finite law CompilerPassId Pass(borrow MirLoweringPassShell self)
+    {
+        return self.PassValue;
+    }
+
+    public inline finite law CompilerPhase Phase(borrow MirLoweringPassShell self)
+    {
+        return self.PhaseValue;
+    }
+
+    public inline finite law PassExecutionMode ExecutionMode(borrow MirLoweringPassShell self)
+    {
+        return self.ExecutionModeValue;
+    }
+
+    public inline finite law CompilerArtifactKind InputArtifact(borrow MirLoweringPassShell self)
+    {
+        return self.InputArtifactValue;
+    }
+
+    public inline finite law CompilerArtifactKind OutputArtifact(borrow MirLoweringPassShell self)
+    {
+        return self.OutputArtifactValue;
+    }
+
+    public inline finite law HirBackendFactSet RequiredBackendFacts(borrow MirLoweringPassShell self)
+    {
+        return self.RequiredBackendFactsValue;
+    }
+}
+
+public inline finite law MirLoweringPassShell DefaultMirLoweringPassShell()
+{
+    return new MirLoweringPassShell()
+    {
+        PassValue = CompilerPassId.LowerMir,
+        PhaseValue = CompilerPhase.Lowering,
+        ExecutionModeValue = PassExecutionMode.SkipOnErrors,
+        InputArtifactValue = CompilerArtifactKind.HighLevelIr,
+        OutputArtifactValue = CompilerArtifactKind.MidLevelIr,
+        RequiredBackendFactsValue = RequiredMirLoweringBackendFacts()
+    };
+}
+
+public inline finite law u8[0 6] MirLoweringRequiredArtifactCount()
+{
+    return 6;
+}
+
+public finite law CompilerArtifactKind MirLoweringRequiredArtifactAt(u8[0 max] index)
+{
+    switch (index)
+    {
+        case 0:
+            return CompilerArtifactKind.LoadedModules;
+        case 1:
+            return CompilerArtifactKind.ModuleGraph;
+        case 2:
+            return CompilerArtifactKind.TypeCheckModel;
+        case 3:
+            return CompilerArtifactKind.EnumLayoutModel;
+        case 4:
+            return CompilerArtifactKind.HighLevelIr;
+        case 5:
+            return CompilerArtifactKind.OwnershipValidation;
+        default:
+            return CompilerArtifactKind.Unknown;
+    }
+}
+
+public finite law bool MirLoweringRequiresArtifact(CompilerArtifactKind kind)
+{
+    stack mut u8[0 max] index = 0;
+    while willexit (index < MirLoweringRequiredArtifactCount())
+    {
+        if (MirLoweringRequiredArtifactAt(index) == kind)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public fn ArtifactStatus AddMirLoweringRequiredArtifacts(mut borrow ArtifactDependencySet dependencies)
+{
+    stack mut u8[0 max] index = 0;
+    while willexit (index < MirLoweringRequiredArtifactCount())
+    {
+        switch (AddRequiredArtifact(dependencies, MirLoweringRequiredArtifactAt(index)))
+        {
+            case ArtifactStatus.Err(var error):
+                return ArtifactStatus.Err(error);
+            case ArtifactStatus.Ok:
+        }
+
+        index += 1;
+    }
+
+    return ArtifactStatus.Ok;
+}
+
+public fn ArtifactResult<ArtifactDependencyReport> ValidateMirLoweringInputs(
+    borrow ArtifactInventory inventory)
+{
+    stack mut ArtifactDependencySet dependencies = new();
+    switch (AddMirLoweringRequiredArtifacts(dependencies))
+    {
+        case ArtifactStatus.Err(var error):
+            return ArtifactResult<ArtifactDependencyReport>.Err(error);
+        case ArtifactStatus.Ok:
+    }
+
+    return ValidateArtifactDependencies(inventory, dependencies);
+}
+
+public fn ArtifactResult<ArtifactDependencyReport> ValidateMirLoweringPassInputs(
+    borrow MirLoweringPassShell shell,
+    borrow ArtifactInventory inventory)
+{
+    if (shell.Pass() != CompilerPassId.LowerMir
+        || shell.InputArtifact() != CompilerArtifactKind.HighLevelIr
+        || shell.OutputArtifact() != CompilerArtifactKind.MidLevelIr)
+    {
+        return ArtifactResult<ArtifactDependencyReport>.Err(ArtifactError.UnknownArtifactKind);
+    }
+
+    return ValidateMirLoweringInputs(inventory);
+}
+
+public enum MirBuilderError
+{
+    OutOfMemory,
+    InvalidSymbol,
+    InvalidHandle,
+    DuplicateSymbol,
+    BuilderClosed,
+    MissingEntryBlock,
+    InvalidBuilderState,
+    TableTooLarge,
+    UnsupportedLiteral,
+    UnsupportedValueType,
+    TypeMismatch,
+}
+
+public enum MirBuilderStatus
+{
+    [Ok] Ok,
+    [Err] Err(MirBuilderError),
+}
+
+public enum MirLoweringSymbolKind
+{
+    Unknown,
+    Parameter,
+    Local,
+    Temporary,
+    Global,
+    Block,
+    Function,
+}
+
+public finite law ascii MirBuilderErrorName(MirBuilderError error)
+{
+    switch (error)
+    {
+        case MirBuilderError.OutOfMemory:
+            return "out-of-memory";
+        case MirBuilderError.InvalidSymbol:
+            return "invalid-symbol";
+        case MirBuilderError.InvalidHandle:
+            return "invalid-handle";
+        case MirBuilderError.DuplicateSymbol:
+            return "duplicate-symbol";
+        case MirBuilderError.BuilderClosed:
+            return "builder-closed";
+        case MirBuilderError.MissingEntryBlock:
+            return "missing-entry-block";
+        case MirBuilderError.InvalidBuilderState:
+            return "invalid-builder-state";
+        case MirBuilderError.TableTooLarge:
+            return "table-too-large";
+        case MirBuilderError.UnsupportedLiteral:
+            return "unsupported-literal";
+        case MirBuilderError.UnsupportedValueType:
+            return "unsupported-value-type";
+        case MirBuilderError.TypeMismatch:
+            return "type-mismatch";
+    }
+}
+
+public finite law ascii MirLoweringSymbolKindName(MirLoweringSymbolKind kind)
+{
+    switch (kind)
+    {
+        case MirLoweringSymbolKind.Unknown:
+            return "";
+        case MirLoweringSymbolKind.Parameter:
+            return "parameter";
+        case MirLoweringSymbolKind.Local:
+            return "local";
+        case MirLoweringSymbolKind.Temporary:
+            return "temporary";
+        case MirLoweringSymbolKind.Global:
+            return "global";
+        case MirLoweringSymbolKind.Block:
+            return "block";
+        case MirLoweringSymbolKind.Function:
+            return "function";
+    }
+}
+
+internal finite law bool MirFunctionBuilderInstructionCursorMatches(
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirInstruction> instructions)
+{
+    if (builder.LastInstructionIndexValue == 0)
+    {
+        return instructions.Count() + 1 == (u64[0 2 ** 63 - 1])builder.FirstInstructionIndexValue;
+    }
+
+    return instructions.Count() == (u64[0 2 ** 63 - 1])builder.LastInstructionIndexValue;
+}
+
+internal finite law bool MirFunctionBuilderBlockCursorMatches(
+    borrow MirFunctionBuilderState builder,
+    borrow IrTable<MirBlock> blocks)
+{
+    if (builder.LastBlockIndexValue == 0)
+    {
+        return blocks.Count() + 1 == (u64[0 2 ** 63 - 1])builder.FirstBlockIndexValue;
+    }
+
+    return blocks.Count() == (u64[0 2 ** 63 - 1])builder.LastBlockIndexValue;
+}
+
+internal finite law bool MirBuilderValueFactTableCanAppend(
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    return valueFacts.Count() <= instructions.Count();
+}
+
+public struct MirLoweringSymbolMap
+{
+    internal dynamic MirLoweringSymbolKind Kinds;
+    internal dynamic MirValueId Values;
+    internal dynamic MirType Types;
+    internal dynamic MirBlockId Blocks;
+    internal dynamic MirFuncId Functions;
+    internal dynamic ValueFacts Facts;
+
+    MirLoweringSymbolMap()
+    {
+        self.Kinds = new();
+        self.Values = new();
+        self.Types = new();
+        self.Blocks = new();
+        self.Functions = new();
+        self.Facts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SlotCount(borrow MirLoweringSymbolMap self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law MirLoweringSymbolKind KindAt(borrow MirLoweringSymbolMap self, SymbolId symbol)
+    {
+        if (!symbol.IsValid())
+        {
+            return MirLoweringSymbolKind.Unknown;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+        if (index >= self.Kinds.Length)
+        {
+            return MirLoweringSymbolKind.Unknown;
+        }
+
+        return self.Kinds[index];
+    }
+
+    public fn MirValueId ValueAt(borrow MirLoweringSymbolMap self, SymbolId symbol)
+    {
+        if (!symbol.IsValid())
+        {
+            return MirValueIdOf(0);
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+        if (index >= self.Values.Length)
+        {
+            return MirValueIdOf(0);
+        }
+
+        return self.Values[index];
+    }
+
+    public law MirType TypeAt(borrow MirLoweringSymbolMap self, SymbolId symbol)
+    {
+        if (!symbol.IsValid())
+        {
+            return MirType.I64;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+        if (index >= self.Types.Length)
+        {
+            return MirType.I64;
+        }
+
+        return self.Types[index];
+    }
+
+    public fn MirBlockId BlockAt(borrow MirLoweringSymbolMap self, SymbolId symbol)
+    {
+        if (!symbol.IsValid())
+        {
+            return MirBlockIdOf(0);
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+        if (index >= self.Blocks.Length)
+        {
+            return MirBlockIdOf(0);
+        }
+
+        return self.Blocks[index];
+    }
+
+    public fn MirFuncId FunctionAt(borrow MirLoweringSymbolMap self, SymbolId symbol)
+    {
+        if (!symbol.IsValid())
+        {
+            return MirFuncIdOf(0);
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+        if (index >= self.Functions.Length)
+        {
+            return MirFuncIdOf(0);
+        }
+
+        return self.Functions[index];
+    }
+
+    public law ValueFacts FactsAt(borrow MirLoweringSymbolMap self, SymbolId symbol)
+    {
+        stack mut ValueFacts empty = new();
+        if (!symbol.IsValid())
+        {
+            return empty;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+        if (index >= self.Facts.Length)
+        {
+            return empty;
+        }
+
+        return self.Facts[index];
+    }
+}
+
+internal finite law bool MirBuilderTableCanAppend(u64[0 2 ** 63 - 1] count)
+{
+    return count < 4294967295;
+}
+
+internal finite law bool MirLoweringSymbolMapLengthsMatch(borrow MirLoweringSymbolMap map)
+{
+    return map.Kinds.Length == map.Values.Length
+        && map.Kinds.Length == map.Types.Length
+        && map.Kinds.Length == map.Blocks.Length
+        && map.Kinds.Length == map.Functions.Length
+        && map.Kinds.Length == map.Facts.Length;
+}
+
+internal fn MirBuilderStatus EnsureMirLoweringSymbolSlot(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol)
+{
+    if (!symbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!MirLoweringSymbolMapLengthsMatch(map))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    stack u64[0 2 ** 63 - 1] requiredLength = (u64[0 2 ** 63 - 1])symbol.Index();
+    if (map.Kinds.Length >= requiredLength)
+    {
+        return MirBuilderStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] missing =
+        (u64[0 2 ** 63 - 1])(requiredLength - map.Kinds.Length);
+    if (!map.Kinds.TryReserve(missing)
+        || !map.Values.TryReserve(missing)
+        || !map.Types.TryReserve(missing)
+        || !map.Blocks.TryReserve(missing)
+        || !map.Functions.TryReserve(missing)
+        || !map.Facts.TryReserve(missing))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    while willexit (map.Kinds.Length < requiredLength)
+    {
+        init map.Kinds[map.Kinds.Length] = MirLoweringSymbolKind.Unknown;
+        init map.Values[map.Values.Length] = MirValueIdOf(0);
+        init map.Types[map.Types.Length] = MirType.I64;
+        init map.Blocks[map.Blocks.Length] = MirBlockIdOf(0);
+        init map.Functions[map.Functions.Length] = MirFuncIdOf(0);
+        init map.Facts[map.Facts.Length] = new ValueFacts();
+    }
+
+    return MirBuilderStatus.Ok;
+}
+
+internal fn MirBuilderStatus RejectDuplicateMirLoweringSymbol(
+    borrow MirLoweringSymbolMap map,
+    SymbolId symbol)
+{
+    if (map.KindAt(symbol) != MirLoweringSymbolKind.Unknown)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.DuplicateSymbol);
+    }
+
+    return MirBuilderStatus.Ok;
+}
+
+internal inline fn void SetMirLoweringSymbolKindAt(
+    mut borrow MirLoweringSymbolMap map,
+    u64[0 2 ** 63 - 1] index,
+    MirLoweringSymbolKind kind)
+{
+    unsafe
+    {
+        map.Kinds[index] = kind;
+    }
+
+    return;
+}
+
+internal inline fn void SetMirLoweringValueAt(
+    mut borrow MirLoweringSymbolMap map,
+    u64[0 2 ** 63 - 1] index,
+    MirValueId value)
+{
+    unsafe
+    {
+        map.Values[index] = value;
+    }
+
+    return;
+}
+
+internal inline fn void SetMirLoweringTypeAt(
+    mut borrow MirLoweringSymbolMap map,
+    u64[0 2 ** 63 - 1] index,
+    MirType type)
+{
+    unsafe
+    {
+        map.Types[index] = type;
+    }
+
+    return;
+}
+
+internal inline fn void SetMirLoweringBlockAt(
+    mut borrow MirLoweringSymbolMap map,
+    u64[0 2 ** 63 - 1] index,
+    MirBlockId block)
+{
+    unsafe
+    {
+        map.Blocks[index] = block;
+    }
+
+    return;
+}
+
+internal inline fn void SetMirLoweringFunctionAt(
+    mut borrow MirLoweringSymbolMap map,
+    u64[0 2 ** 63 - 1] index,
+    MirFuncId function)
+{
+    unsafe
+    {
+        map.Functions[index] = function;
+    }
+
+    return;
+}
+
+internal inline fn void SetMirLoweringFactsAt(
+    mut borrow MirLoweringSymbolMap map,
+    u64[0 2 ** 63 - 1] index,
+    ValueFacts facts)
+{
+    unsafe
+    {
+        map.Facts[index] = facts;
+    }
+
+    return;
+}
+
+public fn MirBuilderStatus BindMirLoweringValueSymbol(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    MirLoweringSymbolKind kind,
+    MirValueId value,
+    ValueFacts facts)
+{
+    if (!value.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (kind == MirLoweringSymbolKind.Unknown
+        || kind == MirLoweringSymbolKind.Block
+        || kind == MirLoweringSymbolKind.Function)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(map, symbol))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(map, symbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+    if (index >= map.Kinds.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringSymbolKindAt(map, index, kind);
+    if (index >= map.Values.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringValueAt(map, index, value);
+    if (index >= map.Facts.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringFactsAt(map, index, facts);
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus BindMirLoweringBlockSymbol(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    MirBlockId block)
+{
+    if (!block.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(map, symbol))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(map, symbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+    if (index >= map.Kinds.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringSymbolKindAt(map, index, MirLoweringSymbolKind.Block);
+    if (index >= map.Blocks.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringBlockAt(map, index, block);
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus BindMirLoweringFunctionSymbol(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    MirFuncId function)
+{
+    if (!function.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(map, symbol))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(map, symbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+    if (index >= map.Kinds.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringSymbolKindAt(map, index, MirLoweringSymbolKind.Function);
+    if (index >= map.Functions.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringFunctionAt(map, index, function);
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus BindMirLoweringGlobalSymbol(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    u32[0 max] globalId,
+    ValueFacts facts)
+{
+    return BindMirLoweringTypedGlobalSymbol(map, symbol, globalId, MirType.I64, facts);
+}
+
+public fn MirBuilderStatus BindMirLoweringTypedGlobalSymbol(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    u32[0 max] globalId,
+    MirType type,
+    ValueFacts facts)
+{
+    if (globalId == 0)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!HighLevelIrGlobalTypeIsLowerable(type)
+        || !HighLevelIrValueFactsFitType(type, facts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(map, symbol))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(map, symbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+    if (index >= map.Kinds.Length || index >= map.Values.Length || index >= map.Types.Length || index >= map.Facts.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringSymbolKindAt(map, index, MirLoweringSymbolKind.Global);
+    SetMirLoweringValueAt(map, index, MirValueIdOf(globalId));
+    SetMirLoweringTypeAt(map, index, type);
+    SetMirLoweringFactsAt(map, index, facts);
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus RebindMirLoweringLocalValueSymbol(
+    mut borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    MirValueId value,
+    ValueFacts facts)
+{
+    if (!symbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!value.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!MirLoweringSymbolMapLengthsMatch(map))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (map.KindAt(symbol) != MirLoweringSymbolKind.Local)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(symbol.Index() - 1);
+    if (index >= map.Values.Length || index >= map.Facts.Length)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    SetMirLoweringValueAt(map, index, value);
+    SetMirLoweringFactsAt(map, index, facts);
+    return MirBuilderStatus.Ok;
+}
+
+public fn bool TryFindMirLoweringValueSymbol(
+    borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    stack MirValueId found = map.ValueAt(symbol);
+    if (!found.IsValid())
+    {
+        return false;
+    }
+
+    value = found;
+    return true;
+}
+
+public fn bool TryFindMirLoweringGlobalSymbol(
+    borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    out u32[0 max] globalId)
+{
+    globalId = 0;
+    if (map.KindAt(symbol) != MirLoweringSymbolKind.Global)
+    {
+        return false;
+    }
+
+    stack MirValueId value = map.ValueAt(symbol);
+    if (!value.IsValid())
+    {
+        return false;
+    }
+
+    globalId = value.Index();
+    return true;
+}
+
+public fn bool TryFindMirLoweringTypedGlobalSymbol(
+    borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    out u32[0 max] globalId,
+    out MirType type)
+{
+    globalId = 0;
+    type = MirType.I64;
+    if (!TryFindMirLoweringGlobalSymbol(map, symbol, globalId))
+    {
+        return false;
+    }
+
+    type = map.TypeAt(symbol);
+    return true;
+}
+
+public fn bool TryFindMirLoweringBlockSymbol(
+    borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    stack MirBlockId found = map.BlockAt(symbol);
+    if (!found.IsValid())
+    {
+        return false;
+    }
+
+    block = found;
+    return true;
+}
+
+public fn bool TryFindMirLoweringFunctionSymbol(
+    borrow MirLoweringSymbolMap map,
+    SymbolId symbol,
+    out MirFuncId function)
+{
+    function = MirFuncIdOf(0);
+    stack MirFuncId found = map.FunctionAt(symbol);
+    if (!found.IsValid())
+    {
+        return false;
+    }
+
+    function = found;
+    return true;
+}
+
+public struct MirFunctionBuilderState
+{
+    internal SymbolId FunctionSymbolValue;
+    internal u32[0 max] FirstInstructionIndexValue;
+    internal u32[0 max] LastInstructionIndexValue;
+    internal u32[0 max] FirstBlockIndexValue;
+    internal u32[0 max] LastBlockIndexValue;
+    internal MirBlockId EntryBlockValue;
+    internal bool HasEntryBlockValue;
+    internal bool IsOpenValue;
+    internal bool UsesArenaFrameValue;
+    internal HirBackendFactSet RequiredBackendFactsValue;
+
+    MirFunctionBuilderState()
+    {
+        self.FunctionSymbolValue = new();
+        self.FirstInstructionIndexValue = 0;
+        self.LastInstructionIndexValue = 0;
+        self.FirstBlockIndexValue = 0;
+        self.LastBlockIndexValue = 0;
+        self.EntryBlockValue = new();
+        self.HasEntryBlockValue = false;
+        self.IsOpenValue = false;
+        self.UsesArenaFrameValue = false;
+        self.RequiredBackendFactsValue = new();
+    }
+
+    public inline finite law SymbolId FunctionSymbol(borrow MirFunctionBuilderState self)
+    {
+        return self.FunctionSymbolValue;
+    }
+
+    public inline finite law u32[0 max] FirstInstructionIndex(borrow MirFunctionBuilderState self)
+    {
+        return self.FirstInstructionIndexValue;
+    }
+
+    public inline finite law u32[0 max] LastInstructionIndex(borrow MirFunctionBuilderState self)
+    {
+        return self.LastInstructionIndexValue;
+    }
+
+    public inline finite law u32[0 max] FirstBlockIndex(borrow MirFunctionBuilderState self)
+    {
+        return self.FirstBlockIndexValue;
+    }
+
+    public inline finite law u32[0 max] LastBlockIndex(borrow MirFunctionBuilderState self)
+    {
+        return self.LastBlockIndexValue;
+    }
+
+    public inline finite law MirBlockId EntryBlock(borrow MirFunctionBuilderState self)
+    {
+        return self.EntryBlockValue;
+    }
+
+    public inline finite law bool HasEntryBlock(borrow MirFunctionBuilderState self)
+    {
+        return self.HasEntryBlockValue;
+    }
+
+    public inline finite law bool IsOpen(borrow MirFunctionBuilderState self)
+    {
+        return self.IsOpenValue;
+    }
+
+    public inline finite law bool UsesArenaFrame(borrow MirFunctionBuilderState self)
+    {
+        return self.UsesArenaFrameValue;
+    }
+
+    public inline finite law HirBackendFactSet RequiredBackendFacts(borrow MirFunctionBuilderState self)
+    {
+        return self.RequiredBackendFactsValue;
+    }
+}
+
+public inline finite law SymbolId MirFunctionBuilderFunctionSymbol(borrow MirFunctionBuilderState builder)
+{
+    return builder.FunctionSymbolValue;
+}
+
+public inline finite law u32[0 max] MirFunctionBuilderFirstInstructionIndex(borrow MirFunctionBuilderState builder)
+{
+    return builder.FirstInstructionIndexValue;
+}
+
+public inline finite law u32[0 max] MirFunctionBuilderLastInstructionIndex(borrow MirFunctionBuilderState builder)
+{
+    return builder.LastInstructionIndexValue;
+}
+
+public inline finite law u32[0 max] MirFunctionBuilderFirstBlockIndex(borrow MirFunctionBuilderState builder)
+{
+    return builder.FirstBlockIndexValue;
+}
+
+public inline finite law u32[0 max] MirFunctionBuilderLastBlockIndex(borrow MirFunctionBuilderState builder)
+{
+    return builder.LastBlockIndexValue;
+}
+
+public inline finite law MirBlockId MirFunctionBuilderEntryBlock(borrow MirFunctionBuilderState builder)
+{
+    return builder.EntryBlockValue;
+}
+
+public inline finite law bool MirFunctionBuilderHasEntryBlock(borrow MirFunctionBuilderState builder)
+{
+    return builder.HasEntryBlockValue;
+}
+
+public inline finite law bool MirFunctionBuilderIsOpen(borrow MirFunctionBuilderState builder)
+{
+    return builder.IsOpenValue;
+}
+
+public inline finite law bool MirFunctionBuilderUsesArenaFrame(borrow MirFunctionBuilderState builder)
+{
+    return builder.UsesArenaFrameValue;
+}
+
+public inline finite law HirBackendFactSet MirFunctionBuilderRequiredBackendFacts(
+    borrow MirFunctionBuilderState builder)
+{
+    return builder.RequiredBackendFactsValue;
+}
+
+public fn MirBuilderStatus BeginMirFunctionBuilder(
+    SymbolId functionSymbol,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    out MirFunctionBuilderState builder)
+{
+    builder = new();
+    if (!functionSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count())
+        || !MirBuilderTableCanAppend(blocks.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    builder = new MirFunctionBuilderState()
+    {
+        FunctionSymbolValue = functionSymbol,
+        FirstInstructionIndexValue = (u32[0 max])(instructions.Count() + 1),
+        LastInstructionIndexValue = 0,
+        FirstBlockIndexValue = (u32[0 max])(blocks.Count() + 1),
+        LastBlockIndexValue = 0,
+        EntryBlockValue = MirBlockIdOf(0),
+        HasEntryBlockValue = false,
+        IsOpenValue = true,
+        UsesArenaFrameValue = false,
+        RequiredBackendFactsValue = RequiredMirLoweringBackendFacts()
+    };
+    return MirBuilderStatus.Ok;
+}
+
+public finite law u32[0 max] MirFunctionBuilderInstructionCount(
+    borrow MirFunctionBuilderState builder)
+{
+    if (builder.FirstInstructionIndexValue == 0 || builder.LastInstructionIndexValue == 0)
+    {
+        return 0;
+    }
+
+    if (builder.LastInstructionIndexValue < builder.FirstInstructionIndexValue)
+    {
+        return 0;
+    }
+
+    return builder.LastInstructionIndexValue - builder.FirstInstructionIndexValue + 1;
+}
+
+public finite law u32[0 max] MirFunctionBuilderBlockCount(
+    borrow MirFunctionBuilderState builder)
+{
+    if (builder.FirstBlockIndexValue == 0 || builder.LastBlockIndexValue == 0)
+    {
+        return 0;
+    }
+
+    if (builder.LastBlockIndexValue < builder.FirstBlockIndexValue)
+    {
+        return 0;
+    }
+
+    return builder.LastBlockIndexValue - builder.FirstBlockIndexValue + 1;
+}
+
+public finite law bool MirFunctionBuilderOwnsValue(
+    borrow MirFunctionBuilderState builder,
+    MirValueId value)
+{
+    if (!value.IsValid())
+    {
+        return false;
+    }
+
+    return builder.FirstInstructionIndexValue != 0
+        && builder.LastInstructionIndexValue != 0
+        && value.Index() >= builder.FirstInstructionIndexValue
+        && value.Index() <= builder.LastInstructionIndexValue;
+}
+
+public finite law bool MirFunctionBuilderOwnsBlock(
+    borrow MirFunctionBuilderState builder,
+    MirBlockId block)
+{
+    if (!block.IsValid())
+    {
+        return false;
+    }
+
+    return builder.FirstBlockIndexValue != 0
+        && builder.LastBlockIndexValue != 0
+        && block.Index() >= builder.FirstBlockIndexValue
+        && block.Index() <= builder.LastBlockIndexValue;
+}
+
+public fn MirBuilderStatus RecordMirFunctionBuilderValue(
+    mut borrow MirFunctionBuilderState builder,
+    MirValueId value)
+{
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!value.IsValid() || value.Index() < builder.FirstInstructionIndexValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (builder.LastInstructionIndexValue != 0 && value.Index() != builder.LastInstructionIndexValue + 1)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    builder.LastInstructionIndexValue = value.Index();
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus MarkMirFunctionBuilderUsesArenaFrame(mut borrow MirFunctionBuilderState builder)
+{
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    builder.UsesArenaFrameValue = true;
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus LowerHighLevelIrParameter(
+    HighLevelIrParameter parameter,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId parameterSymbol = parameter.SymbolValue;
+    if (!parameterSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!HighLevelIrParameterTypeIsLowerable(parameter))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.UnsupportedValueType);
+    }
+
+    if (!HighLevelIrValueFactsFitType(parameter.TypeValue, parameter.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (parameter.ParameterIndexValue != MirFunctionBuilderInstructionCount(builder))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(symbols, parameterSymbol))
+    {
+        case MirBuilderStatus.Err(var slotError):
+            return MirBuilderStatus.Err(slotError);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(symbols, parameterSymbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack MirValueId created = MirParamTyped(instructions, parameter.TypeValue, parameter.ParameterIndexValue);
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!TranslateValueFactsForMirValue(valueFacts, created, parameter.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (BindMirLoweringValueSymbol(
+        symbols,
+        parameterSymbol,
+        MirLoweringSymbolKind.Parameter,
+        created,
+        parameter.FactsValue))
+    {
+        case MirBuilderStatus.Err(var bindError):
+            return MirBuilderStatus.Err(bindError);
+        case MirBuilderStatus.Ok:
+            value = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrLocalAlias(
+    HighLevelIrLocalAlias local,
+    borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId localSymbol = local.SymbolValue;
+    if (!localSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    stack MirValueId initialValue = local.InitialValueValue;
+    if (!initialValue.IsValid()
+        || !instructions.Contains(initialValue.Index())
+        || !MirFunctionBuilderOwnsValue(builder, initialValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!valueFacts.Contains(initialValue.Index()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!HighLevelIrLocalAliasTypeMatchesValue(local, instructions))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts initialFacts = ValueFactsForMirValue(valueFacts, initialValue);
+    if (!HighLevelIrValueFactsFitType(local.TypeValue, initialFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    return BindMirLoweringValueSymbol(
+        symbols,
+        localSymbol,
+        MirLoweringSymbolKind.Local,
+        initialValue,
+        initialFacts);
+}
+
+public fn MirBuilderStatus LowerHighLevelIrGlobalDeclaration(
+    HighLevelIrGlobalDeclaration global,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirGlobal> globals,
+    mut borrow IrTable<ValueFacts> globalFacts,
+    out u32[0 max] globalId)
+{
+    globalId = 0;
+    stack SymbolId globalSymbol = global.SymbolValue;
+    if (!globalSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!HighLevelIrGlobalTypeIsLowerable(global.TypeValue)
+        || !HighLevelIrGlobalInitializerFitsType(global.TypeValue, global.InitialValueValue)
+        || !HighLevelIrGlobalInitializerSatisfiesFacts(global.TypeValue, global.InitialValueValue, global.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!MirBuilderTableCanAppend(globals.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (globalFacts.Count() != globals.Count())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(symbols, globalSymbol))
+    {
+        case MirBuilderStatus.Err(var slotError):
+            return MirBuilderStatus.Err(slotError);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(symbols, globalSymbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack u32[0 max] expectedGlobalId = (u32[0 max])(globals.Count() + 1);
+    stack u32[0 max] created = MirDefineGlobalTyped(globals, global.TypeValue, global.InitialValueValue);
+    if (created == 0)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    if (created != expectedGlobalId)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!RecordValueFactsForMirValue(globalFacts, MirValueIdOf(created), global.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (BindMirLoweringTypedGlobalSymbol(
+        symbols,
+        globalSymbol,
+        created,
+        global.TypeValue,
+        global.FactsValue))
+    {
+        case MirBuilderStatus.Err(var bindError):
+            return MirBuilderStatus.Err(bindError);
+        case MirBuilderStatus.Ok:
+            globalId = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrModuleGlobals(
+    borrow HighLevelIrModule hirModule,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirGlobal> globals,
+    mut borrow IrTable<ValueFacts> globalFacts)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < hirModule.GlobalCount())
+    {
+        stack mut u32[0 max] globalId = 0;
+        switch (LowerHighLevelIrGlobalDeclaration(
+            hirModule.GlobalAt(index),
+            symbols,
+            globals,
+            globalFacts,
+            globalId))
+        {
+            case MirBuilderStatus.Err(var error):
+                return MirBuilderStatus.Err(error);
+            case MirBuilderStatus.Ok:
+        }
+
+        index = index + 1;
+    }
+
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus LowerHighLevelIrGlobalReference(
+    HighLevelIrGlobalReference reference,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId resultSymbol = reference.SymbolValue;
+    stack SymbolId globalSymbol = reference.GlobalSymbolValue;
+    if (!resultSymbol.IsValid() || !globalSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!HighLevelIrGlobalTypeIsLowerable(reference.TypeValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack mut u32[0 max] globalId = 0;
+    stack mut MirType globalType = MirType.I64;
+    if (!TryFindMirLoweringTypedGlobalSymbol(symbols, globalSymbol, globalId, globalType))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (globalType != reference.TypeValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts globalFacts = symbols.FactsAt(globalSymbol);
+    if (!HighLevelIrValueFactsFitType(reference.TypeValue, globalFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(symbols, resultSymbol))
+    {
+        case MirBuilderStatus.Err(var slotError):
+            return MirBuilderStatus.Err(slotError);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(symbols, resultSymbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack MirValueId created = MirLoadGlobalTyped(instructions, reference.TypeValue, globalId);
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!TranslateValueFactsForMirValue(valueFacts, created, globalFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (BindMirLoweringValueSymbol(
+        symbols,
+        resultSymbol,
+        MirLoweringSymbolKind.Temporary,
+        created,
+        globalFacts))
+    {
+        case MirBuilderStatus.Err(var bindError):
+            return MirBuilderStatus.Err(bindError);
+        case MirBuilderStatus.Ok:
+            value = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrGlobalStore(
+    HighLevelIrGlobalStore store,
+    mut borrow MirFunctionBuilderState builder,
+    borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId globalSymbol = store.GlobalSymbolValue;
+    if (!globalSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!HighLevelIrGlobalTypeIsLowerable(store.TypeValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack mut u32[0 max] globalId = 0;
+    stack mut MirType globalType = MirType.I64;
+    if (!TryFindMirLoweringTypedGlobalSymbol(symbols, globalSymbol, globalId, globalType))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (globalType != store.TypeValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack MirValueId storedValue = store.ValueValue;
+    if (!storedValue.IsValid()
+        || !instructions.Contains(storedValue.Index())
+        || !MirFunctionBuilderOwnsValue(builder, storedValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!valueFacts.Contains(storedValue.Index()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (MirValueType(instructions, storedValue.Index()) != store.TypeValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts globalFacts = symbols.FactsAt(globalSymbol);
+    if (!HighLevelIrValueFactsSubsetOf(ValueFactsForMirValue(valueFacts, storedValue), globalFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    stack MirValueId created = MirStoreGlobalTyped(instructions, store.TypeValue, globalId, storedValue);
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!RecordEmptyValueFactsForMirValue(valueFacts, created))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    value = created;
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus LowerHighLevelIrAssignment(
+    HighLevelIrAssignment assignment,
+    borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId targetSymbol = assignment.TargetSymbolValue;
+    if (!targetSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    stack MirValueId assignedValue = assignment.ValueValue;
+    if (!assignedValue.IsValid()
+        || !instructions.Contains(assignedValue.Index())
+        || !MirFunctionBuilderOwnsValue(builder, assignedValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!valueFacts.Contains(assignedValue.Index()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!HighLevelIrAssignmentTypeMatchesValue(assignment, instructions))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts assignedFacts = ValueFactsForMirValue(valueFacts, assignedValue);
+    if (!HighLevelIrValueFactsFitType(assignment.TypeValue, assignedFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (symbols.KindAt(targetSymbol) != MirLoweringSymbolKind.Local)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    switch (RebindMirLoweringLocalValueSymbol(
+        symbols,
+        targetSymbol,
+        assignedValue,
+        assignedFacts))
+    {
+        case MirBuilderStatus.Err(var rebindError):
+            return MirBuilderStatus.Err(rebindError);
+        case MirBuilderStatus.Ok:
+            value = assignedValue;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrCompoundAssignment(
+    HighLevelIrCompoundAssignment assignment,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId targetSymbol = assignment.TargetSymbolValue;
+    if (!targetSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (symbols.KindAt(targetSymbol) != MirLoweringSymbolKind.Local)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!HighLevelIrCompoundAssignmentKindIsLowerable(assignment.KindValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack MirValueId leftValue = symbols.ValueAt(targetSymbol);
+    stack MirValueId rightValue = assignment.RightValue;
+    if (!leftValue.IsValid()
+        || !rightValue.IsValid()
+        || !instructions.Contains(leftValue.Index())
+        || !instructions.Contains(rightValue.Index())
+        || !MirFunctionBuilderOwnsValue(builder, leftValue)
+        || !MirFunctionBuilderOwnsValue(builder, rightValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!valueFacts.Contains(leftValue.Index()) || !valueFacts.Contains(rightValue.Index()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    stack HighLevelIrBinaryOp op =
+        HighLevelIrBinaryOpOf(targetSymbol, assignment.KindValue, assignment.TypeValue, leftValue, rightValue);
+    if (!HighLevelIrBinaryOpTypeIsLowerable(op, instructions))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts leftFacts = ValueFactsForMirValue(valueFacts, leftValue);
+    stack ValueFacts rightFacts = ValueFactsForMirValue(valueFacts, rightValue);
+    if (!HighLevelIrBinaryOperandFactsFitTypes(op, instructions, leftFacts, rightFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!HighLevelIrBinaryOpBackendFactsAreValid(
+        op,
+        leftFacts,
+        rightFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    stack MirValueId created =
+        EmitHighLevelIrBinaryOpInstruction(assignment.KindValue, assignment.TypeValue, leftValue, rightValue, instructions);
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!RecomputeMirGeneratedValueFactsForMirValue(instructions, valueFacts, created))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RebindMirLoweringLocalValueSymbol(
+        symbols,
+        targetSymbol,
+        created,
+        ValueFactsForMirValue(valueFacts, created)))
+    {
+        case MirBuilderStatus.Err(var rebindError):
+            return MirBuilderStatus.Err(rebindError);
+        case MirBuilderStatus.Ok:
+            value = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrLiteral(
+    HighLevelIrLiteral literal,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId literalSymbol = literal.SymbolValue;
+    if (!literalSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!HighLevelIrLiteralTypeIsLowerable(literal))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.UnsupportedLiteral);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(symbols, literalSymbol))
+    {
+        case MirBuilderStatus.Err(var slotError):
+            return MirBuilderStatus.Err(slotError);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(symbols, literalSymbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack mut MirValueId created = MirValueIdOf(0);
+    switch (literal.KindValue)
+    {
+        case HighLevelIrLiteralKind.Null:
+            created = MirConstNullPtr(instructions);
+        case HighLevelIrLiteralKind.Integer:
+            created = MirConstIntTyped(instructions, literal.TypeValue, literal.IntegerValueValue);
+        case HighLevelIrLiteralKind.Bool:
+            created = MirConstIntTyped(instructions, literal.TypeValue, literal.IntegerValueValue);
+        case HighLevelIrLiteralKind.Unknown:
+            created = MirValueIdOf(0);
+        case HighLevelIrLiteralKind.Float:
+            created = MirValueIdOf(0);
+        case HighLevelIrLiteralKind.Text:
+            created = MirValueIdOf(0);
+        case HighLevelIrLiteralKind.Character:
+            created = MirValueIdOf(0);
+    }
+
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, created, literal.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (BindMirLoweringValueSymbol(
+        symbols,
+        literalSymbol,
+        MirLoweringSymbolKind.Temporary,
+        created,
+        literal.FactsValue))
+    {
+        case MirBuilderStatus.Err(var bindError):
+            return MirBuilderStatus.Err(bindError);
+        case MirBuilderStatus.Ok:
+            value = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrBinaryOp(
+    HighLevelIrBinaryOp op,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId resultSymbol = op.SymbolValue;
+    if (!resultSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!op.LeftValue.IsValid()
+        || !op.RightValue.IsValid()
+        || !instructions.Contains(op.LeftValue.Index())
+        || !instructions.Contains(op.RightValue.Index())
+        || !MirFunctionBuilderOwnsValue(builder, op.LeftValue)
+        || !MirFunctionBuilderOwnsValue(builder, op.RightValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!valueFacts.Contains(op.LeftValue.Index())
+        || !valueFacts.Contains(op.RightValue.Index()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!HighLevelIrBinaryOpTypeIsLowerable(op, instructions))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts leftFacts = ValueFactsForMirValue(valueFacts, op.LeftValue);
+    stack ValueFacts rightFacts = ValueFactsForMirValue(valueFacts, op.RightValue);
+    if (!HighLevelIrBinaryOperandFactsFitTypes(op, instructions, leftFacts, rightFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!HighLevelIrBinaryOpBackendFactsAreValid(
+        op,
+        leftFacts,
+        rightFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(symbols, resultSymbol))
+    {
+        case MirBuilderStatus.Err(var slotError):
+            return MirBuilderStatus.Err(slotError);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(symbols, resultSymbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack MirValueId created =
+        EmitHighLevelIrBinaryOpInstruction(op.KindValue, op.TypeValue, op.LeftValue, op.RightValue, instructions);
+
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!RecomputeMirGeneratedValueFactsForMirValue(instructions, valueFacts, created))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (BindMirLoweringValueSymbol(
+        symbols,
+        resultSymbol,
+        MirLoweringSymbolKind.Temporary,
+        created,
+        ValueFactsForMirValue(valueFacts, created)))
+    {
+        case MirBuilderStatus.Err(var bindError):
+            return MirBuilderStatus.Err(bindError);
+        case MirBuilderStatus.Ok:
+            value = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrCall(
+    HighLevelIrCall call,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow MirLoweringSymbolMap symbols,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack SymbolId resultSymbol = call.SymbolValue;
+    if (!resultSymbol.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidSymbol);
+    }
+
+    if (!call.CalleeValue.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    switch (ValidateHighLevelIrCallArguments(call, builder, instructions, valueFacts))
+    {
+        case MirBuilderStatus.Err(var argumentError):
+            return MirBuilderStatus.Err(argumentError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!HighLevelIrCallTypeIsLowerable(call))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    switch (EnsureMirLoweringSymbolSlot(symbols, resultSymbol))
+    {
+        case MirBuilderStatus.Err(var slotError):
+            return MirBuilderStatus.Err(slotError);
+        case MirBuilderStatus.Ok:
+    }
+
+    switch (RejectDuplicateMirLoweringSymbol(symbols, resultSymbol))
+    {
+        case MirBuilderStatus.Err(var duplicateError):
+            return MirBuilderStatus.Err(duplicateError);
+        case MirBuilderStatus.Ok:
+    }
+
+    stack mut MirValueId created = MirValueIdOf(0);
+    switch (call.ArgumentCountValue)
+    {
+        case 0:
+            created = MirCallTyped(instructions, call.TypeValue, call.CalleeValue);
+        case 1:
+            created = MirCall1Typed(instructions, call.TypeValue, call.CalleeValue, call.Argument0Value);
+        case 2:
+            created = MirCall2Typed(instructions, call.TypeValue, call.CalleeValue, call.Argument0Value, call.Argument1Value);
+        case 3:
+            created = MirCall3Typed(instructions, call.TypeValue, call.CalleeValue, call.Argument0Value, call.Argument1Value, call.Argument2Value);
+        case 4:
+            created = MirCall4Typed(instructions, call.TypeValue, call.CalleeValue, call.Argument0Value, call.Argument1Value, call.Argument2Value, call.Argument3Value);
+        default:
+            created = MirValueIdOf(0);
+    }
+
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!TranslateValueFactsForMirValue(valueFacts, created, call.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (BindMirLoweringValueSymbol(
+        symbols,
+        resultSymbol,
+        MirLoweringSymbolKind.Temporary,
+        created,
+        call.FactsValue))
+    {
+        case MirBuilderStatus.Err(var bindError):
+            return MirBuilderStatus.Err(bindError);
+        case MirBuilderStatus.Ok:
+            value = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+internal fn MirValueId EmitHighLevelIrBecomeTailCallInstruction(
+    HighLevelIrBecome tail,
+    mut borrow IrTable<MirInstruction> instructions)
+{
+    switch (tail.ArgumentCountValue)
+    {
+        case 0:
+            return MirTailCallTyped(instructions, tail.TypeValue, tail.CalleeValue);
+        case 1:
+            return MirTailCall1Typed(instructions, tail.TypeValue, tail.CalleeValue, tail.Argument0Value);
+        case 2:
+            return MirTailCall2Typed(instructions, tail.TypeValue, tail.CalleeValue, tail.Argument0Value, tail.Argument1Value);
+        case 3:
+            return MirTailCall3Typed(instructions, tail.TypeValue, tail.CalleeValue, tail.Argument0Value, tail.Argument1Value, tail.Argument2Value);
+        case 4:
+            return MirTailCall4Typed(instructions, tail.TypeValue, tail.CalleeValue, tail.Argument0Value, tail.Argument1Value, tail.Argument2Value, tail.Argument3Value);
+        default:
+            return MirValueIdOf(0);
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrBecome(
+    HighLevelIrBecome tail,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    mut borrow IrTable<MirBlock> blocks,
+    out MirValueId tailCall,
+    out MirBlockId block)
+{
+    tailCall = MirValueIdOf(0);
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!tail.CalleeValue.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    switch (ValidateHighLevelIrBecomeArguments(tail, builder, instructions, valueFacts))
+    {
+        case MirBuilderStatus.Err(var argumentError):
+            return MirBuilderStatus.Err(argumentError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!HighLevelIrBecomeTypeIsLowerable(tail))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!MirBuilderTableCanAppend(instructions.Count())
+        || !MirBuilderTableCanAppend(blocks.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    if (!MirFunctionBuilderInstructionCursorMatches(builder, instructions)
+        || !MirBuilderValueFactTableCanAppend(instructions, valueFacts)
+        || !MirFunctionBuilderBlockCursorMatches(builder, blocks))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    stack MirValueId created = EmitHighLevelIrBecomeTailCallInstruction(tail, instructions);
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (RecordMirFunctionBuilderValue(builder, created))
+    {
+        case MirBuilderStatus.Err(var recordError):
+            return MirBuilderStatus.Err(recordError);
+        case MirBuilderStatus.Ok:
+    }
+
+    if (!TranslateValueFactsForMirValue(valueFacts, created, tail.FactsValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    switch (AppendMirBuilderTailCallBlock(builder, blocks, created, block))
+    {
+        case MirBuilderStatus.Err(var blockError):
+            return MirBuilderStatus.Err(blockError);
+        case MirBuilderStatus.Ok:
+            tailCall = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+internal fn MirBuilderStatus RecordMirFunctionBuilderBlock(
+    mut borrow MirFunctionBuilderState builder,
+    MirBlockId block)
+{
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!block.IsValid() || block.Index() < builder.FirstBlockIndexValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (builder.LastBlockIndexValue != 0 && block.Index() != builder.LastBlockIndexValue + 1)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    builder.LastBlockIndexValue = block.Index();
+    if (!builder.HasEntryBlockValue)
+    {
+        builder.EntryBlockValue = block;
+        builder.HasEntryBlockValue = true;
+    }
+
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus SetMirFunctionBuilderEntry(
+    mut borrow MirFunctionBuilderState builder,
+    MirBlockId entry)
+{
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!MirFunctionBuilderOwnsBlock(builder, entry))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    builder.EntryBlockValue = entry;
+    builder.HasEntryBlockValue = true;
+    return MirBuilderStatus.Ok;
+}
+
+public fn MirBuilderStatus AppendMirBuilderReturnBlock(
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    MirValueId value,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!MirFunctionBuilderOwnsValue(builder, value))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    stack MirBlockId created = MirReturnBlock(blocks, value);
+    switch (RecordMirFunctionBuilderBlock(builder, created))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+            block = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus AppendMirBuilderVoidReturnBlock(
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!MirFunctionBuilderBlockCursorMatches(builder, blocks))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!MirBuilderTableCanAppend(blocks.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    stack MirBlockId created = MirReturnVoidBlock(blocks);
+    switch (RecordMirFunctionBuilderBlock(builder, created))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+            block = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus LowerHighLevelIrReturn(
+    HighLevelIrReturn ret,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    stack MirValueId value = ret.ValueValue;
+    if (!value.IsValid()
+        || !instructions.Contains(value.Index())
+        || !MirFunctionBuilderOwnsValue(builder, value))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    if (!valueFacts.Contains(value.Index())
+        || !MirFunctionBuilderBlockCursorMatches(builder, blocks))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidBuilderState);
+    }
+
+    if (!HighLevelIrReturnTypeMatchesValue(ret, instructions))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    stack ValueFacts returnFacts = ValueFactsForMirValue(valueFacts, value);
+    if (!HighLevelIrValueFactsFitType(ret.TypeValue, returnFacts))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TypeMismatch);
+    }
+
+    if (!MirBuilderTableCanAppend(blocks.Count()))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.TableTooLarge);
+    }
+
+    return AppendMirBuilderReturnBlock(builder, blocks, value, block);
+}
+
+public fn MirBuilderStatus LowerHighLevelIrVoidReturn(
+    HighLevelIrVoidReturn ret,
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    return AppendMirBuilderVoidReturnBlock(builder, blocks, block);
+}
+
+public fn MirBuilderStatus AppendMirBuilderBranchBlock(
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    MirBlockId target,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!MirFunctionBuilderOwnsBlock(builder, target))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    stack MirBlockId created = MirBranchBlock(blocks, target);
+    switch (RecordMirFunctionBuilderBlock(builder, created))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+            block = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus AppendMirBuilderCondBlock(
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    MirValueId condition,
+    MirBlockId thenTarget,
+    MirBlockId elseTarget,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!MirFunctionBuilderOwnsValue(builder, condition)
+        || !MirFunctionBuilderOwnsBlock(builder, thenTarget)
+        || !MirFunctionBuilderOwnsBlock(builder, elseTarget))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    stack MirBlockId created = MirCondBlock(blocks, condition, thenTarget, elseTarget);
+    switch (RecordMirFunctionBuilderBlock(builder, created))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+            block = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus AppendMirBuilderTailCallBlock(
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirBlock> blocks,
+    MirValueId tailCall,
+    out MirBlockId block)
+{
+    block = MirBlockIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!MirFunctionBuilderOwnsValue(builder, tailCall))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    stack MirBlockId created = MirTailCallBlock(blocks, tailCall);
+    switch (RecordMirFunctionBuilderBlock(builder, created))
+    {
+        case MirBuilderStatus.Err(var error):
+            return MirBuilderStatus.Err(error);
+        case MirBuilderStatus.Ok:
+            block = created;
+            return MirBuilderStatus.Ok;
+    }
+}
+
+public fn MirBuilderStatus FinishMirFunctionBuilder(
+    mut borrow MirFunctionBuilderState builder,
+    mut borrow IrTable<MirFunction> functions,
+    out MirFuncId function)
+{
+    function = MirFuncIdOf(0);
+    if (!builder.IsOpenValue)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.BuilderClosed);
+    }
+
+    if (!builder.HasEntryBlockValue || MirFunctionBuilderBlockCount(builder) == 0)
+    {
+        return MirBuilderStatus.Err(MirBuilderError.MissingEntryBlock);
+    }
+
+    if (!MirFunctionBuilderOwnsBlock(builder, builder.EntryBlockValue))
+    {
+        return MirBuilderStatus.Err(MirBuilderError.InvalidHandle);
+    }
+
+    stack mut MirValueId firstInstruction = MirValueIdOf(0);
+    stack u32[0 max] instructionCount = MirFunctionBuilderInstructionCount(builder);
+    if (instructionCount != 0)
+    {
+        firstInstruction = MirValueIdOf(builder.FirstInstructionIndexValue);
+    }
+
+    stack MirFuncId created = MirDefineFunction(
+        functions,
+        builder.EntryBlockValue,
+        MirBlockIdOf(builder.FirstBlockIndexValue),
+        MirFunctionBuilderBlockCount(builder),
+        firstInstruction,
+        instructionCount);
+    if (!created.IsValid())
+    {
+        return MirBuilderStatus.Err(MirBuilderError.OutOfMemory);
+    }
+
+    builder.IsOpenValue = false;
+    function = created;
+    return MirBuilderStatus.Ok;
+}

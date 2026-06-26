@@ -1,0 +1,3378 @@
+import Compiler.Artifacts
+import Compiler.Ir
+import Compiler.Lowering
+import Compiler.Mir
+import Compiler.Pipeline
+import System.Text
+import System.Testing
+[Collection("lowering")]
+module LoweringTests
+
+fn bool MemoryStatusOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+fn bool ArtifactStatusOk(ArtifactStatus status)
+{
+    switch (status)
+    {
+        case ArtifactStatus.Err(var error):
+            return false;
+        case ArtifactStatus.Ok:
+            return true;
+    }
+}
+
+fn bool MirBuilderStatusOk(MirBuilderStatus status)
+{
+    switch (status)
+    {
+        case MirBuilderStatus.Err(var error):
+            return false;
+        case MirBuilderStatus.Ok:
+            return true;
+    }
+}
+
+fn bool MirBuilderStatusErrIs(MirBuilderStatus status, MirBuilderError expected)
+{
+    switch (status)
+    {
+        case MirBuilderStatus.Err(var error):
+            return error == expected;
+        case MirBuilderStatus.Ok:
+            return false;
+    }
+}
+
+fn bool ValueFactsIntegerRangeIs(ValueFacts facts, i64[min max] lower, i64[min max] upperExclusive)
+{
+    return facts.HasIntegerRange()
+        && facts.IntegerRangeLower() == lower
+        && facts.IntegerRangeUpperExclusive() == upperExclusive;
+}
+
+fn bool ValueFactsKnownNull(ValueFacts facts)
+{
+    return facts.HasNullability()
+        && facts.KnownNull()
+        && !facts.KnownNonNull();
+}
+
+fn bool ValueFactsKnownNonNull(ValueFacts facts)
+{
+    return facts.HasNullability()
+        && !facts.KnownNull()
+        && facts.KnownNonNull();
+}
+
+fn bool MarkRequiredMirArtifacts(mut borrow ArtifactInventory inventory)
+{
+    stack mut u8[0 max] index = 0;
+    while willexit (index < MirLoweringRequiredArtifactCount())
+    {
+        if (!ArtifactStatusOk(MarkArtifactPresent(inventory, MirLoweringRequiredArtifactAt(index))))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+[Fact]
+fn bool MirLoweringSymbolMapUsesDenseSymbolSlotsAndCarriesFacts()
+{
+    stack mut MirLoweringSymbolMap symbols = new();
+    stack mut ValueFacts localFacts = new();
+    localFacts.SetIntegerRange(7, 8);
+    localFacts.MarkNoAlias();
+
+    if (!MirBuilderStatusOk(BindMirLoweringValueSymbol(
+        symbols,
+        SymbolIdOf(3),
+        MirLoweringSymbolKind.Local,
+        MirValueIdOf(5),
+        localFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    if (!MirBuilderStatusOk(BindMirLoweringBlockSymbol(symbols, SymbolIdOf(5), MirBlockIdOf(2))))
+    {
+        return System.Testing.Fail("bind-block");
+    }
+
+    if (!MirBuilderStatusOk(BindMirLoweringFunctionSymbol(symbols, SymbolIdOf(7), MirFuncIdOf(4))))
+    {
+        return System.Testing.Fail("bind-function");
+    }
+
+    stack mut MirValueId foundValue = new();
+    stack mut MirBlockId foundBlock = new();
+    stack mut MirFuncId foundFunction = new();
+    stack ValueFacts readFacts = symbols.FactsAt(SymbolIdOf(3));
+    stack MirBuilderStatus duplicate = BindMirLoweringValueSymbol(
+        symbols,
+        SymbolIdOf(3),
+        MirLoweringSymbolKind.Temporary,
+        MirValueIdOf(9),
+        new ValueFacts());
+
+    return symbols.SlotCount() == 7
+        && symbols.KindAt(SymbolIdOf(1)) == MirLoweringSymbolKind.Unknown
+        && symbols.KindAt(SymbolIdOf(3)) == MirLoweringSymbolKind.Local
+        && symbols.KindAt(SymbolIdOf(5)) == MirLoweringSymbolKind.Block
+        && symbols.KindAt(SymbolIdOf(7)) == MirLoweringSymbolKind.Function
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(3), foundValue)
+        && foundValue.Index() == 5
+        && TryFindMirLoweringBlockSymbol(symbols, SymbolIdOf(5), foundBlock)
+        && foundBlock.Index() == 2
+        && TryFindMirLoweringFunctionSymbol(symbols, SymbolIdOf(7), foundFunction)
+        && foundFunction.Index() == 4
+        && readFacts.HasIntegerRange()
+        && readFacts.IntegerRangeLower() == 7
+        && readFacts.IntegerRangeUpperExclusive() == 8
+        && readFacts.HasNoAlias()
+        && !MirBuilderStatusOk(duplicate)
+        && MirBuilderStatusErrIs(duplicate, MirBuilderError.DuplicateSymbol)
+        && System.Text.Equals(MirLoweringSymbolKindName(symbols.KindAt(SymbolIdOf(3))), "local");
+}
+
+[Fact]
+fn bool HighLevelIrLiteralRowsBuildExactIntegerAndBoolFacts()
+{
+    stack HighLevelIrLiteral integerLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(4), MirType.I64, 99);
+    stack HighLevelIrLiteral boolLiteral = HighLevelIrBoolLiteralOf(SymbolIdOf(5), true);
+    stack HighLevelIrLiteral maxLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(6), MirType.I64, 9223372036854775807);
+    stack HighLevelIrLiteral nullLiteral = HighLevelIrNullPointerLiteralOf(SymbolIdOf(7));
+    stack ValueFacts integerFacts = integerLiteral.Facts();
+    stack ValueFacts boolFacts = boolLiteral.Facts();
+    stack ValueFacts maxFacts = maxLiteral.Facts();
+    stack ValueFacts nullFacts = nullLiteral.Facts();
+
+    return integerLiteral.Kind() == HighLevelIrLiteralKind.Integer
+        && integerLiteral.Type() == MirType.I64
+        && integerLiteral.IntegerValue() == 99
+        && ValueFactsIntegerRangeIs(integerFacts, 99, 100)
+        && boolLiteral.Kind() == HighLevelIrLiteralKind.Bool
+        && boolLiteral.Type() == MirType.I1
+        && boolLiteral.IntegerValue() == 1
+        && ValueFactsIntegerRangeIs(boolFacts, 1, 2)
+        && nullLiteral.Kind() == HighLevelIrLiteralKind.Null
+        && nullLiteral.Type() == MirType.Ptr
+        && nullLiteral.IntegerValue() == 0
+        && ValueFactsKnownNull(nullFacts)
+        && ValueFactsIntegerRangeIs(maxFacts, 9223372036854775807, (i64[min max])(-(2 ** 63)))
+        && System.Text.Equals(HighLevelIrLiteralKindName(HighLevelIrLiteralKind.Integer), "integer")
+        && System.Text.Equals(HighLevelIrLiteralKindName(HighLevelIrLiteralKind.Bool), "bool")
+        && System.Text.Equals(HighLevelIrLiteralKindName(HighLevelIrLiteralKind.Null), "null")
+        && System.Text.Equals(HighLevelIrLiteralKindName(HighLevelIrLiteralKind.Text), "text");
+}
+
+[Fact]
+fn bool MirLoweringLowersIntegerLiteralWithExactFactsAndSymbolBinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(31), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrIntegerLiteralOf(SymbolIdOf(8), MirType.I32, 123);
+    stack mut MirValueId value = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, value)))
+    {
+        return System.Testing.Fail("lower");
+    }
+
+    stack mut MirValueId found = new();
+    stack ValueFacts tableFacts = ValueFactsForMirValue(valueFacts, value);
+    stack ValueFacts symbolFacts = symbols.FactsAt(SymbolIdOf(8));
+    stack MirBuilderStatus duplicate = LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, found);
+
+    return value.Index() == 1
+        && instructions.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 1
+        && MirFunctionBuilderOwnsValue(builder, value)
+        && MirOpcodeOf(instructions, value) == MirOp.ConstInt
+        && MirImmediateOf(instructions, value) == 123
+        && MirValueType(instructions, value.Index()) == MirType.I32
+        && symbols.KindAt(SymbolIdOf(8)) == MirLoweringSymbolKind.Temporary
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(8), found)
+        && found.Equals(value)
+        && ValueFactsIntegerRangeIs(tableFacts, 123, 124)
+        && ValueFactsIntegerRangeIs(symbolFacts, 123, 124)
+        && !MirBuilderStatusOk(duplicate)
+        && MirBuilderStatusErrIs(duplicate, MirBuilderError.DuplicateSymbol)
+        && instructions.Count() == 1;
+}
+
+[Fact]
+fn bool MirLoweringLowersBoolLiteralAsI1WithExactFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(32), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrBoolLiteralOf(SymbolIdOf(9), false);
+    stack mut MirValueId value = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, value)))
+    {
+        return System.Testing.Fail("lower");
+    }
+
+    stack ValueFacts facts = ValueFactsForMirValue(valueFacts, value);
+    return value.Index() == 1
+        && MirOpcodeOf(instructions, value) == MirOp.ConstInt
+        && MirImmediateOf(instructions, value) == 0
+        && MirValueType(instructions, value.Index()) == MirType.I1
+        && ValueFactsIntegerRangeIs(facts, 0, 1)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(9)), 0, 1);
+}
+
+[Fact]
+fn bool MirLoweringRejectsUnsupportedLiteralWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(33), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal =
+        HighLevelIrUnsupportedLiteralOf(SymbolIdOf(10), HighLevelIrLiteralKind.Text, MirType.Ptr);
+    stack mut MirValueId value = new();
+    stack MirBuilderStatus status = LowerHighLevelIrLiteral(
+        literal,
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        value);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.UnsupportedLiteral)
+        && !value.IsValid()
+        && instructions.Count() == 0
+        && valueFacts.Count() == 0
+        && symbols.SlotCount() == 0
+        && System.Text.Equals(MirBuilderErrorName(MirBuilderError.UnsupportedLiteral), "unsupported-literal");
+}
+
+[Fact]
+fn bool MirLoweringRejectsTypedIntegerLiteralOutsideRangeWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(34), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrIntegerLiteralOf(SymbolIdOf(11), MirType.I32, 2147483648);
+    stack mut MirValueId value = new();
+    stack MirBuilderStatus status = LowerHighLevelIrLiteral(
+        literal,
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        value);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.UnsupportedLiteral)
+        && !value.IsValid()
+        && instructions.Count() == 0
+        && valueFacts.Count() == 0
+        && symbols.SlotCount() == 0;
+}
+
+[Fact]
+fn bool MirLoweringLowersNullPointerLiteralWithNullabilityFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(35), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrNullPointerLiteralOf(SymbolIdOf(12));
+    stack mut MirValueId value = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, value)))
+    {
+        return System.Testing.Fail("lower");
+    }
+
+    stack ValueFacts tableFacts = ValueFactsForMirValue(valueFacts, value);
+    stack ValueFacts symbolFacts = symbols.FactsAt(SymbolIdOf(12));
+    return value.Index() == 1
+        && instructions.Count() == 1
+        && valueFacts.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 1
+        && MirOpcodeOf(instructions, value) == MirOp.ConstInt
+        && MirImmediateOf(instructions, value) == 0
+        && MirValueType(instructions, value.Index()) == MirType.Ptr
+        && symbols.KindAt(SymbolIdOf(12)) == MirLoweringSymbolKind.Temporary
+        && ValueFactsKnownNull(tableFacts)
+        && ValueFactsKnownNull(symbolFacts);
+}
+
+[Fact]
+fn bool MirLoweringLowersDenseParametersWithFactsAndSymbolBinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(35), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts firstFacts = new();
+    firstFacts.SetIntegerRange(-8, 9);
+    stack mut ValueFacts secondFacts = new();
+    secondFacts.SetIntegerRange(10, 11);
+
+    stack HighLevelIrParameter first = HighLevelIrParameterOf(SymbolIdOf(12), 0, MirType.I64, firstFacts);
+    stack HighLevelIrParameter second = HighLevelIrParameterOf(SymbolIdOf(13), 1, MirType.I64, secondFacts);
+    stack mut MirValueId firstValue = new();
+    stack mut MirValueId secondValue = new();
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(first, builder, symbols, instructions, valueFacts, firstValue)))
+    {
+        return System.Testing.Fail("lower-first");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(second, builder, symbols, instructions, valueFacts, secondValue)))
+    {
+        return System.Testing.Fail("lower-second");
+    }
+
+    stack mut MirValueId foundFirst = new();
+    stack mut MirValueId foundSecond = new();
+    stack ValueFacts firstTableFacts = ValueFactsForMirValue(valueFacts, firstValue);
+    stack ValueFacts secondSymbolFacts = symbols.FactsAt(SymbolIdOf(13));
+
+    return instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && MirFunctionBuilderOwnsValue(builder, firstValue)
+        && MirFunctionBuilderOwnsValue(builder, secondValue)
+        && MirOpcodeOf(instructions, firstValue) == MirOp.Param
+        && MirOpcodeOf(instructions, secondValue) == MirOp.Param
+        && MirParamIndexOf(instructions, firstValue) == 0
+        && MirParamIndexOf(instructions, secondValue) == 1
+        && symbols.KindAt(SymbolIdOf(12)) == MirLoweringSymbolKind.Parameter
+        && symbols.KindAt(SymbolIdOf(13)) == MirLoweringSymbolKind.Parameter
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(12), foundFirst)
+        && foundFirst.Equals(firstValue)
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(13), foundSecond)
+        && foundSecond.Equals(secondValue)
+        && ValueFactsIntegerRangeIs(firstTableFacts, -8, 9)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(12)), -8, 9)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, secondValue), 10, 11)
+        && ValueFactsIntegerRangeIs(secondSymbolFacts, 10, 11);
+}
+
+[Fact]
+fn bool MirLoweringLowersTypedNonI64ParametersWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(36), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts intFacts = new();
+    intFacts.SetIntegerRange(-128, 128);
+    stack mut ValueFacts boolFacts = new();
+    boolFacts.SetIntegerRange(0, 2);
+    stack mut ValueFacts ptrFacts = new();
+    ptrFacts.SetAlignment(8);
+    ptrFacts.MarkNoAlias();
+
+    stack HighLevelIrParameter intParam =
+        HighLevelIrParameterOf(SymbolIdOf(14), 0, MirType.I32, intFacts);
+    stack HighLevelIrParameter boolParam =
+        HighLevelIrParameterOf(SymbolIdOf(15), 1, MirType.I1, boolFacts);
+    stack HighLevelIrParameter ptrParam =
+        HighLevelIrParameterOf(SymbolIdOf(16), 2, MirType.Ptr, ptrFacts);
+    stack mut MirValueId intValue = new();
+    stack mut MirValueId boolValue = new();
+    stack mut MirValueId ptrValue = new();
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(intParam, builder, symbols, instructions, valueFacts, intValue)))
+    {
+        return System.Testing.Fail("lower-int");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(boolParam, builder, symbols, instructions, valueFacts, boolValue)))
+    {
+        return System.Testing.Fail("lower-bool");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(ptrParam, builder, symbols, instructions, valueFacts, ptrValue)))
+    {
+        return System.Testing.Fail("lower-ptr");
+    }
+
+    stack ValueFacts intTableFacts = ValueFactsForMirValue(valueFacts, intValue);
+    stack ValueFacts boolSymbolFacts = symbols.FactsAt(SymbolIdOf(15));
+    stack ValueFacts ptrTableFacts = ValueFactsForMirValue(valueFacts, ptrValue);
+    stack ValueFacts ptrSymbolFacts = symbols.FactsAt(SymbolIdOf(16));
+
+    return instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && MirValueType(instructions, intValue.Index()) == MirType.I32
+        && MirValueType(instructions, boolValue.Index()) == MirType.I1
+        && MirValueType(instructions, ptrValue.Index()) == MirType.Ptr
+        && MirParamTypeOf(instructions, 0) == MirType.I32
+        && MirParamTypeOf(instructions, 1) == MirType.I1
+        && MirParamTypeOf(instructions, 2) == MirType.Ptr
+        && MirParamIndexOf(instructions, intValue) == 0
+        && MirParamIndexOf(instructions, boolValue) == 1
+        && MirParamIndexOf(instructions, ptrValue) == 2
+        && symbols.KindAt(SymbolIdOf(14)) == MirLoweringSymbolKind.Parameter
+        && symbols.KindAt(SymbolIdOf(15)) == MirLoweringSymbolKind.Parameter
+        && symbols.KindAt(SymbolIdOf(16)) == MirLoweringSymbolKind.Parameter
+        && ValueFactsIntegerRangeIs(intTableFacts, -128, 128)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(14)), -128, 128)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, boolValue), 0, 2)
+        && ValueFactsIntegerRangeIs(boolSymbolFacts, 0, 2)
+        && ptrTableFacts.HasAlignment()
+        && ptrTableFacts.AlignmentBytes() == 8
+        && ptrTableFacts.HasNoAlias()
+        && ptrSymbolFacts.HasAlignment()
+        && ptrSymbolFacts.AlignmentBytes() == 8
+        && ptrSymbolFacts.HasNoAlias();
+}
+
+[Fact]
+fn bool MirLoweringRejectsParameterFactsOutsideTypeWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(38), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts scalarNullabilityFacts = new();
+    scalarNullabilityFacts.MarkKnownNull();
+    stack HighLevelIrParameter scalarParameter =
+        HighLevelIrParameterOf(SymbolIdOf(18), 0, MirType.I32, scalarNullabilityFacts);
+    stack mut MirValueId scalarValue = new();
+    stack MirBuilderStatus scalarStatus =
+        LowerHighLevelIrParameter(scalarParameter, builder, symbols, instructions, valueFacts, scalarValue);
+
+    if (!MirBuilderStatusErrIs(scalarStatus, MirBuilderError.TypeMismatch)
+        || scalarValue.IsValid()
+        || instructions.Count() != 0
+        || valueFacts.Count() != 0
+        || MirFunctionBuilderInstructionCount(builder) != 0
+        || symbols.SlotCount() != 0)
+    {
+        return System.Testing.Fail("scalar-nullability");
+    }
+
+    stack mut ValueFacts pointerRangeFacts = new();
+    pointerRangeFacts.SetIntegerRange(0, 1);
+    stack HighLevelIrParameter pointerParameter =
+        HighLevelIrParameterOf(SymbolIdOf(19), 0, MirType.Ptr, pointerRangeFacts);
+    stack mut MirValueId pointerValue = new();
+    stack MirBuilderStatus pointerStatus =
+        LowerHighLevelIrParameter(pointerParameter, builder, symbols, instructions, valueFacts, pointerValue);
+
+    return MirBuilderStatusErrIs(pointerStatus, MirBuilderError.TypeMismatch)
+        && !pointerValue.IsValid()
+        && instructions.Count() == 0
+        && valueFacts.Count() == 0
+        && MirFunctionBuilderInstructionCount(builder) == 0
+        && symbols.SlotCount() == 0
+        && System.Text.Equals(MirBuilderErrorName(MirBuilderError.TypeMismatch), "type-mismatch");
+}
+
+[Fact]
+fn bool MirLoweringRejectsNonDenseParametersWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(37), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrParameter nonDense =
+        HighLevelIrParameterOf(SymbolIdOf(17), 1, MirType.I32, new ValueFacts());
+    stack mut MirValueId value = new();
+    stack MirBuilderStatus nonDenseStatus =
+        LowerHighLevelIrParameter(nonDense, builder, symbols, instructions, valueFacts, value);
+
+    return MirBuilderStatusErrIs(nonDenseStatus, MirBuilderError.InvalidBuilderState)
+        && !value.IsValid()
+        && instructions.Count() == 0
+        && valueFacts.Count() == 0
+        && symbols.SlotCount() == 0
+        && System.Text.Equals(MirBuilderErrorName(MirBuilderError.InvalidBuilderState), "invalid-builder-state");
+}
+
+[Fact]
+fn bool MirLoweringBindsLocalAliasWithoutEmissionAndPreservesFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(37), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrIntegerLiteralOf(SymbolIdOf(16), MirType.I32, 77);
+    stack mut MirValueId initializer = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, initializer)))
+    {
+        return System.Testing.Fail("lower-initializer");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(17), MirType.I32, initializer);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack mut MirValueId found = new();
+    return instructions.Count() == 1
+        && valueFacts.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 1
+        && symbols.KindAt(SymbolIdOf(17)) == MirLoweringSymbolKind.Local
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(17), found)
+        && found.Equals(initializer)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(17)), 77, 78);
+}
+
+[Fact]
+fn bool MirLoweringRejectsLocalAliasTypeMismatchWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(38), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrIntegerLiteralOf(SymbolIdOf(18), MirType.I32, 5);
+    stack mut MirValueId initializer = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, initializer)))
+    {
+        return System.Testing.Fail("lower-initializer");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(19), MirType.I64, initializer);
+    stack MirBuilderStatus status = LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && instructions.Count() == 1
+        && valueFacts.Count() == 1
+        && symbols.KindAt(SymbolIdOf(19)) == MirLoweringSymbolKind.Unknown
+        && System.Text.Equals(MirBuilderErrorName(MirBuilderError.TypeMismatch), "type-mismatch");
+}
+
+[Fact]
+fn bool MirLoweringRejectsLocalAliasFactsOutsideTypeWithoutBinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(39), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId scalarValue = MirConstIntTyped(instructions, MirType.I32, 4);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, scalarValue)))
+    {
+        return System.Testing.Fail("record-scalar");
+    }
+
+    stack mut ValueFacts scalarFacts = new();
+    scalarFacts.MarkKnownNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, scalarValue, scalarFacts))
+    {
+        return System.Testing.Fail("facts-scalar");
+    }
+
+    stack MirBuilderStatus scalarStatus = LowerHighLevelIrLocalAlias(
+        HighLevelIrLocalAliasOf(SymbolIdOf(20), MirType.I32, scalarValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts);
+
+    stack MirValueId pointerValue = MirConstNullPtr(instructions);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, pointerValue)))
+    {
+        return System.Testing.Fail("record-pointer");
+    }
+
+    stack mut ValueFacts pointerFacts = new();
+    pointerFacts.SetIntegerRange(0, 1);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, pointerValue, pointerFacts))
+    {
+        return System.Testing.Fail("facts-pointer");
+    }
+
+    stack MirBuilderStatus pointerStatus = LowerHighLevelIrLocalAlias(
+        HighLevelIrLocalAliasOf(SymbolIdOf(21), MirType.Ptr, pointerValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts);
+
+    return MirBuilderStatusErrIs(scalarStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(pointerStatus, MirBuilderError.TypeMismatch)
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && symbols.KindAt(SymbolIdOf(20)) == MirLoweringSymbolKind.Unknown
+        && symbols.KindAt(SymbolIdOf(21)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringLowersGlobalLoadStoreWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(480), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts globalFacts = new();
+    globalFacts.SetIntegerRange(-3, 4);
+    if (!MirBuilderStatusOk(BindMirLoweringGlobalSymbol(symbols, SymbolIdOf(481), 2, globalFacts)))
+    {
+        return System.Testing.Fail("bind-global");
+    }
+
+    stack HighLevelIrGlobalReference load =
+        HighLevelIrGlobalReferenceOf(SymbolIdOf(482), SymbolIdOf(481), MirType.I64);
+    stack mut MirValueId loadedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrGlobalReference(load, builder, symbols, instructions, valueFacts, loadedValue)))
+    {
+        return System.Testing.Fail("load-global");
+    }
+
+    stack HighLevelIrLiteral storedLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(483), MirType.I64, 2);
+    stack mut MirValueId storedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(storedLiteral, builder, symbols, instructions, valueFacts, storedValue)))
+    {
+        return System.Testing.Fail("lower-stored");
+    }
+
+    stack HighLevelIrGlobalStore store =
+        HighLevelIrGlobalStoreOf(SymbolIdOf(481), MirType.I64, storedValue);
+    stack mut MirValueId storeInstruction = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrGlobalStore(store, builder, symbols, instructions, valueFacts, storeInstruction)))
+    {
+        return System.Testing.Fail("store-global");
+    }
+
+    stack mut MirValueId foundLoad = new();
+    stack mut u32[0 max] foundGlobal = 0;
+    stack ValueFacts loadFacts = ValueFactsForMirValue(valueFacts, loadedValue);
+    stack ValueFacts storeFacts = ValueFactsForMirValue(valueFacts, storeInstruction);
+    return instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && HighLevelIrGlobalReferenceSymbol(load).Equals(SymbolIdOf(482))
+        && HighLevelIrGlobalReferenceGlobalSymbol(load).Equals(SymbolIdOf(481))
+        && HighLevelIrGlobalReferenceType(load) == MirType.I64
+        && HighLevelIrGlobalStoreGlobalSymbol(store).Equals(SymbolIdOf(481))
+        && HighLevelIrGlobalStoreType(store) == MirType.I64
+        && HighLevelIrGlobalStoreValue(store).Equals(storedValue)
+        && MirOpcodeOf(instructions, loadedValue) == MirOp.LoadGlobal
+        && MirLoadedGlobalOf(instructions, loadedValue) == 2
+        && MirOpcodeOf(instructions, storeInstruction) == MirOp.StoreGlobal
+        && MirStoredGlobalOf(instructions, storeInstruction) == 2
+        && MirOperandAOf(instructions, storeInstruction).Equals(storedValue)
+        && TryFindMirLoweringGlobalSymbol(symbols, SymbolIdOf(481), foundGlobal)
+        && foundGlobal == 2
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(482), foundLoad)
+        && foundLoad.Equals(loadedValue)
+        && symbols.KindAt(SymbolIdOf(481)) == MirLoweringSymbolKind.Global
+        && symbols.KindAt(SymbolIdOf(482)) == MirLoweringSymbolKind.Temporary
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(481)), -3, 4)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(482)), -3, 4)
+        && ValueFactsIntegerRangeIs(loadFacts, -3, 4)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, storedValue), 2, 3)
+        && !storeFacts.HasIntegerRange();
+}
+
+[Fact]
+fn bool MirLoweringLowersTypedGlobalLoadStoreWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(484), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts globalFacts = new();
+    globalFacts.SetIntegerRange(20, 31);
+    if (!MirBuilderStatusOk(BindMirLoweringTypedGlobalSymbol(symbols, SymbolIdOf(485), 4, MirType.I32, globalFacts)))
+    {
+        return System.Testing.Fail("bind-global");
+    }
+
+    stack HighLevelIrGlobalReference load =
+        HighLevelIrGlobalReferenceOf(SymbolIdOf(486), SymbolIdOf(485), MirType.I32);
+    stack mut MirValueId loadedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrGlobalReference(load, builder, symbols, instructions, valueFacts, loadedValue)))
+    {
+        return System.Testing.Fail("load-global");
+    }
+
+    stack HighLevelIrLiteral storedLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(487), MirType.I32, 25);
+    stack mut MirValueId storedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(storedLiteral, builder, symbols, instructions, valueFacts, storedValue)))
+    {
+        return System.Testing.Fail("lower-stored");
+    }
+
+    stack HighLevelIrGlobalStore store =
+        HighLevelIrGlobalStoreOf(SymbolIdOf(485), MirType.I32, storedValue);
+    stack mut MirValueId storeInstruction = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrGlobalStore(store, builder, symbols, instructions, valueFacts, storeInstruction)))
+    {
+        return System.Testing.Fail("store-global");
+    }
+
+    stack mut u32[0 max] foundGlobal = 0;
+    stack mut MirType foundType = MirType.I64;
+    return instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && MirOpcodeOf(instructions, loadedValue) == MirOp.LoadGlobal
+        && MirValueType(instructions, loadedValue.Index()) == MirType.I32
+        && MirLoadedGlobalOf(instructions, loadedValue) == 4
+        && MirOpcodeOf(instructions, storeInstruction) == MirOp.StoreGlobal
+        && MirValueType(instructions, storeInstruction.Index()) == MirType.I32
+        && MirStoredGlobalOf(instructions, storeInstruction) == 4
+        && TryFindMirLoweringTypedGlobalSymbol(symbols, SymbolIdOf(485), foundGlobal, foundType)
+        && foundGlobal == 4
+        && foundType == MirType.I32
+        && symbols.TypeAt(SymbolIdOf(485)) == MirType.I32
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(485)), 20, 31)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, loadedValue), 20, 31)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, storedValue), 25, 26);
+}
+
+[Fact]
+fn bool MirLoweringChecksGlobalStoreBackendFactSubset()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(520), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts globalFacts = new();
+    globalFacts.SetAlignment(8);
+    globalFacts.SetCallingAbi(AbiKind.CAbi);
+    globalFacts.MarkNoAlias();
+    globalFacts.MarkVolatile();
+    globalFacts.MarkKnownNonNull();
+    if (!MirBuilderStatusOk(BindMirLoweringTypedGlobalSymbol(symbols, SymbolIdOf(521), 6, MirType.Ptr, globalFacts)))
+    {
+        return System.Testing.Fail("bind-global");
+    }
+
+    stack mut ValueFacts strongFacts = new();
+    strongFacts.SetAlignment(16);
+    strongFacts.SetCallingAbi(AbiKind.CAbi);
+    strongFacts.MarkNoAlias();
+    strongFacts.MarkVolatile();
+    strongFacts.MarkKnownNonNull();
+    stack HighLevelIrCall strongCall =
+        HighLevelIrCallOf(SymbolIdOf(522), MirFuncIdOf(14), MirType.Ptr, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), strongFacts);
+    stack mut MirValueId strongValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(strongCall, builder, symbols, instructions, valueFacts, strongValue)))
+    {
+        return System.Testing.Fail("strong-call");
+    }
+
+    stack HighLevelIrGlobalStore strongStore =
+        HighLevelIrGlobalStoreOf(SymbolIdOf(521), MirType.Ptr, strongValue);
+    stack mut MirValueId strongStoreValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrGlobalStore(strongStore, builder, symbols, instructions, valueFacts, strongStoreValue)))
+    {
+        return System.Testing.Fail("strong-store");
+    }
+
+    stack mut ValueFacts weakFacts = new();
+    weakFacts.SetAlignment(4);
+    weakFacts.SetCallingAbi(AbiKind.CAbi);
+    weakFacts.MarkNoAlias();
+    weakFacts.MarkVolatile();
+    weakFacts.MarkKnownNonNull();
+    stack HighLevelIrCall weakCall =
+        HighLevelIrCallOf(SymbolIdOf(523), MirFuncIdOf(15), MirType.Ptr, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), weakFacts);
+    stack mut MirValueId weakValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(weakCall, builder, symbols, instructions, valueFacts, weakValue)))
+    {
+        return System.Testing.Fail("weak-call");
+    }
+
+    stack mut ValueFacts abiMismatchFacts = new();
+    abiMismatchFacts.SetAlignment(16);
+    abiMismatchFacts.SetCallingAbi(AbiKind.PlatformAbi);
+    abiMismatchFacts.MarkNoAlias();
+    abiMismatchFacts.MarkVolatile();
+    abiMismatchFacts.MarkKnownNonNull();
+    stack HighLevelIrCall abiMismatchCall =
+        HighLevelIrCallOf(SymbolIdOf(524), MirFuncIdOf(16), MirType.Ptr, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), abiMismatchFacts);
+    stack mut MirValueId abiMismatchValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(abiMismatchCall, builder, symbols, instructions, valueFacts, abiMismatchValue)))
+    {
+        return System.Testing.Fail("abi-mismatch-call");
+    }
+
+    stack mut ValueFacts missingNoAliasFacts = new();
+    missingNoAliasFacts.SetAlignment(16);
+    missingNoAliasFacts.SetCallingAbi(AbiKind.CAbi);
+    missingNoAliasFacts.MarkVolatile();
+    missingNoAliasFacts.MarkKnownNonNull();
+    stack HighLevelIrCall missingNoAliasCall =
+        HighLevelIrCallOf(SymbolIdOf(525), MirFuncIdOf(17), MirType.Ptr, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), missingNoAliasFacts);
+    stack mut MirValueId missingNoAliasValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(missingNoAliasCall, builder, symbols, instructions, valueFacts, missingNoAliasValue)))
+    {
+        return System.Testing.Fail("missing-noalias-call");
+    }
+
+    stack mut ValueFacts missingVolatileFacts = new();
+    missingVolatileFacts.SetAlignment(16);
+    missingVolatileFacts.SetCallingAbi(AbiKind.CAbi);
+    missingVolatileFacts.MarkNoAlias();
+    missingVolatileFacts.MarkKnownNonNull();
+    stack HighLevelIrCall missingVolatileCall =
+        HighLevelIrCallOf(SymbolIdOf(526), MirFuncIdOf(18), MirType.Ptr, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), missingVolatileFacts);
+    stack mut MirValueId missingVolatileValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(missingVolatileCall, builder, symbols, instructions, valueFacts, missingVolatileValue)))
+    {
+        return System.Testing.Fail("missing-volatile-call");
+    }
+
+    stack HighLevelIrLiteral nullLiteral = HighLevelIrNullPointerLiteralOf(SymbolIdOf(527));
+    stack mut MirValueId nullValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(nullLiteral, builder, symbols, instructions, valueFacts, nullValue)))
+    {
+        return System.Testing.Fail("null-literal");
+    }
+
+    stack mut MirValueId rejectedWeakStore = new();
+    stack MirBuilderStatus weakStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(521), MirType.Ptr, weakValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedWeakStore);
+
+    stack mut MirValueId rejectedAbiMismatchStore = new();
+    stack MirBuilderStatus abiMismatchStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(521), MirType.Ptr, abiMismatchValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedAbiMismatchStore);
+
+    stack mut MirValueId rejectedMissingNoAliasStore = new();
+    stack MirBuilderStatus missingNoAliasStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(521), MirType.Ptr, missingNoAliasValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedMissingNoAliasStore);
+
+    stack mut MirValueId rejectedMissingVolatileStore = new();
+    stack MirBuilderStatus missingVolatileStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(521), MirType.Ptr, missingVolatileValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedMissingVolatileStore);
+
+    stack mut MirValueId rejectedNullStore = new();
+    stack MirBuilderStatus nullStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(521), MirType.Ptr, nullValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedNullStore);
+
+    stack ValueFacts strongValueFacts = ValueFactsForMirValue(valueFacts, strongValue);
+    return instructions.Count() == 7
+        && valueFacts.Count() == 7
+        && MirFunctionBuilderInstructionCount(builder) == 7
+        && MirOpcodeOf(instructions, strongStoreValue) == MirOp.StoreGlobal
+        && MirStoredGlobalOf(instructions, strongStoreValue) == 6
+        && MirOperandAOf(instructions, strongStoreValue).Equals(strongValue)
+        && strongValueFacts.HasAlignment()
+        && strongValueFacts.AlignmentBytes() == 16
+        && strongValueFacts.HasCallingAbi()
+        && strongValueFacts.CallingAbi() == AbiKind.CAbi
+        && strongValueFacts.HasNoAlias()
+        && strongValueFacts.Volatile()
+        && ValueFactsKnownNonNull(strongValueFacts)
+        && MirBuilderStatusErrIs(weakStoreStatus, MirBuilderError.InvalidBuilderState)
+        && MirBuilderStatusErrIs(abiMismatchStoreStatus, MirBuilderError.InvalidBuilderState)
+        && MirBuilderStatusErrIs(missingNoAliasStoreStatus, MirBuilderError.InvalidBuilderState)
+        && MirBuilderStatusErrIs(missingVolatileStoreStatus, MirBuilderError.InvalidBuilderState)
+        && MirBuilderStatusErrIs(nullStoreStatus, MirBuilderError.InvalidBuilderState)
+        && !rejectedWeakStore.IsValid()
+        && !rejectedAbiMismatchStore.IsValid()
+        && !rejectedMissingNoAliasStore.IsValid()
+        && !rejectedMissingVolatileStore.IsValid()
+        && !rejectedNullStore.IsValid();
+}
+
+[Fact]
+fn bool MirLoweringLowersModuleGlobalDeclarationsAndInitializersWithFacts()
+{
+    stack mut HighLevelIrModule hirModule = HighLevelIrModuleOf(500);
+    stack mut ValueFacts counterFacts = new();
+    counterFacts.SetIntegerRange(7, 8);
+    stack mut ValueFacts pointerFacts = new();
+    pointerFacts.MarkKnownNull();
+
+    stack HighLevelIrGlobalDeclaration counter =
+        HighLevelIrGlobalDeclarationOf(SymbolIdOf(501), MirType.I32, 7, counterFacts);
+    stack HighLevelIrGlobalDeclaration pointer =
+        HighLevelIrGlobalDeclarationOf(SymbolIdOf(502), MirType.Ptr, 0, pointerFacts);
+    if (!MemoryStatusOk(AppendHighLevelIrGlobalDeclaration(hirModule, counter)))
+    {
+        return System.Testing.Fail("append-counter");
+    }
+
+    if (!MemoryStatusOk(AppendHighLevelIrGlobalDeclaration(hirModule, pointer)))
+    {
+        return System.Testing.Fail("append-pointer");
+    }
+
+    stack mut MirLoweringSymbolMap symbols = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrModuleGlobals(hirModule, symbols, globals, globalFacts)))
+    {
+        return System.Testing.Fail("lower-globals");
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(503), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrGlobalReference load =
+        HighLevelIrGlobalReferenceOf(SymbolIdOf(504), SymbolIdOf(501), MirType.I32);
+    stack mut MirValueId loadedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrGlobalReference(load, builder, symbols, instructions, valueFacts, loadedValue)))
+    {
+        return System.Testing.Fail("load");
+    }
+
+    stack HighLevelIrGlobalDeclaration missing = hirModule.GlobalAt(2);
+    stack mut u32[0 max] foundCounter = 0;
+    stack mut u32[0 max] foundPointer = 0;
+    stack mut MirType counterType = MirType.I64;
+    stack mut MirType pointerType = MirType.I64;
+    return hirModule.GlobalCount() == 2
+        && HighLevelIrGlobalDeclarationSymbol(counter).Equals(SymbolIdOf(501))
+        && HighLevelIrGlobalDeclarationType(counter) == MirType.I32
+        && HighLevelIrGlobalDeclarationInitialValue(counter) == 7
+        && ValueFactsIntegerRangeIs(HighLevelIrGlobalDeclarationFacts(counter), 7, 8)
+        && HighLevelIrGlobalDeclarationSymbol(pointer).Equals(SymbolIdOf(502))
+        && HighLevelIrGlobalDeclarationType(pointer) == MirType.Ptr
+        && HighLevelIrGlobalDeclarationInitialValue(pointer) == 0
+        && ValueFactsKnownNull(HighLevelIrGlobalDeclarationFacts(pointer))
+        && !HighLevelIrGlobalDeclarationSymbol(missing).IsValid()
+        && globals.Count() == 2
+        && globalFacts.Count() == 2
+        && MirGlobalType(globals, 1) == MirType.I32
+        && MirGlobalInitialValue(globals, 1) == 7
+        && MirGlobalType(globals, 2) == MirType.Ptr
+        && MirGlobalInitialValue(globals, 2) == 0
+        && ValueFactsIntegerRangeIs(ValueFactsAtIndex(globalFacts, 1), 7, 8)
+        && ValueFactsKnownNull(ValueFactsAtIndex(globalFacts, 2))
+        && TryFindMirLoweringTypedGlobalSymbol(symbols, SymbolIdOf(501), foundCounter, counterType)
+        && TryFindMirLoweringTypedGlobalSymbol(symbols, SymbolIdOf(502), foundPointer, pointerType)
+        && foundCounter == 1
+        && foundPointer == 2
+        && counterType == MirType.I32
+        && pointerType == MirType.Ptr
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(501)), 7, 8)
+        && ValueFactsKnownNull(symbols.FactsAt(SymbolIdOf(502)))
+        && MirOpcodeOf(instructions, loadedValue) == MirOp.LoadGlobal
+        && MirValueType(instructions, loadedValue.Index()) == MirType.I32
+        && MirLoadedGlobalOf(instructions, loadedValue) == 1
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, loadedValue), 7, 8);
+}
+
+[Fact]
+fn bool MirLoweringRejectsInvalidModuleGlobalDeclarationsWithoutBinding()
+{
+    stack mut HighLevelIrModule hirModule = HighLevelIrModuleOf(510);
+    stack mut ValueFacts impossibleFacts = new();
+    impossibleFacts.SetIntegerRange(10, 20);
+    if (!MemoryStatusOk(AppendHighLevelIrGlobalDeclaration(
+        hirModule,
+        HighLevelIrGlobalDeclarationOf(SymbolIdOf(511), MirType.I32, 3, impossibleFacts))))
+    {
+        return System.Testing.Fail("append");
+    }
+
+    stack mut MirLoweringSymbolMap symbols = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack MirBuilderStatus status = LowerHighLevelIrModuleGlobals(hirModule, symbols, globals, globalFacts);
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && globals.Count() == 0
+        && globalFacts.Count() == 0
+        && symbols.KindAt(SymbolIdOf(511)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringRejectsScalarNullabilityGlobalFactsWithoutBinding()
+{
+    stack mut HighLevelIrModule hirModule = HighLevelIrModuleOf(512);
+    stack mut ValueFacts scalarNullabilityFacts = new();
+    scalarNullabilityFacts.MarkKnownNull();
+    if (!MemoryStatusOk(AppendHighLevelIrGlobalDeclaration(
+        hirModule,
+        HighLevelIrGlobalDeclarationOf(SymbolIdOf(513), MirType.I32, 0, scalarNullabilityFacts))))
+    {
+        return System.Testing.Fail("append");
+    }
+
+    stack mut MirLoweringSymbolMap symbols = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack MirBuilderStatus status = LowerHighLevelIrModuleGlobals(hirModule, symbols, globals, globalFacts);
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && globals.Count() == 0
+        && globalFacts.Count() == 0
+        && symbols.KindAt(SymbolIdOf(513)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringRejectsInvalidGlobalAccessWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(490), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts globalFacts = new();
+    globalFacts.SetIntegerRange(0, 10);
+    if (!MirBuilderStatusOk(BindMirLoweringGlobalSymbol(symbols, SymbolIdOf(491), 3, globalFacts)))
+    {
+        return System.Testing.Fail("bind-global");
+    }
+
+    stack HighLevelIrLiteral localLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(492), MirType.I64, 5);
+    stack HighLevelIrLiteral wideLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(493), MirType.I64, 12);
+    stack HighLevelIrLiteral narrowLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(494), MirType.I32, 5);
+    stack mut MirValueId localValue = new();
+    stack mut MirValueId wideValue = new();
+    stack mut MirValueId narrowValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(localLiteral, builder, symbols, instructions, valueFacts, localValue)))
+    {
+        return System.Testing.Fail("lower-local");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(wideLiteral, builder, symbols, instructions, valueFacts, wideValue)))
+    {
+        return System.Testing.Fail("lower-wide");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(narrowLiteral, builder, symbols, instructions, valueFacts, narrowValue)))
+    {
+        return System.Testing.Fail("lower-narrow");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(495), MirType.I64, localValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack mut MirValueId rejectedMissingLoad = new();
+    stack MirBuilderStatus missingLoadStatus = LowerHighLevelIrGlobalReference(
+        HighLevelIrGlobalReferenceOf(SymbolIdOf(496), SymbolIdOf(497), MirType.I64),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedMissingLoad);
+
+    stack mut MirValueId rejectedLocalLoad = new();
+    stack MirBuilderStatus localLoadStatus = LowerHighLevelIrGlobalReference(
+        HighLevelIrGlobalReferenceOf(SymbolIdOf(498), SymbolIdOf(495), MirType.I64),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedLocalLoad);
+
+    stack mut MirValueId rejectedTypedLoad = new();
+    stack MirBuilderStatus typedLoadStatus = LowerHighLevelIrGlobalReference(
+        HighLevelIrGlobalReferenceOf(SymbolIdOf(499), SymbolIdOf(491), MirType.I32),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedTypedLoad);
+
+    stack mut MirValueId rejectedRangeStore = new();
+    stack MirBuilderStatus rangeStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(491), MirType.I64, wideValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedRangeStore);
+
+    stack mut MirValueId rejectedTypeStore = new();
+    stack MirBuilderStatus typeStoreStatus = LowerHighLevelIrGlobalStore(
+        HighLevelIrGlobalStoreOf(SymbolIdOf(491), MirType.I64, narrowValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedTypeStore);
+
+    return MirBuilderStatusErrIs(missingLoadStatus, MirBuilderError.InvalidSymbol)
+        && MirBuilderStatusErrIs(localLoadStatus, MirBuilderError.InvalidSymbol)
+        && MirBuilderStatusErrIs(typedLoadStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(rangeStoreStatus, MirBuilderError.InvalidBuilderState)
+        && MirBuilderStatusErrIs(typeStoreStatus, MirBuilderError.TypeMismatch)
+        && !rejectedMissingLoad.IsValid()
+        && !rejectedLocalLoad.IsValid()
+        && !rejectedTypedLoad.IsValid()
+        && !rejectedRangeStore.IsValid()
+        && !rejectedTypeStore.IsValid()
+        && instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && symbols.KindAt(SymbolIdOf(491)) == MirLoweringSymbolKind.Global
+        && symbols.KindAt(SymbolIdOf(496)) == MirLoweringSymbolKind.Unknown
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(491)), 0, 10);
+}
+
+[Fact]
+fn bool MirLoweringLowersLocalAssignmentByRebindingSymbolAndFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(401), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral firstLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(402), MirType.I32, 10);
+    stack mut MirValueId firstValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(firstLiteral, builder, symbols, instructions, valueFacts, firstValue)))
+    {
+        return System.Testing.Fail("lower-first");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(403), MirType.I32, firstValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack HighLevelIrLiteral secondLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(404), MirType.I32, 25);
+    stack mut MirValueId secondValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(secondLiteral, builder, symbols, instructions, valueFacts, secondValue)))
+    {
+        return System.Testing.Fail("lower-second");
+    }
+
+    stack HighLevelIrAssignment assignment = HighLevelIrAssignmentOf(SymbolIdOf(403), MirType.I32, secondValue);
+    stack mut MirValueId assignedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrAssignment(assignment, builder, symbols, instructions, valueFacts, assignedValue)))
+    {
+        return System.Testing.Fail("assign");
+    }
+
+    stack mut MirValueId found = new();
+    stack ValueFacts localFacts = symbols.FactsAt(SymbolIdOf(403));
+    return instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && HighLevelIrAssignmentTargetSymbol(assignment).Equals(SymbolIdOf(403))
+        && HighLevelIrAssignmentType(assignment) == MirType.I32
+        && HighLevelIrAssignmentValue(assignment).Equals(secondValue)
+        && assignedValue.Equals(secondValue)
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(403), found)
+        && found.Equals(secondValue)
+        && ValueFactsIntegerRangeIs(localFacts, 25, 26)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, firstValue), 10, 11)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, secondValue), 25, 26);
+}
+
+[Fact]
+fn bool MirLoweringUsesLocalAssignmentResultInEnclosingValueContext()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(410), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral firstLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(411), MirType.I32, 3);
+    stack mut MirValueId firstValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(firstLiteral, builder, symbols, instructions, valueFacts, firstValue)))
+    {
+        return System.Testing.Fail("lower-first");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(412), MirType.I32, firstValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack HighLevelIrLiteral secondLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(413), MirType.I32, 4);
+    stack mut MirValueId secondValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(secondLiteral, builder, symbols, instructions, valueFacts, secondValue)))
+    {
+        return System.Testing.Fail("lower-second");
+    }
+
+    stack HighLevelIrAssignment assignment = HighLevelIrAssignmentOf(SymbolIdOf(412), MirType.I32, secondValue);
+    stack mut MirValueId assignedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrAssignment(assignment, builder, symbols, instructions, valueFacts, assignedValue)))
+    {
+        return System.Testing.Fail("assign");
+    }
+
+    stack HighLevelIrLiteral extraLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(414), MirType.I32, 5);
+    stack mut MirValueId extraValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(extraLiteral, builder, symbols, instructions, valueFacts, extraValue)))
+    {
+        return System.Testing.Fail("lower-extra");
+    }
+
+    stack HighLevelIrBinaryOp addOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(415), HighLevelIrBinaryOpKind.Add, MirType.I32, assignedValue, extraValue);
+    stack mut MirValueId sum = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(addOp, builder, symbols, instructions, valueFacts, sum)))
+    {
+        return System.Testing.Fail("lower-add");
+    }
+
+    stack HighLevelIrReturn ret = HighLevelIrReturnOf(MirType.I32, sum);
+    stack mut MirBlockId returnBlock = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrReturn(ret, builder, blocks, instructions, valueFacts, returnBlock)))
+    {
+        return System.Testing.Fail("lower-return");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    stack mut MirValueId foundLocal = new();
+    return assignedValue.Equals(secondValue)
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(412), foundLocal)
+        && foundLocal.Equals(secondValue)
+        && instructions.Count() == 4
+        && valueFacts.Count() == 4
+        && blocks.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 4
+        && MirFunctionBuilderBlockCount(builder) == 1
+        && MirOpcodeOf(instructions, sum) == MirOp.Add
+        && MirValueType(instructions, sum.Index()) == MirType.I32
+        && MirBlockTerminator(blocks, returnBlock) == MirTermKind.Return
+        && MirBlockReturnValue(blocks, returnBlock).Equals(sum)
+        && function.Index() == 1
+        && MirFunctionEntry(functions, function).Equals(returnBlock)
+        && MirFunctionBlockCount(functions, function) == 1
+        && MirFunctionInstrCount(functions, function) == 4
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(412)), 4, 5)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(415)), 9, 10)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, sum), 9, 10);
+}
+
+[Fact]
+fn bool MirLoweringRejectsInvalidLocalAssignmentWithoutRebinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(405), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrParameter parameter =
+        HighLevelIrParameterOf(SymbolIdOf(406), 0, MirType.I32, new ValueFacts());
+    stack mut MirValueId parameterValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(parameter, builder, symbols, instructions, valueFacts, parameterValue)))
+    {
+        return System.Testing.Fail("lower-parameter");
+    }
+
+    stack HighLevelIrLiteral localLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(407), MirType.I32, 5);
+    stack mut MirValueId localValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(localLiteral, builder, symbols, instructions, valueFacts, localValue)))
+    {
+        return System.Testing.Fail("lower-local-value");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(408), MirType.I32, localValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack HighLevelIrLiteral wideLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(409), MirType.I64, 9);
+    stack mut MirValueId wideValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(wideLiteral, builder, symbols, instructions, valueFacts, wideValue)))
+    {
+        return System.Testing.Fail("lower-wide");
+    }
+
+    stack mut MirValueId rejectedParamAssignment = new();
+    stack MirBuilderStatus parameterStatus = LowerHighLevelIrAssignment(
+        HighLevelIrAssignmentOf(SymbolIdOf(406), MirType.I32, localValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedParamAssignment);
+
+    stack mut MirValueId rejectedTypeAssignment = new();
+    stack MirBuilderStatus typeStatus = LowerHighLevelIrAssignment(
+        HighLevelIrAssignmentOf(SymbolIdOf(408), MirType.I32, wideValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedTypeAssignment);
+
+    stack mut MirValueId foundLocal = new();
+    return MirBuilderStatusErrIs(parameterStatus, MirBuilderError.InvalidSymbol)
+        && MirBuilderStatusErrIs(typeStatus, MirBuilderError.TypeMismatch)
+        && !rejectedParamAssignment.IsValid()
+        && !rejectedTypeAssignment.IsValid()
+        && instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(408), foundLocal)
+        && foundLocal.Equals(localValue)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(408)), 5, 6)
+        && symbols.KindAt(SymbolIdOf(406)) == MirLoweringSymbolKind.Parameter;
+}
+
+[Fact]
+fn bool MirLoweringRejectsAssignmentFactsOutsideTypeWithoutRebinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(416), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral localLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(417), MirType.I32, 5);
+    stack mut MirValueId localValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(localLiteral, builder, symbols, instructions, valueFacts, localValue)))
+    {
+        return System.Testing.Fail("lower-local");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(418), MirType.I32, localValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack MirValueId badValue = MirConstIntTyped(instructions, MirType.I32, 6);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, badValue)))
+    {
+        return System.Testing.Fail("record-bad");
+    }
+
+    stack mut ValueFacts badFacts = new();
+    badFacts.MarkKnownNonNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, badValue, badFacts))
+    {
+        return System.Testing.Fail("facts-bad");
+    }
+
+    stack mut MirValueId rejectedAssignment = new();
+    stack MirBuilderStatus status = LowerHighLevelIrAssignment(
+        HighLevelIrAssignmentOf(SymbolIdOf(418), MirType.I32, badValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedAssignment);
+
+    stack mut MirValueId foundLocal = new();
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && !rejectedAssignment.IsValid()
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(418), foundLocal)
+        && foundLocal.Equals(localValue)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(418)), 5, 6);
+}
+
+[Fact]
+fn bool MirLoweringLowersCompoundAssignmentsWithCheckedWrappingAndSaturatingFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(450), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack i64[min max] i32Min = (i64[min max])(-(2 ** 31));
+    stack i64[min max] i32Max = 2147483647;
+    stack i64[min max] i32MaxUpper = (i64[min max])(2 ** 31);
+
+    stack HighLevelIrLiteral initialLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(451), MirType.I32, 10);
+    stack mut MirValueId initialValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(initialLiteral, builder, symbols, instructions, valueFacts, initialValue)))
+    {
+        return System.Testing.Fail("lower-initial");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(452), MirType.I32, initialValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack HighLevelIrLiteral fiveLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(453), MirType.I32, 5);
+    stack mut MirValueId fiveValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(fiveLiteral, builder, symbols, instructions, valueFacts, fiveValue)))
+    {
+        return System.Testing.Fail("lower-five");
+    }
+
+    stack HighLevelIrCompoundAssignment checked =
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(452), HighLevelIrBinaryOpKind.Add, MirType.I32, fiveValue);
+    stack mut MirValueId checkedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCompoundAssignment(checked, builder, symbols, instructions, valueFacts, checkedValue)))
+    {
+        return System.Testing.Fail("compound-add");
+    }
+
+    stack HighLevelIrLiteral maxLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(454), MirType.I32, i32Max);
+    stack HighLevelIrLiteral oneLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(455), MirType.I32, 1);
+    stack mut MirValueId maxValue = new();
+    stack mut MirValueId oneValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(maxLiteral, builder, symbols, instructions, valueFacts, maxValue)))
+    {
+        return System.Testing.Fail("lower-max");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(oneLiteral, builder, symbols, instructions, valueFacts, oneValue)))
+    {
+        return System.Testing.Fail("lower-one");
+    }
+
+    stack mut MirValueId assignedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrAssignment(
+        HighLevelIrAssignmentOf(SymbolIdOf(452), MirType.I32, maxValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        assignedValue)))
+    {
+        return System.Testing.Fail("assign-max");
+    }
+
+    stack HighLevelIrCompoundAssignment wrapping =
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(452), HighLevelIrBinaryOpKind.WrappingAdd, MirType.I32, oneValue);
+    stack mut MirValueId wrappedValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCompoundAssignment(wrapping, builder, symbols, instructions, valueFacts, wrappedValue)))
+    {
+        return System.Testing.Fail("compound-wrap");
+    }
+
+    stack HighLevelIrLiteral minLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(456), MirType.I32, i32Min);
+    stack mut MirValueId minValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(minLiteral, builder, symbols, instructions, valueFacts, minValue)))
+    {
+        return System.Testing.Fail("lower-min");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrAssignment(
+        HighLevelIrAssignmentOf(SymbolIdOf(452), MirType.I32, minValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        assignedValue)))
+    {
+        return System.Testing.Fail("assign-min");
+    }
+
+    stack HighLevelIrCompoundAssignment saturatingSub =
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(452), HighLevelIrBinaryOpKind.SaturatingSub, MirType.I32, oneValue);
+    stack mut MirValueId satSubValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCompoundAssignment(saturatingSub, builder, symbols, instructions, valueFacts, satSubValue)))
+    {
+        return System.Testing.Fail("compound-sat-sub");
+    }
+
+    stack HighLevelIrLiteral bigLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(457), MirType.I32, 1073741824);
+    stack HighLevelIrLiteral fourLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(458), MirType.I32, 4);
+    stack mut MirValueId bigValue = new();
+    stack mut MirValueId fourValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(bigLiteral, builder, symbols, instructions, valueFacts, bigValue)))
+    {
+        return System.Testing.Fail("lower-big");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(fourLiteral, builder, symbols, instructions, valueFacts, fourValue)))
+    {
+        return System.Testing.Fail("lower-four");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrAssignment(
+        HighLevelIrAssignmentOf(SymbolIdOf(452), MirType.I32, bigValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        assignedValue)))
+    {
+        return System.Testing.Fail("assign-big");
+    }
+
+    stack HighLevelIrCompoundAssignment saturatingMul =
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(452), HighLevelIrBinaryOpKind.SaturatingMul, MirType.I32, fourValue);
+    stack mut MirValueId satMulValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCompoundAssignment(saturatingMul, builder, symbols, instructions, valueFacts, satMulValue)))
+    {
+        return System.Testing.Fail("compound-sat-mul");
+    }
+
+    stack mut MirValueId foundLocal = new();
+    return instructions.Count() == 11
+        && valueFacts.Count() == 11
+        && MirFunctionBuilderInstructionCount(builder) == 11
+        && HighLevelIrCompoundAssignmentTargetSymbol(checked).Equals(SymbolIdOf(452))
+        && HighLevelIrCompoundAssignmentKind(checked) == HighLevelIrBinaryOpKind.Add
+        && HighLevelIrCompoundAssignmentType(checked) == MirType.I32
+        && HighLevelIrCompoundAssignmentRight(checked).Equals(fiveValue)
+        && MirOpcodeOf(instructions, checkedValue) == MirOp.Add
+        && MirOpcodeOf(instructions, wrappedValue) == MirOp.WrappingAdd
+        && MirOpcodeOf(instructions, satSubValue) == MirOp.SaturatingSub
+        && MirOpcodeOf(instructions, satMulValue) == MirOp.SaturatingMul
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(452), foundLocal)
+        && foundLocal.Equals(satMulValue)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, checkedValue), 15, 16)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, wrappedValue), i32Min, i32Min + 1)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, satSubValue), i32Min, i32Min + 1)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, satMulValue), i32Max, i32MaxUpper)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(452)), i32Max, i32MaxUpper);
+}
+
+[Fact]
+fn bool MirLoweringRejectsInvalidCompoundAssignmentWithoutRebinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(470), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrParameter parameter =
+        HighLevelIrParameterOf(SymbolIdOf(471), 0, MirType.I32, new ValueFacts());
+    stack mut MirValueId parameterValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrParameter(parameter, builder, symbols, instructions, valueFacts, parameterValue)))
+    {
+        return System.Testing.Fail("lower-parameter");
+    }
+
+    stack HighLevelIrLiteral localLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(472), MirType.I32, 12);
+    stack mut MirValueId localValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(localLiteral, builder, symbols, instructions, valueFacts, localValue)))
+    {
+        return System.Testing.Fail("lower-local");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(473), MirType.I32, localValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack HighLevelIrLiteral wideLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(474), MirType.I64, 2);
+    stack HighLevelIrLiteral zeroLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(475), MirType.I32, 0);
+    stack mut MirValueId wideValue = new();
+    stack mut MirValueId zeroValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(wideLiteral, builder, symbols, instructions, valueFacts, wideValue)))
+    {
+        return System.Testing.Fail("lower-wide");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(zeroLiteral, builder, symbols, instructions, valueFacts, zeroValue)))
+    {
+        return System.Testing.Fail("lower-zero");
+    }
+
+    stack mut MirValueId rejectedParameter = new();
+    stack MirBuilderStatus parameterStatus = LowerHighLevelIrCompoundAssignment(
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(471), HighLevelIrBinaryOpKind.Add, MirType.I32, zeroValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedParameter);
+
+    stack mut MirValueId rejectedType = new();
+    stack MirBuilderStatus typeStatus = LowerHighLevelIrCompoundAssignment(
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(473), HighLevelIrBinaryOpKind.Add, MirType.I32, wideValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedType);
+
+    stack mut MirValueId rejectedZero = new();
+    stack MirBuilderStatus zeroStatus = LowerHighLevelIrCompoundAssignment(
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(473), HighLevelIrBinaryOpKind.SDiv, MirType.I32, zeroValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedZero);
+
+    stack mut MirValueId foundLocal = new();
+    return MirBuilderStatusErrIs(parameterStatus, MirBuilderError.InvalidSymbol)
+        && MirBuilderStatusErrIs(typeStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(zeroStatus, MirBuilderError.InvalidBuilderState)
+        && !rejectedParameter.IsValid()
+        && !rejectedType.IsValid()
+        && !rejectedZero.IsValid()
+        && instructions.Count() == 4
+        && valueFacts.Count() == 4
+        && MirFunctionBuilderInstructionCount(builder) == 4
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(473), foundLocal)
+        && foundLocal.Equals(localValue)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(473)), 12, 13)
+        && symbols.KindAt(SymbolIdOf(471)) == MirLoweringSymbolKind.Parameter;
+}
+
+[Fact]
+fn bool MirLoweringRejectsCompoundAssignmentOperandFactsOutsideTypeWithoutRebinding()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(480), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral initialLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(481), MirType.I32, 12);
+    stack mut MirValueId localValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(initialLiteral, builder, symbols, instructions, valueFacts, localValue)))
+    {
+        return System.Testing.Fail("lower-local");
+    }
+
+    stack HighLevelIrLocalAlias local = HighLevelIrLocalAliasOf(SymbolIdOf(482), MirType.I32, localValue);
+    if (!MirBuilderStatusOk(LowerHighLevelIrLocalAlias(local, builder, symbols, instructions, valueFacts)))
+    {
+        return System.Testing.Fail("bind-local");
+    }
+
+    stack MirValueId badRightValue = MirConstIntTyped(instructions, MirType.I32, 1);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, badRightValue)))
+    {
+        return System.Testing.Fail("record-bad-right");
+    }
+
+    stack mut ValueFacts badRightFacts = new();
+    badRightFacts.MarkKnownNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, badRightValue, badRightFacts))
+    {
+        return System.Testing.Fail("facts-bad-right");
+    }
+
+    stack mut MirValueId rejectedRight = new();
+    stack MirBuilderStatus rightStatus = LowerHighLevelIrCompoundAssignment(
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(482), HighLevelIrBinaryOpKind.Add, MirType.I32, badRightValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedRight);
+
+    stack mut MirValueId afterRight = new();
+    stack bool rightKeptLocal =
+        TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(482), afterRight)
+        && afterRight.Equals(localValue);
+
+    stack MirValueId badLeftValue = MirConstIntTyped(instructions, MirType.I32, 4);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, badLeftValue)))
+    {
+        return System.Testing.Fail("record-bad-left");
+    }
+
+    stack mut ValueFacts badLeftFacts = new();
+    badLeftFacts.SetIntegerRange(2147483648, 2147483649);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, badLeftValue, badLeftFacts))
+    {
+        return System.Testing.Fail("facts-bad-left");
+    }
+
+    if (!MirBuilderStatusOk(RebindMirLoweringLocalValueSymbol(symbols, SymbolIdOf(482), badLeftValue, badLeftFacts)))
+    {
+        return System.Testing.Fail("rebind-bad-left");
+    }
+
+    stack HighLevelIrLiteral validRightLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(483), MirType.I32, 2);
+    stack mut MirValueId validRightValue = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(validRightLiteral, builder, symbols, instructions, valueFacts, validRightValue)))
+    {
+        return System.Testing.Fail("lower-valid-right");
+    }
+
+    stack mut MirValueId rejectedLeft = new();
+    stack MirBuilderStatus leftStatus = LowerHighLevelIrCompoundAssignment(
+        HighLevelIrCompoundAssignmentOf(SymbolIdOf(482), HighLevelIrBinaryOpKind.Add, MirType.I32, validRightValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        rejectedLeft);
+
+    stack mut MirValueId foundLocal = new();
+    return MirBuilderStatusErrIs(rightStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(leftStatus, MirBuilderError.TypeMismatch)
+        && !rejectedRight.IsValid()
+        && !rejectedLeft.IsValid()
+        && rightKeptLocal
+        && TryFindMirLoweringValueSymbol(symbols, SymbolIdOf(482), foundLocal)
+        && foundLocal.Equals(badLeftValue)
+        && instructions.Count() == 4
+        && valueFacts.Count() == 4
+        && MirFunctionBuilderInstructionCount(builder) == 4;
+}
+
+[Fact]
+fn bool MirLoweringLowersTypedIntegerArithmeticAndComparisonWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(39), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral leftLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(20), MirType.I32, 4);
+    stack HighLevelIrLiteral rightLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(21), MirType.I32, 6);
+    stack mut MirValueId left = new();
+    stack mut MirValueId right = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(leftLiteral, builder, symbols, instructions, valueFacts, left)))
+    {
+        return System.Testing.Fail("lower-left");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(rightLiteral, builder, symbols, instructions, valueFacts, right)))
+    {
+        return System.Testing.Fail("lower-right");
+    }
+
+    stack HighLevelIrBinaryOp addOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(22), HighLevelIrBinaryOpKind.Add, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp subOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(23), HighLevelIrBinaryOpKind.Sub, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp mulOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(24), HighLevelIrBinaryOpKind.Mul, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp cmpOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(25), HighLevelIrBinaryOpKind.CmpLt, MirType.I1, left, right);
+    stack mut MirValueId sum = new();
+    stack mut MirValueId diff = new();
+    stack mut MirValueId product = new();
+    stack mut MirValueId cmp = new();
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(addOp, builder, symbols, instructions, valueFacts, sum)))
+    {
+        return System.Testing.Fail("lower-add");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(subOp, builder, symbols, instructions, valueFacts, diff)))
+    {
+        return System.Testing.Fail("lower-sub");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(mulOp, builder, symbols, instructions, valueFacts, product)))
+    {
+        return System.Testing.Fail("lower-mul");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(cmpOp, builder, symbols, instructions, valueFacts, cmp)))
+    {
+        return System.Testing.Fail("lower-cmp");
+    }
+
+    return instructions.Count() == 6
+        && valueFacts.Count() == 6
+        && MirFunctionBuilderInstructionCount(builder) == 6
+        && HighLevelIrBinaryOpSymbol(addOp).Equals(SymbolIdOf(22))
+        && HighLevelIrBinaryOpKindAt(addOp) == HighLevelIrBinaryOpKind.Add
+        && HighLevelIrBinaryOpType(addOp) == MirType.I32
+        && HighLevelIrBinaryOpLeft(addOp).Equals(left)
+        && HighLevelIrBinaryOpRight(addOp).Equals(right)
+        && MirOpcodeOf(instructions, sum) == MirOp.Add
+        && MirOpcodeOf(instructions, diff) == MirOp.Sub
+        && MirOpcodeOf(instructions, product) == MirOp.Mul
+        && MirOpcodeOf(instructions, cmp) == MirOp.CmpLt
+        && MirValueType(instructions, sum.Index()) == MirType.I32
+        && MirValueType(instructions, diff.Index()) == MirType.I32
+        && MirValueType(instructions, product.Index()) == MirType.I32
+        && MirValueType(instructions, cmp.Index()) == MirType.I1
+        && symbols.KindAt(SymbolIdOf(22)) == MirLoweringSymbolKind.Temporary
+        && symbols.KindAt(SymbolIdOf(25)) == MirLoweringSymbolKind.Temporary
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, sum), 10, 11)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, diff), -2, -1)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, product), 24, 25)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, cmp), 0, 2)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(22)), 10, 11)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(25)), 0, 2)
+        && System.Text.Equals(HighLevelIrBinaryOpKindName(HighLevelIrBinaryOpKind.CmpLt), "cmp-lt");
+}
+
+[Fact]
+fn bool MirLoweringLowersTypedIntegerExtendedOpsWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(41), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral leftLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(42), MirType.I32, 20);
+    stack HighLevelIrLiteral rightLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(43), MirType.I32, 6);
+    stack mut MirValueId left = new();
+    stack mut MirValueId right = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(leftLiteral, builder, symbols, instructions, valueFacts, left)))
+    {
+        return System.Testing.Fail("lower-left");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(rightLiteral, builder, symbols, instructions, valueFacts, right)))
+    {
+        return System.Testing.Fail("lower-right");
+    }
+
+    stack HighLevelIrBinaryOp sdivOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(44), HighLevelIrBinaryOpKind.SDiv, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp udivOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(45), HighLevelIrBinaryOpKind.UDiv, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp sremOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(46), HighLevelIrBinaryOpKind.SRem, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp andOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(47), HighLevelIrBinaryOpKind.And, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp orOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(48), HighLevelIrBinaryOpKind.Or, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp xorOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(49), HighLevelIrBinaryOpKind.Xor, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp shlOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(50), HighLevelIrBinaryOpKind.Shl, MirType.I32, left, right);
+    stack HighLevelIrBinaryOp ashrOp =
+        HighLevelIrBinaryOpOf(SymbolIdOf(51), HighLevelIrBinaryOpKind.AShr, MirType.I32, left, right);
+
+    stack mut MirValueId sdiv = new();
+    stack mut MirValueId udiv = new();
+    stack mut MirValueId srem = new();
+    stack mut MirValueId andValue = new();
+    stack mut MirValueId orValue = new();
+    stack mut MirValueId xorValue = new();
+    stack mut MirValueId shl = new();
+    stack mut MirValueId ashr = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(sdivOp, builder, symbols, instructions, valueFacts, sdiv)))
+    {
+        return System.Testing.Fail("lower-sdiv");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(udivOp, builder, symbols, instructions, valueFacts, udiv)))
+    {
+        return System.Testing.Fail("lower-udiv");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(sremOp, builder, symbols, instructions, valueFacts, srem)))
+    {
+        return System.Testing.Fail("lower-srem");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(andOp, builder, symbols, instructions, valueFacts, andValue)))
+    {
+        return System.Testing.Fail("lower-and");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(orOp, builder, symbols, instructions, valueFacts, orValue)))
+    {
+        return System.Testing.Fail("lower-or");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(xorOp, builder, symbols, instructions, valueFacts, xorValue)))
+    {
+        return System.Testing.Fail("lower-xor");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(shlOp, builder, symbols, instructions, valueFacts, shl)))
+    {
+        return System.Testing.Fail("lower-shl");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(ashrOp, builder, symbols, instructions, valueFacts, ashr)))
+    {
+        return System.Testing.Fail("lower-ashr");
+    }
+
+    return instructions.Count() == 10
+        && valueFacts.Count() == 10
+        && MirFunctionBuilderInstructionCount(builder) == 10
+        && MirOpcodeOf(instructions, sdiv) == MirOp.SDiv
+        && MirOpcodeOf(instructions, udiv) == MirOp.UDiv
+        && MirOpcodeOf(instructions, srem) == MirOp.SRem
+        && MirOpcodeOf(instructions, andValue) == MirOp.And
+        && MirOpcodeOf(instructions, orValue) == MirOp.Or
+        && MirOpcodeOf(instructions, xorValue) == MirOp.Xor
+        && MirOpcodeOf(instructions, shl) == MirOp.Shl
+        && MirOpcodeOf(instructions, ashr) == MirOp.AShr
+        && MirValueType(instructions, shl.Index()) == MirType.I32
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, sdiv), 3, 4)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, udiv), 3, 4)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, srem), 2, 3)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, andValue), 4, 5)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, orValue), 22, 23)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, xorValue), 18, 19)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, shl), 1280, 1281)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, ashr), 0, 1)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(50)), 1280, 1281)
+        && System.Text.Equals(HighLevelIrBinaryOpKindName(HighLevelIrBinaryOpKind.AShr), "ashr");
+}
+
+[Fact]
+fn bool MirLoweringLowersExplicitWrappingAndSaturatingArithmeticWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(430), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack i64[min max] i32Min = (i64[min max])(-(2 ** 31));
+    stack i64[min max] i32Max = 2147483647;
+    stack i64[min max] i32MaxUpper = (i64[min max])(2 ** 31);
+
+    stack HighLevelIrLiteral maxLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(431), MirType.I32, i32Max);
+    stack HighLevelIrLiteral oneLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(432), MirType.I32, 1);
+    stack HighLevelIrLiteral minLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(433), MirType.I32, i32Min);
+    stack HighLevelIrLiteral bigLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(434), MirType.I32, 1073741824);
+    stack HighLevelIrLiteral fourLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(435), MirType.I32, 4);
+    stack mut MirValueId maxValue = new();
+    stack mut MirValueId oneValue = new();
+    stack mut MirValueId minValue = new();
+    stack mut MirValueId bigValue = new();
+    stack mut MirValueId fourValue = new();
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(maxLiteral, builder, symbols, instructions, valueFacts, maxValue)))
+    {
+        return System.Testing.Fail("lower-max");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(oneLiteral, builder, symbols, instructions, valueFacts, oneValue)))
+    {
+        return System.Testing.Fail("lower-one");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(minLiteral, builder, symbols, instructions, valueFacts, minValue)))
+    {
+        return System.Testing.Fail("lower-min");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(bigLiteral, builder, symbols, instructions, valueFacts, bigValue)))
+    {
+        return System.Testing.Fail("lower-big");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(fourLiteral, builder, symbols, instructions, valueFacts, fourValue)))
+    {
+        return System.Testing.Fail("lower-four");
+    }
+
+    stack mut MirValueId wrapAdd = new();
+    stack mut MirValueId wrapSub = new();
+    stack mut MirValueId wrapMul = new();
+    stack mut MirValueId satAdd = new();
+    stack mut MirValueId satSub = new();
+    stack mut MirValueId satMul = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(
+        HighLevelIrBinaryOpOf(SymbolIdOf(436), HighLevelIrBinaryOpKind.WrappingAdd, MirType.I32, maxValue, oneValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        wrapAdd)))
+    {
+        return System.Testing.Fail("lower-wrap-add");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(
+        HighLevelIrBinaryOpOf(SymbolIdOf(437), HighLevelIrBinaryOpKind.WrappingSub, MirType.I32, minValue, oneValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        wrapSub)))
+    {
+        return System.Testing.Fail("lower-wrap-sub");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(
+        HighLevelIrBinaryOpOf(SymbolIdOf(438), HighLevelIrBinaryOpKind.WrappingMul, MirType.I32, bigValue, fourValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        wrapMul)))
+    {
+        return System.Testing.Fail("lower-wrap-mul");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(
+        HighLevelIrBinaryOpOf(SymbolIdOf(439), HighLevelIrBinaryOpKind.SaturatingAdd, MirType.I32, maxValue, oneValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        satAdd)))
+    {
+        return System.Testing.Fail("lower-sat-add");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(
+        HighLevelIrBinaryOpOf(SymbolIdOf(440), HighLevelIrBinaryOpKind.SaturatingSub, MirType.I32, minValue, oneValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        satSub)))
+    {
+        return System.Testing.Fail("lower-sat-sub");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrBinaryOp(
+        HighLevelIrBinaryOpOf(SymbolIdOf(441), HighLevelIrBinaryOpKind.SaturatingMul, MirType.I32, bigValue, fourValue),
+        builder,
+        symbols,
+        instructions,
+        valueFacts,
+        satMul)))
+    {
+        return System.Testing.Fail("lower-sat-mul");
+    }
+
+    return instructions.Count() == 11
+        && valueFacts.Count() == 11
+        && MirFunctionBuilderInstructionCount(builder) == 11
+        && MirOpcodeOf(instructions, wrapAdd) == MirOp.WrappingAdd
+        && MirOpcodeOf(instructions, wrapSub) == MirOp.WrappingSub
+        && MirOpcodeOf(instructions, wrapMul) == MirOp.WrappingMul
+        && MirOpcodeOf(instructions, satAdd) == MirOp.SaturatingAdd
+        && MirOpcodeOf(instructions, satSub) == MirOp.SaturatingSub
+        && MirOpcodeOf(instructions, satMul) == MirOp.SaturatingMul
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, wrapAdd), i32Min, i32Min + 1)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, wrapSub), i32Max, i32MaxUpper)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, wrapMul), 0, 1)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, satAdd), i32Max, i32MaxUpper)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, satSub), i32Min, i32Min + 1)
+        && ValueFactsIntegerRangeIs(ValueFactsForMirValue(valueFacts, satMul), i32Max, i32MaxUpper)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(436)), i32Min, i32Min + 1)
+        && ValueFactsIntegerRangeIs(symbols.FactsAt(SymbolIdOf(441)), i32Max, i32MaxUpper)
+        && System.Text.Equals(HighLevelIrBinaryOpKindName(HighLevelIrBinaryOpKind.WrappingAdd), "wrapping-add")
+        && System.Text.Equals(HighLevelIrBinaryOpKindName(HighLevelIrBinaryOpKind.SaturatingMul), "saturating-mul");
+}
+
+[Fact]
+fn bool MirLoweringRejectsExactInvalidExtendedIntegerFactsWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(52), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral leftLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(53), MirType.I32, 7);
+    stack HighLevelIrLiteral zeroLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(54), MirType.I32, 0);
+    stack mut MirValueId left = new();
+    stack mut MirValueId zero = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(leftLiteral, builder, symbols, instructions, valueFacts, left)))
+    {
+        return System.Testing.Fail("lower-left");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(zeroLiteral, builder, symbols, instructions, valueFacts, zero)))
+    {
+        return System.Testing.Fail("lower-zero");
+    }
+
+    stack HighLevelIrBinaryOp op =
+        HighLevelIrBinaryOpOf(SymbolIdOf(55), HighLevelIrBinaryOpKind.SDiv, MirType.I32, left, zero);
+    stack mut MirValueId result = new();
+    stack MirBuilderStatus status =
+        LowerHighLevelIrBinaryOp(op, builder, symbols, instructions, valueFacts, result);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.InvalidBuilderState)
+        && !result.IsValid()
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && symbols.KindAt(SymbolIdOf(55)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringRejectsBinaryOperandFactsOutsideTypeWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(484), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId scalarLeft = MirConstIntTyped(instructions, MirType.I32, 8);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, scalarLeft)))
+    {
+        return System.Testing.Fail("record-scalar");
+    }
+
+    stack mut ValueFacts scalarLeftFacts = new();
+    scalarLeftFacts.MarkKnownNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, scalarLeft, scalarLeftFacts))
+    {
+        return System.Testing.Fail("facts-scalar");
+    }
+
+    stack MirValueId right = MirConstIntTyped(instructions, MirType.I32, 1);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, right)))
+    {
+        return System.Testing.Fail("record-right");
+    }
+
+    stack mut ValueFacts rightFacts = new();
+    rightFacts.SetIntegerRange(1, 2);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, right, rightFacts))
+    {
+        return System.Testing.Fail("facts-right");
+    }
+
+    stack mut MirValueId scalarResult = new();
+    stack MirBuilderStatus scalarStatus =
+        LowerHighLevelIrBinaryOp(
+            HighLevelIrBinaryOpOf(SymbolIdOf(485), HighLevelIrBinaryOpKind.Add, MirType.I32, scalarLeft, right),
+            builder,
+            symbols,
+            instructions,
+            valueFacts,
+            scalarResult);
+
+    stack MirValueId wideLeft = MirConstIntTyped(instructions, MirType.I32, 9);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, wideLeft)))
+    {
+        return System.Testing.Fail("record-wide");
+    }
+
+    stack mut ValueFacts wideLeftFacts = new();
+    wideLeftFacts.SetIntegerRange(2147483648, 2147483649);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, wideLeft, wideLeftFacts))
+    {
+        return System.Testing.Fail("facts-wide");
+    }
+
+    stack mut MirValueId wideResult = new();
+    stack MirBuilderStatus wideStatus =
+        LowerHighLevelIrBinaryOp(
+            HighLevelIrBinaryOpOf(SymbolIdOf(486), HighLevelIrBinaryOpKind.Add, MirType.I32, wideLeft, right),
+            builder,
+            symbols,
+            instructions,
+            valueFacts,
+            wideResult);
+
+    return MirBuilderStatusErrIs(scalarStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(wideStatus, MirBuilderError.TypeMismatch)
+        && !scalarResult.IsValid()
+        && !wideResult.IsValid()
+        && instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && symbols.KindAt(SymbolIdOf(485)) == MirLoweringSymbolKind.Unknown
+        && symbols.KindAt(SymbolIdOf(486)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringLowersTypedDirectCallWithResultFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(56), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral leftLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(57), MirType.I32, 11);
+    stack HighLevelIrLiteral rightLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(58), MirType.I32, 31);
+    stack mut MirValueId left = new();
+    stack mut MirValueId right = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(leftLiteral, builder, symbols, instructions, valueFacts, left)))
+    {
+        return System.Testing.Fail("lower-left");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(rightLiteral, builder, symbols, instructions, valueFacts, right)))
+    {
+        return System.Testing.Fail("lower-right");
+    }
+
+    stack mut ValueFacts resultFacts = new();
+    resultFacts.SetIntegerRange(42, 43);
+    resultFacts.SetAlignment(4);
+    resultFacts.SetCallingAbi(AbiKind.CAbi);
+    resultFacts.MarkNoAlias();
+    resultFacts.MarkVolatile();
+    stack HighLevelIrCall call =
+        HighLevelIrCallOf(SymbolIdOf(59), MirFuncIdOf(7), MirType.I32, 2, left, right, MirValueIdOf(0), MirValueIdOf(0), resultFacts);
+    stack mut MirValueId result = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(call, builder, symbols, instructions, valueFacts, result)))
+    {
+        return System.Testing.Fail("lower-call");
+    }
+
+    stack ValueFacts tableFacts = ValueFactsForMirValue(valueFacts, result);
+    stack ValueFacts symbolFacts = symbols.FactsAt(SymbolIdOf(59));
+    return instructions.Count() == 3
+        && valueFacts.Count() == 3
+        && MirFunctionBuilderInstructionCount(builder) == 3
+        && HighLevelIrCallSymbol(call).Equals(SymbolIdOf(59))
+        && HighLevelIrCallCallee(call).Equals(MirFuncIdOf(7))
+        && HighLevelIrCallType(call) == MirType.I32
+        && HighLevelIrCallArgumentCount(call) == 2
+        && HighLevelIrCallArgumentAt(call, 0).Equals(left)
+        && HighLevelIrCallArgumentAt(call, 1).Equals(right)
+        && HighLevelIrCallFacts(call).IntegerRangeLower() == 42
+        && MirOpcodeOf(instructions, result) == MirOp.Call
+        && MirCalleeOf(instructions, result).Equals(MirFuncIdOf(7))
+        && MirOperandAOf(instructions, result).Equals(left)
+        && MirOperandBOf(instructions, result).Equals(right)
+        && MirValueType(instructions, result.Index()) == MirType.I32
+        && ValueFactsIntegerRangeIs(tableFacts, 42, 43)
+        && tableFacts.HasAlignment()
+        && tableFacts.AlignmentBytes() == 4
+        && tableFacts.HasCallingAbi()
+        && tableFacts.CallingAbi() == AbiKind.CAbi
+        && tableFacts.HasNoAlias()
+        && tableFacts.Volatile()
+        && ValueFactsIntegerRangeIs(symbolFacts, 42, 43)
+        && symbolFacts.HasAlignment()
+        && symbolFacts.AlignmentBytes() == 4
+        && symbolFacts.HasCallingAbi()
+        && symbolFacts.CallingAbi() == AbiKind.CAbi
+        && symbolFacts.HasNoAlias()
+        && symbolFacts.Volatile();
+}
+
+[Fact]
+fn bool MirLoweringLowersPointerDirectCallWithNullabilityFact()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(62), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts resultFacts = new();
+    resultFacts.SetAlignment(8);
+    resultFacts.MarkNoAlias();
+    resultFacts.MarkKnownNonNull();
+    stack HighLevelIrCall call =
+        HighLevelIrCallOf(SymbolIdOf(63), MirFuncIdOf(9), MirType.Ptr, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), resultFacts);
+    stack mut MirValueId result = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrCall(call, builder, symbols, instructions, valueFacts, result)))
+    {
+        return System.Testing.Fail("lower-call");
+    }
+
+    stack ValueFacts tableFacts = ValueFactsForMirValue(valueFacts, result);
+    stack ValueFacts symbolFacts = symbols.FactsAt(SymbolIdOf(63));
+    return instructions.Count() == 1
+        && valueFacts.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 1
+        && MirOpcodeOf(instructions, result) == MirOp.Call
+        && MirCalleeOf(instructions, result).Equals(MirFuncIdOf(9))
+        && MirValueType(instructions, result.Index()) == MirType.Ptr
+        && tableFacts.HasAlignment()
+        && tableFacts.AlignmentBytes() == 8
+        && tableFacts.HasNoAlias()
+        && ValueFactsKnownNonNull(tableFacts)
+        && symbolFacts.HasAlignment()
+        && symbolFacts.AlignmentBytes() == 8
+        && symbolFacts.HasNoAlias()
+        && ValueFactsKnownNonNull(symbolFacts);
+}
+
+[Fact]
+fn bool MirLoweringRejectsCallResultFactsOutsideResultTypeWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(60), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts resultFacts = new();
+    resultFacts.SetIntegerRange(2147483648, 2147483649);
+    stack HighLevelIrCall call =
+        HighLevelIrCallOf(SymbolIdOf(61), MirFuncIdOf(8), MirType.I32, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), resultFacts);
+    stack mut MirValueId result = new();
+    stack MirBuilderStatus status = LowerHighLevelIrCall(call, builder, symbols, instructions, valueFacts, result);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && !result.IsValid()
+        && instructions.Count() == 0
+        && valueFacts.Count() == 0
+        && MirFunctionBuilderInstructionCount(builder) == 0
+        && symbols.KindAt(SymbolIdOf(61)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringRejectsScalarNullabilityCallResultWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(66), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack mut ValueFacts resultFacts = new();
+    resultFacts.MarkKnownNonNull();
+    stack HighLevelIrCall call =
+        HighLevelIrCallOf(SymbolIdOf(67), MirFuncIdOf(10), MirType.I32, 0, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), resultFacts);
+    stack mut MirValueId result = new();
+    stack MirBuilderStatus status = LowerHighLevelIrCall(call, builder, symbols, instructions, valueFacts, result);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && !result.IsValid()
+        && instructions.Count() == 0
+        && valueFacts.Count() == 0
+        && MirFunctionBuilderInstructionCount(builder) == 0
+        && symbols.KindAt(SymbolIdOf(67)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringRejectsCallArgumentFactsOutsideTypeWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(460), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId scalarArgument = MirConstIntTyped(instructions, MirType.I32, 8);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, scalarArgument)))
+    {
+        return System.Testing.Fail("record-scalar");
+    }
+
+    stack mut ValueFacts scalarArgumentFacts = new();
+    scalarArgumentFacts.MarkKnownNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, scalarArgument, scalarArgumentFacts))
+    {
+        return System.Testing.Fail("facts-scalar");
+    }
+
+    stack mut ValueFacts scalarResultFacts = new();
+    scalarResultFacts.SetIntegerRange(0, 1);
+    stack mut MirValueId scalarResult = new();
+    stack MirBuilderStatus scalarStatus =
+        LowerHighLevelIrCall(
+            HighLevelIrCallOf(
+                SymbolIdOf(461),
+                MirFuncIdOf(21),
+                MirType.I32,
+                1,
+                scalarArgument,
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                scalarResultFacts),
+            builder,
+            symbols,
+            instructions,
+            valueFacts,
+            scalarResult);
+
+    stack MirValueId pointerArgument = MirConstNullPtr(instructions);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, pointerArgument)))
+    {
+        return System.Testing.Fail("record-pointer");
+    }
+
+    stack mut ValueFacts pointerArgumentFacts = new();
+    pointerArgumentFacts.SetIntegerRange(0, 1);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, pointerArgument, pointerArgumentFacts))
+    {
+        return System.Testing.Fail("facts-pointer");
+    }
+
+    stack mut ValueFacts pointerResultFacts = new();
+    stack mut MirValueId pointerResult = new();
+    stack MirBuilderStatus pointerStatus =
+        LowerHighLevelIrCall(
+            HighLevelIrCallOf(
+                SymbolIdOf(462),
+                MirFuncIdOf(22),
+                MirType.Ptr,
+                1,
+                pointerArgument,
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                pointerResultFacts),
+            builder,
+            symbols,
+            instructions,
+            valueFacts,
+            pointerResult);
+
+    return MirBuilderStatusErrIs(scalarStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(pointerStatus, MirBuilderError.TypeMismatch)
+        && !scalarResult.IsValid()
+        && !pointerResult.IsValid()
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && symbols.KindAt(SymbolIdOf(461)) == MirLoweringSymbolKind.Unknown
+        && symbols.KindAt(SymbolIdOf(462)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringLowersBecomeToTailCallBlockWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(64), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral argumentLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(65), MirType.I64, 13);
+    stack mut MirValueId argument = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(argumentLiteral, builder, symbols, instructions, valueFacts, argument)))
+    {
+        return System.Testing.Fail("lower-argument");
+    }
+
+    stack mut ValueFacts resultFacts = new();
+    resultFacts.SetIntegerRange(0, 100);
+    stack HighLevelIrBecome tail =
+        HighLevelIrBecomeOf(MirFuncIdOf(12), MirType.I64, 1, argument, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), resultFacts);
+    stack mut MirValueId tailCall = new();
+    stack mut MirBlockId tailBlock = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrBecome(tail, builder, instructions, valueFacts, blocks, tailCall, tailBlock)))
+    {
+        return System.Testing.Fail("lower-become");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    stack ValueFacts tailFacts = ValueFactsForMirValue(valueFacts, tailCall);
+    return HighLevelIrBecomeCallee(tail).Equals(MirFuncIdOf(12))
+        && HighLevelIrBecomeType(tail) == MirType.I64
+        && HighLevelIrBecomeArgumentCount(tail) == 1
+        && HighLevelIrBecomeArgumentAt(tail, 0).Equals(argument)
+        && HighLevelIrBecomeArgumentAt(tail, 1).Equals(MirValueIdOf(0))
+        && ValueFactsIntegerRangeIs(HighLevelIrBecomeFacts(tail), 0, 100)
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && blocks.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && MirFunctionBuilderBlockCount(builder) == 1
+        && MirFunctionBuilderOwnsValue(builder, tailCall)
+        && MirFunctionBuilderOwnsBlock(builder, tailBlock)
+        && MirOpcodeOf(instructions, tailCall) == MirOp.TailCall
+        && MirValueType(instructions, tailCall.Index()) == MirType.I64
+        && MirCalleeOf(instructions, tailCall).Equals(MirFuncIdOf(12))
+        && MirOperandAOf(instructions, tailCall).Equals(argument)
+        && MirBlockTerminator(blocks, tailBlock) == MirTermKind.TailCall
+        && MirBlockTailCallValue(blocks, tailBlock).Equals(tailCall)
+        && function.Index() == 1
+        && MirFunctionEntry(functions, function).Equals(tailBlock)
+        && MirFunctionInstrCount(functions, function) == 2
+        && MirFunctionBlockCount(functions, function) == 1
+        && ValueFactsIntegerRangeIs(tailFacts, 0, 100);
+}
+
+[Fact]
+fn bool MirLoweringLowersTypedBecomeToTailCallBlockWithFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(66), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral argumentLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(67), MirType.I32, 4);
+    stack mut MirValueId argument = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(argumentLiteral, builder, symbols, instructions, valueFacts, argument)))
+    {
+        return System.Testing.Fail("lower-argument");
+    }
+
+    stack mut ValueFacts resultFacts = new();
+    resultFacts.SetIntegerRange(4, 5);
+    stack HighLevelIrBecome tail =
+        HighLevelIrBecomeOf(MirFuncIdOf(13), MirType.I32, 1, argument, MirValueIdOf(0), MirValueIdOf(0), MirValueIdOf(0), resultFacts);
+    stack mut MirValueId tailCall = new();
+    stack mut MirBlockId tailBlock = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrBecome(tail, builder, instructions, valueFacts, blocks, tailCall, tailBlock)))
+    {
+        return System.Testing.Fail("lower-become");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    stack ValueFacts tailFacts = ValueFactsForMirValue(valueFacts, tailCall);
+    return HighLevelIrBecomeType(tail) == MirType.I32
+        && MirValueType(instructions, argument.Index()) == MirType.I32
+        && MirValueType(instructions, tailCall.Index()) == MirType.I32
+        && MirOpcodeOf(instructions, tailCall) == MirOp.TailCall
+        && MirCalleeOf(instructions, tailCall).Equals(MirFuncIdOf(13))
+        && MirOperandAOf(instructions, tailCall).Equals(argument)
+        && MirBlockTerminator(blocks, tailBlock) == MirTermKind.TailCall
+        && MirBlockTailCallValue(blocks, tailBlock).Equals(tailCall)
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && blocks.Count() == 1
+        && function.Index() == 1
+        && MirFunctionEntry(functions, function).Equals(tailBlock)
+        && ValueFactsIntegerRangeIs(tailFacts, 4, 5);
+}
+
+[Fact]
+fn bool MirLoweringRejectsBecomeArgumentFactsOutsideTypeWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(463), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId scalarArgument = MirConstIntTyped(instructions, MirType.I32, 8);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, scalarArgument)))
+    {
+        return System.Testing.Fail("record-scalar");
+    }
+
+    stack mut ValueFacts scalarArgumentFacts = new();
+    scalarArgumentFacts.MarkKnownNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, scalarArgument, scalarArgumentFacts))
+    {
+        return System.Testing.Fail("facts-scalar");
+    }
+
+    stack mut ValueFacts scalarTailFacts = new();
+    scalarTailFacts.SetIntegerRange(0, 1);
+    stack mut MirValueId scalarTailCall = new();
+    stack mut MirBlockId scalarBlock = new();
+    stack MirBuilderStatus scalarStatus =
+        LowerHighLevelIrBecome(
+            HighLevelIrBecomeOf(
+                MirFuncIdOf(23),
+                MirType.I32,
+                1,
+                scalarArgument,
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                scalarTailFacts),
+            builder,
+            instructions,
+            valueFacts,
+            blocks,
+            scalarTailCall,
+            scalarBlock);
+
+    stack MirValueId pointerArgument = MirConstNullPtr(instructions);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, pointerArgument)))
+    {
+        return System.Testing.Fail("record-pointer");
+    }
+
+    stack mut ValueFacts pointerArgumentFacts = new();
+    pointerArgumentFacts.SetIntegerRange(0, 1);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, pointerArgument, pointerArgumentFacts))
+    {
+        return System.Testing.Fail("facts-pointer");
+    }
+
+    stack mut ValueFacts pointerTailFacts = new();
+    stack mut MirValueId pointerTailCall = new();
+    stack mut MirBlockId pointerBlock = new();
+    stack MirBuilderStatus pointerStatus =
+        LowerHighLevelIrBecome(
+            HighLevelIrBecomeOf(
+                MirFuncIdOf(24),
+                MirType.Ptr,
+                1,
+                pointerArgument,
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                MirValueIdOf(0),
+                pointerTailFacts),
+            builder,
+            instructions,
+            valueFacts,
+            blocks,
+            pointerTailCall,
+            pointerBlock);
+
+    return MirBuilderStatusErrIs(scalarStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(pointerStatus, MirBuilderError.TypeMismatch)
+        && !scalarTailCall.IsValid()
+        && !scalarBlock.IsValid()
+        && !pointerTailCall.IsValid()
+        && !pointerBlock.IsValid()
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && blocks.Count() == 0
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && MirFunctionBuilderBlockCount(builder) == 0;
+}
+
+[Fact]
+fn bool MirLoweringRejectsBinaryOperandTypeMismatchWithoutEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(40), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral leftLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(26), MirType.I32, 1);
+    stack HighLevelIrLiteral rightLiteral = HighLevelIrIntegerLiteralOf(SymbolIdOf(27), MirType.I64, 2);
+    stack mut MirValueId left = new();
+    stack mut MirValueId right = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(leftLiteral, builder, symbols, instructions, valueFacts, left)))
+    {
+        return System.Testing.Fail("lower-left");
+    }
+
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(rightLiteral, builder, symbols, instructions, valueFacts, right)))
+    {
+        return System.Testing.Fail("lower-right");
+    }
+
+    stack HighLevelIrBinaryOp op =
+        HighLevelIrBinaryOpOf(SymbolIdOf(28), HighLevelIrBinaryOpKind.Add, MirType.I32, left, right);
+    stack mut MirValueId result = new();
+    stack MirBuilderStatus status =
+        LowerHighLevelIrBinaryOp(op, builder, symbols, instructions, valueFacts, result);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && !result.IsValid()
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && MirFunctionBuilderInstructionCount(builder) == 2
+        && symbols.KindAt(SymbolIdOf(28)) == MirLoweringSymbolKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringLowersValueReturnToMirReturnBlockAndPreservesFacts()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(39), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrIntegerLiteralOf(SymbolIdOf(20), MirType.I32, 64);
+    stack mut MirValueId value = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, value)))
+    {
+        return System.Testing.Fail("lower-literal");
+    }
+
+    stack HighLevelIrReturn ret = HighLevelIrReturnOf(MirType.I32, value);
+    stack mut MirBlockId returnBlock = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrReturn(ret, builder, blocks, instructions, valueFacts, returnBlock)))
+    {
+        return System.Testing.Fail("lower-return");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    stack ValueFacts facts = ValueFactsForMirValue(valueFacts, value);
+    return HighLevelIrReturnType(ret) == MirType.I32
+        && HighLevelIrReturnValue(ret).Equals(value)
+        && instructions.Count() == 1
+        && valueFacts.Count() == 1
+        && blocks.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 1
+        && MirFunctionBuilderBlockCount(builder) == 1
+        && MirFunctionBuilderOwnsValue(builder, value)
+        && MirFunctionBuilderOwnsBlock(builder, returnBlock)
+        && MirBlockTerminator(blocks, returnBlock) == MirTermKind.Return
+        && MirBlockReturnValue(blocks, returnBlock).Equals(value)
+        && function.Index() == 1
+        && MirFunctionEntry(functions, function).Equals(returnBlock)
+        && MirFunctionBlockCount(functions, function) == 1
+        && MirFunctionInstrCount(functions, function) == 1
+        && ValueFactsIntegerRangeIs(facts, 64, 65);
+}
+
+[Fact]
+fn bool MirLoweringLowersVoidReturnToMirReturnVoidBlock()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(400), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrVoidReturn ret = HighLevelIrVoidReturnOf();
+    stack mut MirBlockId returnBlock = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrVoidReturn(ret, builder, blocks, returnBlock)))
+    {
+        return System.Testing.Fail("lower-return");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    return instructions.Count() == 0
+        && blocks.Count() == 1
+        && MirFunctionBuilderInstructionCount(builder) == 0
+        && MirFunctionBuilderBlockCount(builder) == 1
+        && MirFunctionBuilderOwnsBlock(builder, returnBlock)
+        && MirBlockTerminator(blocks, returnBlock) == MirTermKind.ReturnVoid
+        && function.Index() == 1
+        && MirFunctionEntry(functions, function).Equals(returnBlock)
+        && MirFunctionBlockCount(functions, function) == 1
+        && MirFunctionInstrCount(functions, function) == 0;
+}
+
+[Fact]
+fn bool MirLoweringRejectsReturnTypeMismatchWithoutBlockEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+    stack mut MirLoweringSymbolMap symbols = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(40), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack HighLevelIrLiteral literal = HighLevelIrIntegerLiteralOf(SymbolIdOf(21), MirType.I32, 9);
+    stack mut MirValueId value = new();
+    if (!MirBuilderStatusOk(LowerHighLevelIrLiteral(literal, builder, symbols, instructions, valueFacts, value)))
+    {
+        return System.Testing.Fail("lower-literal");
+    }
+
+    stack HighLevelIrReturn ret = HighLevelIrReturnOf(MirType.I64, value);
+    stack mut MirBlockId returnBlock = new();
+    stack MirBuilderStatus status =
+        LowerHighLevelIrReturn(ret, builder, blocks, instructions, valueFacts, returnBlock);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.TypeMismatch)
+        && !returnBlock.IsValid()
+        && instructions.Count() == 1
+        && valueFacts.Count() == 1
+        && blocks.Count() == 0
+        && MirFunctionBuilderBlockCount(builder) == 0;
+}
+
+[Fact]
+fn bool MirLoweringRejectsReturnFactsOutsideTypeWithoutBlockEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(42), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId scalarValue = MirConstIntTyped(instructions, MirType.I32, 8);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, scalarValue)))
+    {
+        return System.Testing.Fail("record-scalar");
+    }
+
+    stack mut ValueFacts scalarFacts = new();
+    scalarFacts.MarkKnownNull();
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, scalarValue, scalarFacts))
+    {
+        return System.Testing.Fail("facts-scalar");
+    }
+
+    stack MirValueId pointerValue = MirConstNullPtr(instructions);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, pointerValue)))
+    {
+        return System.Testing.Fail("record-pointer");
+    }
+
+    stack mut ValueFacts pointerFacts = new();
+    pointerFacts.SetIntegerRange(0, 1);
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, pointerValue, pointerFacts))
+    {
+        return System.Testing.Fail("facts-pointer");
+    }
+
+    stack mut MirBlockId scalarBlock = new();
+    stack MirBuilderStatus scalarStatus =
+        LowerHighLevelIrReturn(
+            HighLevelIrReturnOf(MirType.I32, scalarValue),
+            builder,
+            blocks,
+            instructions,
+            valueFacts,
+            scalarBlock);
+
+    stack mut MirBlockId pointerBlock = new();
+    stack MirBuilderStatus pointerStatus =
+        LowerHighLevelIrReturn(
+            HighLevelIrReturnOf(MirType.Ptr, pointerValue),
+            builder,
+            blocks,
+            instructions,
+            valueFacts,
+            pointerBlock);
+
+    return MirBuilderStatusErrIs(scalarStatus, MirBuilderError.TypeMismatch)
+        && MirBuilderStatusErrIs(pointerStatus, MirBuilderError.TypeMismatch)
+        && !scalarBlock.IsValid()
+        && !pointerBlock.IsValid()
+        && instructions.Count() == 2
+        && valueFacts.Count() == 2
+        && blocks.Count() == 0
+        && MirFunctionBuilderBlockCount(builder) == 0;
+}
+
+[Fact]
+fn bool MirLoweringRejectsReturnWithoutValueFactsBeforeBlockEmission()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut MirFunctionBuilderState builder = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(41), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId value = MirConstIntTyped(instructions, MirType.I64, 10);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, value)))
+    {
+        return System.Testing.Fail("record-value");
+    }
+
+    stack HighLevelIrReturn ret = HighLevelIrReturnOf(MirType.I64, value);
+    stack mut MirBlockId returnBlock = new();
+    stack MirBuilderStatus status =
+        LowerHighLevelIrReturn(ret, builder, blocks, instructions, valueFacts, returnBlock);
+
+    return MirBuilderStatusErrIs(status, MirBuilderError.InvalidBuilderState)
+        && !returnBlock.IsValid()
+        && instructions.Count() == 1
+        && valueFacts.Count() == 0
+        && blocks.Count() == 0
+        && MirFunctionBuilderBlockCount(builder) == 0;
+}
+
+[Fact]
+fn bool HirBoundaryModelsTheHostHighLevelIrPass()
+{
+    stack HirMirLoweringBoundary boundary = SelfHostHirMirLoweringBoundary();
+    stack HirBackendFactSet facts = boundary.RequiredBackendFacts();
+    return boundary.Kind() == HirMirBoundaryKind.HighLevelIrToMidLevelIr
+        && System.Text.Equals(HirMirBoundaryKindName(boundary.Kind()), "high-level-ir-to-mid-level-ir")
+        && boundary.InputArtifact() == CompilerArtifactKind.HighLevelIr
+        && boundary.OutputArtifact() == CompilerArtifactKind.MidLevelIr
+        && HirBackendFactsCoverMirLowering(facts);
+}
+
+[Fact]
+fn bool HighLevelIrModuleStoresFunctionRowsAndBackendFactRequirements()
+{
+    stack mut HighLevelIrModule hirModule = HighLevelIrModuleOf(10);
+    stack HirBackendFactSet fullFacts = RequiredMirLoweringBackendFacts();
+    stack HirBackendFactSet partialFacts = HirBackendFactSetOf(true, false, true, true, true, true, true, true);
+
+    if (!MemoryStatusOk(AppendHighLevelIrFunction(
+        hirModule,
+        HighLevelIrFunctionOf(
+            20,
+            1,
+            2,
+            true,
+            HirFunctionBodyLoweringKind.StarkCfg,
+            false,
+            false,
+            false,
+            fullFacts))))
+    {
+        return System.Testing.Fail("append-body");
+    }
+
+    if (!MemoryStatusOk(AppendHighLevelIrFunction(
+        hirModule,
+        HighLevelIrFunctionOf(
+            21,
+            3,
+            4,
+            false,
+            HirFunctionBodyLoweringKind.DeclarationOnly,
+            true,
+            true,
+            true,
+            partialFacts))))
+    {
+        return System.Testing.Fail("append-template");
+    }
+
+    if (!MemoryStatusOk(AppendHighLevelIrAddressTakenFunction(hirModule, 20)))
+    {
+        return System.Testing.Fail("append-address-taken");
+    }
+
+    stack HighLevelIrFunction body = hirModule.FunctionAt(0);
+    stack HighLevelIrFunction templated = hirModule.FunctionAt(1);
+    stack HighLevelIrFunction missing = hirModule.FunctionAt(2);
+    return hirModule.ModuleNameSymbol() == 10
+        && hirModule.FunctionCount() == 2
+        && hirModule.AddressTakenFunctionCount() == 1
+        && hirModule.AddressTakenFunctionSymbolAt(0) == 20
+        && hirModule.AddressTakenFunctionSymbolAt(1) == 0
+        && body.NameSymbol() == 20
+        && body.SignatureIndexPlusOne() == 1
+        && body.EffectIndexPlusOne() == 2
+        && body.HasBody()
+        && body.BodyLoweringKind() == HirFunctionBodyLoweringKind.StarkCfg
+        && body.HasAllMirLoweringFacts()
+        && System.Text.Equals(HirFunctionBodyLoweringKindName(body.BodyLoweringKind()), "StarkCfg")
+        && templated.NameSymbol() == 21
+        && templated.BodyLoweringKind() == HirFunctionBodyLoweringKind.DeclarationOnly
+        && templated.HasBodyTemplate()
+        && templated.HasGenericTypeSubstitution()
+        && templated.HasGenericValueSubstitution()
+        && !templated.HasAllMirLoweringFacts()
+        && missing.BodyLoweringKind() == HirFunctionBodyLoweringKind.Unknown;
+}
+
+[Fact]
+fn bool MirFunctionBuilderTracksOwnedRangesAndDefinesFunction()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(11), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId value = MirConstInt(instructions, 42);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, value)))
+    {
+        return System.Testing.Fail("record-value");
+    }
+
+    stack mut MirBlockId entry = new();
+    if (!MirBuilderStatusOk(AppendMirBuilderReturnBlock(builder, blocks, value, entry)))
+    {
+        return System.Testing.Fail("return-block");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    return MirFunctionBuilderInstructionCount(builder) == 1
+        && MirFunctionBuilderBlockCount(builder) == 1
+        && MirFunctionBuilderOwnsValue(builder, value)
+        && MirFunctionBuilderOwnsBlock(builder, entry)
+        && function.Index() == 1
+        && MirFunctionEntry(functions, function).Equals(entry)
+        && MirFunctionBlockCount(functions, function) == 1
+        && MirFunctionInstrCount(functions, function) == 1
+        && MirFunctionOwnsBlock(functions, function, entry)
+        && MirFunctionOwnsValue(functions, function, value)
+        && MirBlockTerminator(blocks, entry) == MirTermKind.Return
+        && MirBlockReturnValue(blocks, entry).Equals(value);
+}
+
+[Fact]
+fn bool MirBuilderRejectsClosedAndOutOfRangeBlockCreation()
+{
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut MirFunctionBuilderState builder = new();
+    if (!MirBuilderStatusOk(BeginMirFunctionBuilder(SymbolIdOf(12), instructions, blocks, builder)))
+    {
+        return System.Testing.Fail("begin");
+    }
+
+    stack MirValueId value = MirConstInt(instructions, 1);
+    if (!MirBuilderStatusOk(RecordMirFunctionBuilderValue(builder, value)))
+    {
+        return System.Testing.Fail("record");
+    }
+
+    stack mut MirBlockId invalidBranch = new();
+    stack MirBuilderStatus invalidBranchStatus = AppendMirBuilderBranchBlock(
+        builder,
+        blocks,
+        MirBlockIdOf(99),
+        invalidBranch);
+
+    stack mut MirBlockId entry = new();
+    if (!MirBuilderStatusOk(AppendMirBuilderReturnBlock(builder, blocks, value, entry)))
+    {
+        return System.Testing.Fail("return");
+    }
+
+    stack mut MirFuncId function = new();
+    if (!MirBuilderStatusOk(FinishMirFunctionBuilder(builder, functions, function)))
+    {
+        return System.Testing.Fail("finish");
+    }
+
+    stack mut MirBlockId closedBlock = new();
+    stack MirBuilderStatus closedStatus = AppendMirBuilderReturnBlock(builder, blocks, value, closedBlock);
+    return !MirBuilderStatusOk(invalidBranchStatus)
+        && MirBuilderStatusErrIs(invalidBranchStatus, MirBuilderError.InvalidHandle)
+        && !MirBuilderStatusOk(closedStatus)
+        && MirBuilderStatusErrIs(closedStatus, MirBuilderError.BuilderClosed)
+        && System.Text.Equals(MirBuilderErrorName(MirBuilderError.BuilderClosed), "builder-closed");
+}
+
+[Fact]
+fn bool MirLoweringPassShellMatchesHostPipelineContract()
+{
+    stack MirLoweringPassShell shell = DefaultMirLoweringPassShell();
+    stack HirBackendFactSet facts = shell.RequiredBackendFacts();
+    return shell.Pass() == CompilerPassId.LowerMir
+        && shell.Phase() == CompilerPhase.Lowering
+        && shell.ExecutionMode() == PassExecutionMode.SkipOnErrors
+        && shell.InputArtifact() == CompilerArtifactKind.HighLevelIr
+        && shell.OutputArtifact() == CompilerArtifactKind.MidLevelIr
+        && CompilerPassDependencyCount(shell.Pass()) == MirLoweringRequiredArtifactCount()
+        && CompilerPassOutputArtifactAt(shell.Pass(), 0) == shell.OutputArtifact()
+        && HirBackendFactsCoverMirLowering(facts);
+}
+
+[Fact]
+fn bool MirLoweringRequiredArtifactsMatchPipelineDependencies()
+{
+    stack mut u8[0 max] index = 0;
+    while willexit (index < MirLoweringRequiredArtifactCount())
+    {
+        stack CompilerPassId dependency = CompilerPassDependencyAt(CompilerPassId.LowerMir, index);
+        stack CompilerArtifactKind pipelineKind = CompilerPassOutputArtifactAt(dependency, 0);
+        if (MirLoweringRequiredArtifactAt(index) != pipelineKind)
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return MirLoweringRequiresArtifact(CompilerArtifactKind.LoadedModules)
+        && MirLoweringRequiresArtifact(CompilerArtifactKind.HighLevelIr)
+        && MirLoweringRequiresArtifact(CompilerArtifactKind.OwnershipValidation)
+        && !MirLoweringRequiresArtifact(CompilerArtifactKind.LlvmIrModule)
+        && MirLoweringRequiredArtifactAt(6) == CompilerArtifactKind.Unknown;
+}
+
+[Fact]
+fn bool MirLoweringInputValidationReportsMissingAndSatisfiedArtifacts()
+{
+    stack mut ArtifactInventory inventory = new();
+    switch (MarkArtifactPresent(inventory, CompilerArtifactKind.LoadedModules))
+    {
+        case ArtifactStatus.Err(var markLoadedError):
+            return System.Testing.Fail("mark-loaded");
+        case ArtifactStatus.Ok:
+    }
+
+    switch (ValidateMirLoweringInputs(inventory))
+    {
+        case ArtifactResult<ArtifactDependencyReport>.Err(var missingError):
+            return System.Testing.Fail("validate-missing");
+        case ArtifactResult<ArtifactDependencyReport>.Ok(var missingReport):
+            if (ArtifactDependenciesSatisfied(missingReport)
+                || ArtifactDependencyMissingCount(missingReport) != 5
+                || !ArtifactDependencyReportContains(missingReport, CompilerArtifactKind.HighLevelIr)
+                || ArtifactDependencyReportContains(missingReport, CompilerArtifactKind.LoadedModules))
+            {
+                return System.Testing.Fail("missing-report");
+            }
+    }
+
+    if (!MarkRequiredMirArtifacts(inventory))
+    {
+        return System.Testing.Fail("mark-required");
+    }
+
+    stack MirLoweringPassShell shell = DefaultMirLoweringPassShell();
+    switch (ValidateMirLoweringPassInputs(shell, inventory))
+    {
+        case ArtifactResult<ArtifactDependencyReport>.Err(var fullError):
+            return System.Testing.Fail("validate-full");
+        case ArtifactResult<ArtifactDependencyReport>.Ok(var fullReport):
+            return ArtifactDependenciesSatisfied(fullReport)
+                && ArtifactDependencyMissingCount(fullReport) == 0;
+    }
+}

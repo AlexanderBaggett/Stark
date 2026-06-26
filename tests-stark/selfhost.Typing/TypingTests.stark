@@ -250,6 +250,85 @@ fn bool BuildTypedEnumLayoutTableForSource(ascii source, out TokenStream stream,
     }
 }
 
+fn bool BuildTypedEnumLayoutFoldInputsForSource(ascii source, out TokenStream stream, out DeclarationList declarations, out TypedEnumLayoutTable table)
+{
+    stream = new();
+    declarations = new();
+    table = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList parsedDeclarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            parsedDeclarations = decls;
+    }
+
+    switch (BuildTypedEnumLayouts(source, parsedStream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtTable):
+            stream = parsedStream;
+            declarations = parsedDeclarations;
+            table = builtTable;
+            return true;
+    }
+}
+
+fn u32[0 max] FirstTokenText(ascii source, borrow TokenStream stream, ascii text)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0)
+        {
+            stack ascii actual = Compiler.Lexing.TokenTextOf(source, stream, index);
+            if (System.Text.Equals(actual, text))
+            {
+                found = (u32[0 max])index;
+            }
+        }
+    }
+
+    return found;
+}
+
+fn bool EnumLayoutQueryFoldsU64(
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u64[0 max] expected)
+{
+    stack mut TypedLayoutQueryConstant constant = new();
+    return TryFoldEnumLayoutComptimeQueryCall(declarations, table, source, stream, queryNameToken, constant)
+        && constant.IsU64()
+        && constant.U64Value() == expected;
+}
+
+fn bool EnumLayoutQueryFoldsBool(
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    bool expected)
+{
+    stack mut TypedLayoutQueryConstant constant = new();
+    return TryFoldEnumLayoutComptimeQueryCall(declarations, table, source, stream, queryNameToken, constant)
+        && constant.IsBool()
+        && constant.BoolValue() == expected;
+}
+
 fn u32[0 max] TypedEnumPayloadIndexByVariantAndOrdinal(
     borrow TypedEnumPayloadTable table,
     ascii source,
@@ -1896,6 +1975,191 @@ fn bool TypedEnumLayoutsPreserveControlledAggregatePayloadLayouts()
         && table.AlignmentBytesAt(alignedPayload) == 4
         && table.HasConcreteLayoutAt(alignedPayload)
         && !table.IsMisalignedAt(alignedPayload);
+}
+
+[Fact]
+fn bool TypedEnumLayoutQueriesExposeCtfeFoldConstants()
+{
+    stack ascii source = raw"""
+    enum Packet<T>
+    {
+        Empty,
+        Data(u8[0 max]),
+        Other(u32[0 max]),
+        Generic(T)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutTableForSource(source, stream, table))
+    {
+        return false;
+    }
+
+    stack u32[0 max] dataVariantSlot = TypedEnumLayoutVariantIndexByName(table, source, stream, "Data");
+    if (dataVariantSlot == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] dataVariant = (u64[0 2 ** 63 - 1])(dataVariantSlot - 1);
+    stack u32[0 max] packetOwner = table.OwnerDeclarationIndexAt(dataVariant);
+
+    stack mut u64[0 max] tagOffset = 0;
+    stack mut u64[0 max] tagSize = 0;
+    stack mut u64[0 max] tagAlign = 0;
+    stack mut bool tagMisaligned = true;
+    if (!table.TryGetEnumTagLayout(packetOwner, tagOffset, tagSize, tagAlign, tagMisaligned))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] emptyTag = 99;
+    stack mut u64[0 max] dataTag = 99;
+    stack mut u64[0 max] otherTag = 99;
+    stack mut u64[0 max] genericTag = 99;
+    if (!table.TryGetEnumVariantTag(packetOwner, 0, emptyTag)
+        || !table.TryGetEnumVariantTag(packetOwner, 1, dataTag)
+        || !table.TryGetEnumVariantTag(packetOwner, 2, otherTag)
+        || !table.TryGetEnumVariantTag(packetOwner, 3, genericTag))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] emptyPayloadCount = 99;
+    stack mut u64[0 max] dataPayloadCount = 99;
+    stack mut u64[0 max] genericPayloadCount = 99;
+    if (!table.TryGetEnumVariantPayloadCount(packetOwner, 0, emptyPayloadCount)
+        || !table.TryGetEnumVariantPayloadCount(packetOwner, 1, dataPayloadCount)
+        || !table.TryGetEnumVariantPayloadCount(packetOwner, 3, genericPayloadCount))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] dataOffset = 0;
+    stack mut u64[0 max] dataSize = 0;
+    stack mut u64[0 max] dataAlign = 0;
+    stack mut bool dataMisaligned = true;
+    stack mut u64[0 max] otherOffset = 0;
+    stack mut u64[0 max] otherSize = 0;
+    stack mut u64[0 max] otherAlign = 0;
+    stack mut bool otherMisaligned = true;
+    if (!table.TryGetEnumVariantPayloadLayout(packetOwner, 1, 0, dataOffset, dataSize, dataAlign, dataMisaligned)
+        || !table.TryGetEnumVariantPayloadLayout(packetOwner, 2, 0, otherOffset, otherSize, otherAlign, otherMisaligned))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] missing = 0;
+    stack mut u64[0 max] missingSize = 0;
+    stack mut u64[0 max] missingAlign = 0;
+    stack mut bool missingMisaligned = false;
+
+    return tagOffset == 0
+        && tagSize == 1
+        && tagAlign == 1
+        && !tagMisaligned
+        && emptyTag == 0
+        && dataTag == 1
+        && otherTag == 2
+        && genericTag == 3
+        && emptyPayloadCount == 0
+        && dataPayloadCount == 1
+        && genericPayloadCount == 1
+        && dataOffset == 1
+        && dataSize == 1
+        && dataAlign == 1
+        && !dataMisaligned
+        && otherOffset == 4
+        && otherSize == 4
+        && otherAlign == 4
+        && !otherMisaligned
+        && !table.TryGetEnumVariantTag(packetOwner, 4, missing)
+        && !table.TryGetEnumVariantPayloadLayout(packetOwner, 0, 0, missing, missingSize, missingAlign, missingMisaligned)
+        && !table.TryGetEnumVariantPayloadLayout(packetOwner, 3, 0, missing, missingSize, missingAlign, missingMisaligned);
+}
+
+[Fact]
+fn bool TypedEnumLayoutSystemCompilerQueriesFoldToTypedConstants()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Empty,
+        Data(u8[0 max]),
+        Other(u32[0 max])
+    }
+
+    fn u64[0 max] TagOffset()
+    {
+        return comptime System.Compiler.EnumTagOffset<Packet>();
+    }
+
+    fn u64[0 max] TagSize()
+    {
+        return comptime System.Compiler.EnumTagSize<Packet>();
+    }
+
+    fn u64[0 max] TagAlign()
+    {
+        return comptime System.Compiler.EnumTagAlign<Packet>();
+    }
+
+    fn bool TagMisaligned()
+    {
+        return comptime System.Compiler.EnumTagIsMisaligned<Packet>();
+    }
+
+    fn u64[0 max] OtherTag()
+    {
+        return comptime System.Compiler.EnumVariantTag<Packet, +2>();
+    }
+
+    fn u64[0 max] EmptyPayloadCount()
+    {
+        return comptime System.Compiler.EnumVariantPayloadCount<Packet, 0>();
+    }
+
+    fn u64[0 max] OtherPayloadOffset()
+    {
+        return comptime System.Compiler.EnumVariantPayloadOffset<Packet, 2, 0>();
+    }
+
+    fn u64[0 max] OtherPayloadSize()
+    {
+        return comptime System.Compiler.EnumVariantPayloadSize<Packet, 2, 0>();
+    }
+
+    fn u64[0 max] OtherPayloadAlign()
+    {
+        return comptime System.Compiler.EnumVariantPayloadAlign<Packet, 2, 0>();
+    }
+
+    fn bool OtherPayloadMisaligned()
+    {
+        return comptime System.Compiler.EnumVariantPayloadIsMisaligned<Packet, 2, 0>();
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumLayoutTable table = new();
+    if (!BuildTypedEnumLayoutFoldInputsForSource(source, stream, declarations, table))
+    {
+        return false;
+    }
+
+    return EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagOffset"), 0)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagSize"), 1)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagAlign"), 1)
+        && EnumLayoutQueryFoldsBool(declarations, table, source, stream, FirstTokenText(source, stream, "EnumTagIsMisaligned"), false)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantTag"), 2)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadCount"), 0)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadOffset"), 4)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadSize"), 4)
+        && EnumLayoutQueryFoldsU64(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadAlign"), 4)
+        && EnumLayoutQueryFoldsBool(declarations, table, source, stream, FirstTokenText(source, stream, "EnumVariantPayloadIsMisaligned"), false);
 }
 
 [Fact]

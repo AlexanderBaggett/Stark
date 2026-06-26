@@ -1,0 +1,182 @@
+import Compiler.Artifacts
+import Compiler.Diagnostics
+import Compiler.Pipeline
+import System.Text
+import System.Testing
+[Collection("pipeline")]
+module PipelineTests
+
+fn bool PipelineStatusOk(PipelineStatus status)
+{
+    switch (status)
+    {
+        case PipelineStatus.Err(var error):
+            return false;
+        case PipelineStatus.Ok:
+            return true;
+    }
+}
+
+[Fact]
+fn bool CompilerPassIdsMatchHostPipelineOrder()
+{
+    stack mut CompilerPassId pass = CompilerPassId.Unknown;
+    return CompilerPassCount() == 43
+        && CompilerPassAtOrdinal(0) == CompilerPassId.Parse
+        && CompilerPassAtOrdinal(42) == CompilerPassId.EmitLlvm
+        && CompilerPassAtOrdinal(43) == CompilerPassId.Unknown
+        && CompilerPassOrdinal(CompilerPassId.Parse) == 0
+        && CompilerPassOrdinal(CompilerPassId.EmitLlvm) == 42
+        && System.Text.Equals(CompilerPassName(CompilerPassId.Parse), "parse")
+        && System.Text.Equals(CompilerPassName(CompilerPassId.RefineFunctionEffects), "refine-function-effects")
+        && System.Text.Equals(CompilerPassName(CompilerPassId.ArithmeticFoldSsa), "arithmetic-fold-ssa")
+        && System.Text.Equals(CompilerPassName(CompilerPassId.EmitLlvm), "emit-llvm")
+        && CompilerPassPhase(CompilerPassId.Parse) == CompilerPhase.Parsing
+        && CompilerPassPhase(CompilerPassId.BorrowLiveness) == CompilerPhase.Semantics
+        && CompilerPassPhase(CompilerPassId.EmitLlvm) == CompilerPhase.CodeGeneration
+        && CompilerPassExecutionMode(CompilerPassId.Parse) == PassExecutionMode.RunAlways
+        && CompilerPassExecutionMode(CompilerPassId.TypeCheck) == PassExecutionMode.SkipOnErrors
+        && TryParseCompilerPassId("lower-mir", pass)
+        && pass == CompilerPassId.LowerMir
+        && !TryParseCompilerPassId("not-a-pass", pass)
+        && pass == CompilerPassId.Unknown;
+}
+
+[Fact]
+fn bool CompilerPassDependencyGraphPreservesHostEdges()
+{
+    return DefaultCompilerPassGraphIsOrdered()
+        && CompilerPassDependencyCount(CompilerPassId.Parse) == 0
+        && CompilerPassDependencyCount(CompilerPassId.SymbolCatalog) == 2
+        && CompilerPassHasDirectDependency(CompilerPassId.SymbolCatalog, CompilerPassId.DeclarationIndex)
+        && CompilerPassHasDirectDependency(CompilerPassId.SymbolCatalog, CompilerPassId.ModuleGraph)
+        && CompilerPassDependencyCount(CompilerPassId.LowerHir) == 9
+        && CompilerPassHasDirectDependency(CompilerPassId.LowerHir, CompilerPassId.ValidateLoweringContract)
+        && CompilerPassHasDirectDependency(CompilerPassId.LowerHir, CompilerPassId.SpecializationCodegenStrategy)
+        && CompilerPassDependencyCount(CompilerPassId.EmitLlvm) == 9
+        && CompilerPassHasDirectDependency(CompilerPassId.EmitLlvm, CompilerPassId.MemoryOptSsa)
+        && CompilerPassHasDirectDependency(CompilerPassId.EmitLlvm, CompilerPassId.LowerAbi)
+        && CompilerPassHasDirectDependency(CompilerPassId.EmitLlvm, CompilerPassId.ValidateSsa)
+        && !CompilerPassHasDirectDependency(CompilerPassId.EmitLlvm, CompilerPassId.ArithmeticFoldSsa);
+}
+
+[Fact]
+fn bool CompilerPassOutputsExposeBackendFactArtifacts()
+{
+    stack mut ArtifactDependencySet dependencies = new();
+    switch (AddCompilerPassRequiredArtifacts(dependencies, CompilerPassId.EmitLlvm))
+    {
+        case ArtifactStatus.Err(var error):
+            return System.Testing.Fail("required-artifacts");
+        case ArtifactStatus.Ok:
+    }
+
+    return CompilerPassOutputArtifactCount(CompilerPassId.ModuleGraph) == 2
+        && CompilerPassOutputArtifactAt(CompilerPassId.ModuleGraph, 0) == CompilerArtifactKind.ModuleGraph
+        && CompilerPassOutputArtifactAt(CompilerPassId.ModuleGraph, 1) == CompilerArtifactKind.SourceModuleParseCache
+        && CompilerPassOutputArtifactAt(CompilerPassId.RefineFunctionEffects, 1) == CompilerArtifactKind.ClosedWorldOptimization
+        && CompilerPassOutputArtifactAt(CompilerPassId.DynamicStorageSsa, 0) == CompilerArtifactKind.OptimizedSsaIr
+        && CompilerPassOutputArtifactAt(CompilerPassId.DynamicStorageSsa, 1) == CompilerArtifactKind.SsaValueFacts
+        && CompilerPassOutputArtifactCount(CompilerPassId.ValidateSsa) == 0
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.SyntaxModel)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.FunctionEffects)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.ClosedWorldOptimization)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.TypeCheckModel)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.EnumLayoutModel)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.SemanticValidation)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.OptimizedSsaIr)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.SsaValueFacts)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.AbiModel)
+        && ArtifactDependencySetContains(dependencies, CompilerArtifactKind.SpecializationCodegenStrategy)
+        && !ArtifactDependencySetContains(dependencies, CompilerArtifactKind.LlvmIrModule);
+}
+
+[Fact]
+fn bool PassExecutionLogRecordsHostShape()
+{
+    stack mut PassExecutionLog log = new();
+    if (!PipelineStatusOk(AppendPassExecutionRecord(
+        log,
+        PassExecutionRecordOf(CompilerPassId.Parse, PassExecutionStatus.Executed, 12, 0))))
+    {
+        return System.Testing.Fail("append-parse");
+    }
+
+    if (!PipelineStatusOk(AppendPassExecutionRecord(
+        log,
+        PassExecutionRecordOf(CompilerPassId.SyntaxModel, PassExecutionStatus.Skipped, 0, 0))))
+    {
+        return System.Testing.Fail("append-syntax");
+    }
+
+    if (!PipelineStatusOk(AppendPassExecutionRecord(
+        log,
+        PassExecutionRecordOf(CompilerPassId.LowerMir, PassExecutionStatus.Failed, 40, 1))))
+    {
+        return System.Testing.Fail("append-failed");
+    }
+
+    return log.Count() == 3
+        && log.PassAt(0) == CompilerPassId.Parse
+        && log.PhaseAt(0) == CompilerPhase.Parsing
+        && log.StatusAt(0) == PassExecutionStatus.Executed
+        && log.DurationMicrosecondsAt(0) == 12
+        && log.DiagnosticsAddedAt(2) == 1
+        && log.PassAt(9) == CompilerPassId.Unknown
+        && PassExecutionLogStatusCount(log, PassExecutionStatus.Executed) == 1
+        && PassExecutionLogStatusCount(log, PassExecutionStatus.Skipped) == 1
+        && PassExecutionLogStatusCount(log, PassExecutionStatus.Failed) == 1;
+}
+
+[Fact]
+fn bool StopAfterPassBoundariesMatchSkippedOrExecutedPass()
+{
+    stack mut CompilerPassId stopAfter = CompilerPassId.Unknown;
+    if (!TryResolveStopAfterPass("", stopAfter) || stopAfter != CompilerPassId.Unknown)
+    {
+        return System.Testing.Fail("empty");
+    }
+
+    if (!TryResolveStopAfterPass("type-check", stopAfter) || stopAfter != CompilerPassId.TypeCheck)
+    {
+        return System.Testing.Fail("type-check");
+    }
+
+    if (TryResolveStopAfterPass("missing-pass", stopAfter) || stopAfter != CompilerPassId.Unknown)
+    {
+        return System.Testing.Fail("missing");
+    }
+
+    stack PassExecutionRecord skipped = PassExecutionRecordOf(
+        CompilerPassId.TypeCheck,
+        PassExecutionStatus.Skipped,
+        0,
+        0);
+    stack PassExecutionRecord executed = PassExecutionRecordOf(
+        CompilerPassId.LowerMir,
+        PassExecutionStatus.Executed,
+        9,
+        0);
+    return ShouldStopAfterPass(CompilerPassId.TypeCheck, skipped.Pass())
+        && !ShouldStopAfterPass(CompilerPassId.TypeCheck, executed.Pass());
+}
+
+[Fact]
+fn bool PassCrashDiagnosticsUseStableStk9999()
+{
+    stack mut DiagnosticBag diagnostics = new();
+    if (!PipelineStatusOk(AppendPassCrashDiagnostic(
+        diagnostics,
+        CompilerPassId.LowerMir,
+        "lowering invariant failed")))
+    {
+        return System.Testing.Fail("append");
+    }
+
+    return diagnostics.Count() == 1
+        && diagnostics.SeverityAt(0) == Compiler.Diagnostics.DiagnosticSeverity.Error
+        && diagnostics.CodeEqualsAt(0, "STK9999")
+        && diagnostics.StageEqualsAt(0, "lower-mir")
+        && diagnostics.MessageEqualsAt(0, "Pass 'lower-mir' crashed: lowering invariant failed")
+        && !diagnostics.HasLocationAt(0);
+}

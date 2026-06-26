@@ -987,7 +987,7 @@ internal static class CompilerCli
                 && loadedModules is not null)
             {
                 var dependencyModules = loadedModules.ImportedModules
-                    .Where(static module => !module.Reference.IsExternal)
+                    .Where(static module => IsSourceBackedDependencyModule(module))
                     .ToArray();
 
                 // Optimization decisions write to the metrics stream, so they resolve
@@ -3939,6 +3939,29 @@ internal static class CompilerCli
         CompilerOptions rootOptions,
         IReadOnlySet<string>? importedInlineCloneSeedFunctions)
     {
+        if (!IsSourceBackedDependencyModule(module))
+        {
+            return new DependencyLlvmCompileResult(
+                false,
+                module,
+                null,
+                EmptyLlvmSymbolSummary(),
+                [
+                    new CompilerDiagnostic(
+                        Code: "STK7204",
+                        Severity: DiagnosticSeverity.Error,
+                        Message: $"Package-backed module '{module.SyntaxModel.ModuleName}' cannot be recompiled as source; use its package library and package facts.",
+                        Stage: "dependency-compile",
+                        Location: new SourceLocation(module.Reference.ManifestPath ?? module.Reference.FilePath, 1, 1))
+                ],
+                [],
+                UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null,
+                RequiresMathLibrary: false,
+                RequiresWinsockLibrary: false,
+                RequiresWindowsSynchronizationLibrary: false,
+                RequiresNtDllLibrary: false);
+        }
+
         if (rootOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
             || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
         {
@@ -3995,6 +4018,15 @@ internal static class CompilerCli
             requiresWinsockLibrary,
             requiresWindowsSynchronizationLibrary,
             requiresNtDllLibrary);
+    }
+
+    private static bool IsSourceBackedDependencyModule(LoadedModuleDocument module)
+    {
+        return !module.Reference.IsRoot
+            && !module.Reference.IsExternal
+            && module.Reference.ManifestPath is null
+            && module.Reference.LibraryPath is null
+            && module.PackageImageFacts is null;
     }
 
     private static NativeToolchainResult EmitDependencyObject(

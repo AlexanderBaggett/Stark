@@ -63,7 +63,7 @@ internal sealed class SemanticValidator
         _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult, syntaxModel)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _objectCreations = typeModel.ObjectCreations
-            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .GroupBy(static record => new ObjectCreationKey(record.EnclosingFunctionName, record.ExpressionText, record.Location.FilePath, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last());
     }
 
@@ -6440,7 +6440,9 @@ internal sealed class SemanticValidator
     {
         return _objectCreations.TryGetValue(
             new ObjectCreationKey(
+                _currentFunctionName,
                 objectCreation.GetText(),
+                Location(objectCreation.Start).FilePath,
                 objectCreation.Start.Line,
                 objectCreation.Start.Column + 1),
             out typing!);
@@ -7612,7 +7614,7 @@ internal sealed class SemanticValidator
         string Name,
         EnumVariantSymbol Variant);
 
-    private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
+    private readonly record struct ObjectCreationKey(string? ScopeName, string Text, string? FilePath, int Line, int Column);
 
     private sealed class ValidationScope
     {

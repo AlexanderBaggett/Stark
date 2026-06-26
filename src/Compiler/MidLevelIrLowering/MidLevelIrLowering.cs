@@ -11,7 +11,7 @@ namespace Stark.Compiler;
 internal sealed partial class MidLevelIrLowerer
 {
     private static readonly int[] SupportedConstIntegerWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
-    private readonly record struct BoundOperationKey(string? FunctionName, int Line, int Column);
+    private readonly record struct BoundOperationKey(string? FunctionName, string? FilePath, int Line, int Column);
 
     private sealed record BoundOperationIndex(
         IReadOnlyDictionary<BoundOperationKey, BoundDirectCallOperation> DirectCalls,
@@ -37,9 +37,11 @@ internal sealed partial class MidLevelIrLowerer
     private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _loweringNamedTypes;
     private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _publishedEnumLayouts;
+    private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _fallbackEnumLayouts;
     private readonly Dictionary<string, FunctionLoweringContext> _functionsByName;
     private readonly Dictionary<string, ConstructorLoweringContext> _constructorsByBodyKey;
     private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName;
+    private readonly string? _operationRecordFilePath;
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions;
     private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals;
@@ -69,9 +71,11 @@ internal sealed partial class MidLevelIrLowerer
         _loweringNamedTypes = CollectFallbackNamedTypes(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
         _publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(loadedModules);
         _publishedEnumLayouts = BuildPublishedEnumLayouts(loadedModules);
+        _fallbackEnumLayouts = BuildFallbackEnumLayouts(_loweringNamedTypes, enumLayoutModel, _publishedEnumLayouts);
         _functionsByName = CollectFunctionsByQualifiedName(loadedModules, typeModel);
         _constructorsByBodyKey = CollectConstructorsByBodyKey(loadedModules);
         _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
+        _operationRecordFilePath = context.Input.FilePath;
         _typeResolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, _loweringNamedTypes, typeModel.TypeAliases);
         _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, _loweringNamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
         _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, _loweringNamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
@@ -79,7 +83,7 @@ internal sealed partial class MidLevelIrLowerer
             .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Type);
         _objectCreationConstructors = typeModel.ObjectCreations
-            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .GroupBy(static record => new ObjectCreationKey(record.EnclosingFunctionName, record.ExpressionText, record.Location.FilePath, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
         _boundOperations = BuildBoundOperationIndex(typeModel.BoundOperations);
         _maximumCompileTimeLoopIterations = Math.Max(1, context.Options.MaximumCompileTimeLoopIterations);
@@ -129,6 +133,18 @@ internal sealed partial class MidLevelIrLowerer
         return layouts;
     }
 
+    private static IReadOnlyDictionary<string, EnumLayoutSymbol> BuildFallbackEnumLayouts(
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        EnumLayoutModel enumLayoutModel,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> publishedEnumLayouts)
+    {
+        return EnumLayoutBuilder.Build(enumLayoutModel.ModuleName, namedTypes).Layouts
+            .Where(pair =>
+                !enumLayoutModel.Layouts.ContainsKey(pair.Key)
+                && !publishedEnumLayouts.ContainsKey(pair.Key))
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+    }
+
     private static IReadOnlyDictionary<BoundOperationKey, TOperation> BuildBoundOperationMap<TOperation>(
         IEnumerable<BoundOperation> operations)
         where TOperation : BoundOperation
@@ -137,6 +153,7 @@ internal sealed partial class MidLevelIrLowerer
             .OfType<TOperation>()
             .GroupBy(static operation => new BoundOperationKey(
                 operation.EnclosingFunctionName,
+                operation.Location.FilePath,
                 operation.Location.Line,
                 operation.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last());
@@ -272,6 +289,7 @@ internal sealed partial class MidLevelIrLowerer
             _destructorsByTypeName,
             _logs,
             loweringContext.FilePath,
+            _operationRecordFilePath,
             functionLocation,
             _loweringNamedTypes,
             _fallbackFunctions,
@@ -280,6 +298,7 @@ internal sealed partial class MidLevelIrLowerer
             _objectCreationConstructors,
             _publishedConcreteLayouts,
             _publishedEnumLayouts,
+            _fallbackEnumLayouts,
             _boundOperations,
             importedTemplateSummary,
             _importedFunctionTemplates,
@@ -608,6 +627,7 @@ internal sealed partial class MidLevelIrLowerer
             _destructorsByTypeName,
             _logs,
             functionLocation.FilePath,
+            _operationRecordFilePath,
             functionLocation,
             _loweringNamedTypes,
             _fallbackFunctions,
@@ -616,6 +636,7 @@ internal sealed partial class MidLevelIrLowerer
             _objectCreationConstructors,
             _publishedConcreteLayouts,
             _publishedEnumLayouts,
+            _fallbackEnumLayouts,
             _boundOperations,
             importedTemplateSummary: null,
             _importedFunctionTemplates,
@@ -1793,6 +1814,6 @@ internal sealed partial class MidLevelIrLowerer
         StarkParser.BlockContext Body);
 
     private readonly record struct LiteralKey(string Text, int Line, int Column);
-    private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
+    private readonly record struct ObjectCreationKey(string? ScopeName, string Text, string? FilePath, int Line, int Column);
 
 }

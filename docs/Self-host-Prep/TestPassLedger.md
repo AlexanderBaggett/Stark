@@ -80,6 +80,105 @@ stdlib.Json.
 
 ---
 
+## 2026-06-26 Selfhost HIR Fact-Type Validation
+
+- HIR-to-MIR fact compatibility now rejects scalar values carrying pointer
+  nullability facts and pointer values carrying integer range facts.
+- Parameter lowering now applies the common value-fact compatibility check
+  before emitting `Param` instructions or symbol-map rows.
+- Narrow verification:
+  `../../stark test --filter FactsOutsideType` in
+  `tests-stark/selfhost.Lowering` passed.
+- Narrow verification:
+  `../../stark test --filter Nullability` in
+  `tests-stark/selfhost.Lowering` passed.
+- Narrow verification:
+  `../../stark test --filter MirLoweringRejectsCallResultFactsOutsideResultTypeWithoutEmission`
+  in `tests-stark/selfhost.Lowering` passed.
+
+---
+
+## 2026-06-26 Selfhost Global Store Fact Subsets
+
+- HIR global-store lowering now enforces the full declared value-fact subset,
+  including alignment, ABI, noalias, volatile, nullability, and integer range.
+- Alignment subsets are checked by divisibility, so a stronger alignment fact
+  satisfies a weaker one without accepting incompatible alignments.
+- Narrow verification:
+  `../../stark test --filter MirLoweringChecksGlobalStoreBackendFactSubset` in
+  `tests-stark/selfhost.Lowering` passed.
+- Narrow verification:
+  `../../stark test --filter MirLoweringRejectsInvalidGlobalAccessWithoutEmission`
+  in `tests-stark/selfhost.Lowering` passed.
+
+---
+
+## 2026-06-26 Selfhost Local Symbol Fact Validation
+
+- SSA local alias binding and local assignment rebinding now validate carried
+  value facts against the MIR value type before updating the lowering symbol map.
+- This prevents stale pointer range facts and scalar nullability facts from
+  becoming backend-visible local facts.
+- Narrow verification:
+  `../../stark test --filter MirLoweringRejectsLocalAliasFactsOutsideTypeWithoutBinding --filter MirLoweringRejectsAssignmentFactsOutsideTypeWithoutRebinding`
+  in `tests-stark/selfhost.Lowering` passed.
+- Narrow verification:
+  `../../stark test --filter MirLoweringBindsLocalAliasWithoutEmissionAndPreservesFacts --filter MirLoweringLowersLocalAssignmentByRebindingSymbolAndFacts --filter MirLoweringRejectsInvalidLocalAssignmentWithoutRebinding`
+  in `tests-stark/selfhost.Lowering` passed.
+
+---
+
+## 2026-06-26 Selfhost Return Fact Validation
+
+- HIR return lowering now validates returned value facts against the MIR return
+  type before appending a return block.
+- This prevents stale pointer range facts and scalar nullability facts from
+  becoming backend-visible terminator facts.
+- Narrow verification:
+  `../../stark test --filter MirLoweringRejectsReturnFactsOutsideTypeWithoutBlockEmission`
+  in `tests-stark/selfhost.Lowering` passed.
+- Narrow verification:
+  `../../stark test --filter MirLoweringLowersValueReturnToMirReturnBlock --filter MirLoweringRejectsReturnTypeMismatchWithoutBlockEmission --filter MirLoweringRejectsReturnWithoutValueFactsBeforeBlockEmission`
+  in `tests-stark/selfhost.Lowering` passed.
+
+---
+
+## 2026-06-26 Selfhost Typed Parameter Lowering
+
+- Lowering now accepts typed non-i64 HIR parameters, emits typed MIR `Param`
+  instructions, and preserves parameter facts in the MIR value-fact table and
+  lowering symbol map.
+- Typed LLVM straight-line emission now has a typed parameter signature path
+  with width-correct integer range attributes.
+- Narrow verification:
+  `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`
+  passed, including `MirLoweringLowersTypedNonI64ParametersWithFacts`.
+- Narrow verification:
+  `../../stark test --filter EmitsLlvmTypedFunctionWithParameterTypesAndFacts`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-26 Selfhost Null Pointer Literal Lowering
+
+- Lowering now accepts null pointer HIR literals, emits typed MIR pointer-zero
+  constants, and preserves known-null facts in value-fact and lowering-symbol
+  tables.
+- MIR value facts now model nullability, and typed LLVM emission renders null
+  pointer constants as `inttoptr i64 0 to ptr`.
+- Narrow verification:
+  `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`
+  passed, including `MirLoweringLowersNullPointerLiteralWithNullabilityFacts`.
+- Narrow verification:
+  `../../stark test --filter MirNullPointerConstantRoundTripsFactsAndTypedLlvm`
+  in `tests-stark/selfhost.Ir` passed.
+- Narrow verification:
+  `../../stark test --filter ValueFacts` and
+  `../../stark test --filter IrFactCategoryIndexCoversConcreteDescriptors` in
+  `tests-stark/selfhost.Ir` passed.
+
+---
+
 ## 2026-06-23 Feature Tests Recheck
 
 - Reproduced and fixed the lone `compiler.FeatureTests` residue in
@@ -686,3 +785,315 @@ cross-target tests whose expected Linux/Windows output can be asserted without a
 foreign SDK/linker/runtime. Tests that need real non-macOS platform facilities
 are excluded from the macOS pass bar by platform gating, and should carry
 comments explaining which platform is required.
+
+---
+
+## 2026-06-25 Selfhost Lowering Boundary Slice
+
+- Added the Stark-side HIR/MIR boundary model and MIR lowering pass shell.
+- The shell validates the host `lower-mir` artifact contract and records the
+  backend fact families that must survive HIR to MIR lowering.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 5 selected facts.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost MIR Builder State Slice
+
+- Added Stark-side MIR function builder state, dense lowering symbol maps, and
+  block creation helpers that record owned value/block ranges without embedding
+  generic `IrTable<T>` fields in builder state.
+- Preserved backend fact rows through symbol binding so lowering can carry range,
+  alias, ABI, alignment, and layout facts into MIR/LLVM-facing tables.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 8 selected facts.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Literal Lowering Slice
+
+- Added explicit HighLevelIr literal kinds for unsupported null, float, text,
+  and character literals so lowering rejects them as literals instead of symbols.
+- Lowered integer and boolean literals to typed MIR constants while preserving
+  exact range facts in both value-fact and lowering-symbol tables.
+- Rejected out-of-range typed integer literals and unsupported literal families
+  before appending partial MIR instructions.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 13 selected facts.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Parameter And Local Alias Lowering Slice
+
+- Lowered dense i64 HIR parameters to `MirOp.Param` values while preserving
+  translated backend facts in value-fact and lowering-symbol tables.
+- Added zero-emission SSA local alias binding so local symbols reuse initializer
+  MIR values and preserve existing backend facts.
+- Rejected unsupported parameter types, non-dense parameter ordinals, and local
+  alias type mismatches before emitting or binding partial MIR.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 17 selected facts.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Simple Local Assignment Lowering Slice
+
+- Added a HIR assignment row for simple local reassignments.
+- Lowered SSA local assignment by rebinding the local symbol to the assigned MIR
+  value without emitting an extra instruction.
+- Preserved the assigned value's backend facts in the lowering symbol map and
+  rejected non-local targets or type mismatches before rebinding.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringBindsLocalAliasWithoutEmissionAndPreservesFacts --filter MirLoweringLowersLocalAssignmentByRebindingSymbolAndFacts --filter MirLoweringRejectsInvalidLocalAssignmentWithoutRebinding` in `tests-stark/selfhost.Lowering`:
+    passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Value Return Lowering Slice
+
+- Lowered typed HIR value returns to MIR return blocks without emitting extra
+  value instructions or dropping the returned value's fact row.
+- Rejected return type mismatches and missing returned-value facts before
+  appending partial MIR blocks.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 22 selected facts.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Integer Binary Lowering Slice
+
+- Lowered typed integer add/sub/mul and signed comparisons from HIR to typed MIR
+  while recomputing generated value facts before symbol binding.
+- Corrected MIR comparisons to be i1-valued, preserved their range facts, and
+  taught typed LLVM emission to return typed comparison results.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 24 selected facts.
+  - `../../stark test --filter EmitsLlvmTypedI32ComparisonFunction` in
+    `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BinaryRoundTripsInstructionStream` in
+    `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter MirComparisonRecordsOpcodeAndOperands` in
+    `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Extended Integer Binary Lowering Slice
+
+- Lowered typed integer division, remainder, bitwise, and shift operations from
+  HIR to typed MIR with proven-invalid backend fact rejection.
+- Recomputed exact generated facts for safe constant extended integer operations
+  and taught typed LLVM emission to preserve their result types.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 26 selected facts.
+  - `../../stark test --filter BuildMirValueRangeFactsDerivesExactExtendedIntegerOps`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter EmitsLlvmTypedI32ExtendedArithmeticFunction`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Direct Call Lowering Slice
+
+- Lowered typed direct HIR calls up to MIR's four-argument payload to typed MIR
+  `Call` instructions while binding result backend facts.
+- Added typed MIR call constructors and typed LLVM call emission so call result
+  and argument types survive into LLVM IR.
+- Rejected call result range facts that do not fit the declared MIR result type
+  before emitting partial MIR.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 28 selected facts.
+  - `../../stark test --filter BuildMirValueRangeFactsImportsTypedCallReturnFacts`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter EmitsLlvmTypedI32CallFunction` in
+    `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Void Return Lowering Slice
+
+- Added a first-class MIR void-return terminator and lowered bare HIR void
+  returns to it without creating a synthetic SSA value.
+- Added void LLVM definition emission so a void function emits `ret void` under
+  a `define void` signature.
+- Kept block serialization stable by assigning `ReturnVoid` a new terminator
+  byte after the existing values.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 29 selected facts.
+  - `../../stark test --filter MirReturnVoidBlockRecordsEmptyTerminator` in
+    `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter EmitsLlvmVoidDefinitionWithParams` in
+    `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BinaryRoundTripsBlocks` in
+    `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Direct Call Fact Preservation Slice
+
+- Verified direct-call result fact rows are translated through HIR-to-MIR call
+  lowering without narrowing the transfer to integer ranges.
+- Verified MIR call-return fact import preserves non-range backend facts such as
+  alignment, ABI, noalias, volatility, and pointer nullability.
+- Narrow verification:
+  - `../../stark test --collection lowering` in `tests-stark/selfhost.Lowering`:
+    passed, 30 selected facts.
+  - `../../stark test --filter BuildMirValueRangeFactsImportsTypedCallReturnFacts`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BuildMirValueRangeFactsImportsPointerCallReturnBackendFacts`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Call-Site Effect Attribute Slice
+
+- Threaded computed function-effect facts into range-aware LLVM call emission.
+- Emitted callee effect attributes on ordinary direct calls and `musttail`
+  tail-call terminators.
+- Refined law effect summaries so calls to proven `memory(none)` law callees do
+  not force the caller to `memory(read)`.
+- Added a pre-emission effect prepass so functions emitted before their callees
+  still keep callee effect attributes.
+- Narrow verification in `tests-stark/selfhost.Ir`:
+  - `../../stark test --filter CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes --filter CompileModuleFiniteEffectsPropagateThroughProvenDirectCalls --filter CompileModuleLawEffectsPropagateThroughProvenDirectCalls --filter CompileModuleTailFiniteLawCallSitesLowerEffectAttributes --filter CompileModuleForwardDirectCallsUsePrecomputedEffectFacts`:
+    passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Memory-Backed Call Argument Slice
+
+- Threaded callee parameter ABI and storage-contract facts into direct call and
+  `musttail` call lowering.
+- Emitted pointer call-site attributes and `separate_storage` assumes from
+  memory-backed argument obligations.
+- Rejected pointer/scalar argument kind mismatches and calls whose caller cannot
+  prove the callee's required non-overlap contract.
+- Narrow verification in `tests-stark/selfhost.Ir`:
+  - `../../stark test --filter CompileModulePointerParametersLowerGranularAttributes --filter CompileModuleWholePointerParamsEmitSeparateStorageAssume --filter CompileModulePointerCallArgumentsPreserveAbiAndAliasFacts --filter CompileModuleTailPointerCallArgumentsPreserveAbiAndAliasFacts --filter CompileModulePointerCallArgumentsRequireCallerAliasProof --filter CompileModulePointerCallArgumentKindsMustMatchCallee --filter CompileModuleForwardDirectCallsUsePrecomputedEffectFacts --filter CompileModuleTailFiniteLawCallSitesLowerEffectAttributes`:
+    passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Assignment Value Context Lowering Slice
+
+- Verified local assignment lowering returns the assigned MIR value for enclosing
+  value contexts without emitting an extra assignment instruction.
+- Confirmed the assignment result feeds typed MIR arithmetic and return lowering
+  while preserving recomputed backend range facts.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringUsesLocalAssignmentResultInEnclosingValueContext --filter MirLoweringLowersLocalAssignmentByRebindingSymbolAndFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Explicit Overflow Arithmetic Lowering Slice
+
+- Added distinct MIR and HIR lowering opcodes for explicit wrapping and
+  saturating add, subtract, and multiply operations.
+- Preserved exact or clamped range facts for explicit overflow arithmetic instead
+  of reusing ordinary no-overflow arithmetic facts.
+- Emitted wrapping LLVM arithmetic without no-wrap flags and emitted saturating
+  LLVM arithmetic through a deterministic wide clamp sequence.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersExplicitWrappingAndSaturatingArithmeticWithFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirExplicitWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter MirLoweringLowersTypedIntegerArithmeticAndComparisonWithFacts --filter MirLoweringLowersTypedIntegerExtendedOpsWithFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter EmitsLlvmForMixedArithmetic --filter BinaryRoundTripsInstructionStream`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Local Compound Assignment Lowering Slice
+
+- Lowered SSA local compound assignments by emitting the selected checked,
+  wrapping, or saturating MIR operation and rebinding the local to the result.
+- Preserved recomputed backend value facts through compound assignment results
+  and final local facts.
+- Rejected non-local targets, type mismatches, and exact invalid backend facts
+  before emitting partial MIR.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersCompoundAssignmentsWithCheckedWrappingAndSaturatingFacts --filter MirLoweringRejectsInvalidCompoundAssignmentWithoutRebinding --filter MirLoweringLowersTypedIntegerArithmeticAndComparisonWithFacts --filter MirLoweringLowersExplicitWrappingAndSaturatingArithmeticWithFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost I64 Global Lowering Slice
+
+- Added explicit HIR rows for i64 global references and global stores.
+- Bound source global symbols to MIR global ids with declared backend facts.
+- Lowered global references to `MirOp.LoadGlobal` and stores to `MirOp.StoreGlobal` while preserving load facts and rejecting out-of-range stores.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersGlobalLoadStoreWithFacts --filter MirLoweringRejectsInvalidGlobalAccessWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Typed Global Storage And Lowering Slice
+
+- Added typed MIR global records, typed load/store constructors, and typed LLVM
+  global emission.
+- Serialized global storage types through package images and validation.
+- Lowered typed global references and stores with declared type and range-fact
+  validation.
+- Narrow verification:
+  - `../../stark test --filter MirLoadGlobalRecordsTarget --filter MirStoreGlobalRecordsTargetAndValue --filter EmitsLlvmTypedGlobalLoadStore --filter MirGlobalRecordsInitialValue --filter EmitsLlvmGlobals --filter BinaryRoundTripsGlobals --filter BinaryRoundTripsPackageImage --filter EmitsLlvmGlobalLoad --filter EmitsLlvmGlobalStore --filter EmitsLlvmModuleWithGlobals`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter MirLoweringLowersGlobalLoadStoreWithFacts --filter MirLoweringLowersTypedGlobalLoadStoreWithFacts --filter MirLoweringRejectsInvalidGlobalAccessWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Module Global Declaration Lowering Slice
+
+- Added HIR module global declaration rows with typed scalar initializers and
+  declared backend facts.
+- Lowered HIR module globals into typed MIR global rows, aligned global fact
+  rows, and bound global symbols for later loads/stores.
+- Rejected invalid declaration facts and initializers before emitting global
+  rows or symbol bindings.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersModuleGlobalDeclarationsAndInitializersWithFacts --filter MirLoweringRejectsInvalidModuleGlobalDeclarationsWithoutBinding --filter MirLoweringLowersTypedGlobalLoadStoreWithFacts --filter MirLoweringRejectsInvalidGlobalAccessWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Become Tail-Call Lowering Slice
+
+- Added HIR `become` lowering for direct typed tail calls through MIR's current
+  four-argument payload.
+- Added typed MIR tail-call payload constructors and preserved payload result
+  types through LLVM `musttail` terminator emission.
+- Preserved translated result facts on `become` payload values and kept typed
+  tail-call payload types through binary round-trip.
+- Narrow verification:
+  - `../../stark test --filter EmitsLlvmTypedTailCallTerminator --filter EmitsLlvmTailCallTerminator --filter BinaryRoundTripsFourArgumentTailCall --filter EmitsLlvmTypedI32CallFunction`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleTailFiniteLawCallSitesLowerEffectAttributes --filter CompileModulePointerCallArgumentsPreserveAbiAndAliasFacts --filter CompileModuleForwardDirectCallsUsePrecomputedEffectFacts --filter EmitsLlvmTypedFunctionWithParameterTypesAndFacts`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter EmitsLlvmTypedTailCallTerminator --filter EmitsLlvmVoidDefinitionWithParams --filter EmitsLlvmModuleWithGlobals --filter BinaryRoundTripsFourArgumentTailCall`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter MirLoweringLowersBecomeToTailCallBlockWithFacts --filter MirLoweringLowersTypedBecomeToTailCallBlockWithFacts --filter MirLoweringLowersTypedDirectCallWithResultFacts --filter MirLoweringLowersValueReturnToMirReturnBlockAndPreservesFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Call Argument Fact Validation Slice
+
+- Validated carried backend facts on direct-call and tail-call argument values
+  before MIR payload emission.
+- Rejected stale scalar nullability and pointer range facts on call arguments
+  without emitting call or tail-call instructions.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringRejectsCallArgumentFactsOutsideTypeWithoutEmission --filter MirLoweringRejectsBecomeArgumentFactsOutsideTypeWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringLowersTypedDirectCallWithResultFacts --filter MirLoweringLowersBecomeToTailCallBlockWithFacts --filter MirLoweringLowersTypedBecomeToTailCallBlockWithFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringRejectsCallResultFactsOutsideResultTypeWithoutEmission --filter MirLoweringRejectsScalarNullabilityCallResultWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Arithmetic Operand Fact Validation Slice
+
+- Validated carried backend facts on binary and compound-assignment operands
+  before interpreting arithmetic backend facts.
+- Rejected stale scalar nullability and out-of-type integer range facts without
+  emitting arithmetic instructions or rebinding compound-assignment locals.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringRejectsBinaryOperandFactsOutsideTypeWithoutEmission --filter MirLoweringRejectsCompoundAssignmentOperandFactsOutsideTypeWithoutRebinding`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringLowersTypedIntegerArithmeticAndComparisonWithFacts --filter MirLoweringLowersTypedIntegerExtendedOpsWithFacts --filter MirLoweringLowersExplicitWrappingAndSaturatingArithmeticWithFacts --filter MirLoweringLowersCompoundAssignmentsWithCheckedWrappingAndSaturatingFacts --filter MirLoweringRejectsInvalidCompoundAssignmentWithoutRebinding --filter MirLoweringRejectsExactInvalidExtendedIntegerFactsWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
