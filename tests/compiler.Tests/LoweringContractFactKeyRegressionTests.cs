@@ -168,4 +168,90 @@ public sealed class LoweringContractFactKeyRegressionTests
             string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK9999");
     }
+
+    [Fact]
+    public void ConstructorBodyObjectCreationFactsDoNotCollideAcrossSourceFiles()
+    {
+        // The `self.Field = new();` expressions intentionally share the same line
+        // and column in both files. Constructor-body operation facts must bind by
+        // constructor body key, not by a null scope plus root-stamped source location.
+        var dependencySource = string.Join('\n',
+            "",
+            "module Dep",
+            "",
+            "public struct Inner",
+            "{",
+            "    i32[min max] Value;",
+            "",
+            "    Inner()",
+            "    {",
+            "        self.Value = 1;",
+            "    }",
+            "}",
+            "",
+            "public struct Box",
+            "{",
+            "    Inner Field;",
+            "",
+            "    Box()",
+            "    {",
+            "        self.Field = new();",
+            "    }",
+            "}",
+            "");
+        var rootSource = string.Join('\n',
+            "import Dep",
+            "module Demo",
+            "",
+            "struct Inner",
+            "{",
+            "    bool Flag;",
+            "",
+            "    Inner()",
+            "    {",
+            "        self.Flag = true;",
+            "    }",
+            "}",
+            "",
+            "struct Box",
+            "{",
+            "    Inner Field;",
+            "",
+            "    Box()",
+            "    {",
+            "        self.Field = new();",
+            "    }",
+            "}",
+            "",
+            "export fn i32[min max] main()",
+            "{",
+            "    stack Box local = new();",
+            "    stack Dep.Box imported = new Dep.Box();",
+            "    if (!local.Field.Flag)",
+            "    {",
+            "        return 1;",
+            "    }",
+            "",
+            "    return imported.Field.Value - 1;",
+            "}",
+            "");
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(rootSource),
+            new CompilerOptions(
+                StopAfterPassId: "lower-mir",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Dep", "/virtual/Dep.stark", IsExternal: false),
+                        dependencySource,
+                        "/virtual/Dep.stark"
+                    )
+                ])));
+
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK9999");
+    }
 }

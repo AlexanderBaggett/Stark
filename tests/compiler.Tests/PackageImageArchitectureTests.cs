@@ -72,6 +72,78 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImageKeepsPackageBackedImportsWithoutRepublishingImportedModules()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-source-owned-imports-");
+
+        try
+        {
+            var dependencySourcePath = Path.Combine(tempDirectory.FullName, "Dependency.stark");
+            var dependencyResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Dependency
+
+                    public finite law i32[min max] Value()
+                    {
+                        return 7;
+                    }
+                    """,
+                    dependencySourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(dependencyResult.Succeeded, string.Join(", ", dependencyResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var dependencyPackagePath = Path.Combine(tempDirectory.FullName, "libDependency.starkpkg");
+            var dependencyManifest = PackageImageBuilder.Create(
+                dependencyResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Dependency.lib" : "libDependency.a"));
+            File.WriteAllBytes(dependencyPackagePath, PackageImageBinaryFormat.Encode(dependencyManifest));
+
+            var consumerSourcePath = Path.Combine(tempDirectory.FullName, "Consumer.stark");
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Dependency
+                    module Consumer
+
+                    public finite law i32[min max] Use()
+                    {
+                        return Value();
+                    }
+                    """,
+                    consumerSourcePath),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-abi",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var consumerManifest = PackageImageBuilder.Create(
+                consumerResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Consumer.lib" : "libConsumer.a"));
+            var consumerModule = Assert.Single(consumerManifest.Modules);
+            Assert.Equal("Consumer", consumerModule.ModuleName);
+
+            var typedImport = Assert.Single(consumerModule.CompilerSections?.TypedInterface?.Imports ?? []);
+            Assert.Equal("Dependency", typedImport.ModuleName);
+            var sourceImport = Assert.Single(consumerModule.SourceSurface?.Imports ?? []);
+            Assert.Equal("Dependency", sourceImport.ModuleName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFacts()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-associated-types-");

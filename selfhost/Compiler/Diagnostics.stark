@@ -1,0 +1,2596 @@
+import System.Memory
+import System.Text
+module Compiler.Diagnostics
+
+public enum DiagnosticSeverity
+{
+    Info,
+    Warning,
+    Error,
+}
+
+public finite law ascii DiagnosticSeverityName(DiagnosticSeverity severity)
+{
+    switch (severity)
+    {
+        case DiagnosticSeverity.Info:
+            return "info";
+        case DiagnosticSeverity.Warning:
+            return "warning";
+        case DiagnosticSeverity.Error:
+            return "error";
+    }
+}
+
+internal inline finite law bool DiagnosticCodeDigit(i8[min max] value)
+{
+    return value >= 48 && value <= 57;
+}
+
+public finite law bool DiagnosticCodeIsStable(ascii code)
+{
+    unsafe
+    {
+        if (System.Text.AsciiLength(code) != 7)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(code);
+        if (data == null)
+        {
+            return false;
+        }
+
+        return *(&data[0]) == 83
+            && *(&data[1]) == 84
+            && *(&data[2]) == 75
+            && DiagnosticCodeDigit(*(&data[3]))
+            && DiagnosticCodeDigit(*(&data[4]))
+            && DiagnosticCodeDigit(*(&data[5]))
+            && DiagnosticCodeDigit(*(&data[6]));
+    }
+}
+
+public enum DiagnosticError
+{
+    OutOfMemory,
+    SourceRangeOutOfBounds,
+}
+
+public enum DiagnosticStatus
+{
+    [Ok] Ok,
+    [Err] Err(DiagnosticError),
+}
+
+public enum DiagnosticResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(DiagnosticError),
+}
+
+public struct SourceSpan
+{
+    internal u64[0 2 ** 63 - 1] StartOffsetValue;
+    internal u64[0 2 ** 63 - 1] LengthValue;
+
+    SourceSpan()
+    {
+        self.StartOffsetValue = 0;
+        self.LengthValue = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StartOffset(borrow SourceSpan self)
+    {
+        return self.StartOffsetValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow SourceSpan self)
+    {
+        return self.LengthValue;
+    }
+
+}
+
+public inline finite law SourceSpan SourceSpanOf(
+    u64[0 2 ** 63 - 1] startOffset,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack mut SourceSpan span = new SourceSpan();
+    span.StartOffsetValue = startOffset;
+    span.LengthValue = length;
+    return span;
+}
+
+public struct SourcePosition
+{
+    internal u64[1 2 ** 63 - 1] LineValue;
+    internal u64[1 2 ** 63 - 1] ColumnValue;
+
+    SourcePosition()
+    {
+        self.LineValue = 1;
+        self.ColumnValue = 1;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] Line(borrow SourcePosition self)
+    {
+        return self.LineValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] Column(borrow SourcePosition self)
+    {
+        return self.ColumnValue;
+    }
+}
+
+public struct SourceLocation
+{
+    internal OwnedAscii FilePathText;
+    internal bool HasFilePathValue;
+    internal u64[1 2 ** 63 - 1] LineValue;
+    internal u64[1 2 ** 63 - 1] ColumnValue;
+    internal u64[0 2 ** 63 - 1] EndLineValue;
+    internal u64[0 2 ** 63 - 1] EndColumnValue;
+
+    SourceLocation()
+    {
+        self.FilePathText = new();
+        self.HasFilePathValue = false;
+        self.LineValue = 1;
+        self.ColumnValue = 1;
+        self.EndLineValue = 0;
+        self.EndColumnValue = 0;
+    }
+
+    public inline finite law bool HasFilePath(borrow SourceLocation self)
+    {
+        return self.HasFilePathValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] Line(borrow SourceLocation self)
+    {
+        return self.LineValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] Column(borrow SourceLocation self)
+    {
+        return self.ColumnValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] ResolvedEndLine(borrow SourceLocation self)
+    {
+        if (self.EndLineValue > 0)
+        {
+            return (u64[1 2 ** 63 - 1])self.EndLineValue;
+        }
+
+        return self.LineValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] ResolvedEndColumn(borrow SourceLocation self)
+    {
+        if (self.EndColumnValue > 0)
+        {
+            return (u64[1 2 ** 63 - 1])self.EndColumnValue;
+        }
+
+        return self.ColumnValue;
+    }
+
+    public fn bool FilePathEquals(mut borrow SourceLocation self, ascii expected)
+    {
+        if (!self.HasFilePathValue)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.FilePathText, expected);
+    }
+}
+
+internal fn DiagnosticStatus CopyAsciiInto(ascii source, mut borrow OwnedAscii destination)
+{
+    switch (destination.AppendAscii(source))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+            return DiagnosticStatus.Ok;
+    }
+}
+
+internal inline fn DiagnosticStatus AppendLineStart(
+    mut borrow dynamic u64[0 2 ** 63 - 1] lineStarts,
+    u64[0 2 ** 63 - 1] offset)
+{
+    if (!lineStarts.TryReserve(1))
+    {
+        return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+    }
+
+    init lineStarts[lineStarts.Length] = offset;
+    return DiagnosticStatus.Ok;
+}
+
+internal inline finite law u32[0 max] DiagnosticCaretTabWidth()
+{
+    return 4;
+}
+
+internal finite law u32[0 max] DiagnosticCaretTabDisplayWidth(u32[0 max] displayColumn)
+{
+    stack u8[0 4 - 1] remainder = (u8[0 4 - 1])(displayColumn % DiagnosticCaretTabWidth());
+    if (remainder == 0)
+    {
+        return DiagnosticCaretTabWidth();
+    }
+
+    return (u32[0 max])(DiagnosticCaretTabWidth() - remainder);
+}
+
+internal finite law u32[0 max] DiagnosticCaretDigitCount(u32[0 max] value)
+{
+    stack mut u32[0 max] count = 1;
+    stack mut u32[0 max] remaining = value;
+    while willexit (remaining >= 10)
+    {
+        remaining = (u32[0 max])(remaining / 10);
+        count = (u32[0 max])(count + 1);
+    }
+
+    return count;
+}
+
+internal fn DiagnosticStatus DiagnosticCaretAppendStatus(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+            return DiagnosticStatus.Ok;
+    }
+}
+
+internal fn DiagnosticStatus DiagnosticAppendAscii(mut borrow OwnedAscii writer, ascii value)
+    where overlap(writer, value)
+{
+    return DiagnosticCaretAppendStatus(writer.AppendAscii(value));
+}
+
+internal fn DiagnosticStatus DiagnosticAppendByte(mut borrow OwnedAscii writer, i8[min max] value)
+{
+    return DiagnosticCaretAppendStatus(writer.AppendByte(value));
+}
+
+internal fn DiagnosticStatus DiagnosticAppendU64(mut borrow OwnedAscii writer, u64[0 max] value)
+{
+    return DiagnosticCaretAppendStatus(writer.AppendU64(value));
+}
+
+internal fn DiagnosticStatus DiagnosticAppendOwnedAscii(
+    mut borrow OwnedAscii writer,
+    borrow OwnedAscii value)
+    where overlap(writer, value)
+{
+    return DiagnosticCaretAppendStatus(System.Text.OwnedAscii.Format(value, writer));
+}
+
+internal unsafe finite law bool DiagnosticAsciiHasNonWhitespace(ascii value)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(value);
+    if (signedLength <= 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+    stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
+    if (data == null)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack i8[min max] unit = *(&data[index]);
+        if (unit != 9 && unit != 10 && unit != 13 && unit != 32)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal finite law bool DiagnosticOwnedAsciiHasNonWhitespace(borrow OwnedAscii value)
+{
+    stack i8[min max][] bytes = value.AsSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < bytes.Length; index += 1)
+    {
+        stack i8[min max] unit = bytes[index];
+        if (unit != 9 && unit != 10 && unit != 13 && unit != 32)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+public struct SourceFileMap
+{
+    internal OwnedAscii FilePathText;
+    internal bool HasFilePathValue;
+    internal OwnedAscii SourceText;
+    internal u64[0 2 ** 63 - 1] SourceLengthValue;
+    internal dynamic u64[0 2 ** 63 - 1] LineStarts;
+
+    SourceFileMap()
+    {
+        self.FilePathText = new OwnedAscii();
+        self.HasFilePathValue = false;
+        self.SourceText = new OwnedAscii();
+        self.SourceLengthValue = 0;
+        self.LineStarts = new();
+    }
+
+    public inline finite law bool HasFilePath(borrow SourceFileMap self)
+    {
+        return self.HasFilePathValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] SourceLength(borrow SourceFileMap self)
+    {
+        return self.SourceLengthValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LineCount(borrow SourceFileMap self)
+    {
+        return self.LineStarts.Length;
+    }
+
+    public law u64[0 2 ** 63 - 1] LineStartAt(
+        borrow SourceFileMap self,
+        u64[0 2 ** 63 - 1] lineIndex)
+    {
+        if (lineIndex < self.LineStarts.Length)
+        {
+            return self.LineStarts[lineIndex];
+        }
+
+        return 0;
+    }
+
+    public fn bool FilePathEquals(mut borrow SourceFileMap self, ascii expected)
+    {
+        if (!self.HasFilePathValue)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.FilePathText, expected);
+    }
+
+    public fn bool SourceTextEquals(mut borrow SourceFileMap self, ascii expected)
+    {
+        return System.Text.OwnedAsciiEqualsAscii(self.SourceText, expected);
+    }
+
+    internal law u64[0 2 ** 63 - 1] LineIndexForOffset(
+        borrow SourceFileMap self,
+        u64[0 2 ** 63 - 1] offset)
+    {
+        stack mut u64[0 2 ** 63 - 1] low = 0;
+        stack mut u64[0 2 ** 63 - 1] high = self.LineStarts.Length;
+
+        while willexit (low < high)
+        {
+            stack u64[0 2 ** 63 - 1] span = high - low;
+            stack u64[0 2 ** 63 - 1] mid = low + span / 2;
+            if (mid >= self.LineStarts.Length)
+            {
+                return 0;
+            }
+
+            stack u64[0 2 ** 63 - 1] lineStart = self.LineStarts[mid];
+            if (lineStart <= offset)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        if (low == 0)
+        {
+            return 0;
+        }
+
+        return low - 1;
+    }
+
+    public law DiagnosticResult<SourcePosition> PositionAtOffset(
+        borrow SourceFileMap self,
+        u64[0 2 ** 63 - 1] offset)
+    {
+        if (offset > self.SourceLengthValue || self.LineStarts.Length == 0)
+        {
+            return DiagnosticResult<SourcePosition>.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack u64[0 2 ** 63 - 1] lineIndex = self.LineIndexForOffset(offset);
+        if (lineIndex >= self.LineStarts.Length)
+        {
+            return DiagnosticResult<SourcePosition>.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack u64[0 2 ** 63 - 1] lineStart = self.LineStarts[lineIndex];
+        if (lineStart > offset)
+        {
+            return DiagnosticResult<SourcePosition>.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack mut SourcePosition position = new SourcePosition();
+        position.LineValue = (u64[1 2 ** 63 - 1])(lineIndex + 1);
+        position.ColumnValue = (u64[1 2 ** 63 - 1])(offset - lineStart + 1);
+        return DiagnosticResult<SourcePosition>.Ok(position);
+    }
+
+    public fn DiagnosticResult<SourceLocation> LocationAtOffset(
+        mut borrow SourceFileMap self,
+        u64[0 2 ** 63 - 1] offset)
+    {
+        switch (self.PositionAtOffset(offset))
+        {
+            case DiagnosticResult<SourcePosition>.Err(var error):
+                return DiagnosticResult<SourceLocation>.Err(error);
+            case DiagnosticResult<SourcePosition>.Ok(var position):
+                return SourceLocationOf(
+                    self.FilePathText.View(),
+                    self.HasFilePathValue,
+                    position.Line(),
+                    position.Column(),
+                    0,
+                    0);
+        }
+    }
+
+    public fn DiagnosticResult<SourceLocation> LocationForSpan(
+        mut borrow SourceFileMap self,
+        SourceSpan span)
+    {
+        if (span.StartOffsetValue > self.SourceLengthValue)
+        {
+            return DiagnosticResult<SourceLocation>.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack u64[0 2 ** 63 - 1] remaining = self.SourceLengthValue - span.StartOffsetValue;
+        if (span.LengthValue > remaining)
+        {
+            return DiagnosticResult<SourceLocation>.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack u64[0 2 ** 63 - 1] endOffset = span.StartOffsetValue + span.LengthValue;
+        switch (self.PositionAtOffset(endOffset))
+        {
+            case DiagnosticResult<SourcePosition>.Err(var endError):
+                return DiagnosticResult<SourceLocation>.Err(endError);
+            case DiagnosticResult<SourcePosition>.Ok(var endPosition):
+                switch (self.PositionAtOffset(span.StartOffsetValue))
+                {
+                    case DiagnosticResult<SourcePosition>.Err(var startError):
+                        return DiagnosticResult<SourceLocation>.Err(startError);
+                    case DiagnosticResult<SourcePosition>.Ok(var startPosition):
+                        return SourceLocationOf(
+                            self.FilePathText.View(),
+                            self.HasFilePathValue,
+                            startPosition.Line(),
+                            startPosition.Column(),
+                            endPosition.Line(),
+                            endPosition.Column());
+                }
+        }
+    }
+
+    internal unsafe fn bool CaretLineRange(
+        borrow SourceFileMap self,
+        rawptr<i8[min max]> data,
+        u32[0 max] lineNumber,
+        out u64[0 2 ** 63 - 1] start,
+        out u64[0 2 ** 63 - 1] end)
+        where overlap(self, data)
+    {
+        start = 0;
+        end = 0;
+        if (lineNumber == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] lineIndex = (u64[0 2 ** 63 - 1])(lineNumber - 1);
+        if (lineIndex >= self.LineStarts.Length)
+        {
+            return false;
+        }
+
+        start = self.LineStarts[lineIndex];
+        if (lineIndex + 1 < self.LineStarts.Length)
+        {
+            end = self.LineStarts[lineIndex + 1];
+            if (end > 0)
+            {
+                end = (u64[0 2 ** 63 - 1])(end - 1);
+            }
+
+            if (end > start && *(&data[end - 1]) == 13)
+            {
+                end = (u64[0 2 ** 63 - 1])(end - 1);
+            }
+        }
+        else
+        {
+            end = self.SourceLengthValue;
+        }
+
+        if (end > self.SourceLengthValue)
+        {
+            end = self.SourceLengthValue;
+        }
+
+        return true;
+    }
+}
+
+internal unsafe finite law u32[0 max] DiagnosticCaretExpandedWidth(
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd)
+{
+    stack mut u32[0 max] displayColumn = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = lineStart; index < lineEnd; index += 1)
+    {
+        if (*(&data[index]) == 9)
+        {
+            displayColumn = (u32[0 max])(displayColumn + DiagnosticCaretTabDisplayWidth(displayColumn));
+        }
+        else
+        {
+            displayColumn = (u32[0 max])(displayColumn + 1);
+        }
+    }
+
+    return displayColumn;
+}
+
+internal unsafe finite law u32[0 max] DiagnosticCaretDisplayColumn(
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd,
+    u32[0 max] column)
+{
+    if (column <= 1)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] lineLength = lineEnd - lineStart;
+    stack u64[0 2 ** 63 - 1] characterCount = (u64[0 2 ** 63 - 1])(column - 1);
+    stack u64[0 2 ** 63 - 1] bounded = characterCount < lineLength ? characterCount : lineLength;
+    stack mut u32[0 max] displayColumn = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < bounded; offset += 1)
+    {
+        if (*(&data[lineStart + offset]) == 9)
+        {
+            displayColumn = (u32[0 max])(displayColumn + DiagnosticCaretTabDisplayWidth(displayColumn));
+        }
+        else
+        {
+            displayColumn = (u32[0 max])(displayColumn + 1);
+        }
+    }
+
+    if (characterCount > lineLength)
+    {
+        displayColumn = (u32[0 max])(displayColumn + (u32[0 max])(characterCount - lineLength));
+    }
+
+    return displayColumn;
+}
+
+internal unsafe fn DiagnosticStatus AppendDiagnosticCaretExpandedLine(
+    mut borrow OwnedAscii writer,
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd)
+{
+    stack mut u32[0 max] displayColumn = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = lineStart; index < lineEnd; index += 1)
+    {
+        stack i8[min max] value = *(&data[index]);
+        if (value == 9)
+        {
+            stack u32[0 max] width = DiagnosticCaretTabDisplayWidth(displayColumn);
+            switch (DiagnosticCaretAppendStatus(writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])width)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            displayColumn = (u32[0 max])(displayColumn + width);
+        }
+        else
+        {
+            switch (DiagnosticCaretAppendStatus(writer.AppendByte(value)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            displayColumn = (u32[0 max])(displayColumn + 1);
+        }
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+internal unsafe finite law u32[0 max] DiagnosticCaretSpanWidth(
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd,
+    u32[0 max] spanStartLine,
+    u32[0 max] spanEndLine,
+    u32[0 max] current,
+    u32[0 max] column,
+    u32[0 max] endColumn,
+    u32[0 max] caretStart,
+    u32[0 max] expandedWidth)
+{
+    if (current == spanStartLine && current == spanEndLine)
+    {
+        stack mut u32[0 max] effectiveEnd = endColumn;
+        if (effectiveEnd < column)
+        {
+            effectiveEnd = column;
+        }
+
+        stack u32[0 max] endExclusive = DiagnosticCaretDisplayColumn(data, lineStart, lineEnd, (u32[0 max])(effectiveEnd + 1));
+        if (endExclusive > caretStart)
+        {
+            return (u32[0 max])(endExclusive - caretStart);
+        }
+
+        return 1;
+    }
+
+    if (current == spanStartLine)
+    {
+        if (expandedWidth > caretStart)
+        {
+            return (u32[0 max])(expandedWidth - caretStart);
+        }
+
+        return 1;
+    }
+
+    if (current == spanEndLine)
+    {
+        stack mut u32[0 max] effectiveEnd = endColumn;
+        if (effectiveEnd < 1)
+        {
+            effectiveEnd = 1;
+        }
+
+        stack u32[0 max] endExclusive = DiagnosticCaretDisplayColumn(data, lineStart, lineEnd, (u32[0 max])(effectiveEnd + 1));
+        if (endExclusive > 0)
+        {
+            return endExclusive;
+        }
+
+        return 1;
+    }
+
+    if (expandedWidth > 0)
+    {
+        return expandedWidth;
+    }
+
+    return 1;
+}
+
+public fn DiagnosticStatus AppendSourceCaretForLocation(
+    mut borrow OwnedAscii writer,
+    mut borrow SourceFileMap sourceMap,
+    borrow SourceLocation location)
+{
+    stack u64[1 2 ** 63 - 1] lineValue = location.Line();
+    stack u64[1 2 ** 63 - 1] columnValue = location.Column();
+    stack u64[1 2 ** 63 - 1] endLineValue = location.ResolvedEndLine();
+    stack u64[1 2 ** 63 - 1] endColumnValue = location.ResolvedEndColumn();
+    if (lineValue > 4294967295
+        || columnValue > 4294967295
+        || endLineValue > 4294967295
+        || endColumnValue > 4294967295)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+
+    stack u32[0 max] line = (u32[0 max])lineValue;
+    stack u32[0 max] column = (u32[0 max])columnValue;
+    stack mut u32[0 max] spanEndLine = (u32[0 max])endLineValue;
+    stack u32[0 max] endColumn = (u32[0 max])endColumnValue;
+    stack u64[0 2 ** 63 - 1] totalLines = sourceMap.LineStarts.Length;
+    if ((u64[0 2 ** 63 - 1])line > totalLines)
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    if (spanEndLine < line)
+    {
+        spanEndLine = line;
+    }
+
+    if ((u64[0 2 ** 63 - 1])spanEndLine > totalLines)
+    {
+        spanEndLine = (u32[0 max])totalLines;
+    }
+
+    stack u32[0 max] gutterWidth = DiagnosticCaretDigitCount(spanEndLine);
+
+    unsafe
+    {
+        stack ascii source = sourceMap.SourceText.View();
+        stack mut rawptr<i8[min max]> data = System.Text.AsciiData(source);
+        if (data == null && sourceMap.SourceLengthValue > 0)
+        {
+            return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack mut i8[min max] emptyAnchor = 0;
+        if (data == null)
+        {
+            data = &emptyAnchor;
+        }
+
+        stack mut u32[0 max] current = line;
+        while willexit (current <= spanEndLine)
+        {
+            stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+            stack mut u64[0 2 ** 63 - 1] lineEnd = 0;
+            if (!sourceMap.CaretLineRange(data, current, lineStart, lineEnd))
+            {
+                break;
+            }
+
+            stack mut u32[0 max] caretStart = 0;
+            if (current == line)
+            {
+                caretStart = DiagnosticCaretDisplayColumn(data, lineStart, lineEnd, column);
+            }
+
+            stack u32[0 max] expandedWidth = DiagnosticCaretExpandedWidth(data, lineStart, lineEnd);
+            stack u32[0 max] caretWidth = DiagnosticCaretSpanWidth(
+                data,
+                lineStart,
+                lineEnd,
+                line,
+                spanEndLine,
+                current,
+                column,
+                endColumn,
+                caretStart,
+                expandedWidth);
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendAscii("  ")))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            stack u32[0 max] currentDigits = DiagnosticCaretDigitCount(current);
+            if (currentDigits < gutterWidth)
+            {
+                switch (DiagnosticCaretAppendStatus(writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])(gutterWidth - currentDigits))))
+                {
+                    case DiagnosticStatus.Err(var error):
+                        return DiagnosticStatus.Err(error);
+                    case DiagnosticStatus.Ok:
+                }
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendU64((u64[0 max])current)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendAscii(" | ")))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (AppendDiagnosticCaretExpandedLine(writer, data, lineStart, lineEnd))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendByte(10)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendAscii("  ")))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])gutterWidth)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendAscii(" | ")))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            if (caretStart > 0)
+            {
+                switch (DiagnosticCaretAppendStatus(writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])caretStart)))
+                {
+                    case DiagnosticStatus.Err(var error):
+                        return DiagnosticStatus.Err(error);
+                    case DiagnosticStatus.Ok:
+                }
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendRepeatedByte(94, (u64[0 2 ** 63 - 1])caretWidth)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            if (current == spanEndLine)
+            {
+                break;
+            }
+
+            switch (DiagnosticCaretAppendStatus(writer.AppendByte(10)))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            current = (u32[0 max])(current + 1);
+        }
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+public fn DiagnosticStatus AppendSourceCaretForDiagnostic(
+    mut borrow OwnedAscii writer,
+    mut borrow SourceFileMap sourceMap,
+    borrow CompilerDiagnostic diagnostic)
+{
+    if (!diagnostic.HasLocationValue)
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    stack mut SourceLocation location = new SourceLocation();
+    location.HasFilePathValue = diagnostic.HasFilePathValue;
+    location.LineValue = diagnostic.LineValue;
+    location.ColumnValue = diagnostic.ColumnValue;
+    location.EndLineValue = diagnostic.EndLineValue;
+    location.EndColumnValue = diagnostic.EndColumnValue;
+
+    return AppendSourceCaretForLocation(writer, sourceMap, location);
+}
+
+public fn DiagnosticResult<SourceFileMap> SourceFileMapOf(
+    ascii filePath,
+    bool hasFilePath,
+    ascii source)
+{
+    stack mut SourceFileMap sourceMap = new SourceFileMap();
+    sourceMap.HasFilePathValue = hasFilePath;
+
+    switch (CopyAsciiInto(source, sourceMap.SourceText))
+    {
+        case DiagnosticStatus.Err(var sourceError):
+            return DiagnosticResult<SourceFileMap>.Err(sourceError);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (hasFilePath)
+    {
+        switch (CopyAsciiInto(filePath, sourceMap.FilePathText))
+        {
+            case DiagnosticStatus.Err(var filePathError):
+                return DiagnosticResult<SourceFileMap>.Err(filePathError);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    stack i64[min max] signedLength = System.Text.AsciiLength(source);
+    if (signedLength < 0)
+    {
+        return DiagnosticResult<SourceFileMap>.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+
+    sourceMap.SourceLengthValue = (u64[0 2 ** 63 - 1])signedLength;
+    switch (AppendLineStart(sourceMap.LineStarts, 0))
+    {
+        case DiagnosticStatus.Err(var initialLineError):
+            return DiagnosticResult<SourceFileMap>.Err(initialLineError);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (sourceMap.SourceLengthValue == 0)
+    {
+        return DiagnosticResult<SourceFileMap>.Ok(sourceMap);
+    }
+
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(source);
+        if (data == null)
+        {
+            return DiagnosticResult<SourceFileMap>.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] offset = 0;
+        while willexit (offset < sourceMap.SourceLengthValue)
+        {
+            stack i8[min max] value = *(&data[offset]);
+            if (value == 13)
+            {
+                stack mut u64[0 2 ** 63 - 1] next = offset + 1;
+                if (next < sourceMap.SourceLengthValue && *(&data[next]) == 10)
+                {
+                    next = next + 1;
+                }
+
+                switch (AppendLineStart(sourceMap.LineStarts, next))
+                {
+                    case DiagnosticStatus.Err(var lineError):
+                        return DiagnosticResult<SourceFileMap>.Err(lineError);
+                    case DiagnosticStatus.Ok:
+                }
+
+                offset = next;
+                continue;
+            }
+
+            if (value == 10)
+            {
+                switch (AppendLineStart(sourceMap.LineStarts, offset + 1))
+                {
+                    case DiagnosticStatus.Err(var lineError):
+                        return DiagnosticResult<SourceFileMap>.Err(lineError);
+                    case DiagnosticStatus.Ok:
+                }
+            }
+
+            offset = offset + 1;
+        }
+    }
+
+    return DiagnosticResult<SourceFileMap>.Ok(sourceMap);
+}
+
+public fn SourceLocation SyntheticSourceLocation()
+{
+    stack SourceLocation location = new SourceLocation();
+    return location;
+}
+
+public fn DiagnosticResult<SourceLocation> SourceLocationOf(
+    ascii filePath,
+    bool hasFilePath,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column,
+    u64[0 2 ** 63 - 1] endLine,
+    u64[0 2 ** 63 - 1] endColumn)
+{
+    stack mut SourceLocation location = new SourceLocation();
+    location.HasFilePathValue = hasFilePath;
+    location.LineValue = line;
+    location.ColumnValue = column;
+    location.EndLineValue = endLine;
+    location.EndColumnValue = endColumn;
+
+    if (hasFilePath)
+    {
+        switch (CopyAsciiInto(filePath, location.FilePathText))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticResult<SourceLocation>.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    return DiagnosticResult<SourceLocation>.Ok(location);
+}
+
+public struct CompilerDiagnostic
+{
+    internal DiagnosticSeverity SeverityValue;
+    internal OwnedAscii CodeText;
+    internal OwnedAscii MessageText;
+    internal OwnedAscii StageText;
+    internal OwnedAscii FilePathText;
+    internal bool HasStageValue;
+    internal bool HasLocationValue;
+    internal bool HasFilePathValue;
+    internal u64[1 2 ** 63 - 1] LineValue;
+    internal u64[1 2 ** 63 - 1] ColumnValue;
+    internal u64[0 2 ** 63 - 1] EndLineValue;
+    internal u64[0 2 ** 63 - 1] EndColumnValue;
+
+    CompilerDiagnostic()
+    {
+        self.SeverityValue = DiagnosticSeverity.Info;
+        self.CodeText = new();
+        self.MessageText = new();
+        self.StageText = new();
+        self.FilePathText = new();
+        self.HasStageValue = false;
+        self.HasLocationValue = false;
+        self.HasFilePathValue = false;
+        self.LineValue = 1;
+        self.ColumnValue = 1;
+        self.EndLineValue = 0;
+        self.EndColumnValue = 0;
+    }
+
+    public inline finite law DiagnosticSeverity Severity(borrow CompilerDiagnostic self)
+    {
+        return self.SeverityValue;
+    }
+
+    public inline finite law bool HasStage(borrow CompilerDiagnostic self)
+    {
+        return self.HasStageValue;
+    }
+
+    public inline finite law bool HasLocation(borrow CompilerDiagnostic self)
+    {
+        return self.HasLocationValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] Line(borrow CompilerDiagnostic self)
+    {
+        return self.LineValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] Column(borrow CompilerDiagnostic self)
+    {
+        return self.ColumnValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] ResolvedEndLine(borrow CompilerDiagnostic self)
+    {
+        if (self.EndLineValue > 0)
+        {
+            return (u64[1 2 ** 63 - 1])self.EndLineValue;
+        }
+
+        return self.LineValue;
+    }
+
+    public inline finite law u64[1 2 ** 63 - 1] ResolvedEndColumn(borrow CompilerDiagnostic self)
+    {
+        if (self.EndColumnValue > 0)
+        {
+            return (u64[1 2 ** 63 - 1])self.EndColumnValue;
+        }
+
+        return self.ColumnValue;
+    }
+
+    public fn bool CodeEquals(mut borrow CompilerDiagnostic self, ascii expected)
+    {
+        return System.Text.OwnedAsciiEqualsAscii(self.CodeText, expected);
+    }
+
+    public fn bool MessageEquals(mut borrow CompilerDiagnostic self, ascii expected)
+    {
+        return System.Text.OwnedAsciiEqualsAscii(self.MessageText, expected);
+    }
+
+    public fn bool StageEquals(mut borrow CompilerDiagnostic self, ascii expected)
+    {
+        if (!self.HasStageValue)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.StageText, expected);
+    }
+
+    public fn bool FilePathEquals(mut borrow CompilerDiagnostic self, ascii expected)
+    {
+        if (!self.HasLocationValue || !self.HasFilePathValue)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.FilePathText, expected);
+    }
+}
+
+public fn DiagnosticResult<CompilerDiagnostic> CompilerDiagnosticOf(
+    DiagnosticSeverity severity,
+    ascii code,
+    ascii message,
+    ascii stage,
+    bool hasStage,
+    ascii filePath,
+    bool hasFilePath,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column,
+    u64[0 2 ** 63 - 1] endLine,
+    u64[0 2 ** 63 - 1] endColumn,
+    bool hasLocation)
+{
+    stack mut CompilerDiagnostic diagnostic = new CompilerDiagnostic();
+    diagnostic.SeverityValue = severity;
+    diagnostic.HasStageValue = hasStage;
+    diagnostic.HasLocationValue = hasLocation;
+    diagnostic.HasFilePathValue = hasLocation && hasFilePath;
+    diagnostic.LineValue = line;
+    diagnostic.ColumnValue = column;
+    diagnostic.EndLineValue = endLine;
+    diagnostic.EndColumnValue = endColumn;
+
+    switch (CopyAsciiInto(code, diagnostic.CodeText))
+    {
+        case DiagnosticStatus.Err(var codeError):
+            return DiagnosticResult<CompilerDiagnostic>.Err(codeError);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (CopyAsciiInto(message, diagnostic.MessageText))
+    {
+        case DiagnosticStatus.Err(var messageError):
+            return DiagnosticResult<CompilerDiagnostic>.Err(messageError);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (hasStage)
+    {
+        switch (CopyAsciiInto(stage, diagnostic.StageText))
+        {
+            case DiagnosticStatus.Err(var stageError):
+                return DiagnosticResult<CompilerDiagnostic>.Err(stageError);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    if (hasLocation && hasFilePath)
+    {
+        switch (CopyAsciiInto(filePath, diagnostic.FilePathText))
+        {
+            case DiagnosticStatus.Err(var filePathError):
+                return DiagnosticResult<CompilerDiagnostic>.Err(filePathError);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    return DiagnosticResult<CompilerDiagnostic>.Ok(diagnostic);
+}
+
+internal fn DiagnosticStatus AppendCompilerDiagnosticLocationTextParts(
+    mut borrow OwnedAscii writer,
+    bool hasFilePath,
+    ascii filePath,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column)
+    where overlap(writer, filePath)
+{
+    stack mut bool appendFilePath = false;
+    if (hasFilePath)
+    {
+        unsafe
+        {
+            appendFilePath = DiagnosticAsciiHasNonWhitespace(filePath);
+        }
+    }
+
+    if (appendFilePath)
+    {
+        switch (DiagnosticAppendAscii(writer, filePath))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, ":"))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (DiagnosticAppendU64(writer, (u64[0 max])line))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, ":"))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    return DiagnosticAppendU64(writer, (u64[0 max])column);
+}
+
+internal fn DiagnosticStatus AppendCompilerDiagnosticLineParts(
+    mut borrow OwnedAscii writer,
+    DiagnosticSeverity severity,
+    ascii code,
+    ascii message,
+    bool hasStage,
+    ascii stage,
+    bool hasLocation,
+    bool hasFilePath,
+    ascii filePath,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column)
+    where overlap(writer, code, message, stage, filePath)
+{
+    if (hasLocation)
+    {
+        switch (AppendCompilerDiagnosticLocationTextParts(writer, hasFilePath, filePath, line, column))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, ": "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (DiagnosticAppendAscii(writer, DiagnosticSeverityName(severity)))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, " "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, code))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    stack mut bool appendStage = false;
+    if (hasStage)
+    {
+        unsafe
+        {
+            appendStage = DiagnosticAsciiHasNonWhitespace(stage);
+        }
+    }
+
+    if (appendStage)
+    {
+        switch (DiagnosticAppendAscii(writer, " ["))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, stage))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, "]"))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (DiagnosticAppendAscii(writer, ": "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    return DiagnosticAppendAscii(writer, message);
+}
+
+public fn DiagnosticStatus AppendCompilerDiagnosticLine(
+    mut borrow OwnedAscii writer,
+    mut borrow CompilerDiagnostic diagnostic)
+{
+    stack mut ascii code = diagnostic.CodeText.View();
+    stack mut ascii message = diagnostic.MessageText.View();
+    stack mut ascii stage = "";
+    stack mut ascii filePath = "";
+
+    if (diagnostic.HasStageValue)
+    {
+        stage = diagnostic.StageText.View();
+    }
+
+    if (diagnostic.HasLocationValue && diagnostic.HasFilePathValue)
+    {
+        filePath = diagnostic.FilePathText.View();
+    }
+
+    return AppendCompilerDiagnosticLineParts(
+        writer,
+        diagnostic.SeverityValue,
+        code,
+        message,
+        diagnostic.HasStageValue,
+        stage,
+        diagnostic.HasLocationValue,
+        diagnostic.HasFilePathValue,
+        filePath,
+        diagnostic.LineValue,
+        diagnostic.ColumnValue);
+}
+
+internal fn DiagnosticStatus AppendCompilerDiagnosticGroupedNoteHeaderParts(
+    mut borrow OwnedAscii writer,
+    ascii message,
+    bool hasStage,
+    ascii stage,
+    bool hasLocation,
+    bool hasFilePath,
+    ascii filePath,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column)
+    where overlap(writer, message, stage, filePath)
+{
+    switch (DiagnosticAppendAscii(writer, "  note"))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    stack mut bool appendStage = false;
+    if (hasStage)
+    {
+        unsafe
+        {
+            appendStage = DiagnosticAsciiHasNonWhitespace(stage);
+        }
+    }
+
+    if (appendStage)
+    {
+        switch (DiagnosticAppendAscii(writer, " ["))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, stage))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, "]"))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    if (hasLocation)
+    {
+        switch (DiagnosticAppendAscii(writer, " at "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (AppendCompilerDiagnosticLocationTextParts(writer, hasFilePath, filePath, line, column))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (DiagnosticAppendAscii(writer, ": "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    return DiagnosticAppendAscii(writer, message);
+}
+
+public fn DiagnosticStatus AppendCompilerDiagnosticGroupedNoteHeader(
+    mut borrow OwnedAscii writer,
+    mut borrow CompilerDiagnostic diagnostic)
+{
+    stack mut ascii message = diagnostic.MessageText.View();
+    stack mut ascii stage = "";
+    stack mut ascii filePath = "";
+
+    if (diagnostic.HasStageValue)
+    {
+        stage = diagnostic.StageText.View();
+    }
+
+    if (diagnostic.HasLocationValue && diagnostic.HasFilePathValue)
+    {
+        filePath = diagnostic.FilePathText.View();
+    }
+
+    return AppendCompilerDiagnosticGroupedNoteHeaderParts(
+        writer,
+        message,
+        diagnostic.HasStageValue,
+        stage,
+        diagnostic.HasLocationValue,
+        diagnostic.HasFilePathValue,
+        filePath,
+        diagnostic.LineValue,
+        diagnostic.ColumnValue);
+}
+
+internal fn bool CompilerDiagnosticMatchesSourceMap(
+    mut borrow CompilerDiagnostic diagnostic,
+    mut borrow SourceFileMap sourceMap)
+{
+    if (!diagnostic.HasLocationValue)
+    {
+        return false;
+    }
+
+    if (!diagnostic.HasFilePathValue)
+    {
+        return true;
+    }
+
+    if (!sourceMap.HasFilePathValue)
+    {
+        return false;
+    }
+
+    return System.Text.OwnedAsciiEqualsAscii(sourceMap.FilePathText, diagnostic.FilePathText.View());
+}
+
+public fn DiagnosticStatus AppendCompilerDiagnosticTextWithSourceMap(
+    mut borrow OwnedAscii writer,
+    mut borrow CompilerDiagnostic diagnostic,
+    mut borrow SourceFileMap sourceMap)
+{
+    switch (AppendCompilerDiagnosticLine(writer, diagnostic))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendByte(writer, 10))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (!CompilerDiagnosticMatchesSourceMap(diagnostic, sourceMap))
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] before = writer.Length();
+    switch (AppendSourceCaretForDiagnostic(writer, sourceMap, diagnostic))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (writer.Length() > before)
+    {
+        return DiagnosticAppendByte(writer, 10);
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+internal unsafe fn DiagnosticStatus AppendIndentedAscii(
+    mut borrow OwnedAscii writer,
+    ascii text,
+    ascii indent)
+    where overlap(writer, text, indent)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0)
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+    stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+    if (data == null)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+
+    switch (DiagnosticAppendAscii(writer, indent))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack i8[min max] unit = *(&data[index]);
+        switch (DiagnosticAppendByte(writer, unit))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        stack u64[0 2 ** 63 - 1] next = index + 1;
+        if (unit == 10 && next < length)
+        {
+            switch (DiagnosticAppendAscii(writer, indent))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+        }
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+public struct DiagnosticBag
+{
+    internal dynamic DiagnosticSeverity Severities;
+    internal dynamic OwnedAscii Codes;
+    internal dynamic OwnedAscii Messages;
+    internal dynamic OwnedAscii Stages;
+    internal dynamic bool HasStages;
+    internal dynamic bool HasLocations;
+    internal dynamic OwnedAscii FilePaths;
+    internal dynamic bool HasFilePaths;
+    internal dynamic u64[1 2 ** 63 - 1] Lines;
+    internal dynamic u64[1 2 ** 63 - 1] Columns;
+    internal dynamic u64[0 2 ** 63 - 1] EndLines;
+    internal dynamic u64[0 2 ** 63 - 1] EndColumns;
+
+    DiagnosticBag()
+    {
+        self.Severities = new();
+        self.Codes = new();
+        self.Messages = new();
+        self.Stages = new();
+        self.HasStages = new();
+        self.HasLocations = new();
+        self.FilePaths = new();
+        self.HasFilePaths = new();
+        self.Lines = new();
+        self.Columns = new();
+        self.EndLines = new();
+        self.EndColumns = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow DiagnosticBag self)
+    {
+        return self.Severities.Length;
+    }
+
+    public law bool HasErrors(borrow DiagnosticBag self)
+    {
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < self.Severities.Length; index += 1)
+        {
+            if (self.Severities[index] == DiagnosticSeverity.Error)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public law DiagnosticSeverity SeverityAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Severities.Length)
+        {
+            return self.Severities[index];
+        }
+
+        return DiagnosticSeverity.Info;
+    }
+
+    public law bool HasStageAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.HasStages.Length)
+        {
+            return self.HasStages[index];
+        }
+
+        return false;
+    }
+
+    public law bool HasLocationAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.HasLocations.Length)
+        {
+            return self.HasLocations[index];
+        }
+
+        return false;
+    }
+
+    public law u64[1 2 ** 63 - 1] LineAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Lines.Length)
+        {
+            return self.Lines[index];
+        }
+
+        return 1;
+    }
+
+    public law u64[1 2 ** 63 - 1] ColumnAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.Columns.Length)
+        {
+            return self.Columns[index];
+        }
+
+        return 1;
+    }
+
+    public law u64[1 2 ** 63 - 1] ResolvedEndLineAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.EndLines.Length)
+        {
+            return self.LineAt(index);
+        }
+
+        stack u64[0 2 ** 63 - 1] endLine = self.EndLines[index];
+        if (endLine > 0)
+        {
+            return (u64[1 2 ** 63 - 1])endLine;
+        }
+
+        return self.LineAt(index);
+    }
+
+    public law u64[1 2 ** 63 - 1] ResolvedEndColumnAt(borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.EndColumns.Length)
+        {
+            return self.ColumnAt(index);
+        }
+
+        stack u64[0 2 ** 63 - 1] endColumn = self.EndColumns[index];
+        if (endColumn > 0)
+        {
+            return (u64[1 2 ** 63 - 1])endColumn;
+        }
+
+        return self.ColumnAt(index);
+    }
+
+    public fn bool CodeEqualsAt(mut borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.Codes.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.Codes[index], expected);
+    }
+
+    public fn bool MessageEqualsAt(mut borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.Messages.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.Messages[index], expected);
+    }
+
+    public fn bool StageEqualsAt(mut borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.HasStages.Length)
+        {
+            return false;
+        }
+
+        if (!self.HasStages[index])
+        {
+            return false;
+        }
+
+        if (index >= self.Stages.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.Stages[index], expected);
+    }
+
+    public fn bool FilePathEqualsAt(mut borrow DiagnosticBag self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.HasFilePaths.Length)
+        {
+            return false;
+        }
+
+        if (!self.HasFilePaths[index])
+        {
+            return false;
+        }
+
+        if (index >= self.FilePaths.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.FilePaths[index], expected);
+    }
+
+    public fn DiagnosticStatus Add(mut borrow DiagnosticBag self, CompilerDiagnostic diagnostic)
+    {
+        if (!self.Severities.TryReserve(1)
+            || !self.Codes.TryReserve(1)
+            || !self.Messages.TryReserve(1)
+            || !self.Stages.TryReserve(1)
+            || !self.HasStages.TryReserve(1)
+            || !self.HasLocations.TryReserve(1)
+            || !self.FilePaths.TryReserve(1)
+            || !self.HasFilePaths.TryReserve(1)
+            || !self.Lines.TryReserve(1)
+            || !self.Columns.TryReserve(1)
+            || !self.EndLines.TryReserve(1)
+            || !self.EndColumns.TryReserve(1))
+        {
+            return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+        }
+
+        stack DiagnosticSeverity severity = diagnostic.SeverityValue;
+        stack bool hasStage = diagnostic.HasStageValue;
+        stack bool hasLocation = diagnostic.HasLocationValue;
+        stack bool hasFilePath = diagnostic.HasFilePathValue;
+        stack u64[1 2 ** 63 - 1] line = diagnostic.LineValue;
+        stack u64[1 2 ** 63 - 1] column = diagnostic.ColumnValue;
+        stack u64[0 2 ** 63 - 1] endLine = diagnostic.EndLineValue;
+        stack u64[0 2 ** 63 - 1] endColumn = diagnostic.EndColumnValue;
+        stack mut OwnedAscii codeText = new();
+        stack mut OwnedAscii messageText = new();
+        stack mut OwnedAscii stageText = new();
+        stack mut OwnedAscii filePathText = new();
+
+        switch (System.Text.OwnedAscii.Format(diagnostic.CodeText, codeText))
+        {
+            case System.Memory.MemoryStatus.Err(var codeError):
+                return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (System.Text.OwnedAscii.Format(diagnostic.MessageText, messageText))
+        {
+            case System.Memory.MemoryStatus.Err(var messageError):
+                return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (hasStage)
+        {
+            switch (System.Text.OwnedAscii.Format(diagnostic.StageText, stageText))
+            {
+                case System.Memory.MemoryStatus.Err(var stageError):
+                    return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (hasLocation && hasFilePath)
+        {
+            switch (System.Text.OwnedAscii.Format(diagnostic.FilePathText, filePathText))
+            {
+                case System.Memory.MemoryStatus.Err(var filePathError):
+                    return DiagnosticStatus.Err(DiagnosticError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        init self.Severities[self.Severities.Length] = severity;
+        init self.Codes[self.Codes.Length] = codeText;
+        init self.Messages[self.Messages.Length] = messageText;
+        init self.Stages[self.Stages.Length] = stageText;
+        init self.HasStages[self.HasStages.Length] = hasStage;
+        init self.HasLocations[self.HasLocations.Length] = hasLocation;
+        init self.FilePaths[self.FilePaths.Length] = filePathText;
+        init self.HasFilePaths[self.HasFilePaths.Length] = hasLocation && hasFilePath;
+        init self.Lines[self.Lines.Length] = line;
+        init self.Columns[self.Columns.Length] = column;
+        init self.EndLines[self.EndLines.Length] = endLine;
+        init self.EndColumns[self.EndColumns.Length] = endColumn;
+        return DiagnosticStatus.Ok;
+    }
+
+    public fn DiagnosticStatus Append(
+        mut borrow DiagnosticBag self,
+        DiagnosticSeverity severity,
+        ascii code,
+        ascii message,
+        ascii stage,
+        bool hasStage,
+        ascii filePath,
+        bool hasFilePath,
+        u64[1 2 ** 63 - 1] line,
+        u64[1 2 ** 63 - 1] column,
+        u64[0 2 ** 63 - 1] endLine,
+        u64[0 2 ** 63 - 1] endColumn,
+        bool hasLocation)
+    {
+        switch (CompilerDiagnosticOf(
+            severity,
+            code,
+            message,
+            stage,
+            hasStage,
+            filePath,
+            hasFilePath,
+            line,
+            column,
+            endLine,
+            endColumn,
+            hasLocation))
+        {
+            case DiagnosticResult<CompilerDiagnostic>.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticResult<CompilerDiagnostic>.Ok(var diagnostic):
+                return self.Add(diagnostic);
+        }
+    }
+}
+
+internal fn DiagnosticStatus AppendDiagnosticBagRowLine(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (index >= bag.Severities.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack DiagnosticSeverity severity = bag.Severities[index];
+
+    if (index >= bag.HasStages.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack bool hasStage = bag.HasStages[index];
+
+    if (index >= bag.HasLocations.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack bool hasLocation = bag.HasLocations[index];
+
+    if (index >= bag.HasFilePaths.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack bool hasFilePath = bag.HasFilePaths[index];
+
+    if (index >= bag.Lines.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack u64[1 2 ** 63 - 1] line = bag.Lines[index];
+
+    if (index >= bag.Columns.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack u64[1 2 ** 63 - 1] column = bag.Columns[index];
+
+    if (hasLocation)
+    {
+        if (hasFilePath)
+        {
+            if (index >= bag.FilePaths.Length)
+            {
+                return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+            }
+
+            if (DiagnosticOwnedAsciiHasNonWhitespace(bag.FilePaths[index]))
+            {
+                switch (DiagnosticAppendOwnedAscii(writer, bag.FilePaths[index]))
+                {
+                    case DiagnosticStatus.Err(var error):
+                        return DiagnosticStatus.Err(error);
+                    case DiagnosticStatus.Ok:
+                }
+
+                switch (DiagnosticAppendAscii(writer, ":"))
+                {
+                    case DiagnosticStatus.Err(var error):
+                        return DiagnosticStatus.Err(error);
+                    case DiagnosticStatus.Ok:
+                }
+            }
+        }
+
+        switch (DiagnosticAppendU64(writer, (u64[0 max])line))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, ":"))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendU64(writer, (u64[0 max])column))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, ": "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (DiagnosticAppendAscii(writer, DiagnosticSeverityName(severity)))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, " "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (index >= bag.Codes.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    switch (DiagnosticAppendOwnedAscii(writer, bag.Codes[index]))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (hasStage)
+    {
+        if (index >= bag.Stages.Length)
+        {
+            return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        if (DiagnosticOwnedAsciiHasNonWhitespace(bag.Stages[index]))
+        {
+            switch (DiagnosticAppendAscii(writer, " ["))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticAppendOwnedAscii(writer, bag.Stages[index]))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticAppendAscii(writer, "]"))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+        }
+    }
+
+    switch (DiagnosticAppendAscii(writer, ": "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (index >= bag.Messages.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    return DiagnosticAppendOwnedAscii(writer, bag.Messages[index]);
+}
+
+internal fn DiagnosticStatus AppendDiagnosticBagRowGroupedNoteHeader(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (index >= bag.HasStages.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack bool hasStage = bag.HasStages[index];
+
+    if (index >= bag.HasLocations.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack bool hasLocation = bag.HasLocations[index];
+
+    if (index >= bag.HasFilePaths.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack bool hasFilePath = bag.HasFilePaths[index];
+
+    if (index >= bag.Lines.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack u64[1 2 ** 63 - 1] line = bag.Lines[index];
+
+    if (index >= bag.Columns.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack u64[1 2 ** 63 - 1] column = bag.Columns[index];
+
+    switch (DiagnosticAppendAscii(writer, "  note"))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (hasStage)
+    {
+        if (index >= bag.Stages.Length)
+        {
+            return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+        }
+
+        if (DiagnosticOwnedAsciiHasNonWhitespace(bag.Stages[index]))
+        {
+            switch (DiagnosticAppendAscii(writer, " ["))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticAppendOwnedAscii(writer, bag.Stages[index]))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (DiagnosticAppendAscii(writer, "]"))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+        }
+    }
+
+    if (hasLocation)
+    {
+        switch (DiagnosticAppendAscii(writer, " at "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        if (hasFilePath)
+        {
+            if (index >= bag.FilePaths.Length)
+            {
+                return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+            }
+
+            if (DiagnosticOwnedAsciiHasNonWhitespace(bag.FilePaths[index]))
+            {
+                switch (DiagnosticAppendOwnedAscii(writer, bag.FilePaths[index]))
+                {
+                    case DiagnosticStatus.Err(var error):
+                        return DiagnosticStatus.Err(error);
+                    case DiagnosticStatus.Ok:
+                }
+
+                switch (DiagnosticAppendAscii(writer, ":"))
+                {
+                    case DiagnosticStatus.Err(var error):
+                        return DiagnosticStatus.Err(error);
+                    case DiagnosticStatus.Ok:
+                }
+            }
+        }
+
+        switch (DiagnosticAppendU64(writer, (u64[0 max])line))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendAscii(writer, ":"))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        switch (DiagnosticAppendU64(writer, (u64[0 max])column))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (DiagnosticAppendAscii(writer, ": "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (index >= bag.Messages.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    return DiagnosticAppendOwnedAscii(writer, bag.Messages[index]);
+}
+
+public law u64[0 2 ** 63 - 1] DiagnosticBagSeverityCount(
+    borrow DiagnosticBag bag,
+    DiagnosticSeverity severity)
+{
+    stack mut u64[0 2 ** 63 - 1] count = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < bag.Severities.Length; index += 1)
+    {
+        if (bag.Severities[index] == severity)
+        {
+            count = count + 1;
+        }
+    }
+
+    return count;
+}
+
+internal fn DiagnosticStatus AppendDiagnosticCount(
+    mut borrow OwnedAscii writer,
+    u64[0 2 ** 63 - 1] count,
+    ascii singular)
+    where overlap(writer, singular)
+{
+    switch (DiagnosticAppendU64(writer, (u64[0 max])count))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, " "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, singular))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (count != 1)
+    {
+        return DiagnosticAppendAscii(writer, "s");
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+public fn DiagnosticStatus AppendDiagnosticSummary(
+    mut borrow OwnedAscii writer,
+    borrow DiagnosticBag bag,
+    bool succeeded)
+{
+    if (succeeded)
+    {
+        switch (DiagnosticAppendAscii(writer, "Summary: "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+    else
+    {
+        switch (DiagnosticAppendAscii(writer, "Failure summary: "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    switch (AppendDiagnosticCount(writer, DiagnosticBagSeverityCount(bag, DiagnosticSeverity.Error), "error"))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, ", "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (AppendDiagnosticCount(writer, DiagnosticBagSeverityCount(bag, DiagnosticSeverity.Warning), "warning"))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendAscii(writer, ", "))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (AppendDiagnosticCount(writer, DiagnosticBagSeverityCount(bag, DiagnosticSeverity.Info), "info"))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    return DiagnosticAppendAscii(writer, ".");
+}
+
+internal fn bool DiagnosticBagRowMatchesSourceMap(
+    mut borrow DiagnosticBag bag,
+    u64[0 2 ** 63 - 1] index,
+    mut borrow SourceFileMap sourceMap)
+{
+    if (index >= bag.HasLocations.Length)
+    {
+        return false;
+    }
+
+    if (!bag.HasLocations[index])
+    {
+        return false;
+    }
+
+    if (index >= bag.HasFilePaths.Length)
+    {
+        return false;
+    }
+
+    stack bool hasFilePath = bag.HasFilePaths[index];
+    if (!hasFilePath)
+    {
+        return true;
+    }
+
+    if (!sourceMap.HasFilePathValue)
+    {
+        return false;
+    }
+
+    if (index >= bag.FilePaths.Length)
+    {
+        return false;
+    }
+
+    return System.Text.OwnedAscii.Equals(sourceMap.FilePathText, bag.FilePaths[index]);
+}
+
+internal fn DiagnosticStatus AppendDiagnosticBagRowSourceSnippet(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    u64[0 2 ** 63 - 1] index,
+    mut borrow SourceFileMap sourceMap,
+    bool indent)
+{
+    if (!DiagnosticBagRowMatchesSourceMap(bag, index, sourceMap))
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    if (index >= bag.Lines.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    stack mut SourceLocation location = new SourceLocation();
+    location.HasFilePathValue = false;
+    location.LineValue = bag.Lines[index];
+
+    if (index >= bag.Columns.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    location.ColumnValue = bag.Columns[index];
+
+    if (index >= bag.EndLines.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    location.EndLineValue = bag.EndLines[index];
+
+    if (index >= bag.EndColumns.Length)
+    {
+        return DiagnosticStatus.Err(DiagnosticError.SourceRangeOutOfBounds);
+    }
+    location.EndColumnValue = bag.EndColumns[index];
+
+    if (!indent)
+    {
+        stack u64[0 2 ** 63 - 1] before = writer.Length();
+        switch (AppendSourceCaretForLocation(writer, sourceMap, location))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        if (writer.Length() > before)
+        {
+            return DiagnosticAppendByte(writer, 10);
+        }
+
+        return DiagnosticStatus.Ok;
+    }
+
+    stack mut OwnedAscii snippet = new();
+    switch (AppendSourceCaretForLocation(snippet, sourceMap, location))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (snippet.Length() == 0)
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    unsafe
+    {
+        switch (AppendIndentedAscii(writer, snippet.View(), "  "))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+    }
+
+    return DiagnosticAppendByte(writer, 10);
+}
+
+internal fn DiagnosticStatus AppendDiagnosticBagPrimaryRow(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    u64[0 2 ** 63 - 1] index,
+    mut borrow SourceFileMap sourceMap,
+    bool hasSourceMap)
+{
+    switch (AppendDiagnosticBagRowLine(writer, bag, index))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendByte(writer, 10))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (hasSourceMap)
+    {
+        return AppendDiagnosticBagRowSourceSnippet(writer, bag, index, sourceMap, false);
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+internal fn DiagnosticStatus AppendDiagnosticBagNoteRow(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    u64[0 2 ** 63 - 1] index,
+    mut borrow SourceFileMap sourceMap,
+    bool hasSourceMap)
+{
+    switch (AppendDiagnosticBagRowGroupedNoteHeader(writer, bag, index))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (DiagnosticAppendByte(writer, 10))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    if (hasSourceMap)
+    {
+        return AppendDiagnosticBagRowSourceSnippet(writer, bag, index, sourceMap, true);
+    }
+
+    return DiagnosticStatus.Ok;
+}
+
+internal fn DiagnosticStatus AppendDiagnosticBagTextCore(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    mut borrow SourceFileMap sourceMap,
+    bool hasSourceMap,
+    bool succeeded)
+{
+    stack u64[0 2 ** 63 - 1] count = bag.Count();
+    if (count == 0)
+    {
+        return DiagnosticStatus.Ok;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (bag.SeverityAt(index) == DiagnosticSeverity.Info)
+        {
+            switch (AppendDiagnosticBagPrimaryRow(writer, bag, index, sourceMap, hasSourceMap))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            index = index + 1;
+            continue;
+        }
+
+        switch (AppendDiagnosticBagPrimaryRow(writer, bag, index, sourceMap, hasSourceMap))
+        {
+            case DiagnosticStatus.Err(var error):
+                return DiagnosticStatus.Err(error);
+            case DiagnosticStatus.Ok:
+        }
+
+        index = index + 1;
+        while willexit (index < count && bag.SeverityAt(index) == DiagnosticSeverity.Info)
+        {
+            switch (AppendDiagnosticBagNoteRow(writer, bag, index, sourceMap, hasSourceMap))
+            {
+                case DiagnosticStatus.Err(var error):
+                    return DiagnosticStatus.Err(error);
+                case DiagnosticStatus.Ok:
+            }
+
+            index = index + 1;
+        }
+    }
+
+    switch (AppendDiagnosticSummary(writer, bag, succeeded))
+    {
+        case DiagnosticStatus.Err(var error):
+            return DiagnosticStatus.Err(error);
+        case DiagnosticStatus.Ok:
+    }
+
+    return DiagnosticAppendByte(writer, 10);
+}
+
+public fn DiagnosticStatus AppendDiagnosticBagText(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    bool succeeded)
+{
+    stack mut SourceFileMap emptySourceMap = new SourceFileMap();
+    return AppendDiagnosticBagTextCore(writer, bag, emptySourceMap, false, succeeded);
+}
+
+public fn DiagnosticStatus AppendDiagnosticBagTextWithSourceMap(
+    mut borrow OwnedAscii writer,
+    mut borrow DiagnosticBag bag,
+    mut borrow SourceFileMap sourceMap,
+    bool succeeded)
+{
+    return AppendDiagnosticBagTextCore(writer, bag, sourceMap, true, succeeded);
+}

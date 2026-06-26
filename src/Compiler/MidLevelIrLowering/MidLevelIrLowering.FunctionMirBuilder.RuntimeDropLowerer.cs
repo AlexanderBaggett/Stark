@@ -318,9 +318,15 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (_fallbackEnumLayouts.TryGetValue(type.NamedType, out layout!))
+            {
+                return true;
+            }
+
             var key = StarkTypeSymbols.GetGenericBaseName(type.NamedType);
             return _enumLayoutModel.Layouts.TryGetValue(key, out layout!)
-                || _publishedEnumLayouts.TryGetValue(key, out layout!);
+                || _publishedEnumLayouts.TryGetValue(key, out layout!)
+                || _fallbackEnumLayouts.TryGetValue(key, out layout!);
         }
 
         private StarkTypeSymbol ApplyRuntimeDropGenericSubstitution(StarkTypeSymbol type, StarkTypeSymbol ownerType)

@@ -163,7 +163,7 @@ internal sealed class LlvmIrEmitter
         _emitFallbackDeclarationsForSourceBodies = emitFallbackDeclarationsForSourceBodies;
         _stringConstants = CollectStringConstants(parseResult, ssa);
         _objectCreationConstructors = typeModel.ObjectCreations
-            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .GroupBy(static record => new ObjectCreationKey(record.EnclosingFunctionName, record.ExpressionText, record.Location.FilePath, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _allFunctionEffects = BuildAllFunctionEffects(effectModel, typeModel, ssa, specializationCodegenStrategy);
@@ -217,7 +217,9 @@ internal sealed class LlvmIrEmitter
             expression => TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression) ? primaryExpression : null,
             objectCreation => _objectCreationConstructors.TryGetValue(
                     new ObjectCreationKey(
+                        null,
                         objectCreation.GetText(),
+                        _input.FilePath,
                         objectCreation.Start.Line,
                         objectCreation.Start.Column + 1),
                     out var constructor)
@@ -3304,7 +3306,7 @@ internal sealed class LlvmIrEmitter
             out orderedFields);
     }
 
-    private readonly record struct ObjectCreationKey(string Text, int Line, int Column);
+    private readonly record struct ObjectCreationKey(string? ScopeName, string Text, string? FilePath, int Line, int Column);
 
     private static StringConstantKey CreateStringConstantKey(string literalText, StarkTypeSymbol type)
     {

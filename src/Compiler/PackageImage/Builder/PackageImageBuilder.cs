@@ -36,7 +36,6 @@ internal static partial class PackageImageBuilder
                 .Select(static import => new StarkPackageReExportManifest(import.ModuleName))
                 .ToArray();
             var imports = module.SyntaxModel.Imports
-                .Where(import => import.IsReExport || packagedModuleNames.Contains(import.ModuleName))
                 .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
                 .ThenByDescending(static import => import.IsReExport)
                 .Select(static import => new StarkPackageImportManifest(import.ModuleName, import.IsReExport))
@@ -543,7 +542,8 @@ internal static partial class PackageImageBuilder
 
         foreach (var module in modules)
         {
-            if (!HasPackageImageSurface(module)
+            if (!IsPackageImageOwnedModule(module)
+                || !HasPackageImageSurface(module)
                 || !packagedModuleNames.Add(module.SyntaxModel.ModuleName))
             {
                 continue;
@@ -558,6 +558,7 @@ internal static partial class PackageImageBuilder
             foreach (var import in module.SyntaxModel.Imports)
             {
                 if (!modulesByName.TryGetValue(import.ModuleName, out var importedModule)
+                    || !IsPackageImageOwnedModule(importedModule)
                     || !packagedModuleNames.Add(importedModule.SyntaxModel.ModuleName))
                 {
                     continue;
@@ -568,6 +569,14 @@ internal static partial class PackageImageBuilder
         }
 
         return packagedModuleNames;
+    }
+
+    private static bool IsPackageImageOwnedModule(LoadedModuleDocument module)
+    {
+        return !module.Reference.IsExternal
+            && module.Reference.ManifestPath is null
+            && module.Reference.LibraryPath is null
+            && module.PackageImageFacts is null;
     }
 
     private static bool HasPackageImageSurface(LoadedModuleDocument module)

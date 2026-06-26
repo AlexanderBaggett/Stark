@@ -113,70 +113,82 @@ Execution constraints:
     - [~] Port borrow liveness.
       - [x] Validate straight-line local borrow conflicts.
       - [x] Validate straight-line assignment and local-initializer moves across live borrows.
-    - [~] Port drop validity.
+    - [x] Port drop validity.
       - [x] Validate destructor declaration shape and local body restrictions.
-      - [~] Validate destructor body memory effects.
+      - [x] Validate destructor body memory effects.
         - [x] Reject direct storage allocation and dynamic-storage mutation in destructor bodies.
-        - [ ] Build destructor effect summaries for transitive call and implicit-drop effects.
+        - [x] Build destructor effect summaries for transitive call and implicit-drop effects.
     - [~] Port move semantics.
       - [x] Validate straight-line direct-call moves before later reads.
       - [x] Validate straight-line whole-variable assignment and local-initializer moves before later reads.
-    - [~] Port initialization guarantees.
+    - [x] Port initialization guarantees.
       - [x] Reject straight-line constructor reads of owning `self` fields before assignment.
-      - [~] Validate branch-complete constructor field assignment.
+      - [x] Validate branch-complete constructor field assignment.
         - [x] Validate `if`/`else` constructor field assignment joins.
-        - [ ] Validate exhaustive `switch` constructor field assignment joins.
+        - [x] Validate `switch` constructor field assignment joins.
+          - [x] Validate default-covered switch constructor field assignment joins.
+          - [x] Validate exhaustiveness-proven non-default switch constructor field assignment joins.
         - [x] Validate early-exit constructor paths before merging assignment facts.
-      - [~] Validate local and `out`/`init` write-before-read guarantees.
+      - [x] Validate local and `out`/`init` write-before-read guarantees.
         - [x] Reject straight-line local and `out`/`init` reads before assignment.
-        - [ ] Validate branch-complete local and `out`/`init` assignment before reads.
-        - [ ] Validate successful-return write obligations for `out`/`init` outputs.
+        - [x] Validate branch-complete local and `out`/`init` assignment before reads.
+          - [x] Validate `if`/`else` local and direct output-parameter assignment joins.
+          - [x] Validate default-covered switch local and direct output-parameter assignment joins.
+          - [x] Validate branch-complete `init` element assignment joins.
+          - [x] Validate exhaustiveness-proven non-default switch local and `out`/`init` assignment joins.
+            - [x] Validate unguarded exhaustive bool-switch joins without `default`.
+            - [x] Validate enum-variant switch joins without `default`.
+            - [x] Validate bounded-integer and range-pattern switch joins without `default`.
+        - [x] Validate successful-return write obligations for `out`/`init` outputs.
     - [~] Port range facts.
       - [x] Preserve arithmetic integer range endpoint facts through MIR LLVM range attributes.
       - [x] Propagate value-derived range facts through MIR lowering and joins.
       - [x] Validate range facts against branch and comparison proofs.
-    - [~] Port enum layout facts.
+    - [x] Port enum layout facts.
       - [x] Build direct-tag enum variant and scalar payload layout fact tables.
       - [x] Resolve nested non-generic local struct and record enum payload layout facts.
       - [x] Resolve generic aggregate enum payload layout substitutions.
       - [x] Preserve C pack, explicit field offsets, and aggregate align attributes in enum payload size and alignment facts.
       - [x] Preserve enum payload storage misalignment facts where lowered payload storage is under-aligned.
-      - [~] Fold enum layout facts through CTFE `System.Compiler` queries.
+      - [x] Fold enum layout facts through CTFE `System.Compiler` queries.
         - [x] Validate enum tag, variant, and payload layout query calls in the binder.
-        - [ ] Fold enum tag layout queries to compile-time constants.
-        - [ ] Fold enum variant payload layout queries to compile-time constants.
-      - [~] Preserve enum layout facts through MIR, package images, ABI, and LLVM lowering.
+        - [x] Expose typed enum layout query helpers for CTFE folding.
+        - [x] Fold enum tag layout queries to compile-time constants.
+        - [x] Fold enum variant payload layout queries to compile-time constants.
+      - [x] Preserve enum layout facts through MIR, package images, ABI, and LLVM lowering.
         - [x] Define enum layout as a durable type-attached MIR fact category.
         - [x] Validate enum layout facts as layout facts at MIR phase boundaries.
-        - [ ] Attach typed enum layout rows to MIR lowering fact records.
-        - [ ] Serialize enum layout fact rows in package images.
-        - [ ] Load enum layout fact rows from package images.
-        - [ ] Carry enum tag and payload layout facts into ABI lowering.
-        - [ ] Emit LLVM IR from enum layout facts without recomputing layout.
+        - [x] Attach typed enum layout rows to MIR lowering fact records.
+        - [x] Serialize enum layout fact rows in package images.
+        - [x] Load enum layout fact rows from package images.
+        - [x] Carry enum tag and payload layout facts into ABI lowering.
+        - [x] Emit LLVM IR from enum layout facts without recomputing layout.
+          - [x] Emit enum storage LLVM types from MIR enum layout rows.
+          - [x] Emit enum value constructors, loads, stores, and tag reads from MIR enum layout rows.
     - [ ] Port CTFE.
     - [ ] Port compile-time generic value evaluation.
 
-- [ ] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.
-  - [ ] Port diagnostic records.
-  - [ ] Port stable diagnostic codes.
-  - [ ] Port diagnostic severity handling.
-  - [ ] Port source spans and source-file mapping.
-  - [ ] Port source-caret rendering.
-  - [ ] Port deterministic diagnostic text output.
-  - [ ] Port artifact keys.
-  - [ ] Port artifact storage.
-  - [ ] Port artifact dependency validation.
-  - [ ] Port typed artifact access.
-  - [ ] Port parse and syntax artifact renderers.
-  - [ ] Port type and semantic artifact renderers.
-  - [ ] Port MIR and SSA artifact renderers.
-  - [ ] Port LLVM and package artifact renderers.
-  - [ ] Port the pass dependency graph.
-  - [ ] Port pass execution records.
-  - [ ] Port stop-after pass boundaries.
-  - [ ] Port pass crash diagnostics.
-  - [ ] Add fast typed artifact inspection APIs.
-  - [ ] Add stage-comparison artifact APIs.
+- [x] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.
+  - [x] Port diagnostic records.
+  - [x] Port stable diagnostic codes.
+  - [x] Port diagnostic severity handling.
+  - [x] Port source spans and source-file mapping.
+  - [x] Port source-caret rendering.
+  - [x] Port deterministic diagnostic text output.
+  - [x] Port artifact keys.
+  - [x] Port artifact storage.
+  - [x] Port artifact dependency validation.
+  - [x] Port typed artifact access.
+  - [x] Port parse and syntax artifact renderers.
+  - [x] Port type and semantic artifact renderers.
+  - [x] Port MIR and SSA artifact renderers.
+  - [x] Port LLVM and package artifact renderers.
+  - [x] Port the pass dependency graph.
+  - [x] Port pass execution records.
+  - [x] Port stop-after pass boundaries.
+  - [x] Port pass crash diagnostics.
+  - [x] Add fast typed artifact inspection APIs.
+  - [x] Add stage-comparison artifact APIs.
 
 - [x] Implement the IR memory model, MIR foundations, and fact-transfer substrate.
   - [x] Implement typed handle wrappers in `selfhost/Compiler/Ir.stark`.
@@ -214,20 +226,60 @@ Execution constraints:
   - [x] Add phase-boundary validation for durable package facts.
 
 - [ ] Implement HIR/MIR lowering.
-  - [ ] Define the self-host HIR model or explicit direct-to-MIR boundary.
-  - [ ] Port the MIR lowering pass shell.
-  - [ ] Port function builder state.
-  - [ ] Port lowering symbol maps.
-  - [ ] Port MIR block creation.
-  - [ ] Lower literals.
-  - [ ] Lower locals and parameters.
-  - [ ] Lower assignments.
-  - [ ] Lower arithmetic and comparisons.
-  - [ ] Lower calls.
-  - [ ] Lower returns.
+  - [x] Define the self-host HIR model or explicit direct-to-MIR boundary.
+  - [x] Port the MIR lowering pass shell.
+  - [x] Port function builder state.
+  - [x] Port lowering symbol maps.
+  - [x] Port MIR block creation.
+  - [~] Lower literals.
+    - [x] Lower integer and boolean literals to typed MIR constants with exact range facts.
+    - [x] Reject unsupported literal families before emitting partial MIR.
+    - [ ] Lower character and text literals through the MIR constant storage model.
+    - [ ] Lower floating-point literals once MIR has typed float constants.
+    - [x] Lower null pointer literals to typed pointer constants with nullability facts.
+  - [~] Lower locals and parameters.
+    - [x] Lower dense i64 parameters with translated backend facts.
+    - [x] Bind SSA local aliases without emitting extra MIR.
+      - [x] Validate carried value facts before binding SSA local aliases.
+    - [x] Lower typed non-i64 parameters once MIR models parameter result types.
+    - [ ] Lower mutable and storage-backed locals.
+    - [ ] Lower local lifetime, move, and drop facts.
+    - [~] Lower assignments.
+      - [x] Lower simple SSA local reassignments by rebinding the local symbol to the assigned value.
+        - [x] Validate carried value facts before rebinding SSA local assignments.
+      - [ ] Lower mutable storage-backed place assignments.
+      - [x] Lower compound assignments with checked, wrapping, and saturating arithmetic semantics.
+        - [x] Validate carried operand facts before emitting compound assignment operations.
+      - [x] Lower assignment expressions in enclosing value contexts.
+  - [~] Lower arithmetic and comparisons.
+    - [x] Lower typed integer add/sub/mul and signed comparisons with recomputed value facts.
+      - [x] Validate carried operand facts before interpreting binary operation facts.
+    - [x] Lower integer division, remainder, bitwise, and shift operators with checked backend facts.
+    - [x] Lower wrapping and saturating arithmetic operators with explicit overflow semantics.
+    - [ ] Lower floating-point arithmetic and comparisons after MIR has typed float operations.
+  - [~] Lower calls.
+    - [x] Lower typed direct calls up to MIR's four-argument payload with result facts.
+      - [x] Validate carried argument facts before emitting MIR direct-call payloads.
+    - [ ] Lower direct calls with more than four arguments once MIR has side-table argument storage.
+    - [ ] Lower function-pointer, closure, method, and dynamic trait calls.
+    - [x] Preserve callable ABI, effect, ownership, and alias facts through call lowering.
+      - [x] Preserve direct-call result value facts through HIR-to-MIR lowering and MIR call-return fact import.
+      - [x] Preserve callee callable ABI and effect facts at call sites.
+        - [x] Emit LLVM direct-call attributes from computed callee effect facts.
+        - [x] Preserve `memory(none)` across law calls to memory-none callees.
+        - [x] Precompute effect summaries before emission so forward direct calls keep attributes.
+      - [x] Preserve ownership and alias obligations for memory-backed call arguments.
+  - [~] Lower returns.
+    - [x] Lower value returns to MIR return blocks without dropping value facts.
+      - [x] Validate carried value facts before emitting MIR return blocks.
+    - [x] Lower bare void returns once MIR has a void-return terminator.
+    - [ ] Lower return-time cleanup edges after ownership cleanup lowering exists.
   - [ ] Lower places and member access.
   - [ ] Lower indexing and slicing.
-  - [ ] Lower globals.
+  - [x] Lower globals.
+    - [x] Lower i64 global references and stores through MIR load/store while preserving declared facts.
+    - [x] Lower typed global definitions and typed global load/store once MIR global storage records value types.
+    - [x] Lower module-scope global declarations and initializers from HIR.
   - [ ] Lower raw pointers.
   - [ ] Lower address-taking.
   - [ ] Lower if expressions and statements.
@@ -235,8 +287,14 @@ Execution constraints:
   - [ ] Lower `for` and `foreach`.
   - [ ] Lower switch.
   - [ ] Lower `try`.
-  - [ ] Lower `become`.
-  - [ ] Lower recursion and tail calls.
+  - [x] Lower `become`.
+    - [x] Lower direct i64 `become` calls to MIR tail-call payloads and terminator blocks with facts.
+    - [x] Lower typed non-i64 `become` calls once typed tail-call terminator emission exists.
+    - [x] Validate carried argument facts before emitting MIR tail-call payloads.
+  - [~] Lower recursion and tail calls.
+    - [x] Preserve direct i64 tail-call payloads through HIR-to-MIR lowering.
+    - [x] Lower typed tail-call terminators for all scalar MIR return types.
+    - [ ] Lower self-recursive source functions through the full HIR body pipeline.
   - [ ] Lower object construction.
   - [ ] Lower enum payloads.
   - [ ] Lower dynamic storage.
@@ -246,12 +304,33 @@ Execution constraints:
   - [ ] Port ownership-driven cleanup.
   - [ ] Port compile-time evaluator lowering.
   - [ ] Port compile-time evaluated expressions.
-  - [ ] Port imported source lowering.
+  - [~] Port imported source lowering.
+    - [x] Lower unit enum values referenced through an imported source module's own imports.
   - [ ] Port imported-template lowering.
-  - [ ] Preserve range facts through MIR lowering.
-  - [ ] Preserve alias facts through MIR lowering.
-  - [ ] Preserve ABI facts through MIR lowering.
-  - [ ] Preserve layout facts through MIR lowering.
+  - [~] Preserve range facts through MIR lowering.
+    - [x] Reject integer range facts on pointer HIR values at the common value-fact compatibility boundary.
+    - [x] Reject stale pointer range facts when binding or rebinding SSA local symbols.
+    - [x] Reject stale pointer range facts before emitting MIR return blocks.
+    - [x] Reject stale pointer range facts before emitting call and tail-call argument payloads.
+    - [x] Reject integer range facts outside scalar operand types before emitting binary and compound arithmetic.
+    - [ ] Audit range fact validation when each remaining HIR value producer is added.
+  - [~] Preserve pointer nullability facts through MIR lowering.
+    - [x] Reject pointer nullability facts on scalar HIR values at the common value-fact compatibility boundary.
+    - [x] Enforce known-null and known-nonnull global-store obligations before MIR store emission.
+    - [x] Reject stale scalar nullability facts when binding or rebinding SSA local symbols.
+    - [x] Reject stale scalar nullability facts before emitting MIR return blocks.
+    - [x] Reject stale scalar nullability facts before emitting call and tail-call argument payloads.
+    - [x] Reject stale scalar nullability facts before emitting binary and compound arithmetic.
+    - [ ] Audit nullability fact validation when each remaining pointer-producing HIR construct is added.
+  - [~] Preserve alias facts through MIR lowering.
+    - [x] Enforce noalias global-store obligations before MIR store emission.
+    - [ ] Audit alias fact transfer when each remaining memory-producing HIR construct is added.
+  - [~] Preserve ABI facts through MIR lowering.
+    - [x] Enforce calling-ABI global-store obligations before MIR store emission.
+    - [ ] Audit ABI fact transfer when each remaining callable-producing HIR construct is added.
+  - [~] Preserve layout facts through MIR lowering.
+    - [x] Enforce alignment global-store obligations before MIR store emission.
+    - [ ] Audit layout fact transfer when each remaining aggregate and pointer-producing HIR construct is added.
   - [ ] Preserve ownership facts through MIR lowering.
   - [ ] Preserve assembly facts through MIR lowering.
   - [ ] Preserve arena facts through MIR lowering.
@@ -343,6 +422,9 @@ Execution constraints:
     - [x] Inspect the host logical `STRS`/`PINF`/`MANF` section wrapper.
     - [x] Preserve and inspect logical package identity/profile/target facts from `PINF`/`STRS`.
     - [x] Preserve and inspect logical target backend facts from `PINF` without materializing `MANF`.
+    - [x] Keep manifest-backed module resolution from falling back to raw `.starkpkg` source reads.
+    - [x] Keep library package images scoped to source-owned modules while preserving direct external imports.
+    - [x] Compile library dependency objects only from source-backed imports and use package-backed facts as imports.
     - [ ] Decode `MANF` and build the self-host logical package model from binary images.
     - [ ] Materialize typed interface declarations.
     - [ ] Materialize typed interface functions and methods.

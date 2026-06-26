@@ -1,0 +1,509 @@
+import Compiler.Diagnostics
+import System.Text
+import System.Testing
+[Collection("diagnostics")]
+module DiagnosticsTests
+
+[Fact]
+fn bool DiagnosticSeverityNamesMatchHostSpelling()
+{
+    return System.Text.Equals(DiagnosticSeverityName(Compiler.Diagnostics.DiagnosticSeverity.Info), "info")
+        && System.Text.Equals(DiagnosticSeverityName(Compiler.Diagnostics.DiagnosticSeverity.Warning), "warning")
+        && System.Text.Equals(DiagnosticSeverityName(Compiler.Diagnostics.DiagnosticSeverity.Error), "error");
+}
+
+[Fact]
+fn bool StableDiagnosticCodesUseStkPrefixAndFourDigits()
+{
+    return DiagnosticCodeIsStable("STK1001")
+        && DiagnosticCodeIsStable("STK7136")
+        && !DiagnosticCodeIsStable("STK12")
+        && !DiagnosticCodeIsStable("ABC1001")
+        && !DiagnosticCodeIsStable("STK1A01");
+}
+
+[Fact]
+fn bool SourceLocationsResolveMissingEndToStart()
+{
+    switch (SourceLocationOf("main.stark", true, 7, 11, 0, 0))
+    {
+        case DiagnosticResult<SourceLocation>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceLocation>.Ok(var location):
+            return location.HasFilePath()
+                && location.Line() == 7
+                && location.Column() == 11
+                && location.ResolvedEndLine() == 7
+                && location.ResolvedEndColumn() == 11
+                && location.FilePathEquals("main.stark");
+    }
+}
+
+[Fact]
+fn bool SourceFileMapBuildsLineStartTable()
+{
+    switch (SourceFileMapOf("input.stark", true, "alpha\nbeta\r\ngamma"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            return sourceMap.HasFilePath()
+                && sourceMap.FilePathEquals("input.stark")
+                && sourceMap.SourceTextEquals("alpha\nbeta\r\ngamma")
+                && sourceMap.SourceLength() == 17
+                && sourceMap.LineCount() == 3
+                && sourceMap.LineStartAt(0) == 0
+                && sourceMap.LineStartAt(1) == 6
+                && sourceMap.LineStartAt(2) == 12
+                && sourceMap.LineStartAt(3) == 0;
+    }
+}
+
+[Fact]
+fn bool SourceFileMapMapsOffsetsToPositions()
+{
+    switch (SourceFileMapOf("input.stark", true, "alpha\nbeta\r\ngamma"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            if (!SourcePositionEquals(sourceMap, 0, 1, 1))
+            {
+                return System.Testing.Fail("start");
+            }
+
+            if (!SourcePositionEquals(sourceMap, 6, 2, 1))
+            {
+                return System.Testing.Fail("second-line");
+            }
+
+            if (!SourcePositionEquals(sourceMap, 12, 3, 1))
+            {
+                return System.Testing.Fail("third-line");
+            }
+
+            if (!SourcePositionEquals(sourceMap, 17, 3, 6))
+            {
+                return System.Testing.Fail("eof");
+            }
+
+            switch (sourceMap.PositionAtOffset(18))
+            {
+                case DiagnosticResult<SourcePosition>.Ok(var badPosition):
+                    return System.Testing.Fail("out-of-range-ok");
+                case DiagnosticResult<SourcePosition>.Err(var error):
+                    return error == DiagnosticError.SourceRangeOutOfBounds;
+            }
+    }
+}
+
+[Fact]
+fn bool SourceSpansMapToExclusiveEndLocations()
+{
+    switch (SourceFileMapOf("input.stark", true, "alpha\nbeta\r\ngamma"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack SourceSpan beta = SourceSpanOf(6, 4);
+            switch (sourceMap.LocationForSpan(beta))
+            {
+                case DiagnosticResult<SourceLocation>.Err(var betaError):
+                    return System.Testing.Fail("beta-range");
+                case DiagnosticResult<SourceLocation>.Ok(var betaLocation):
+                    if (!betaLocation.FilePathEquals("input.stark")
+                        || betaLocation.Line() != 2
+                        || betaLocation.Column() != 1
+                        || betaLocation.ResolvedEndLine() != 2
+                        || betaLocation.ResolvedEndColumn() != 5)
+                    {
+                        return System.Testing.Fail("beta-location");
+                    }
+            }
+
+            stack SourceSpan firstLineWithNewline = SourceSpanOf(0, 6);
+            switch (sourceMap.LocationForSpan(firstLineWithNewline))
+            {
+                case DiagnosticResult<SourceLocation>.Err(var newlineError):
+                    return System.Testing.Fail("newline-range");
+                case DiagnosticResult<SourceLocation>.Ok(var newlineLocation):
+                    if (newlineLocation.Line() != 1
+                        || newlineLocation.Column() != 1
+                        || newlineLocation.ResolvedEndLine() != 2
+                        || newlineLocation.ResolvedEndColumn() != 1)
+                    {
+                        return System.Testing.Fail("newline-location");
+                    }
+            }
+
+            stack SourceSpan outOfRange = SourceSpanOf(16, 2);
+            switch (sourceMap.LocationForSpan(outOfRange))
+            {
+                case DiagnosticResult<SourceLocation>.Ok(var outOfRangeLocation):
+                    return System.Testing.Fail("out-of-range-ok");
+                case DiagnosticResult<SourceLocation>.Err(var error):
+                    return error == DiagnosticError.SourceRangeOutOfBounds;
+            }
+    }
+}
+
+[Fact]
+fn bool SourceCaretRendersSinglePointFromSourceMap()
+{
+    switch (SourceFileMapOf("input.stark", true, "let x = 1;\n"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack mut SourceFileMap mutableSourceMap = sourceMap;
+            switch (SourceLocationOf("input.stark", true, 1, 5, 0, 0))
+            {
+                case DiagnosticResult<SourceLocation>.Err(var locationError):
+                    return false;
+                case DiagnosticResult<SourceLocation>.Ok(var location):
+                    stack mut OwnedAscii writer = new();
+                    switch (AppendSourceCaretForLocation(writer, mutableSourceMap, location))
+                    {
+                        case DiagnosticStatus.Err(var caretError):
+                            return false;
+                        case DiagnosticStatus.Ok:
+                    }
+
+                    return System.Text.Equals(writer.View(), "  1 | let x = 1;\n    |     ^");
+            }
+    }
+}
+
+[Fact]
+fn bool SourceCaretRendersTabsAndMultiLineSpans()
+{
+    switch (SourceFileMapOf("input.stark", true, "\tcall(\n\targ)\n"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack mut SourceFileMap mutableSourceMap = sourceMap;
+            switch (SourceLocationOf("input.stark", true, 1, 2, 2, 5))
+            {
+                case DiagnosticResult<SourceLocation>.Err(var locationError):
+                    return false;
+                case DiagnosticResult<SourceLocation>.Ok(var location):
+                    stack mut OwnedAscii writer = new();
+                    switch (AppendSourceCaretForLocation(writer, mutableSourceMap, location))
+                    {
+                        case DiagnosticStatus.Err(var caretError):
+                            return false;
+                        case DiagnosticStatus.Ok:
+                    }
+
+                    return System.Text.Equals(
+                        writer.View(),
+                        "  1 |     call(\n    |     ^^^^^\n  2 |     arg)\n    | ^^^^^^^^");
+            }
+    }
+}
+
+[Fact]
+fn bool SourceCaretHandlesCarriageReturnLines()
+{
+    switch (SourceFileMapOf("input.stark", true, "alpha\rbeta\r"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack mut SourceFileMap mutableSourceMap = sourceMap;
+            switch (SourceLocationOf("input.stark", true, 2, 1, 2, 4))
+            {
+                case DiagnosticResult<SourceLocation>.Err(var locationError):
+                    return false;
+                case DiagnosticResult<SourceLocation>.Ok(var location):
+                    stack mut OwnedAscii writer = new();
+                    switch (AppendSourceCaretForLocation(writer, mutableSourceMap, location))
+                    {
+                        case DiagnosticStatus.Err(var caretError):
+                            return false;
+                        case DiagnosticStatus.Ok:
+                    }
+
+                    return mutableSourceMap.LineCount() == 3
+                        && System.Text.Equals(writer.View(), "  2 | beta\n    | ^^^^");
+            }
+    }
+}
+
+[Fact]
+fn bool SourceCaretBeyondLastLineRendersNothing()
+{
+    switch (SourceFileMapOf("input.stark", true, "x\n"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack mut SourceFileMap mutableSourceMap = sourceMap;
+            switch (SourceLocationOf("input.stark", true, 99, 1, 0, 0))
+            {
+                case DiagnosticResult<SourceLocation>.Err(var locationError):
+                    return false;
+                case DiagnosticResult<SourceLocation>.Ok(var location):
+                    stack mut OwnedAscii writer = new();
+                    switch (AppendSourceCaretForLocation(writer, mutableSourceMap, location))
+                    {
+                        case DiagnosticStatus.Err(var caretError):
+                            return false;
+                        case DiagnosticStatus.Ok:
+                    }
+
+                    return System.Text.AsciiLength(writer.View()) == 0;
+            }
+    }
+}
+
+[Fact]
+fn bool SourceCaretRendersCompilerDiagnosticLocation()
+{
+    switch (SourceFileMapOf("input.stark", true, "alpha\nbeta\n"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var error):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack mut SourceFileMap mutableSourceMap = sourceMap;
+            switch (CompilerDiagnosticOf(Compiler.Diagnostics.DiagnosticSeverity.Error, "STK3001", "bad", "type-check", true, "input.stark", true, 2, 2, 2, 4, true))
+            {
+                case DiagnosticResult<CompilerDiagnostic>.Err(var diagnosticError):
+                    return false;
+                case DiagnosticResult<CompilerDiagnostic>.Ok(var diagnostic):
+                    stack mut OwnedAscii writer = new();
+                    switch (AppendSourceCaretForDiagnostic(writer, mutableSourceMap, diagnostic))
+                    {
+                        case DiagnosticStatus.Err(var caretError):
+                            return false;
+                        case DiagnosticStatus.Ok:
+                    }
+
+                    return System.Text.Equals(writer.View(), "  2 | beta\n    |  ^^^");
+            }
+    }
+}
+
+[Fact]
+fn bool CompilerDiagnosticCopiesOwnedTextAndLocation()
+{
+    stack SourceLocation synthetic = SyntheticSourceLocation();
+    switch (CompilerDiagnosticOf(Compiler.Diagnostics.DiagnosticSeverity.Error, "STK3001", "bad type", "type-check", true, "input.stark", true, 3, 5, 3, 12, true))
+    {
+        case DiagnosticResult<CompilerDiagnostic>.Err(var diagnosticError):
+            return false;
+        case DiagnosticResult<CompilerDiagnostic>.Ok(var diagnostic):
+            return diagnostic.Severity() == Compiler.Diagnostics.DiagnosticSeverity.Error
+                && diagnostic.HasStage()
+                && diagnostic.HasLocation()
+                && diagnostic.Line() == 3
+                && diagnostic.Column() == 5
+                && diagnostic.ResolvedEndLine() == 3
+                && diagnostic.ResolvedEndColumn() == 12
+                && diagnostic.CodeEquals("STK3001")
+                && diagnostic.MessageEquals("bad type")
+                && diagnostic.StageEquals("type-check")
+                && diagnostic.FilePathEquals("input.stark")
+                && synthetic.Line() == 1
+                && synthetic.Column() == 1;
+    }
+}
+
+[Fact]
+fn bool CompilerDiagnosticLineRendersHostFormat()
+{
+    switch (CompilerDiagnosticOf(Compiler.Diagnostics.DiagnosticSeverity.Error, "STK3001", "bad type", "type-check", true, "input.stark", true, 3, 5, 3, 12, true))
+    {
+        case DiagnosticResult<CompilerDiagnostic>.Err(var diagnosticError):
+            return false;
+        case DiagnosticResult<CompilerDiagnostic>.Ok(var diagnostic):
+            stack mut CompilerDiagnostic mutableDiagnostic = diagnostic;
+            stack mut OwnedAscii writer = new();
+            switch (AppendCompilerDiagnosticLine(writer, mutableDiagnostic))
+            {
+                case DiagnosticStatus.Err(var appendError):
+                    return false;
+                case DiagnosticStatus.Ok:
+            }
+
+            return System.Text.Equals(
+                writer.View(),
+                "input.stark:3:5: error STK3001 [type-check]: bad type");
+    }
+}
+
+[Fact]
+fn bool DiagnosticBagStoresRowsAndReportsErrors()
+{
+    stack mut DiagnosticBag bag = new();
+    switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Warning, "STK2001", "careful", "bind", true, "input.stark", true, 2, 4, 0, 0, true))
+    {
+        case DiagnosticStatus.Err(var warningError):
+            return false;
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Error, "STK5002", "bad ssa", "", false, "", false, 1, 1, 0, 0, false))
+    {
+        case DiagnosticStatus.Err(var error):
+            return false;
+        case DiagnosticStatus.Ok:
+    }
+
+    if (bag.Count() != 2)
+    {
+        return System.Testing.Fail("count");
+    }
+
+    if (!bag.HasErrors())
+    {
+        return System.Testing.Fail("has-errors");
+    }
+
+    if (bag.SeverityAt(0) != Compiler.Diagnostics.DiagnosticSeverity.Warning
+        || bag.SeverityAt(1) != Compiler.Diagnostics.DiagnosticSeverity.Error)
+    {
+        return System.Testing.Fail("severity");
+    }
+
+    if (!bag.HasStageAt(0) || bag.HasStageAt(1))
+    {
+        return System.Testing.Fail("stage-presence");
+    }
+
+    if (!bag.HasLocationAt(0) || bag.HasLocationAt(1))
+    {
+        return System.Testing.Fail("location-presence");
+    }
+
+    if (bag.LineAt(0) != 2 || bag.ColumnAt(0) != 4)
+    {
+        return System.Testing.Fail("start-location");
+    }
+
+    if (bag.ResolvedEndLineAt(0) != 2 || bag.ResolvedEndColumnAt(0) != 4)
+    {
+        return System.Testing.Fail("resolved-end-location");
+    }
+
+    if (!bag.CodeEqualsAt(0, "STK2001"))
+    {
+        return System.Testing.Fail("first-code-text");
+    }
+
+    if (!bag.CodeEqualsAt(1, "STK5002"))
+    {
+        return System.Testing.Fail("second-code-text");
+    }
+
+    if (!bag.MessageEqualsAt(0, "careful") || !bag.MessageEqualsAt(1, "bad ssa"))
+    {
+        return System.Testing.Fail("message-text");
+    }
+
+    if (!bag.StageEqualsAt(0, "bind"))
+    {
+        return System.Testing.Fail("stage-text");
+    }
+
+    if (!bag.FilePathEqualsAt(0, "input.stark"))
+    {
+        return System.Testing.Fail("file-path");
+    }
+
+    return DiagnosticBagSeverityCount(bag, Compiler.Diagnostics.DiagnosticSeverity.Warning) == 1
+        && DiagnosticBagSeverityCount(bag, Compiler.Diagnostics.DiagnosticSeverity.Error) == 1
+        && DiagnosticBagSeverityCount(bag, Compiler.Diagnostics.DiagnosticSeverity.Info) == 0;
+}
+
+[Fact]
+fn bool DiagnosticBagTextGroupsInfoNotesAndSummary()
+{
+    stack mut DiagnosticBag bag = new();
+    switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Error, "STK3001", "bad", "bind", true, "input.stark", true, 2, 4, 0, 0, true))
+    {
+        case DiagnosticStatus.Err(var firstError):
+            return false;
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Info, "STK0001", "detail", "bind", true, "input.stark", true, 2, 5, 0, 0, true))
+    {
+        case DiagnosticStatus.Err(var noteError):
+            return false;
+        case DiagnosticStatus.Ok:
+    }
+
+    switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Warning, "STK2001", "careful", "", false, "", false, 1, 1, 0, 0, false))
+    {
+        case DiagnosticStatus.Err(var warningError):
+            return false;
+        case DiagnosticStatus.Ok:
+    }
+
+    stack mut OwnedAscii writer = new();
+    switch (AppendDiagnosticBagText(writer, bag, false))
+    {
+        case DiagnosticStatus.Err(var appendError):
+            return false;
+        case DiagnosticStatus.Ok:
+    }
+
+    return System.Text.Equals(
+        writer.View(),
+        "input.stark:2:4: error STK3001 [bind]: bad\n  note [bind] at input.stark:2:5: detail\nwarning STK2001: careful\nFailure summary: 1 error, 1 warning, 1 info.\n");
+}
+
+[Fact]
+fn bool DiagnosticBagTextWithSourceMapRendersSnippets()
+{
+    switch (SourceFileMapOf("input.stark", true, "alpha\nbeta\n"))
+    {
+        case DiagnosticResult<SourceFileMap>.Err(var sourceError):
+            return false;
+        case DiagnosticResult<SourceFileMap>.Ok(var sourceMap):
+            stack mut SourceFileMap mutableSourceMap = sourceMap;
+            stack mut DiagnosticBag bag = new();
+            switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Error, "STK3001", "bad", "type-check", true, "input.stark", true, 2, 2, 2, 4, true))
+            {
+                case DiagnosticStatus.Err(var firstError):
+                    return false;
+                case DiagnosticStatus.Ok:
+            }
+
+            switch (bag.Append(Compiler.Diagnostics.DiagnosticSeverity.Info, "STK0001", "more", "bind", true, "input.stark", true, 1, 1, 1, 5, true))
+            {
+                case DiagnosticStatus.Err(var noteError):
+                    return false;
+                case DiagnosticStatus.Ok:
+            }
+
+            stack mut OwnedAscii writer = new();
+            switch (AppendDiagnosticBagTextWithSourceMap(writer, bag, mutableSourceMap, false))
+            {
+                case DiagnosticStatus.Err(var appendError):
+                    return false;
+                case DiagnosticStatus.Ok:
+            }
+
+            return System.Text.Equals(
+                writer.View(),
+                "input.stark:2:2: error STK3001 [type-check]: bad\n  2 | beta\n    |  ^^^\n  note [bind] at input.stark:1:1: more\n    1 | alpha\n      | ^^^^^\nFailure summary: 1 error, 0 warnings, 1 info.\n");
+    }
+}
+
+internal law bool SourcePositionEquals(
+    borrow SourceFileMap sourceMap,
+    u64[0 2 ** 63 - 1] offset,
+    u64[1 2 ** 63 - 1] expectedLine,
+    u64[1 2 ** 63 - 1] expectedColumn)
+{
+    switch (sourceMap.PositionAtOffset(offset))
+    {
+        case DiagnosticResult<SourcePosition>.Err(var error):
+            return false;
+        case DiagnosticResult<SourcePosition>.Ok(var position):
+            return position.Line() == expectedLine && position.Column() == expectedColumn;
+    }
+}

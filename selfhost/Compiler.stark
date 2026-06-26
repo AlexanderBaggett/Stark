@@ -1,5 +1,10 @@
 export import Compiler.Lexing
 export import Compiler.Parsing
+export import Compiler.Diagnostics
+export import Compiler.Artifacts
+export import Compiler.ArtifactRendering
+export import Compiler.Pipeline
+export import Compiler.Lowering
 export import Compiler.Binding
 export import Compiler.Typing
 export import Compiler.Ir

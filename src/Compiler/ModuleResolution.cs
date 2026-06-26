@@ -145,6 +145,10 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
                     return true;
                 }
             }
+
+            sourceText = string.Empty;
+            filePath = module.ManifestPath;
+            return false;
         }
 
         filePath = module.FilePath ?? ResolvePath(_searchDirectories[0], module.ModuleName);

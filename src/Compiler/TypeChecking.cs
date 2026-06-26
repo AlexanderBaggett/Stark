@@ -3693,7 +3693,7 @@ internal sealed class TypeChecker
             var previousInsideConstructorBody = _insideConstructorBody;
 
             _currentFunctionGenericParameters = genericParameters;
-            _currentFunctionName = null;
+            _currentFunctionName = BuildConstructorBodyKey(qualifiedTypeName, constructor);
             _currentFunctionModuleName = module.SyntaxModel.ModuleName;
             _insideConstructorBody = true;
 

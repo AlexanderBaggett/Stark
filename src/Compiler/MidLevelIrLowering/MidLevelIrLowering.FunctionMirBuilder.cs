@@ -262,6 +262,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IReadOnlyDictionary<string, DestructorLoweringContext> _destructorsByTypeName;
         private readonly CompilerLogBag _logs;
         private readonly string? _moduleFilePath;
+        private readonly string? _operationRecordFilePath;
         private readonly SourceLocation _functionLocation;
         private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
         private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _fallbackFunctions;
@@ -270,6 +271,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
         private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
         private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _publishedEnumLayouts;
+        private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _fallbackEnumLayouts;
         private readonly IReadOnlyDictionary<BoundOperationKey, BoundDirectCallOperation> _boundDirectCalls;
         private readonly IReadOnlyDictionary<BoundOperationKey, BoundMemberCallOperation> _boundMemberCalls;
         private readonly IReadOnlyDictionary<BoundOperationKey, BoundFunctionPointerCallOperation> _boundFunctionPointerCalls;
@@ -337,6 +339,8 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IReadOnlyDictionary<string, ClosureCaptureFieldSymbol> _closureCaptureFieldsByName;
         private readonly StarkTypeSymbol? _closureEnvironmentType;
         private string? _moduleNameOverride;
+        private string? _sourceFilePathOverride;
+        private string? _constructorBodyKeyOverride;
         private SourceLocation? _currentStatementLocation;
         private MidLevelIrOperand? _closureEnvironmentAddress;
         private DynamicStorageAllocationKind? _currentObjectCreationAllocationKind;
@@ -357,6 +361,7 @@ internal sealed partial class MidLevelIrLowerer
         private int _nextLoopAccessGroupId;
         private string? _lastCallBuildFailureReason;
         private bool _arenaFrameStatementsFinalized;
+        private bool _loweringExplicitConstructorBody;
 
         public FunctionMirBuilder(
             HighLevelIrFunction function,
@@ -370,6 +375,7 @@ internal sealed partial class MidLevelIrLowerer
             IReadOnlyDictionary<string, DestructorLoweringContext> destructorsByTypeName,
             CompilerLogBag logs,
             string? moduleFilePath,
+            string? operationRecordFilePath,
             SourceLocation functionLocation,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, TypedFunctionSignature> fallbackFunctions,
@@ -378,6 +384,7 @@ internal sealed partial class MidLevelIrLowerer
             IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> objectCreationConstructors,
             IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
             IReadOnlyDictionary<string, EnumLayoutSymbol> publishedEnumLayouts,
+            IReadOnlyDictionary<string, EnumLayoutSymbol> fallbackEnumLayouts,
             BoundOperationIndex boundOperations,
             ImportedFunctionTemplateSummary? importedTemplateSummary,
             IReadOnlyDictionary<string, ImportedFunctionTemplateSummary> importedFunctionTemplates,
@@ -398,6 +405,7 @@ internal sealed partial class MidLevelIrLowerer
             _destructorsByTypeName = destructorsByTypeName;
             _logs = logs;
             _moduleFilePath = moduleFilePath;
+            _operationRecordFilePath = operationRecordFilePath;
             _functionLocation = functionLocation;
             _namedTypes = namedTypes;
             _fallbackFunctions = fallbackFunctions;
@@ -406,6 +414,7 @@ internal sealed partial class MidLevelIrLowerer
             _objectCreationConstructors = objectCreationConstructors;
             _publishedConcreteLayouts = publishedConcreteLayouts;
             _publishedEnumLayouts = publishedEnumLayouts;
+            _fallbackEnumLayouts = fallbackEnumLayouts;
             _boundDirectCalls = boundOperations.DirectCalls;
             _boundMemberCalls = boundOperations.MemberCalls;
             _boundFunctionPointerCalls = boundOperations.FunctionPointerCalls;
@@ -606,6 +615,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private BasicBlockBuilder CurrentBlock { get; set; }
         private string CurrentModuleName => _moduleNameOverride ?? _currentModuleName;
+        private string? CurrentSourceFilePath => _sourceFilePathOverride ?? _moduleFilePath;
 
         public void Dispose()
         {
@@ -7005,12 +7015,21 @@ internal sealed partial class MidLevelIrLowerer
                 using var constructorBodyContext = EnterConstructorBodyContext(constructorContext, createdType, aliases);
                 var exitBlock = CreateBlock("ctor_exit");
                 _constructorReturnTargets.Push(new ConstructorReturnTarget(exitBlock.Id, _scopes.Count));
+                var previousLoweringExplicitConstructorBody = _loweringExplicitConstructorBody;
+                var previousSourceFilePathOverride = _sourceFilePathOverride;
+                var previousConstructorBodyKeyOverride = _constructorBodyKeyOverride;
+                _loweringExplicitConstructorBody = true;
+                _sourceFilePathOverride = constructorContext.FilePath;
+                _constructorBodyKeyOverride = constructorContext.BodyKey;
                 try
                 {
                     LowerBlock(constructorContext.Body);
                 }
                 finally
                 {
+                    _constructorBodyKeyOverride = previousConstructorBodyKeyOverride;
+                    _sourceFilePathOverride = previousSourceFilePathOverride;
+                    _loweringExplicitConstructorBody = previousLoweringExplicitConstructorBody;
                     _constructorReturnTargets.Pop();
                 }
 
@@ -7660,12 +7679,24 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            return _objectCreationConstructors.TryGetValue(
-                new ObjectCreationKey(
-                    expression.GetText(),
-                    expression.Start.Line,
-                    expression.Start.Column + 1),
-                out constructor);
+            var text = expression.GetText();
+            var line = expression.Start.Line;
+            var column = expression.Start.Column + 1;
+            foreach (var scopeName in BoundOperationFunctionNames())
+            {
+                foreach (var filePath in BoundOperationFilePaths())
+                {
+                    if (_objectCreationConstructors.TryGetValue(
+                            new ObjectCreationKey(scopeName, text, filePath, line, column),
+                            out constructor))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            constructor = null;
+            return false;
         }
 
         private bool TryGetPublishedObjectCreationSummary(
@@ -12472,7 +12503,8 @@ internal sealed partial class MidLevelIrLowerer
             var matches = operations
                 .Where(entry =>
                     entry.Key.Line == line
-                    && entry.Key.Column == column)
+                    && entry.Key.Column == column
+                    && BoundOperationFilePathMatches(entry.Key.FilePath))
                 .Select(static entry => entry.Value)
                 .Distinct()
                 .Take(2)
@@ -12491,12 +12523,26 @@ internal sealed partial class MidLevelIrLowerer
         {
             foreach (var functionName in BoundOperationFunctionNames())
             {
-                yield return new BoundOperationKey(functionName, line, column);
+                foreach (var filePath in BoundOperationFilePaths())
+                {
+                    yield return new BoundOperationKey(functionName, filePath, line, column);
+                }
             }
         }
 
-        private IEnumerable<string> BoundOperationFunctionNames()
+        private IEnumerable<string?> BoundOperationFunctionNames()
         {
+            if (_loweringExplicitConstructorBody)
+            {
+                if (_constructorBodyKeyOverride is { Length: > 0 } constructorBodyKey)
+                {
+                    yield return constructorBodyKey;
+                }
+
+                yield return null;
+                yield break;
+            }
+
             var seen = new HashSet<string>(StringComparer.Ordinal);
             if (seen.Add(_function.Name))
             {
@@ -12519,6 +12565,46 @@ internal sealed partial class MidLevelIrLowerer
             {
                 yield return bodyTemplateName;
             }
+        }
+
+        private IEnumerable<string?> BoundOperationFilePaths()
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            if (CurrentSourceFilePath is { } currentSourceFilePath
+                && seen.Add(currentSourceFilePath))
+            {
+                yield return currentSourceFilePath;
+            }
+
+            if (_operationRecordFilePath is { } operationRecordFilePath
+                && seen.Add(operationRecordFilePath))
+            {
+                yield return operationRecordFilePath;
+            }
+
+            if (seen.Add(string.Empty))
+            {
+                yield return null;
+            }
+        }
+
+        private bool BoundOperationFilePathMatches(string? filePath)
+        {
+            if (string.IsNullOrEmpty(filePath))
+            {
+                return true;
+            }
+
+            foreach (var candidate in BoundOperationFilePaths())
+            {
+                if (!string.IsNullOrEmpty(candidate)
+                    && string.Equals(filePath, candidate, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool RecordedMemberCallNameMatches(string memberName, TypedFunctionSignature signature)
@@ -12878,20 +12964,162 @@ internal sealed partial class MidLevelIrLowerer
 
             var enumTypeName = name[..separator];
             var variantName = name[(separator + 1)..];
-            if (!TryResolveNamedTypeBySourceName(enumTypeName, out var namedType)
+            if (!TryResolveEnumCaseTypeBySourceName(enumTypeName, variantName, out var namedType)
                 || namedType.Kind != DeclarationKind.Enum
                 || !TryGetEnumLayoutCore(StarkTypeSymbols.Named(namedType.Name), out var resolvedLayout)
                 || !resolvedLayout.TryGetVariant(variantName, out var resolvedVariant))
             {
-                layout = null!;
-                variant = null!;
-                return false;
+                return TryResolveEnumCaseLayoutBySourceName(
+                    enumTypeName,
+                    variantName,
+                    out enumType,
+                    out layout,
+                    out variant);
             }
 
             layout = resolvedLayout;
             variant = resolvedVariant;
             enumType = StarkTypeSymbols.Named(namedType.Name);
             return true;
+        }
+
+        private bool TryResolveEnumCaseTypeBySourceName(
+            string enumTypeName,
+            string variantName,
+            out NamedTypeSymbol namedType)
+        {
+            if (TryResolveNamedTypeBySourceName(enumTypeName, out namedType!)
+                && namedType.Kind == DeclarationKind.Enum)
+            {
+                return true;
+            }
+
+            if (enumTypeName.Contains('.', StringComparison.Ordinal))
+            {
+                namedType = null!;
+                return false;
+            }
+
+            var suffix = $".{enumTypeName}";
+            NamedTypeSymbol? match = null;
+            foreach (var candidate in _namedTypes.Values)
+            {
+                if (candidate.Kind != DeclarationKind.Enum
+                    || !candidate.Name.EndsWith(suffix, StringComparison.Ordinal)
+                    || !candidate.Variants.Any(variant => string.Equals(variant.Name, variantName, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                if (match is not null)
+                {
+                    namedType = null!;
+                    return false;
+                }
+
+                match = candidate;
+            }
+
+            namedType = match!;
+            return match is not null;
+        }
+
+        private bool TryResolveEnumCaseLayoutBySourceName(
+            string enumTypeName,
+            string variantName,
+            out StarkTypeSymbol enumType,
+            out EnumLayoutSymbol layout,
+            out EnumVariantLayoutSymbol variant)
+        {
+            enumType = StarkTypeSymbols.Error;
+            layout = null!;
+            variant = null!;
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            EnumLayoutSymbol? matchingLayout = null;
+            EnumVariantLayoutSymbol? matchingVariant = null;
+            string? matchingTypeName = null;
+
+            if (TrySelectEnumCaseLayout(
+                    _enumLayoutModel.Layouts,
+                    enumTypeName,
+                    variantName,
+                    seen,
+                    ref matchingTypeName,
+                    ref matchingLayout,
+                    ref matchingVariant)
+                && TrySelectEnumCaseLayout(
+                    _publishedEnumLayouts,
+                    enumTypeName,
+                    variantName,
+                    seen,
+                    ref matchingTypeName,
+                    ref matchingLayout,
+                    ref matchingVariant)
+                && TrySelectEnumCaseLayout(
+                    _fallbackEnumLayouts,
+                    enumTypeName,
+                    variantName,
+                    seen,
+                    ref matchingTypeName,
+                    ref matchingLayout,
+                    ref matchingVariant)
+                && matchingTypeName is not null
+                && matchingLayout is not null
+                && matchingVariant is not null)
+            {
+                enumType = StarkTypeSymbols.Named(matchingTypeName);
+                layout = matchingLayout;
+                variant = matchingVariant;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TrySelectEnumCaseLayout(
+            IReadOnlyDictionary<string, EnumLayoutSymbol> layouts,
+            string enumTypeName,
+            string variantName,
+            HashSet<string> seen,
+            ref string? matchingTypeName,
+            ref EnumLayoutSymbol? matchingLayout,
+            ref EnumVariantLayoutSymbol? matchingVariant)
+        {
+            foreach (var (candidateTypeName, candidateLayout) in layouts)
+            {
+                if (!seen.Add(candidateTypeName)
+                    || !EnumLayoutNameMatchesSourceName(candidateTypeName, enumTypeName)
+                    || !candidateLayout.TryGetVariant(variantName, out var candidateVariant))
+                {
+                    continue;
+                }
+
+                if (matchingTypeName is not null)
+                {
+                    matchingTypeName = null;
+                    matchingLayout = null;
+                    matchingVariant = null;
+                    return false;
+                }
+
+                matchingTypeName = candidateTypeName;
+                matchingLayout = candidateLayout;
+                matchingVariant = candidateVariant;
+            }
+
+            return true;
+        }
+
+        private static bool EnumLayoutNameMatchesSourceName(string candidateTypeName, string sourceTypeName)
+        {
+            if (string.Equals(candidateTypeName, sourceTypeName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            return !sourceTypeName.Contains('.', StringComparison.Ordinal)
+                && candidateTypeName.EndsWith($".{sourceTypeName}", StringComparison.Ordinal);
         }
 
         private bool TryResolveEnumCaseReference(
@@ -15499,7 +15727,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             return token is null
                 ? null
-                : new SourceLocation(_moduleFilePath, token.Line, token.Column + 1);
+                : new SourceLocation(CurrentSourceFilePath, token.Line, token.Column + 1);
         }
 
         private static string FormatInitializer(StarkParser.VariableInitializerContext initializer)
