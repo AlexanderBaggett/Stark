@@ -143,14 +143,14 @@ internal static class TypeCompatibilityFacts
             || source.FunctionPointerAbi != target.FunctionPointerAbi
             || source.FunctionPointerIsUnsafe != target.FunctionPointerIsUnsafe
             || source.FunctionPointerIsTailCallable != target.FunctionPointerIsTailCallable
-            || !Equals(targetReturn, sourceReturn))
+            || !AreCallableSignaturePositionTypesEquivalent(targetReturn, sourceReturn))
         {
             return false;
         }
 
         for (var index = 0; index < targetParameters.Count; index++)
         {
-            if (!Equals(sourceParameters[index], targetParameters[index]))
+            if (!AreCallableSignaturePositionTypesEquivalent(sourceParameters[index], targetParameters[index]))
             {
                 return false;
             }
@@ -187,14 +187,14 @@ internal static class TypeCompatibilityFacts
             || target.ClosureCallCapability != source.ClosureCallCapability
             || target.ClosureIsTailCallable != source.ClosureIsTailCallable
             || !FunctionKindSatisfies(sourceKind, targetKind)
-            || !Equals(targetReturn, sourceReturn))
+            || !AreCallableSignaturePositionTypesEquivalent(targetReturn, sourceReturn))
         {
             return false;
         }
 
         for (var index = 0; index < targetParameters.Count; index++)
         {
-            if (!Equals(sourceParameters[index], targetParameters[index]))
+            if (!AreCallableSignaturePositionTypesEquivalent(sourceParameters[index], targetParameters[index]))
             {
                 return false;
             }
@@ -212,6 +212,28 @@ internal static class TypeCompatibilityFacts
             && PointeeDeadOnReturnSourceObligationsArePreserved(
                 source.ClosurePointeeDeadOnReturnParameterNames,
                 target.ClosurePointeeDeadOnReturnParameterNames);
+    }
+
+    private static bool AreCallableSignaturePositionTypesEquivalent(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        if (Equals(left, right))
+        {
+            return true;
+        }
+
+        if (left.Kind != right.Kind)
+        {
+            return false;
+        }
+
+        return left.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => AreFunctionPointerTypesAssignable(left, right)
+                && AreFunctionPointerTypesAssignable(right, left),
+            StarkTypeKind.Closure => AreClosureTypesAssignable(left, right)
+                && AreClosureTypesAssignable(right, left),
+            _ => CanAssign(left, right) && CanAssign(right, left)
+        };
     }
 
     public static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)

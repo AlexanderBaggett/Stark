@@ -26,7 +26,7 @@ public enum CStringResult<T>
     [Err] Err(CStringError),
 }
 
-internal unsafe inline finite law rawptr<System.C.c_char> EmptyCStringData()
+internal unsafe noinline finite law rawptr<System.C.c_char> EmptyCStringData()
 {
     return &EmptyCString[0];
 }

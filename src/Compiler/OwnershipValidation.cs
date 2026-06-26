@@ -2191,7 +2191,10 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
-        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), state, signature, summary, ValueUse.Read, allowFunctionReference);
+        var conditionUse = expression.expression().Length == 0
+            ? SingleOperandUse(use, 1)
+            : ValueUse.Read;
+        var condition = EvaluateLogicalOrExpression(expression.logicalOrExpression(), state, signature, summary, conditionUse, allowFunctionReference);
         if (expression.expression().Length == 0)
         {
             return ApplyUse(condition, state, summary, use, expression);
@@ -2221,8 +2224,10 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
-        var operands = expression.logicalAndExpression()
-            .Select(item => EvaluateLogicalAndExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference))
+        var operandContexts = expression.logicalAndExpression();
+        var operandUse = SingleOperandUse(use, operandContexts.Length);
+        var operands = operandContexts
+            .Select(item => EvaluateLogicalAndExpression(item, state, signature, summary, operandUse, allowFunctionReference))
             .ToArray();
 
         var result = operands.Length == 1
@@ -2239,8 +2244,10 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
-        var operands = expression.bitwiseOrExpression()
-            .Select(item => EvaluateBitwiseOrExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference))
+        var operandContexts = expression.bitwiseOrExpression();
+        var operandUse = SingleOperandUse(use, operandContexts.Length);
+        var operands = operandContexts
+            .Select(item => EvaluateBitwiseOrExpression(item, state, signature, summary, operandUse, allowFunctionReference))
             .ToArray();
 
         var result = operands.Length == 1
@@ -2257,9 +2264,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.bitwiseXorExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.bitwiseXorExpression(),
-            item => EvaluateBitwiseXorExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateBitwiseXorExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
@@ -2274,9 +2283,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.bitwiseAndExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.bitwiseAndExpression(),
-            item => EvaluateBitwiseAndExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateBitwiseAndExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
@@ -2291,9 +2302,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.equalityExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.equalityExpression(),
-            item => EvaluateEqualityExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateEqualityExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
@@ -2308,9 +2321,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.relationalExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.relationalExpression(),
-            item => EvaluateRelationalExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateRelationalExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
@@ -2326,9 +2341,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.shiftExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.shiftExpression(),
-            item => EvaluateShiftExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateShiftExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
@@ -2344,9 +2361,11 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.additiveExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.additiveExpression(),
-            item => EvaluateAdditiveExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateAdditiveExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
@@ -2365,9 +2384,10 @@ internal sealed class OwnershipValidator
         var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(expression);
         if (operators.Count == 0)
         {
+            var operandUse = SingleOperandUse(use, operands.Length);
             return EvaluateBinaryChain(
                 operands,
-                item => EvaluateMultiplicativeExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+                item => EvaluateMultiplicativeExpression(item, state, signature, summary, operandUse, allowFunctionReference),
                 state,
                 summary,
                 use,
@@ -2459,13 +2479,23 @@ internal sealed class OwnershipValidator
         ValueUse use,
         bool allowFunctionReference)
     {
+        var operands = expression.unaryExpression();
+        var operandUse = SingleOperandUse(use, operands.Length);
         return EvaluateBinaryChain(
-            expression.unaryExpression(),
-            item => EvaluateUnaryExpression(item, state, signature, summary, ValueUse.Read, allowFunctionReference),
+            operands,
+            item => EvaluateUnaryExpression(item, state, signature, summary, operandUse, allowFunctionReference),
             state,
             summary,
             use,
             expression);
+    }
+
+    private static ValueUse SingleOperandUse(ValueUse use, int operandCount)
+    {
+        return operandCount == 1
+            && use.TargetType?.Kind is StarkTypeKind.FunctionPointer or StarkTypeKind.Closure
+            ? ValueUse.Read with { TargetType = use.TargetType }
+            : ValueUse.Read;
     }
 
     private ExpressionInfo EvaluateBinaryChain<TContext>(
@@ -2752,6 +2782,12 @@ internal sealed class OwnershipValidator
             var primaryUse = expression.postfixPart().Length == 0
                 ? use.Kind == ValueUseKind.Place ? ValueUse.Place : ValueUse.Read
                 : ValueUse.ProjectBase;
+            if (expression.postfixPart().Length == 0
+                && use.TargetType?.Kind is StarkTypeKind.FunctionPointer or StarkTypeKind.Closure)
+            {
+                primaryUse = primaryUse with { TargetType = use.TargetType };
+            }
+
             binding = EvaluatePrimaryExpression(expression.primaryExpression(), state, signature, summary, primaryUse, allowFunctionReference || requiresCallableTarget);
         }
 
@@ -3060,7 +3096,7 @@ internal sealed class OwnershipValidator
 
         if (expression.genericQualifiedName() is { } genericQualifiedName)
         {
-            return ResolveGenericQualifiedNameValue(genericQualifiedName, allowFunctionReference);
+            return ResolveGenericQualifiedNameValue(genericQualifiedName, allowFunctionReference, use.TargetType);
         }
 
         if (expression.qualifiedName() is { } qualifiedName)
@@ -6196,7 +6232,8 @@ internal sealed class OwnershipValidator
 
     private ExpressionInfo ResolveGenericQualifiedNameValue(
         StarkParser.GenericQualifiedNameContext genericQualifiedName,
-        bool allowFunctionReference)
+        bool allowFunctionReference,
+        StarkTypeSymbol? expectedType)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
         if (CompileTimeStructuralFacts.TryGetFactKind(baseName, out _))
@@ -6225,7 +6262,9 @@ internal sealed class OwnershipValidator
             return new ExpressionInfo(signature.ReturnType, Function: signature);
         }
 
-        if (allowFunctionReference && TryGetFunctionOverloads(baseName, out var overloads))
+        var allowCallableValue = allowFunctionReference
+            || expectedType?.Kind is StarkTypeKind.FunctionPointer or StarkTypeKind.Closure;
+        if (allowCallableValue && TryGetFunctionOverloads(baseName, out var overloads))
         {
             var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;
             var instantiatedCandidates = new List<TypedFunctionSignature>(overloads.Count);
@@ -6260,6 +6299,24 @@ internal sealed class OwnershipValidator
             if (instantiatedCandidates.Count == 1)
             {
                 var signature = instantiatedCandidates[0];
+                if (expectedType?.Kind == StarkTypeKind.FunctionPointer
+                    && TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(
+                        expectedType,
+                        TypeCompatibilityFacts.FunctionPointerTypeForSignature(signature)))
+                {
+                    return new ExpressionInfo(expectedType, Function: signature);
+                }
+
+                if (expectedType?.Kind == StarkTypeKind.Closure
+                    && expectedType.ClosureStorageKind is { } storageKind
+                    && expectedType.ClosureCallCapability is { } callCapability
+                    && TypeCompatibilityFacts.AreClosureTypesAssignable(
+                        expectedType,
+                        TypeCompatibilityFacts.ClosureTypeForSignature(signature, storageKind, callCapability)))
+                {
+                    return new ExpressionInfo(expectedType, Function: signature);
+                }
+
                 return new ExpressionInfo(signature.ReturnType, Function: signature);
             }
 
@@ -6272,6 +6329,11 @@ internal sealed class OwnershipValidator
             }
 
             return new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: baseName);
+        }
+
+        if (expectedType?.Kind is StarkTypeKind.FunctionPointer or StarkTypeKind.Closure)
+        {
+            return new ExpressionInfo(expectedType);
         }
 
         var targetType = ResolveGenericQualifiedName(genericQualifiedName);

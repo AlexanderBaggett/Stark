@@ -19,7 +19,7 @@ unless a compatibility need is explicit.
 | `Vendor.Miniaudio` | miniaudio `0.11.25` `miniaudio.h` | Incomplete; safe decode/playback helper only, with encoding/generation/resource-manager/node-graph/engine disabled in the native build |
 | `Vendor.Cgltf` | cgltf `v1.15` `cgltf.h`, plus upstream-but-not-vendored `cgltf_write.h` | Incomplete; safe asset-summary wrapper only, no raw data graph, accessor payload reads, transform helpers, extensions/extras, custom options, or writer API |
 | `Vendor.GLFW` | GLFW `3.4` `GLFW/glfw3.h`, `GLFW/glfw3native.h` | Incomplete; minimal window/context/input/Vulkan helper only, no monitors, cursors, clipboard, joystick/gamepad, gamma, full window attributes, full callbacks, native access, init/platform options, or complete constants |
-| `Vendor.SQLite` | SQLite `3.53.2` official C interface, `sqlite3.h`, and `sqlite3ext.h` | Incomplete; safe open/prepare/step/basic bind/basic column wrapper plus prepared-statement metadata, database introspection, limits, status counters, blob bind/result helpers, incremental blob I/O, backup, serialization/deserialization, WAL checkpoint helpers, no-callback utility/introspection APIs, UTF-16 text copies, column metadata, scalar custom functions, value/result helpers, extended result-code constants, authorizer/action/access/trace/lock/conflict constants, and global/database config constants; no snapshots, hooks, collations, virtual tables, VFS, raw config/file-control surface, extension API, or complete constants |
+| `Vendor.SQLite` | SQLite `3.53.2` official C interface, `sqlite3.h`, and `sqlite3ext.h` | Incomplete; safe open/prepare/step/basic bind/basic column wrapper plus lifecycle/shared-cache/busy-timeout/lock-timeout helpers, checked db-config flag helpers, global directory variable helpers, typed global `sqlite3_config` wrappers for threading, logging, SQLLOG, memory statistics, lookaside, page cache, heap memory, URI/default planner toggles, mmap and sorter tuning, page-cache header-size readback, rowid-in-view, and Win32 heap sizing, test-control probes, deprecated memory-alarm clearing, SQLite printf text-literal helpers, normalized-SQL and scan-status optional-symbol wrappers, optional snapshot owner/helpers, optional carray numeric/text/blob slice binding helpers, optional Win32 directory setters, extension-loading entrypoint, auto-extension controls, file-control raw/data-version/file-object helpers plus typed common file-control wrappers, VFS lookup/unsafe view registration helpers, virtual-table module registration/config/helper APIs, prepared-statement metadata, database introspection, limits, status counters, blob bind/result helpers, incremental blob I/O, backup, serialization/deserialization, WAL checkpoint/hook helpers, no-callback utility/introspection APIs, connection client-data keys/destructors, UTF-16 text copies, column metadata, scalar/aggregate/window custom functions, collation registration/needed callbacks, aggregate context, value/result helpers, SQLite-owned byte allocation, legacy get-table ownership, SQLite-owned filename construction, SQLite mutex owner/view/debug-assertion helpers, SQLite dynamic string-builder owner/helpers, database callback hooks, preupdate callback value accessors, explicit `Vendor.SQLite.Raw` ABI module, raw VFS/memory/mutex/io/pcache method-table carriers, full `sqlite3_api_routines` C-layout field table, and complete official constant coverage; no Stark-authored virtual-table/VFS safe builders, loadable-extension entrypoint policy, or `va_list` printf entrypoints |
 | `Vendor.SDL3` | SDL `3.4.10` public symbol index and local `SDL3/SDL*.h` headers | Incomplete; init/window/renderer/event/audio-stream convenience wrapper only, no complete raw SDL3 surface, GPU, surfaces/textures, input devices, filesystem/storage, threading/sync, properties, dialogs, clipboard, platform, Vulkan/OpenGL/EGL/Metal, or complete constants/types |
 
 ## `Vendor.STB.Image`
@@ -3382,11 +3382,12 @@ These are the public `GLFW_*` macros from `glfw3.h`. Statuses describe whether t
 - Official complete C interface reference: <https://www.sqlite.org/capi3ref.html>
 - Local public binding entrypoint: `vendor/src/Vendor/SQLite.stark`
 - Local safe wrapper implementation: `vendor/src/Vendor/SQLite/Core.stark`
+- Local raw ABI declarations: `vendor/src/Vendor/SQLite/Raw.stark`
 - Local public types/constants: `vendor/src/Vendor/SQLite/Types.stark`
 - Local native helper: `vendor/SQLiteTextBinding.c`
 - Build script: `vendor/build-sqlite-package.sh`
 
-The official SQLite `3.53.2` C reference lists 304 public function entries, 495 constants, and 29 public object/type entries. The current Stark binding covers 185 official function names, 331 official constants, 4 owning handles directly (`sqlite3`, `sqlite3_stmt`, `sqlite3_blob`, and `sqlite3_backup`), and 2 callback/value opaque carriers (`sqlite3_context` and `sqlite3_value`), with the integer typedefs represented by native Stark integer types rather than named aliases. The missing surface is 119 functions, 164 constants, and 19 object/table types.
+The official SQLite `3.53.2` C reference inventory tracked below lists 304 public function entries, 495 constants, and 29 public object/type entries. The current Stark binding covers 301 official function names, all 495 official constants, 4 owning handles directly (`sqlite3`, `sqlite3_stmt`, `sqlite3_blob`, and `sqlite3_backup`), owning legacy result-table, filename, allocator-byte, duplicate-value, dynamic-mutex, dynamic string-builder, and optional snapshot wrappers, a database-owned mutex view, non-owning file-object, VFS, and virtual-table module views, owned SQLite pointer type-token and client-data key wrappers, database hook callback wrappers, aggregate/window SQL function registration, collation registration/needed callbacks, auto-extension controls, aggregate context accessors, preupdate value accessors, virtual-table module registration/config/helper APIs, global logging/config/test-control helpers, global directory variable helpers, typed SQLite printf text-literal helpers, checked database-configuration wrappers including the non-boolean `MAINDBNAME`, `LOOKASIDE`, and `FP_DIGITS` shapes, optional normalized-SQL and scan-status helpers, optional carray numeric/text/blob slice binding helpers, unsafe zero-copy borrowed byte-view wrappers for column/value blob and text reads, optional debug mutex assertion helpers, optional Win32 directory setters, SQLite version data-symbol access, a low-level `Vendor.SQLite.Raw` module with 313 public unsafe FFI declarations including 8 varargs declarations, carriers for every public object/type entry including the full 277-slot `sqlite3_api_routines` C-layout field table, and loadable-extension and auto-extension entrypoint ABI aliases, with the integer typedefs represented by native Stark integer types rather than named aliases. The missing surface is 3 functions, 0 constants, and 0 object/type carrier names. Remaining object-shaped work is safe construction/lifetime policy for callback tables.
 
 The official function inventory was extracted from the SQLite function list with:
 
@@ -3405,65 +3406,73 @@ awk '/<h2>List Of Constants/{flag=1;next}/<h2>List Of Functions/{flag=0}flag' ca
 
 The public Stark API currently exposes:
 
-- owning `Database`, `Statement`, `Blob`, `Backup`, `SQLiteOwnedBytes`, and `SQLiteOwnedValue` structs that close/finalize/free in `drop`
+- owning `Database`, `Statement`, `Blob`, `Backup`, `SQLiteTable`, `SQLiteFilename`, `SQLiteOwnedBytes`, `SQLiteOwnedValue`, `SQLiteMutex`, and `SQLiteStringBuilder` structs that close/finalize/free in `drop`, plus non-owning `SQLiteMutexView` and `SQLiteFileObjectView` wrappers for database-owned/VFS-owned objects
 - primary result/status and column-type enums
-- primary and extended result-code constants, authorizer/action/access/trace/lock/conflict constants, global and database config constants, function-property constants, basic column type constants, limit codes, transaction-state codes, global/db/statement/scan-status counters, prepare flags, UTF text encoding constants, checkpoint/serialization flags, and the complete current `SQLITE_OPEN_*` flag set
-- library version/source-id/thread-safety helpers
-- compile-option, keyword, SQL-complete, string compare/glob/like, randomness, sleep, memory high-water, global release-memory, and soft/hard heap-limit helpers
+- primary and extended result-code constants, version/source-control text constants, authorizer/action/access/trace/lock/conflict constants, global and database config constants, file-control/sync/shared-memory constants, IO capability constants, virtual-table constraint/operator constants, mutex constants, test-control constants, carray type constants, Win32 directory-type constants, destructor sentinel values, function-property constants, basic column type constants, limit codes, transaction-state codes, global/db/statement/scan-status counters, prepare flags, UTF text encoding constants, checkpoint/serialization flags, and the complete current `SQLITE_OPEN_*` flag set
+- library version/source-id/thread-safety helpers, `sqlite3_version[]` data-symbol access, explicit initialize/OS-initialize hooks, unsafe shutdown/OS-shutdown hooks, deprecated global recover/thread-cleanup hooks, unsafe `sqlite3_temp_directory` / `sqlite3_data_directory` copy/set/clear helpers, optional Win32 directory setters, and shared-cache toggling
+- compile-option, keyword, SQL-complete, string compare/glob/like, randomness, sleep, memory high-water, global release-memory, soft/hard heap-limit helpers, deprecated soft-heap-limit setter, global log config/logging, test-control probes, deprecated memory-alarm clearing, SQLite printf text-literal helpers, and SQLite allocator-backed owned byte allocation/resizing/size helpers
+- dynamic mutex helpers: `AllocateMutex`, `EnterMutex`, `TryEnterMutex`, `LeaveMutex`, optional `IsMutexHeld`/`IsMutexNotHeld`, and corresponding `SQLiteMutexView` helpers for database-owned mutexes
+- raw C-layout method-table carriers: `SQLite3VfsNative`, `SQLiteMemoryMethods`, `SQLiteMutexMethods`, `SQLiteIoMethods`, `SQLitePcachePage`, `SQLitePcacheMethods2`, and the 277-slot `SQLite3ApiRoutinesNative` extension API table, plus loadable-extension and auto-extension entrypoint ABI aliases, the typed `unsafe ffi(c)` callback aliases they contain, and typed unsafe global config wrappers for memory/mutex/pcache method tables, retained config callbacks, default lookaside, page-cache memory, heap memory, mmap, planner, sorter, memory-statistics, rowid-in-view, and platform tuning options
+- dynamic string-builder helpers: `CreateStringBuilder`, `CreateStringBuilderForDatabase`, `StringBuilderAppend`, `StringBuilderAppendPrefix`, `StringBuilderAppendSqlTextLiteral`, `StringBuilderAppendRepeatedAsciiByte`, `StringBuilderReset`, `StringBuilderTruncate`, `StringBuilderStatus`, `StringBuilderByteLength`, `StringBuilderValue`, and `FinishStringBuilder`
 - `Open`, `OpenDefault`, `OpenUtf16Ascii`, `OpenUtf16Unicode`, `OpenReadOnly`, `OpenReadWrite`, `OpenReadWriteCreate`, and `OpenInMemory`
-- error-state helpers: `LastErrorCode`, `LastExtendedErrorCode`, `ErrorOffset`, `SystemErrno`, `SetExtendedResultCodes`, and `ErrorMessage`
-- database introspection/configuration helpers: `IsAutocommit`, `DatabaseName`, `DatabaseFileName`, URI/default filename helpers, `DatabaseReadonly`, `TransactionState`, `TableColumnMetadata`, `CurrentLimit`, `SetLimit`, `HasOpenStatements`, `OpenStatementCount`, `ReleaseMemory`, `CacheFlush`, `Interrupt`, `IsInterrupted`, `GlobalStatus`, `GlobalStatus32`, and `DatabaseStatus`
+- error-state helpers: `LastErrorCode`, `LastExtendedErrorCode`, `ErrorOffset`, `SystemErrno`, `SetExtendedResultCodes`, `SetErrorMessage`, `SetDefaultErrorMessage`, `ErrorMessage`, and `ErrorMessage16`
+- database introspection/configuration helpers: `IsAutocommit`, `SetBusyTimeout`, `SetLockTimeout`, checked `SetDatabaseConfigFlag`, `SetMainDatabaseName` with retained schema-name storage, SQLite-managed and Stark-owned lookaside configuration/disable helpers, floating-point digit query/set helpers, API-only/legacy extension-loading toggles, unsafe extension loading, auto-extension registration/cancel/reset, `OverloadFunction`, `FileControlRaw`, typed file-control wrappers for lock state, data version, file/journal/VFS object views, size hints, chunk size, size limit, persistent WAL, powersafe overwrite, VFS names, temp filenames, mmap size, moved-file detection, atomic write brackets, lock timeout, external-reader checks, and cache reset, `DatabaseName`, `DatabaseFileName`, URI/default filename helpers, `CreateFilename`/`SQLiteFilename` helpers, `DatabaseReadonly`, `TransactionState`, `TableColumnMetadata`, legacy `GetTable`/`SQLiteTable` helpers, `CurrentLimit`, `SetLimit`, `HasOpenStatements`, `OpenStatementCount`, `ReleaseMemory`, `CacheFlush`, `DatabaseMutex`, `Interrupt`, `IsInterrupted`, `GlobalStatus`, `GlobalStatus32`, `DatabaseStatus`, and `DatabaseStatus32`
+- virtual-table helper APIs: non-owning `SQLiteVirtualTableModuleView`, module register/unregister/drop wrappers, callback-only virtual-table declaration/config helpers, conflict policy and no-change helpers, planner collation/distinct/`IN` helpers, right-hand-side value extraction, and `IN` sequence iteration
 - `Close`, `CloseStrict`, `Execute`, `Prepare`, `PrepareLegacy`, `PrepareWithFlags`, `PrepareUtf16LegacyAscii`, `PrepareUtf16Ascii`, `PrepareUtf16AsciiWithFlags`, `Finalize`, `Reset`, `ClearBindings`, and `Step`
-- `BindNull`, `BindInt64`, `BindInt`, `BindDouble`, `BindText`, `BindText64`, `BindText16Ascii`, `BindText16Unicode`, `BindBytes`, `BindValue`, `BindZeroBlob`, `BindZeroBlob64`, `BindParameterCount`, `BindParameterIndex`, and `BindParameterName`
-- `ColumnCount`, `DataCount`, `ColumnType`, `ColumnValueRaw`, `ColumnInt64`, `ColumnInt`, `ColumnDouble`, `ColumnText`, `ColumnText16`, `ColumnBytes16`, declared-type/database/table/origin metadata helpers, `ColumnBlobLength`, `ColumnBlobCopy`, `ColumnName`, and `ColumnName16`
+- `CreatePointerType`, `BindNull`, `BindInt64`, `BindInt`, `BindDouble`, `BindText`, `BindText64`, `BindText16Ascii`, `BindText16Unicode`, `BindBytes`, optional `BindCArrayInt32`/`BindCArrayInt64`/`BindCArrayDouble`/`BindCArrayText`/`BindCArrayBlob` plus `_V2` variants, `BindValue`, `BindPointerNoDestructor`, destructor-backed `BindPointer<T>`, `BindZeroBlob`, `BindZeroBlob64`, `BindParameterCount`, `BindParameterIndex`, and `BindParameterName`
+- `ColumnCount`, `DataCount`, `ColumnType`, `ColumnValueRaw`, `ColumnInt64`, `ColumnInt`, `ColumnDouble`, `ColumnText`, `ColumnText16`, `ColumnTextBytes`, `ColumnText16Bytes`, `ColumnTextBytesView`, `ColumnText16BytesView`, `ColumnBytes16`, declared-type/database/table/origin metadata helpers, `ColumnBlobLength`, `ColumnBlobCopy`, `ColumnBlobBytes`, `ColumnBlobView`, `ColumnName`, and `ColumnName16`
 - owning `Blob` incremental I/O helpers: `OpenBlob`, `OpenBlobReadOnly`, `OpenBlobReadWrite`, `BlobByteLength`, `ReadBlob`, `WriteBlob`, `ReopenBlob`, and `CloseBlob`
 - owning `Backup` helpers: `OpenBackup`, `StepBackup`, `BackupRemaining`, `BackupPageCount`, and `FinishBackup`
 - serialization helpers: `SerializeDatabase`, `SerializeDatabaseWithFlags`, `DeserializeDatabase`, `DeserializeDatabaseReadOnly`, `DeserializeDatabaseFromSerialized`, `DeserializeDatabaseReadOnlyFromSerialized`, and `DeserializeDatabaseWithCapacity`
 - WAL checkpoint helpers: `WalAutoCheckpoint`, `WalCheckpoint`, and `WalCheckpointWithMode`
-- statement SQL/introspection helpers: `StatementSql`, `ExpandedSql`, `StatementHasDatabase`, `StatementExpired`, `TransferBindings`, `IsStatementReadOnly`, `IsStatementBusy`, `StatementExplainMode`, `SetStatementExplainMode`, and `StatementStatus`
-- scalar custom-function registration with typed callback aliases, callback argument extraction, user/aux data helpers, context database error access, `sqlite3_value` copy/read helpers, and `sqlite3_result` writers
+- optional snapshot helpers: `SnapshotAvailable`, owning `SQLiteSnapshot`, `GetSnapshot`, `OpenSnapshot`, `RecoverSnapshots`, and `CompareSnapshots`, with `SQLiteStatus.NotFound` returned on SQLite builds that omit `SQLITE_ENABLE_SNAPSHOT`
+- statement SQL/introspection helpers: `StatementSql`, `ExpandedSql`, optional `NormalizedSql`, optional scan-status availability/probe/reset helpers, `StatementHasDatabase`, `StatementExpired`, `TransferBindings`, `IsStatementReadOnly`, `IsStatementBusy`, `StatementExplainMode`, `SetStatementExplainMode`, and `StatementStatus`
+- scalar/aggregate/window custom-function registration and collation registration/needed callbacks with typed callback aliases, callback argument extraction, callback-local aggregate context helpers, user/aux data helpers including destructor-backed aux-data slots, connection client-data helpers with typed `storeborrow mut T` destructor callbacks, context database error access, `sqlite3_value` copy/read helpers, unsafe zero-copy `sqlite3_value` byte views, pointer type-token lookup helpers, and `sqlite3_result` writers including destructor-backed pointer results
+- database hook registration with typed `storeborrow mut T` callback data for busy, authorizer, trace/trace-v2/profile, progress, commit/rollback/update, autovacuum pages with optional destructor, WAL, unlock notify, and preupdate, plus preupdate old/new value/count/depth/blob-write accessors
 - `LastInsertRowId`, `SetLastInsertRowId`, `Changes32`, `Changes`, `TotalChanges32`, and `TotalChanges`
 
-The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`sqlite3_bind_blob64` and `sqlite3_result_text`/`sqlite3_result_blob` families with `SQLITE_TRANSIENT`, plus `sqlite3_value**` argument extraction while hiding the destructor-function sentinel from Stark source.
+The native helper exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`sqlite3_bind_blob64`, `sqlite3_carray_bind`/`sqlite3_carray_bind_v2`, and `sqlite3_result_text`/`sqlite3_result_blob` families with `SQLITE_TRANSIENT`, to expose optional normalized-SQL, scan-status, snapshot, carray, debug mutex assertion, and Win32 directory symbols without making lean SQLite builds fail to link, to read/copy/set the SQLite global data symbols while Stark lacks imported-data FFI, and to extract `sqlite3_value**` and legacy table entries while hiding C-only pointer shapes and destructor-function sentinels from Stark source.
+
+The C# vendor audit suite includes `SQLiteAuditInventoryMatchesRecordedCoverage`, which pins the SQLite `3.53.2` recorded inventory counts, rejects duplicate inventory entries, verifies the exact three remaining `va_list`-blocked functions, and checks the complete scalar `SQLITE_*` constant inventory against `Vendor.SQLite.Types`.
 
 ### Complete SQLite Object Inventory
 
 - `sqlite3` - covered as safe `Database` owner
-- `sqlite3_api_routines` - missing
+- `sqlite3_api_routines` - covered as full C-layout `SQLite3ApiRoutinesNative` field table with one opaque `SQLiteExtensionApiRoutine` function-pointer slot per `sqlite3ext.h` routine entry
 - `sqlite3_backup` - covered as safe `Backup` owner
 - `sqlite3_blob` - covered as safe `Blob` owner
 - `sqlite3_context` - covered as typed callback context carrier
-- `sqlite3_data_directory` - missing
-- `sqlite3_file` - missing
-- `sqlite3_filename` - missing
-- `sqlite3_index_info` - missing
+- `sqlite3_data_directory` - covered by unsafe `DataDirectory`, `SetDataDirectory`, and `ClearDataDirectory` helpers through native SQLite-owned copies
+- `sqlite3_file` - covered as non-owning `SQLiteFileObjectView`
+- `sqlite3_filename` - covered as safe `SQLiteFilename` owner
+- `sqlite3_index_info` - covered as typed virtual-table callback carrier
 - `sqlite3_int64` - represented by Stark `i64`, no named public alias
-- `sqlite3_io_methods` - missing
-- `sqlite3_mem_methods` - missing
-- `sqlite3_module` - missing
-- `sqlite3_mutex` - missing
-- `sqlite3_mutex_methods` - missing
-- `sqlite3_pcache` - missing
-- `sqlite3_pcache_methods2` - missing
-- `sqlite3_pcache_page` - missing
-- `sqlite3_snapshot` - missing
+- `sqlite3_io_methods` - covered as raw C-layout `SQLiteIoMethods`
+- `sqlite3_mem_methods` - covered as raw C-layout `SQLiteMemoryMethods`
+- `sqlite3_module` - covered as typed module carrier plus non-owning `SQLiteVirtualTableModuleView`
+- `sqlite3_mutex` - covered as safe dynamic `SQLiteMutex` owner and non-owning `SQLiteMutexView`
+- `sqlite3_mutex_methods` - covered as raw C-layout `SQLiteMutexMethods`
+- `sqlite3_pcache` - covered as opaque `SQLite3PcacheNative`
+- `sqlite3_pcache_methods2` - covered as raw C-layout `SQLitePcacheMethods2`
+- `sqlite3_pcache_page` - covered as raw C-layout `SQLitePcachePage`
+- `sqlite3_snapshot` - covered as optional-symbol safe `SQLiteSnapshot` owner
 - `sqlite3_stmt` - covered as safe `Statement` owner
-- `sqlite3_str` - missing
-- `sqlite3_temp_directory` - missing
+- `sqlite3_str` - covered as safe `SQLiteStringBuilder` owner
+- `sqlite3_temp_directory` - covered by unsafe `TempDirectory`, `SetTempDirectory`, and `ClearTempDirectory` helpers through native SQLite-owned copies
 - `sqlite3_uint64` - represented by Stark `u64`, no named public alias
 - `sqlite3_value` - covered as typed SQL value carrier and owning duplicate wrapper
-- `sqlite3_vfs` - missing
-- `sqlite3_vtab` - missing
-- `sqlite3_vtab_cursor` - missing
+- `sqlite3_vfs` - covered as raw C-layout `SQLite3VfsNative` plus non-owning `SQLiteVfsView`
+- `sqlite3_vtab` - covered as typed virtual-table callback carrier
+- `sqlite3_vtab_cursor` - covered as typed virtual-table cursor callback carrier
 - `sqlite_int64` - represented by Stark `i64`, no named public alias
 - `sqlite_uint64` - represented by Stark `u64`, no named public alias
 
 ### Complete SQLite Function Inventory
 
-- `sqlite3_aggregate_context` - missing
-- `sqlite3_aggregate_count` - missing
-- `sqlite3_auto_extension` - missing
-- `sqlite3_autovacuum_pages` - missing
+- `sqlite3_aggregate_context` - covered by unsafe callback-only `AggregateContext` / `ExistingAggregateContext`
+- `sqlite3_aggregate_count` - covered by unsafe callback-only `AggregateCountDeprecated`
+- `sqlite3_auto_extension` - covered by `RegisterAutoExtension`
+- `sqlite3_autovacuum_pages` - covered by typed `SetAutovacuumPagesNoDestructor` / `SetAutovacuumPages<T>` plus clear wrapper
 - `sqlite3_backup_finish` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_backup_init` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_backup_pagecount` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3478,7 +3487,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_bind_parameter_count` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_bind_parameter_index` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_bind_parameter_name` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_bind_pointer` - missing
+- `sqlite3_bind_pointer` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_bind_text` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_bind_text16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_bind_text64` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3491,18 +3500,18 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_blob_read` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_blob_reopen` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_blob_write` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_busy_handler` - missing
-- `sqlite3_busy_timeout` - missing
-- `sqlite3_cancel_auto_extension` - missing
-- `sqlite3_carray_bind` - missing
-- `sqlite3_carray_bind_v2` - missing
+- `sqlite3_busy_handler` - covered by typed `SetBusyHandler<T>` plus clear wrapper
+- `sqlite3_busy_timeout` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_cancel_auto_extension` - covered by `CancelAutoExtension`
+- `sqlite3_carray_bind` - covered by optional-symbol `BindCArrayInt32` / `BindCArrayInt64` / `BindCArrayDouble` / `BindCArrayText` / `BindCArrayBlob` slice wrappers that return `SQLiteStatus.NotFound` when the SQLite build omits carray
+- `sqlite3_carray_bind_v2` - covered by optional-symbol `BindCArrayInt32V2` / `BindCArrayInt64V2` / `BindCArrayDoubleV2` / `BindCArrayTextV2` / `BindCArrayBlobV2` slice wrappers that return `SQLiteStatus.NotFound` when the SQLite build omits the v2 symbol
 - `sqlite3_changes` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_changes64` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_clear_bindings` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_close` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_close_v2` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_collation_needed` - missing
-- `sqlite3_collation_needed16` - missing
+- `sqlite3_collation_needed` - covered by typed `SetCollationNeeded*` plus clear wrapper
+- `sqlite3_collation_needed16` - covered by typed `SetCollationNeededUtf16*` plus clear wrapper
 - `sqlite3_column_blob` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_column_bytes` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_column_bytes16` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3524,43 +3533,43 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_column_text16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_column_type` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_column_value` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_commit_hook` - missing
+- `sqlite3_commit_hook` - covered by typed `SetCommitHook<T>` plus clear wrapper
 - `sqlite3_compileoption_get` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_compileoption_used` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_complete` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_complete16` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_config` - missing
+- `sqlite3_config` - covered by global threading-mode wrappers and `SetConfigLog` / `ClearConfigLog`
 - `sqlite3_context_db_handle` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_create_collation` - missing
-- `sqlite3_create_collation16` - missing
-- `sqlite3_create_collation_v2` - missing
-- `sqlite3_create_filename` - missing
+- `sqlite3_create_collation` - covered by typed `RegisterCollation*` / `ClearCollation`
+- `sqlite3_create_collation16` - covered by typed `RegisterCollationUtf16Ascii*` / `ClearCollationUtf16Ascii`
+- `sqlite3_create_collation_v2` - covered by typed `RegisterCollationWithUserData<T>` with destructor callback
+- `sqlite3_create_filename` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_create_function` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_create_function16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_create_function_v2` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_create_module` - missing
-- `sqlite3_create_module_v2` - missing
-- `sqlite3_create_window_function` - missing
+- `sqlite3_create_module` - covered by `RegisterVirtualTableModuleViewNoDestructor` / `UnregisterVirtualTableModule`
+- `sqlite3_create_module_v2` - covered by `RegisterVirtualTableModuleView`
+- `sqlite3_create_window_function` - covered by typed `RegisterWindowFunction*`
 - `sqlite3_data_count` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_database_file_object` - missing
+- `sqlite3_database_file_object` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_db_cacheflush` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_db_config` - missing
+- `sqlite3_db_config` - covered by checked boolean-flag wrappers plus dedicated `MAINDBNAME`, `LOOKASIDE`, and `FP_DIGITS` wrappers
 - `sqlite3_db_filename` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_db_handle` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_db_mutex` - missing
+- `sqlite3_db_mutex` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_db_name` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_db_readonly` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_db_release_memory` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_db_status` - missing
+- `sqlite3_db_status` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_db_status64` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_declare_vtab` - missing
+- `sqlite3_declare_vtab` - covered by `DeclareVirtualTable` / `DeclareVirtualTableForCallback`
 - `sqlite3_deserialize` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_drop_modules` - missing
-- `sqlite3_enable_load_extension` - missing
-- `sqlite3_enable_shared_cache` - missing
+- `sqlite3_drop_modules` - covered by `DropAllVirtualTableModules`
+- `sqlite3_enable_load_extension` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_enable_shared_cache` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_errcode` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_errmsg` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_errmsg16` - missing
+- `sqlite3_errmsg16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_error_offset` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_errstr` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_exec` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3568,21 +3577,21 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_expired` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_extended_errcode` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_extended_result_codes` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_file_control` - missing
-- `sqlite3_filename_database` - missing
+- `sqlite3_file_control` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_filename_database` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_filename_journal` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_filename_wal` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_finalize` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_free` - covered internally by `ExpandedSql` cleanup and `SQLiteOwnedBytes` ownership
-- `sqlite3_free_filename` - missing
-- `sqlite3_free_table` - missing
+- `sqlite3_free_filename` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_free_table` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_get_autocommit` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_get_auxdata` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_get_clientdata` - missing
-- `sqlite3_get_table` - missing
-- `sqlite3_global_recover` - missing
+- `sqlite3_get_clientdata` - covered by `ClientData` plus owned `SQLiteClientDataKey`
+- `sqlite3_get_table` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_global_recover` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_hard_heap_limit64` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_initialize` - missing
+- `sqlite3_initialize` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_interrupt` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_is_interrupted` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_keyword_check` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3592,50 +3601,50 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_libversion` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_libversion_number` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_limit` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_load_extension` - missing
-- `sqlite3_log` - missing
-- `sqlite3_malloc` - missing
+- `sqlite3_load_extension` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_log` - covered by `LogMessage`
+- `sqlite3_malloc` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_malloc64` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_memory_alarm` - missing
+- `sqlite3_memory_alarm` - covered by deprecated `SetMemoryAlarmDeprecated` / `ClearMemoryAlarmDeprecated`
 - `sqlite3_memory_highwater` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_memory_used` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_mprintf` - missing
-- `sqlite3_msize` - missing
-- `sqlite3_mutex_alloc` - missing
-- `sqlite3_mutex_enter` - missing
-- `sqlite3_mutex_free` - missing
-- `sqlite3_mutex_held` - missing
-- `sqlite3_mutex_leave` - missing
-- `sqlite3_mutex_notheld` - missing
-- `sqlite3_mutex_try` - missing
+- `sqlite3_mprintf` - covered by `FormatSqlTextLiteral`
+- `sqlite3_msize` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_mutex_alloc` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_mutex_enter` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_mutex_free` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_mutex_held` - covered by optional-symbol `MutexHeldAvailable` / `IsMutexHeld` / `IsMutexViewHeld`, returning `SQLiteStatus.NotFound` when the SQLite build omits debug mutex assertions
+- `sqlite3_mutex_leave` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_mutex_notheld` - covered by optional-symbol `MutexNotHeldAvailable` / `IsMutexNotHeld` / `IsMutexViewNotHeld`, returning `SQLiteStatus.NotFound` when the SQLite build omits debug mutex assertions
+- `sqlite3_mutex_try` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_next_stmt` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_normalized_sql` - missing
+- `sqlite3_normalized_sql` - covered by optional-symbol `NormalizedSqlAvailable` / `NormalizedSql`
 - `sqlite3_open` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_open16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_open_v2` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_os_end` - missing
-- `sqlite3_os_init` - missing
-- `sqlite3_overload_function` - missing
+- `sqlite3_os_end` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_os_init` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_overload_function` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_prepare` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_prepare16` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_prepare16_v2` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_prepare16_v3` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_prepare_v2` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_prepare_v3` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_preupdate_blobwrite` - missing
-- `sqlite3_preupdate_count` - missing
-- `sqlite3_preupdate_depth` - missing
-- `sqlite3_preupdate_hook` - missing
-- `sqlite3_preupdate_new` - missing
-- `sqlite3_preupdate_old` - missing
-- `sqlite3_profile` - missing
-- `sqlite3_progress_handler` - missing
+- `sqlite3_preupdate_blobwrite` - covered by callback-only `PreupdateBlobWriteColumn`
+- `sqlite3_preupdate_count` - covered by callback-only `PreupdateColumnCount`
+- `sqlite3_preupdate_depth` - covered by callback-only `PreupdateDepth`
+- `sqlite3_preupdate_hook` - covered by typed `SetPreupdateHook<T>` plus clear wrapper
+- `sqlite3_preupdate_new` - covered by callback-only `PreupdateNewValue`
+- `sqlite3_preupdate_old` - covered by callback-only `PreupdateOldValue`
+- `sqlite3_profile` - covered by typed deprecated `SetProfileDeprecated<T>` plus clear wrapper
+- `sqlite3_progress_handler` - covered by typed `SetProgressHandler<T>` plus clear wrapper
 - `sqlite3_randomness` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_realloc` - missing
-- `sqlite3_realloc64` - missing
+- `sqlite3_realloc` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_realloc64` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_release_memory` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_reset` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_reset_auto_extension` - missing
+- `sqlite3_reset_auto_extension` - covered by `ResetAutoExtensions`
 - `sqlite3_result_blob` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_result_blob64` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_result_double` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3657,23 +3666,23 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_result_value` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_result_zeroblob` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_result_zeroblob64` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_rollback_hook` - missing
+- `sqlite3_rollback_hook` - covered by typed `SetRollbackHook<T>` plus clear wrapper
 - `sqlite3_serialize` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_set_authorizer` - missing
+- `sqlite3_set_authorizer` - covered by typed `SetAuthorizer<T>` plus clear wrapper
 - `sqlite3_set_auxdata` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_set_clientdata` - missing
-- `sqlite3_set_errmsg` - missing
+- `sqlite3_set_clientdata` - covered by `SetClientDataNoDestructor`, typed `SetClientData<T>` with `storeborrow mut T` destructor data, and `ClearClientDataNoDestructor`
+- `sqlite3_set_errmsg` - covered by `SetErrorMessage` and `SetDefaultErrorMessage`
 - `sqlite3_set_last_insert_rowid` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_setlk_timeout` - missing
-- `sqlite3_shutdown` - missing
+- `sqlite3_setlk_timeout` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_shutdown` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_sleep` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_snapshot_cmp` - missing
-- `sqlite3_snapshot_free` - missing
-- `sqlite3_snapshot_get` - missing
-- `sqlite3_snapshot_open` - missing
-- `sqlite3_snapshot_recover` - missing
-- `sqlite3_snprintf` - missing
-- `sqlite3_soft_heap_limit` - missing
+- `sqlite3_snapshot_cmp` - covered by optional-symbol `CompareSnapshots`
+- `sqlite3_snapshot_free` - covered by optional-symbol `SQLiteSnapshot` owner cleanup
+- `sqlite3_snapshot_get` - covered by optional-symbol `GetSnapshot`
+- `sqlite3_snapshot_open` - covered by optional-symbol `OpenSnapshot`
+- `sqlite3_snapshot_recover` - covered by optional-symbol `RecoverSnapshots`
+- `sqlite3_snprintf` - covered by `FormatSqlTextLiteralFixed`
+- `sqlite3_soft_heap_limit` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_soft_heap_limit64` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_sourceid` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_sql` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3684,22 +3693,22 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_stmt_explain` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_stmt_isexplain` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_stmt_readonly` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_stmt_scanstatus` - missing
-- `sqlite3_stmt_scanstatus_reset` - missing
-- `sqlite3_stmt_scanstatus_v2` - missing
+- `sqlite3_stmt_scanstatus` - covered by optional-symbol typed scan-status wrappers
+- `sqlite3_stmt_scanstatus_reset` - covered by optional-symbol `ResetStatementScanStatus`
+- `sqlite3_stmt_scanstatus_v2` - covered by optional-symbol typed scan-status wrappers with explicit flags and `StatementScanStatusV2Available`
 - `sqlite3_stmt_status` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_str_append` - missing
-- `sqlite3_str_appendall` - missing
-- `sqlite3_str_appendchar` - missing
-- `sqlite3_str_appendf` - missing
-- `sqlite3_str_errcode` - missing
-- `sqlite3_str_finish` - missing
-- `sqlite3_str_free` - missing
-- `sqlite3_str_length` - missing
-- `sqlite3_str_new` - missing
-- `sqlite3_str_reset` - missing
-- `sqlite3_str_truncate` - missing
-- `sqlite3_str_value` - missing
+- `sqlite3_str_append` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_appendall` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_appendchar` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_appendf` - covered by `StringBuilderAppendSqlTextLiteral`
+- `sqlite3_str_errcode` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_finish` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_free` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_length` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_new` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_reset` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_truncate` - covered by current `Vendor.SQLite` wrapper/native helper
+- `sqlite3_str_value` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_str_vappendf` - missing
 - `sqlite3_strglob` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_stricmp` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3707,17 +3716,17 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_strnicmp` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_system_errno` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_table_column_metadata` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_test_control` - missing
-- `sqlite3_thread_cleanup` - missing
+- `sqlite3_test_control` - covered by unsafe `TestControlIsInitialized` / `TestControlByteOrder`
+- `sqlite3_thread_cleanup` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_threadsafe` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_total_changes` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_total_changes64` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_trace` - missing
-- `sqlite3_trace_v2` - missing
+- `sqlite3_trace` - covered by typed deprecated `SetTraceDeprecated<T>` plus clear wrapper
+- `sqlite3_trace_v2` - covered by typed `SetTraceHandler<T>` plus clear wrapper
 - `sqlite3_transfer_bindings` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_txn_state` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_unlock_notify` - missing
-- `sqlite3_update_hook` - missing
+- `sqlite3_unlock_notify` - covered by typed `SetUnlockNotify<T>` plus clear wrapper
+- `sqlite3_update_hook` - covered by typed `SetUpdateHook<T>` plus clear wrapper
 - `sqlite3_uri_boolean` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_uri_int64` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_uri_key` - covered by current `Vendor.SQLite` wrapper/native helper
@@ -3742,28 +3751,28 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `sqlite3_value_text16be` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_value_text16le` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_value_type` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_version` - missing
-- `sqlite3_vfs_find` - missing
-- `sqlite3_vfs_register` - missing
-- `sqlite3_vfs_unregister` - missing
+- `sqlite3_version` - covered by `LibraryVersionConstant` through the native helper while Stark lacks direct imported-data FFI
+- `sqlite3_vfs_find` - covered by `DefaultVfs` / `FindVfs`
+- `sqlite3_vfs_register` - covered by unsafe `RegisterVfsView`
+- `sqlite3_vfs_unregister` - covered by unsafe `UnregisterVfsView`
 - `sqlite3_vmprintf` - missing
 - `sqlite3_vsnprintf` - missing
-- `sqlite3_vtab_collation` - missing
-- `sqlite3_vtab_config` - missing
-- `sqlite3_vtab_distinct` - missing
-- `sqlite3_vtab_in` - missing
-- `sqlite3_vtab_in_first` - missing
-- `sqlite3_vtab_in_next` - missing
-- `sqlite3_vtab_nochange` - missing
-- `sqlite3_vtab_on_conflict` - missing
-- `sqlite3_vtab_rhs_value` - missing
+- `sqlite3_vtab_collation` - covered by `VirtualTableConstraintCollation`
+- `sqlite3_vtab_config` - covered by virtual-table config wrappers
+- `sqlite3_vtab_distinct` - covered by `VirtualTableDistinctMode`
+- `sqlite3_vtab_in` - covered by `VirtualTableInCanProcessAllAtOnce` / `SetVirtualTableInAllAtOnce`
+- `sqlite3_vtab_in_first` - covered by `VirtualTableInFirst`
+- `sqlite3_vtab_in_next` - covered by `VirtualTableInNext`
+- `sqlite3_vtab_nochange` - covered by `VirtualTableNoChange`
+- `sqlite3_vtab_on_conflict` - covered by `VirtualTableConflictPolicy`
+- `sqlite3_vtab_rhs_value` - covered by `VirtualTableRightHandSideValue`
 - `sqlite3_wal_autocheckpoint` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_wal_checkpoint` - covered by current `Vendor.SQLite` wrapper/native helper
 - `sqlite3_wal_checkpoint_v2` - covered by current `Vendor.SQLite` wrapper/native helper
-- `sqlite3_wal_hook` - missing
-- `sqlite3_win32_set_directory` - missing
-- `sqlite3_win32_set_directory16` - missing
-- `sqlite3_win32_set_directory8` - missing
+- `sqlite3_wal_hook` - covered by typed `SetWalHook<T>` plus clear wrapper
+- `sqlite3_win32_set_directory` - covered by optional-symbol unsafe `SetWin32DirectoryNative` plus `ClearWin32DirectoryNative`, returning `SQLiteStatus.NotFound` when unavailable
+- `sqlite3_win32_set_directory16` - covered by optional-symbol `SetWin32DirectoryUtf16Ascii` / `SetWin32DirectoryUtf16Unicode` plus `ClearWin32DirectoryUtf16`, returning `SQLiteStatus.NotFound` when unavailable
+- `sqlite3_win32_set_directory8` - covered by optional-symbol `SetWin32DirectoryUtf8` plus `ClearWin32DirectoryUtf8`, returning `SQLiteStatus.NotFound` when unavailable
 
 ### Complete SQLite Constant Inventory
 
@@ -3774,7 +3783,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_ACCESS_READWRITE` - covered
 - `SQLITE_ALTER_TABLE` - covered
 - `SQLITE_ANALYZE` - covered
-- `SQLITE_ANY` - missing
+- `SQLITE_ANY` - covered
 - `SQLITE_ATTACH` - covered
 - `SQLITE_AUTH` - covered
 - `SQLITE_AUTH_USER` - covered
@@ -3790,11 +3799,11 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_CANTOPEN_ISDIR` - covered
 - `SQLITE_CANTOPEN_NOTEMPDIR` - covered
 - `SQLITE_CANTOPEN_SYMLINK` - covered
-- `SQLITE_CARRAY_BLOB` - missing
-- `SQLITE_CARRAY_DOUBLE` - missing
-- `SQLITE_CARRAY_INT32` - missing
-- `SQLITE_CARRAY_INT64` - missing
-- `SQLITE_CARRAY_TEXT` - missing
+- `SQLITE_CARRAY_BLOB` - covered
+- `SQLITE_CARRAY_DOUBLE` - covered
+- `SQLITE_CARRAY_INT32` - covered
+- `SQLITE_CARRAY_INT64` - covered
+- `SQLITE_CARRAY_TEXT` - covered
 - `SQLITE_CHECKPOINT_FULL` - covered
 - `SQLITE_CHECKPOINT_NOOP` - covered
 - `SQLITE_CHECKPOINT_PASSIVE` - covered
@@ -3881,7 +3890,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_DBCONFIG_TRIGGER_EQP` - covered
 - `SQLITE_DBCONFIG_TRUSTED_SCHEMA` - covered
 - `SQLITE_DBCONFIG_WRITABLE_SCHEMA` - covered
-- `SQLITE_DBSTATUS` - missing
+- `SQLITE_DBSTATUS` - covered by complete `SQLITE_DBSTATUS_*` family; header keyword only
 - `SQLITE_DBSTATUS_CACHE_HIT` - covered
 - `SQLITE_DBSTATUS_CACHE_MISS` - covered
 - `SQLITE_DBSTATUS_CACHE_SPILL` - covered
@@ -3924,95 +3933,95 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_ERROR_SNAPSHOT` - covered
 - `SQLITE_ERROR_UNABLE` - covered
 - `SQLITE_FAIL` - covered
-- `SQLITE_FCNTL_BEGIN_ATOMIC_WRITE` - missing
-- `SQLITE_FCNTL_BLOCK_ON_CONNECT` - missing
-- `SQLITE_FCNTL_BUSYHANDLER` - missing
-- `SQLITE_FCNTL_CHUNK_SIZE` - missing
-- `SQLITE_FCNTL_CKPT_DONE` - missing
-- `SQLITE_FCNTL_CKPT_START` - missing
-- `SQLITE_FCNTL_CKSM_FILE` - missing
-- `SQLITE_FCNTL_COMMIT_ATOMIC_WRITE` - missing
-- `SQLITE_FCNTL_COMMIT_PHASETWO` - missing
-- `SQLITE_FCNTL_DATA_VERSION` - missing
-- `SQLITE_FCNTL_EXTERNAL_READER` - missing
-- `SQLITE_FCNTL_FILESTAT` - missing
-- `SQLITE_FCNTL_FILE_POINTER` - missing
-- `SQLITE_FCNTL_GET_LOCKPROXYFILE` - missing
-- `SQLITE_FCNTL_HAS_MOVED` - missing
-- `SQLITE_FCNTL_JOURNAL_POINTER` - missing
-- `SQLITE_FCNTL_LAST_ERRNO` - missing
-- `SQLITE_FCNTL_LOCKSTATE` - missing
-- `SQLITE_FCNTL_LOCK_TIMEOUT` - missing
-- `SQLITE_FCNTL_MMAP_SIZE` - missing
-- `SQLITE_FCNTL_NULL_IO` - missing
-- `SQLITE_FCNTL_OVERWRITE` - missing
-- `SQLITE_FCNTL_PDB` - missing
-- `SQLITE_FCNTL_PERSIST_WAL` - missing
-- `SQLITE_FCNTL_POWERSAFE_OVERWRITE` - missing
-- `SQLITE_FCNTL_PRAGMA` - missing
-- `SQLITE_FCNTL_RBU` - missing
-- `SQLITE_FCNTL_RESERVE_BYTES` - missing
-- `SQLITE_FCNTL_RESET_CACHE` - missing
-- `SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE` - missing
-- `SQLITE_FCNTL_SET_LOCKPROXYFILE` - missing
-- `SQLITE_FCNTL_SIZE_HINT` - missing
-- `SQLITE_FCNTL_SIZE_LIMIT` - missing
-- `SQLITE_FCNTL_SYNC` - missing
-- `SQLITE_FCNTL_SYNC_OMITTED` - missing
-- `SQLITE_FCNTL_TEMPFILENAME` - missing
-- `SQLITE_FCNTL_TRACE` - missing
-- `SQLITE_FCNTL_VFSNAME` - missing
-- `SQLITE_FCNTL_VFS_POINTER` - missing
-- `SQLITE_FCNTL_WAL_BLOCK` - missing
-- `SQLITE_FCNTL_WIN32_AV_RETRY` - missing
-- `SQLITE_FCNTL_WIN32_GET_HANDLE` - missing
-- `SQLITE_FCNTL_WIN32_SET_HANDLE` - missing
-- `SQLITE_FCNTL_ZIPVFS` - missing
+- `SQLITE_FCNTL_BEGIN_ATOMIC_WRITE` - covered
+- `SQLITE_FCNTL_BLOCK_ON_CONNECT` - covered
+- `SQLITE_FCNTL_BUSYHANDLER` - covered
+- `SQLITE_FCNTL_CHUNK_SIZE` - covered
+- `SQLITE_FCNTL_CKPT_DONE` - covered
+- `SQLITE_FCNTL_CKPT_START` - covered
+- `SQLITE_FCNTL_CKSM_FILE` - covered
+- `SQLITE_FCNTL_COMMIT_ATOMIC_WRITE` - covered
+- `SQLITE_FCNTL_COMMIT_PHASETWO` - covered
+- `SQLITE_FCNTL_DATA_VERSION` - covered
+- `SQLITE_FCNTL_EXTERNAL_READER` - covered
+- `SQLITE_FCNTL_FILESTAT` - covered
+- `SQLITE_FCNTL_FILE_POINTER` - covered
+- `SQLITE_FCNTL_GET_LOCKPROXYFILE` - covered
+- `SQLITE_FCNTL_HAS_MOVED` - covered
+- `SQLITE_FCNTL_JOURNAL_POINTER` - covered
+- `SQLITE_FCNTL_LAST_ERRNO` - covered
+- `SQLITE_FCNTL_LOCKSTATE` - covered
+- `SQLITE_FCNTL_LOCK_TIMEOUT` - covered
+- `SQLITE_FCNTL_MMAP_SIZE` - covered
+- `SQLITE_FCNTL_NULL_IO` - covered
+- `SQLITE_FCNTL_OVERWRITE` - covered
+- `SQLITE_FCNTL_PDB` - covered
+- `SQLITE_FCNTL_PERSIST_WAL` - covered
+- `SQLITE_FCNTL_POWERSAFE_OVERWRITE` - covered
+- `SQLITE_FCNTL_PRAGMA` - covered
+- `SQLITE_FCNTL_RBU` - covered
+- `SQLITE_FCNTL_RESERVE_BYTES` - covered
+- `SQLITE_FCNTL_RESET_CACHE` - covered
+- `SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE` - covered
+- `SQLITE_FCNTL_SET_LOCKPROXYFILE` - covered
+- `SQLITE_FCNTL_SIZE_HINT` - covered
+- `SQLITE_FCNTL_SIZE_LIMIT` - covered
+- `SQLITE_FCNTL_SYNC` - covered
+- `SQLITE_FCNTL_SYNC_OMITTED` - covered
+- `SQLITE_FCNTL_TEMPFILENAME` - covered
+- `SQLITE_FCNTL_TRACE` - covered
+- `SQLITE_FCNTL_VFSNAME` - covered
+- `SQLITE_FCNTL_VFS_POINTER` - covered
+- `SQLITE_FCNTL_WAL_BLOCK` - covered
+- `SQLITE_FCNTL_WIN32_AV_RETRY` - covered
+- `SQLITE_FCNTL_WIN32_GET_HANDLE` - covered
+- `SQLITE_FCNTL_WIN32_SET_HANDLE` - covered
+- `SQLITE_FCNTL_ZIPVFS` - covered
 - `SQLITE_FLOAT` - covered
 - `SQLITE_FORMAT` - covered
 - `SQLITE_FULL` - covered
 - `SQLITE_FUNCTION` - covered
 - `SQLITE_IGNORE` - covered
-- `SQLITE_INDEX_CONSTRAINT_EQ` - missing
-- `SQLITE_INDEX_CONSTRAINT_FUNCTION` - missing
-- `SQLITE_INDEX_CONSTRAINT_GE` - missing
-- `SQLITE_INDEX_CONSTRAINT_GLOB` - missing
-- `SQLITE_INDEX_CONSTRAINT_GT` - missing
-- `SQLITE_INDEX_CONSTRAINT_IS` - missing
-- `SQLITE_INDEX_CONSTRAINT_ISNOT` - missing
-- `SQLITE_INDEX_CONSTRAINT_ISNOTNULL` - missing
-- `SQLITE_INDEX_CONSTRAINT_ISNULL` - missing
-- `SQLITE_INDEX_CONSTRAINT_LE` - missing
-- `SQLITE_INDEX_CONSTRAINT_LIKE` - missing
-- `SQLITE_INDEX_CONSTRAINT_LIMIT` - missing
-- `SQLITE_INDEX_CONSTRAINT_LT` - missing
-- `SQLITE_INDEX_CONSTRAINT_MATCH` - missing
-- `SQLITE_INDEX_CONSTRAINT_NE` - missing
-- `SQLITE_INDEX_CONSTRAINT_OFFSET` - missing
-- `SQLITE_INDEX_CONSTRAINT_REGEXP` - missing
-- `SQLITE_INDEX_SCAN_HEX` - missing
-- `SQLITE_INDEX_SCAN_UNIQUE` - missing
+- `SQLITE_INDEX_CONSTRAINT_EQ` - covered
+- `SQLITE_INDEX_CONSTRAINT_FUNCTION` - covered
+- `SQLITE_INDEX_CONSTRAINT_GE` - covered
+- `SQLITE_INDEX_CONSTRAINT_GLOB` - covered
+- `SQLITE_INDEX_CONSTRAINT_GT` - covered
+- `SQLITE_INDEX_CONSTRAINT_IS` - covered
+- `SQLITE_INDEX_CONSTRAINT_ISNOT` - covered
+- `SQLITE_INDEX_CONSTRAINT_ISNOTNULL` - covered
+- `SQLITE_INDEX_CONSTRAINT_ISNULL` - covered
+- `SQLITE_INDEX_CONSTRAINT_LE` - covered
+- `SQLITE_INDEX_CONSTRAINT_LIKE` - covered
+- `SQLITE_INDEX_CONSTRAINT_LIMIT` - covered
+- `SQLITE_INDEX_CONSTRAINT_LT` - covered
+- `SQLITE_INDEX_CONSTRAINT_MATCH` - covered
+- `SQLITE_INDEX_CONSTRAINT_NE` - covered
+- `SQLITE_INDEX_CONSTRAINT_OFFSET` - covered
+- `SQLITE_INDEX_CONSTRAINT_REGEXP` - covered
+- `SQLITE_INDEX_SCAN_HEX` - covered
+- `SQLITE_INDEX_SCAN_UNIQUE` - covered
 - `SQLITE_INNOCUOUS` - covered
 - `SQLITE_INSERT` - covered
 - `SQLITE_INTEGER` - covered
 - `SQLITE_INTERNAL` - covered
 - `SQLITE_INTERRUPT` - covered
-- `SQLITE_IOCAP_ATOMIC` - missing
-- `SQLITE_IOCAP_ATOMIC16K` - missing
-- `SQLITE_IOCAP_ATOMIC1K` - missing
-- `SQLITE_IOCAP_ATOMIC2K` - missing
-- `SQLITE_IOCAP_ATOMIC32K` - missing
-- `SQLITE_IOCAP_ATOMIC4K` - missing
-- `SQLITE_IOCAP_ATOMIC512` - missing
-- `SQLITE_IOCAP_ATOMIC64K` - missing
-- `SQLITE_IOCAP_ATOMIC8K` - missing
-- `SQLITE_IOCAP_BATCH_ATOMIC` - missing
-- `SQLITE_IOCAP_IMMUTABLE` - missing
-- `SQLITE_IOCAP_POWERSAFE_OVERWRITE` - missing
-- `SQLITE_IOCAP_SAFE_APPEND` - missing
-- `SQLITE_IOCAP_SEQUENTIAL` - missing
-- `SQLITE_IOCAP_SUBPAGE_READ` - missing
-- `SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN` - missing
+- `SQLITE_IOCAP_ATOMIC` - covered
+- `SQLITE_IOCAP_ATOMIC16K` - covered
+- `SQLITE_IOCAP_ATOMIC1K` - covered
+- `SQLITE_IOCAP_ATOMIC2K` - covered
+- `SQLITE_IOCAP_ATOMIC32K` - covered
+- `SQLITE_IOCAP_ATOMIC4K` - covered
+- `SQLITE_IOCAP_ATOMIC512` - covered
+- `SQLITE_IOCAP_ATOMIC64K` - covered
+- `SQLITE_IOCAP_ATOMIC8K` - covered
+- `SQLITE_IOCAP_BATCH_ATOMIC` - covered
+- `SQLITE_IOCAP_IMMUTABLE` - covered
+- `SQLITE_IOCAP_POWERSAFE_OVERWRITE` - covered
+- `SQLITE_IOCAP_SAFE_APPEND` - covered
+- `SQLITE_IOCAP_SEQUENTIAL` - covered
+- `SQLITE_IOCAP_SUBPAGE_READ` - covered
+- `SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN` - covered
 - `SQLITE_IOERR` - covered
 - `SQLITE_IOERR_ACCESS` - covered
 - `SQLITE_IOERR_AUTH` - covered
@@ -4073,22 +4082,22 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_LOCK_SHARED` - covered
 - `SQLITE_MISMATCH` - covered
 - `SQLITE_MISUSE` - covered
-- `SQLITE_MUTEX_FAST` - missing
-- `SQLITE_MUTEX_RECURSIVE` - missing
-- `SQLITE_MUTEX_STATIC_APP1` - missing
-- `SQLITE_MUTEX_STATIC_APP2` - missing
-- `SQLITE_MUTEX_STATIC_APP3` - missing
-- `SQLITE_MUTEX_STATIC_LRU` - missing
-- `SQLITE_MUTEX_STATIC_LRU2` - missing
-- `SQLITE_MUTEX_STATIC_MAIN` - missing
-- `SQLITE_MUTEX_STATIC_MEM` - missing
-- `SQLITE_MUTEX_STATIC_MEM2` - missing
-- `SQLITE_MUTEX_STATIC_OPEN` - missing
-- `SQLITE_MUTEX_STATIC_PMEM` - missing
-- `SQLITE_MUTEX_STATIC_PRNG` - missing
-- `SQLITE_MUTEX_STATIC_VFS1` - missing
-- `SQLITE_MUTEX_STATIC_VFS2` - missing
-- `SQLITE_MUTEX_STATIC_VFS3` - missing
+- `SQLITE_MUTEX_FAST` - covered
+- `SQLITE_MUTEX_RECURSIVE` - covered
+- `SQLITE_MUTEX_STATIC_APP1` - covered
+- `SQLITE_MUTEX_STATIC_APP2` - covered
+- `SQLITE_MUTEX_STATIC_APP3` - covered
+- `SQLITE_MUTEX_STATIC_LRU` - covered
+- `SQLITE_MUTEX_STATIC_LRU2` - covered
+- `SQLITE_MUTEX_STATIC_MAIN` - covered
+- `SQLITE_MUTEX_STATIC_MEM` - covered
+- `SQLITE_MUTEX_STATIC_MEM2` - covered
+- `SQLITE_MUTEX_STATIC_OPEN` - covered
+- `SQLITE_MUTEX_STATIC_PMEM` - covered
+- `SQLITE_MUTEX_STATIC_PRNG` - covered
+- `SQLITE_MUTEX_STATIC_VFS1` - covered
+- `SQLITE_MUTEX_STATIC_VFS2` - covered
+- `SQLITE_MUTEX_STATIC_VFS3` - covered
 - `SQLITE_NOLFS` - covered
 - `SQLITE_NOMEM` - covered
 - `SQLITE_NOTADB` - covered
@@ -4157,20 +4166,20 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_SCANSTAT_PARENTID` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_SCANSTAT_SELECTID` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_SCHEMA` - covered
-- `SQLITE_SCM_BRANCH` - missing
-- `SQLITE_SCM_DATETIME` - missing
-- `SQLITE_SCM_TAGS` - missing
+- `SQLITE_SCM_BRANCH` - covered
+- `SQLITE_SCM_DATETIME` - covered
+- `SQLITE_SCM_TAGS` - covered
 - `SQLITE_SELECT` - covered
 - `SQLITE_SELFORDER1` - covered
 - `SQLITE_SERIALIZE_NOCOPY` - covered
-- `SQLITE_SETLK_BLOCK_ON_CONNECT` - missing
-- `SQLITE_SHM_EXCLUSIVE` - missing
-- `SQLITE_SHM_LOCK` - missing
-- `SQLITE_SHM_NLOCK` - missing
-- `SQLITE_SHM_SHARED` - missing
-- `SQLITE_SHM_UNLOCK` - missing
-- `SQLITE_SOURCE_ID` - missing
-- `SQLITE_STATIC` - missing
+- `SQLITE_SETLK_BLOCK_ON_CONNECT` - covered
+- `SQLITE_SHM_EXCLUSIVE` - covered
+- `SQLITE_SHM_LOCK` - covered
+- `SQLITE_SHM_NLOCK` - covered
+- `SQLITE_SHM_SHARED` - covered
+- `SQLITE_SHM_UNLOCK` - covered
+- `SQLITE_SOURCE_ID` - covered
+- `SQLITE_STATIC` - covered
 - `SQLITE_STATUS_MALLOC_COUNT` - covered
 - `SQLITE_STATUS_MALLOC_SIZE` - covered
 - `SQLITE_STATUS_MEMORY_USED` - covered
@@ -4181,7 +4190,7 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_STATUS_SCRATCH_OVERFLOW` - covered
 - `SQLITE_STATUS_SCRATCH_SIZE` - covered
 - `SQLITE_STATUS_SCRATCH_USED` - covered
-- `SQLITE_STMTSTATUS` - missing
+- `SQLITE_STMTSTATUS` - covered by complete `SQLITE_STMTSTATUS_*` family; header keyword only
 - `SQLITE_STMTSTATUS_AUTOINDEX` - covered
 - `SQLITE_STMTSTATUS_FILTER_HIT` - covered
 - `SQLITE_STMTSTATUS_FILTER_MISS` - covered
@@ -4192,50 +4201,50 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_STMTSTATUS_SORT` - covered
 - `SQLITE_STMTSTATUS_VM_STEP` - covered
 - `SQLITE_SUBTYPE` - covered
-- `SQLITE_SYNC_DATAONLY` - missing
-- `SQLITE_SYNC_FULL` - missing
-- `SQLITE_SYNC_NORMAL` - missing
-- `SQLITE_TESTCTRL_ALWAYS` - missing
-- `SQLITE_TESTCTRL_ASSERT` - missing
-- `SQLITE_TESTCTRL_ATOF` - missing
-- `SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS` - missing
-- `SQLITE_TESTCTRL_BITVEC_TEST` - missing
-- `SQLITE_TESTCTRL_BYTEORDER` - missing
-- `SQLITE_TESTCTRL_EXPLAIN_STMT` - missing
-- `SQLITE_TESTCTRL_EXTRA_SCHEMA_CHECKS` - missing
-- `SQLITE_TESTCTRL_FAULT_INSTALL` - missing
-- `SQLITE_TESTCTRL_FIRST` - missing
-- `SQLITE_TESTCTRL_FK_NO_ACTION` - missing
-- `SQLITE_TESTCTRL_GETOPT` - missing
-- `SQLITE_TESTCTRL_IMPOSTER` - missing
-- `SQLITE_TESTCTRL_INTERNAL_FUNCTIONS` - missing
-- `SQLITE_TESTCTRL_ISINIT` - missing
-- `SQLITE_TESTCTRL_ISKEYWORD` - missing
-- `SQLITE_TESTCTRL_JSON_SELFCHECK` - missing
-- `SQLITE_TESTCTRL_LAST` - missing
-- `SQLITE_TESTCTRL_LOCALTIME_FAULT` - missing
-- `SQLITE_TESTCTRL_LOGEST` - missing
-- `SQLITE_TESTCTRL_NEVER_CORRUPT` - missing
-- `SQLITE_TESTCTRL_ONCE_RESET_THRESHOLD` - missing
-- `SQLITE_TESTCTRL_OPTIMIZATIONS` - missing
-- `SQLITE_TESTCTRL_PARSER_COVERAGE` - missing
-- `SQLITE_TESTCTRL_PENDING_BYTE` - missing
-- `SQLITE_TESTCTRL_PRNG_RESET` - missing
-- `SQLITE_TESTCTRL_PRNG_RESTORE` - missing
-- `SQLITE_TESTCTRL_PRNG_SAVE` - missing
-- `SQLITE_TESTCTRL_PRNG_SEED` - missing
-- `SQLITE_TESTCTRL_RESERVE` - missing
-- `SQLITE_TESTCTRL_RESULT_INTREAL` - missing
-- `SQLITE_TESTCTRL_SCRATCHMALLOC` - missing
-- `SQLITE_TESTCTRL_SEEK_COUNT` - missing
-- `SQLITE_TESTCTRL_SORTER_MMAP` - missing
-- `SQLITE_TESTCTRL_TRACEFLAGS` - missing
-- `SQLITE_TESTCTRL_TUNE` - missing
-- `SQLITE_TESTCTRL_USELONGDOUBLE` - missing
-- `SQLITE_TESTCTRL_VDBE_COVERAGE` - missing
+- `SQLITE_SYNC_DATAONLY` - covered
+- `SQLITE_SYNC_FULL` - covered
+- `SQLITE_SYNC_NORMAL` - covered
+- `SQLITE_TESTCTRL_ALWAYS` - covered
+- `SQLITE_TESTCTRL_ASSERT` - covered
+- `SQLITE_TESTCTRL_ATOF` - covered
+- `SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS` - covered
+- `SQLITE_TESTCTRL_BITVEC_TEST` - covered
+- `SQLITE_TESTCTRL_BYTEORDER` - covered
+- `SQLITE_TESTCTRL_EXPLAIN_STMT` - covered
+- `SQLITE_TESTCTRL_EXTRA_SCHEMA_CHECKS` - covered
+- `SQLITE_TESTCTRL_FAULT_INSTALL` - covered
+- `SQLITE_TESTCTRL_FIRST` - covered
+- `SQLITE_TESTCTRL_FK_NO_ACTION` - covered
+- `SQLITE_TESTCTRL_GETOPT` - covered
+- `SQLITE_TESTCTRL_IMPOSTER` - covered
+- `SQLITE_TESTCTRL_INTERNAL_FUNCTIONS` - covered
+- `SQLITE_TESTCTRL_ISINIT` - covered
+- `SQLITE_TESTCTRL_ISKEYWORD` - covered
+- `SQLITE_TESTCTRL_JSON_SELFCHECK` - covered
+- `SQLITE_TESTCTRL_LAST` - covered
+- `SQLITE_TESTCTRL_LOCALTIME_FAULT` - covered
+- `SQLITE_TESTCTRL_LOGEST` - covered
+- `SQLITE_TESTCTRL_NEVER_CORRUPT` - covered
+- `SQLITE_TESTCTRL_ONCE_RESET_THRESHOLD` - covered
+- `SQLITE_TESTCTRL_OPTIMIZATIONS` - covered
+- `SQLITE_TESTCTRL_PARSER_COVERAGE` - covered
+- `SQLITE_TESTCTRL_PENDING_BYTE` - covered
+- `SQLITE_TESTCTRL_PRNG_RESET` - covered
+- `SQLITE_TESTCTRL_PRNG_RESTORE` - covered
+- `SQLITE_TESTCTRL_PRNG_SAVE` - covered
+- `SQLITE_TESTCTRL_PRNG_SEED` - covered
+- `SQLITE_TESTCTRL_RESERVE` - covered
+- `SQLITE_TESTCTRL_RESULT_INTREAL` - covered
+- `SQLITE_TESTCTRL_SCRATCHMALLOC` - covered
+- `SQLITE_TESTCTRL_SEEK_COUNT` - covered
+- `SQLITE_TESTCTRL_SORTER_MMAP` - covered
+- `SQLITE_TESTCTRL_TRACEFLAGS` - covered
+- `SQLITE_TESTCTRL_TUNE` - covered
+- `SQLITE_TESTCTRL_USELONGDOUBLE` - covered
+- `SQLITE_TESTCTRL_VDBE_COVERAGE` - covered
 - `SQLITE_TEXT` - covered
 - `SQLITE_TOOBIG` - covered
-- `SQLITE_TRACE` - missing
+- `SQLITE_TRACE` - covered by complete `SQLITE_TRACE_*` family; header keyword only
 - `SQLITE_TRACE_CLOSE` - covered
 - `SQLITE_TRACE_PROFILE` - covered
 - `SQLITE_TRACE_ROW` - covered
@@ -4252,114 +4261,71 @@ The native helper only exists to call `sqlite3_bind_text`/`sqlite3_bind_blob`/`s
 - `SQLITE_UTF16_ALIGNED` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_UTF8` - covered by current `Vendor.SQLite` wrapper/native helper
 - `SQLITE_UTF8_ZT` - covered by current `Vendor.SQLite` wrapper/native helper
-- `SQLITE_VERSION` - missing
-- `SQLITE_VERSION_NUMBER` - missing
-- `SQLITE_VTAB_CONSTRAINT_SUPPORT` - missing
-- `SQLITE_VTAB_DIRECTONLY` - missing
-- `SQLITE_VTAB_INNOCUOUS` - missing
-- `SQLITE_VTAB_USES_ALL_SCHEMAS` - missing
+- `SQLITE_VERSION` - covered
+- `SQLITE_VERSION_NUMBER` - covered
+- `SQLITE_VTAB_CONSTRAINT_SUPPORT` - covered
+- `SQLITE_VTAB_DIRECTONLY` - covered
+- `SQLITE_VTAB_INNOCUOUS` - covered
+- `SQLITE_VTAB_USES_ALL_SCHEMAS` - covered
 - `SQLITE_WARNING` - covered
 - `SQLITE_WARNING_AUTOINDEX` - covered
-- `SQLITE_WIN32_DATA_DIRECTORY_TYPE` - missing
-- `SQLITE_WIN32_TEMP_DIRECTORY_TYPE` - missing
+- `SQLITE_WIN32_DATA_DIRECTORY_TYPE` - covered
+- `SQLITE_WIN32_TEMP_DIRECTORY_TYPE` - covered
 
 ### Missing API Groups
 
-- Connection lifecycle and configuration: database config, file control, shared-cache controls, 32-bit db-status compatibility wrapper, database-file object access, and the VFS-only filename construction/database-file helpers that are not safe through an ordinary `Database` owner.
-- Statement preparation and introspection: normalized SQL when enabled and scan-status APIs where the linked SQLite build exports them.
-- Binding and column value coverage: pointer binding and zero-copy borrowed value/column text/blob views once statement-step and callback lifetimes can be expressed in source. `sqlite3_value_*` copy/read helpers and `sqlite3_result_*` writers are covered.
-- Snapshot and WAL hook coverage: snapshot APIs and `sqlite3_wal_hook`.
-- Custom SQL extension points: aggregate/window function registration, aggregate context, collations, authorizer, overload function, auto-extension registration, load-extension controls, and `sqlite3_api_routines`. Scalar function registration, user data, aux data, result APIs, and value APIs are covered.
-- Hooks and callbacks: busy handler/timeout, progress handler, commit/rollback/update hooks, trace v2, preupdate hooks, unlock notify, log callback, autovacuum pages callback, clientdata, and custom error-message hooks.
-- Virtual tables and VFS: `sqlite3_module`, `sqlite3_vtab`, `sqlite3_vtab_cursor`, `sqlite3_index_info`, vtab config/helper APIs, VFS registration/find/unregister, `sqlite3_file`, `sqlite3_io_methods`, VFS-owned file-name APIs, and database-file object access.
-- Memory, mutex, and page-cache customization: global config, allocator APIs, legacy soft-heap-limit compatibility, mutex object/method APIs, pcache method/page types, and string-builder APIs.
-- Introspection/utilities: `sqlite3_version` variable exposure if Stark gains safe imported-data support, mprintf/snprintf families, string-builder APIs, `sqlite3_get_table` compatibility helpers, and deprecated compatibility APIs not already wrapped.
-- Constants: file-control opcodes, IO capability flags, sync/shared-memory/version constants, test controls, virtual-table constraint/operator flags, and Windows-specific constants are missing.
+- Connection lifecycle and configuration: covered except for intentionally raw/internal VFS-only file-control opcodes whose arguments are VFS-private or SQLite-internal. Boolean and non-boolean database configuration shapes are covered by checked wrappers.
+- Statement preparation and introspection: covered, including optional-symbol normalized SQL and scan-status wrappers that report `SQLITE_NOTFOUND` on lean SQLite builds.
+- Binding and column value coverage: owned byte-copy wrappers and unsafe zero-copy borrowed byte views for column/value text/blob reads are covered through `SQLiteOwnedBytes` and `SQLiteByteView`; fully safe borrowed views remain pending until callback and statement-step lifetimes can be expressed in source. No-destructor and destructor-backed pointer binding/result/aux-data paths, transient numeric/text/blob carray slice binding, `sqlite3_value_*` copy/read helpers, and `sqlite3_result_*` writers are covered.
+- Custom SQL extension points: loadable-extension and auto-extension entrypoint ABI aliases over the full `sqlite3_api_routines` field table are covered; Stark-authored extension packaging, export naming, and callback lifetime policy remain pending. Scalar/aggregate/window function registration, collation registration/needed callbacks, aggregate context, user data, aux data, result APIs, value APIs, overload placeholders, auto-extension controls, direct extension loading, authorizer, and database hooks are covered.
+- Virtual tables and VFS: Stark-authored `sqlite3_module` method-table construction, virtual-table implementation examples/tests, and safe VFS construction policy. Non-owning `sqlite3_file`, `sqlite3_vfs`, and virtual-table module views plus VFS lookup/register/unregister, raw `sqlite3_vfs`/`sqlite3_io_methods`, and virtual-table helper wrappers are covered; safe method-table construction remains future virtual-table/VFS work.
+- Memory, mutex, and page-cache customization: raw custom allocator, mutex, and pcache method-table carriers plus unsafe global config accessors are covered. Typed wrappers now cover the non-`va_list` global performance knobs: memory-statistics and small-malloc hints, default lookaside, SQLite-managed or retained aligned page-cache memory, retained aligned heap memory, URI/default planner toggles, mmap sizing, page-cache header-size readback, PMA size, statement-journal spill threshold, sorter-reference threshold, memory-database max size, rowid-in-view query/set, Win32 heap size, config log, and optional SQLLOG. Higher-level safe registration/lifetime helpers for custom allocator, mutex, and pcache method tables are still pending and should stay explicit `unsafe` unless Stark can prove callback and allocator lifetime safety. The basic SQLite allocator functions are covered through `SQLiteOwnedBytes`, dynamic/database mutex objects are covered through `SQLiteMutex`/`SQLiteMutexView`, optional debug mutex assertions return `SQLiteStatus.NotFound` on non-debug SQLite builds, `sqlite3_memory_alarm` is covered as deprecated compatibility, and dynamic string-builder APIs are covered except the `va_list` append variant.
+- Introspection/utilities: `va_list` printf families (`sqlite3_vmprintf`, `sqlite3_vsnprintf`, `sqlite3_str_vappendf`) remain pending until Stark has a target-aware `va_list` carrier. `sqlite3_version[]` is covered through the native helper; direct imported-data FFI can replace that helper later.
+- Constants: complete. `SQLITE_STATIC` is exposed as the zero destructor-sentinel value. `SQLITE_DBSTATUS`, `SQLITE_STMTSTATUS`, and `SQLITE_TRACE` are official reference-index keywords rather than scalar `#define` macros in `sqlite3.h`; Stark covers them through the complete exported `SQLITE_DBSTATUS_*`, `SQLITE_STMTSTATUS_*`, and `SQLITE_TRACE_*` families.
 
 ### Design Notes
 
 - The existing safe API is useful and should stay; full coverage should be additive, likely split into safe convenience wrappers and a lower-level `Raw`/`C` submodule where the C API contract is necessarily exposed.
-- Scalar SQL callbacks now use Stark `fnptr<unsafe ffi(c)>` values directly. Remaining callback-heavy SQLite surfaces still need explicit lifetime/unwind policy and, where C expects function-table layouts, may require generated static carrier tables. This affects aggregate/window functions, collations, hooks, virtual tables, VFS, memory/mutex/pcache methods, and extension entrypoints.
-- Text is currently `ascii`/`OwnedAscii` even though SQLite text is byte-oriented UTF-8/UTF-16. Complete SQLite bindings need UTF-8-safe text and byte/blob paths without forcing callers through ASCII.
+- `Vendor.SQLite.Raw` is now that lower-level ABI module. It owns the callable `sqlite3_*` and `stark_sqlite_*` unsafe FFI declarations that back `Vendor.SQLite.Core`, re-exports the raw carrier types from `Vendor.SQLite.Types`, and is imported by `Vendor.SQLite.Core`. Destructor-only free functions used by owner `drop` blocks remain internal to `Vendor.SQLite.Types` to avoid a module cycle. The safe `Vendor.SQLite` root does not re-export `Vendor.SQLite.Raw`; callers have to opt into the raw boundary explicitly.
+- Scalar, aggregate, window, collation SQL callbacks, database hooks, auto-extension callbacks, loadable-extension entrypoints, and virtual-table helper callbacks now use Stark `fnptr<unsafe ffi(c)>` values directly with typed retained callback data or typed ABI aliases where SQLite accepts standalone callbacks. Remaining callback-heavy SQLite surfaces still need explicit lifetime/unwind policy and, where C expects function-table layouts, may require generated static carrier tables. This affects Stark-authored virtual-table modules, custom VFS implementations, memory/mutex/pcache methods, and extension packaging.
+- `SQLiteExtensionErrorMessagePointer` names SQLite's `char*` error-message slot value; `SQLiteLoadExtensionEntry` spells the ABI as `rawmutptr<SQLiteExtensionErrorMessagePointer>` because Stark permits raw pointer-to-pointer shapes at FFI boundaries but rejects a standalone public `rawmutptr<rawmutptr<T>>` alias.
+- `SQLiteByteView` is intentionally unsafe for pointer access and copying. SQLite owns the memory and invalidates column views on the next relevant `Step`, `Reset`, `Finalize`, or conversion of the same column; value views are callback-scoped. The view removes hot-path allocations without pretending those lifetimes are safe yet. `ColumnTextBytes`, `ColumnText16Bytes`, `ColumnBlobBytes`, `ValueTextBytes`, and `ValueText16Bytes` provide stable owned copies for callers that need byte-correct SQLite text/blob data without carrying a borrowed SQLite lifetime.
+- Text convenience wrappers still return `ascii`/`OwnedAscii`; byte-oriented UTF-8/UTF-16 SQLite text can use the owned byte-copy wrappers or unsafe byte views instead of forcing callers through ASCII.
+- SQLite examples now cover simple in-memory queries, prepared statement reuse with task-report output, scalar-function and collation callbacks, byte-safe text/blob reads, and optional snapshot/WAL behavior. The remaining virtual-table example belongs with Stark-authored virtual-table module support, because the binding has raw helper coverage but no safe method-table construction policy yet.
+- Stark self-hosted source tests now cover SQLite constant parity, C-layout method/extension carriers, the loadable-extension entrypoint alias, major owner/view struct shapes, result enum OK/ERR payload shapes, representative callback ABI aliases, representative `Vendor.SQLite.Raw` ABI function items, and 493 public wrapper function items, including overlap-contract wrappers, generic `storeborrow mut T` wrappers, and callback-parameter wrappers.
 - The current `sqlite3_bind_text`/`sqlite3_bind_blob` helper is acceptable while Stark cannot spell `SQLITE_TRANSIENT` as a destructor sentinel directly. If Stark gains a safe way to model that sentinel, this helper can disappear.
 - Performance-sensitive wrappers should avoid per-call allocations for hot statement loops. Current blob writes can use caller-owned buffers through incremental blob I/O; borrowed zero-copy column slices remain future work until the statement-step lifetime can be expressed explicitly.
 
 ### Tasks
 
-- [ ] Add generated SQLite upstream inventory tests:
-  - fetch or read the supported SQLite `3.53.2` function, object, and constant inventories
-  - classify every item as bound, covered by a safe wrapper, intentionally unsupported, or pending
-  - fail C# tests when the supported SQLite header/reference version changes without updating this audit
-  - add Stark self-hosted source tests for every public API name currently exposed by `Vendor.SQLite`
+- [ ] Complete safe lifetime-checked borrowed value/column views:
+  - replace or supplement the current unsafe `SQLiteByteView` byte accessors with safe borrowed blob/text views once statement-step and callback lifetimes can be expressed in source
+  - test null handling, conversion failures, and borrowed read-view lifetime rules
 
-- [ ] Add a complete low-level SQLite module boundary:
-  - introduce a documented `Vendor.SQLite.Raw` or equivalent namespace for ABI-shaped C coverage
-  - keep `Vendor.SQLite` as the safe high-level wrapper over the raw layer
-  - expose opaque carriers for every SQLite object/type that cannot be represented by an existing safe owner
-  - add C# ABI tests and Stark self-hosted parser/type tests for every raw carrier
+- [ ] Complete Stark-authored loadable-extension packaging and callback policy:
+  - define how a Stark library exports the SQLite entrypoint symbol, including `sqlite3_extension_init` naming and any `[LinkName]`/export restrictions
+  - implement required callback lifetime/unwind policy and generated non-allocating C carrier tables where SQLite expects struct-of-function-pointer layouts
+  - test extension loading through SQLite, exported-symbol gates, and callback lifetime diagnostics
 
-- [ ] Complete remaining connection and database-control APIs:
-  - bind db config, file controls, shared-cache controls, 32-bit db-status compatibility, database-file object access, and VFS-only filename construction/database-file helpers where they can be made safe
-  - preserve existing safe wrappers for open/open16, strict close, extended result-code toggles, limits, db status64, cache flush, release memory, autocommit, interrupt/is-interrupted, next-statement counting, readonly/name/filename/URI helpers, table-column metadata, and transaction state
-  - expose remaining open/config/file-control/shared-cache constants
-  - test successful paths, null-handle diagnostics, remaining db config/file-control behavior, and package-image native metadata in C# and Stark self-hosted tests
-
-- [ ] Complete remaining prepared statement APIs:
-  - bind normalized SQL where available and scanstatus APIs where the linked SQLite build exports them
-  - preserve existing safe wrappers for legacy prepare, UTF-16 prepare, `sqlite3_prepare_v3`, SQL text/expanded SQL, stmt busy/readonly/explain/isexplain/status, transfer-bindings, bind parameter count/name/index, data count, and common prepare flags
-  - test query-plan scan status when available, normalized SQL availability, and reset/finalize behavior
-
-- [ ] Complete pointer binding and borrowed value/column views:
-  - bind `sqlite3_bind_pointer` with an explicit pointer-type token policy
-  - add zero-copy borrowed value/column blob/text views once statement-step and callback lifetimes can be expressed in source
-  - test pointer binding lookup, null handling, conversion failures, and borrowed read-view lifetime rules
-
-- [ ] Add snapshot and remaining WAL hook APIs:
-  - expose a safe `Snapshot` owner and bind snapshot get/open/recover/cmp/free APIs
-  - bind `sqlite3_wal_hook` once callback ABI/lifetime policy is ready
-  - test snapshot get/open/recover/free and WAL hook callback ordering
-
-- [ ] Add aggregate/window SQL functions, collations, authorizer, and extension APIs:
-  - bind window-function/collation/authorizer APIs, aggregate context, overload function, auto-extension controls, load-extension controls, and `sqlite3_api_routines` where appropriate
-  - implement required callback lifetime policy and generated non-allocating C carrier tables where SQLite expects struct-of-function-pointer layouts
-  - test aggregate and window functions, deterministic/direct-only flags, custom collation ordering, authorizer denial/ignore paths, and extension-loading gates
-
-- [ ] Add hook APIs:
-  - bind busy handler/timeout, progress handler, commit/rollback/update hooks, trace v2, preupdate hooks, unlock notify, log callback, autovacuum pages, clientdata, and custom error-message helpers
-  - ensure callbacks cannot unwind into C and have clear lifetime/ownership rules
-  - test callback ordering, cancellation, busy/progress behavior, trace event flags, preupdate old/new values, and hook removal
-
-- [ ] Add virtual table and VFS APIs:
-  - bind `sqlite3_module`, `sqlite3_vtab`, `sqlite3_vtab_cursor`, `sqlite3_index_info`, all vtab helper functions, VFS registration/find/unregister, file/io-method structs, VFS-owned filename helpers, and database-file object access
-  - implement function-pointer table layout support or generated static C shim tables for Stark-defined modules/VFS implementations
+- [ ] Add Stark-authored virtual table and custom VFS implementation support:
+  - implement function-pointer table layout support or generated static C shim tables for Stark-defined virtual-table modules and VFS implementations
+  - add safe construction policy for `sqlite3_module`, `sqlite3_vtab`, `sqlite3_vtab_cursor`, and `sqlite3_index_info` callback lifetimes without exposing raw pointers outside the callback edge
+  - add safe construction policy for the existing raw `sqlite3_vfs`/`sqlite3_io_methods` carriers and remaining database-file object helpers
   - test a minimal virtual table, constraint pushdown, `IN` handling, vtab config paths, URI parameters, and a read-only custom VFS smoke path
 
-- [ ] Add memory, mutex, page-cache, and string-builder APIs:
-  - bind allocator functions, global config, mutex objects/methods, pcache method/page carriers, string-builder APIs, mprintf/snprintf families, and legacy compatibility memory APIs not already covered
-  - keep allocator and mutex hooks explicit unsafe/raw APIs unless Stark can prove callback and allocator lifetime safety
-  - test custom allocator tables, string builder append/finish/free behavior, mutex allocation, and config ordering before/after initialization
+- [ ] Add safe custom allocator, mutex, pcache method-table lifetime helpers, and `va_list` formatted string APIs:
+  - design safe or explicitly unsafe lifetime helpers around the existing custom allocator, mutex, and pcache method-table config accessors; non-method-table global memory/page-cache tuning wrappers are already covered
+  - bind `sqlite3_str_vappendf`, `sqlite3_vmprintf`, and `sqlite3_vsnprintf` after Stark has a target-aware `va_list` carrier
+  - test custom allocator tables, formatted string builder append behavior, custom mutex method tables, pcache method tables, and config ordering before/after initialization
 
 - [ ] Add remaining introspection, utility, and compatibility APIs:
-  - bind `sqlite3_version` if Stark gains safe imported-data support, `sqlite3_get_table`/`sqlite3_free_table`, test-control where supported, `mprintf`/`snprintf` families, and deprecated compatibility entries as clearly deprecated bindings
-  - expose all official constants with generated values
+  - bind `va_list` formatted-string families once Stark has a target-aware `va_list` carrier, replace the `sqlite3_version[]` helper with direct imported-data FFI if/when the language gains it, and keep deprecated compatibility entries clearly marked
   - test compatibility table helpers, formatted string allocation/freeing, deprecated API behavior, and constant parity against `sqlite3.h`
 
-- [ ] Update SQLite examples:
-  - keep the simple in-memory query example
-  - add examples for prepared statement reuse, custom scalar function, collation, snapshots, and a small virtual table once those APIs exist
-  - keep console output as simple `WriteLine(...)` calls without checking every status
+Test requirements for future SQLite work:
 
-- [ ] Add C# compiler/integration tests for every new SQLite surface:
-  - package-image native dependency metadata for `sqlite3`
-  - native symbol availability by API group
-  - ABI layout tests for every public carrier and callback table
-  - runtime tests for safe wrappers and raw API parity where the installed SQLite supports the feature
-  - performance regression tests for hot prepare/bind/step loops and zero-copy column reads
-
-- [ ] Add Stark self-hosted tests for every new SQLite surface that the current Stark test harness can express:
-  - source-level API shape tests for constants, enums, structs, functions, and callback carrier declarations
-  - example compile tests for safe wrapper usage
-  - native/runtime tests gated on SQLite availability as the self-hosted compiler gains those test capabilities
+- Add C# compiler/integration coverage for package-image native dependency metadata, native symbol availability by API group, ABI layout for every new public carrier and callback table, runtime parity where the installed SQLite supports the feature, and hot prepare/bind/step plus zero-copy column-read performance regressions.
+- Add Stark self-hosted coverage for source-level API shape tests, example compile tests for safe wrapper usage, and native/runtime tests as the self-hosted compiler gains those test capabilities.
 
 ## `Vendor.SDL3`
 

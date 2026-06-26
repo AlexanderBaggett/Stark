@@ -1,0 +1,20 @@
+import System.C
+import System.Testing
+import Vendor.SQLite.Raw
+module SQLiteRawTests
+
+[Fact]
+unsafe fn bool RawAbiFunctionItemsAreReferenceable()
+{
+    unsafe
+    {
+        stack fnptr<unsafe ffi(c) fn rawptr<System.C.c_char>()> function0 = sqlite3_libversion;
+        stack fnptr<unsafe ffi(c) fn System.C.c_int()> function1 = sqlite3_libversion_number;
+        stack fnptr<unsafe ffi(c) fn void()> function2 = sqlite3_thread_cleanup;
+        stack fnptr<unsafe ffi(c) fn i64[min max]()> function3 = sqlite3_memory_used;
+        stack fnptr<unsafe ffi(c) fn System.C.c_int(System.C.c_int)> function4 = sqlite3_release_memory;
+        stack fnptr<unsafe ffi(c) fn System.C.c_int(rawptr<System.C.c_char>)> function5 = sqlite3_complete;
+    }
+
+    return true;
+}
