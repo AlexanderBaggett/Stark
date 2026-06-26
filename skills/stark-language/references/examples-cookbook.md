@@ -272,12 +272,12 @@ kind = "executable"
 root = "Demo.stark"
 output = "demo"
 
-[dependencies]
-stdlib = { path = "../stdlib" }
-
 [profiles.dev]
 opt = 0
 
 [profiles.release]
 opt = 3
 ```
+
+Do not add a `stdlib` dependency for `System.*` imports; project builds resolve
+the bundled standard library automatically.

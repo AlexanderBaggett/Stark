@@ -9,7 +9,6 @@ output = "selfhost-pipeline-tests"
 
 [dependencies]
 stark-compiler = { path = "../../selfhost" }
-stdlib = { path = "../../stdlib" }
 
 [profiles.dev]
 opt = 0

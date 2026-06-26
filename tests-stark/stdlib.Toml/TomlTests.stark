@@ -1530,16 +1530,16 @@ fn bool RealProjectManifestDecodes()
     {
         switch (ParseText(raw"""
 [project]
-name = "compiler-feature-tests"
+name = "selfhost-ir-tests"
 version = "0.1.0"
 kind = "test"
 
 [test]
-root = "FeatureTests.stark"
-output = "compiler-feature-tests"
+root = "IrTests.stark"
+output = "selfhost-ir-tests"
 
 [dependencies]
-stdlib = { path = "../../stdlib" }
+stark-compiler = { path = "../../selfhost" }
 
 [profiles.dev]
 opt = 0
@@ -1589,14 +1589,14 @@ opt = 3
                     return false;
                 }
 
-                stack mut u64[0 2 ** 63 - 1] stdlibDependency = 0;
-                if (!document.TryFindMemberOfKind(dependencies, "stdlib", TomlKind.Table, stdlibDependency))
+                stack mut u64[0 2 ** 63 - 1] compilerDependency = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "stark-compiler", TomlKind.Table, compilerDependency))
                 {
                     return false;
                 }
 
                 stack mut u64[0 2 ** 63 - 1] path = 0;
-                if (!document.TryFindMember(stdlibDependency, "path", path))
+                if (!document.TryFindMember(compilerDependency, "path", path))
                 {
                     return false;
                 }
@@ -1628,10 +1628,10 @@ opt = 3
                         optValue = parsedOpt;
                 }
 
-                return document.TextAt(name) == "compiler-feature-tests"
+                return document.TextAt(name) == "selfhost-ir-tests"
                     && document.TextAt(kind) == "test"
-                    && document.TextAt(root) == "FeatureTests.stark"
-                    && document.TextAt(path) == "../../stdlib"
+                    && document.TextAt(root) == "IrTests.stark"
+                    && document.TextAt(path) == "../../selfhost"
                     && optValue == 0;
         }
     }

@@ -7,9 +7,6 @@ kind = "test"
 root = "SsaTests.stark"
 output = "compiler-ssa-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

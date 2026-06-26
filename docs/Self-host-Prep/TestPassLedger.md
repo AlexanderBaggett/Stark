@@ -1097,3 +1097,343 @@ comments explaining which platform is required.
   - `../../stark test --filter MirLoweringLowersTypedIntegerArithmeticAndComparisonWithFacts --filter MirLoweringLowersTypedIntegerExtendedOpsWithFacts --filter MirLoweringLowersExplicitWrappingAndSaturatingArithmeticWithFacts --filter MirLoweringLowersCompoundAssignmentsWithCheckedWrappingAndSaturatingFacts --filter MirLoweringRejectsInvalidCompoundAssignmentWithoutRebinding --filter MirLoweringRejectsExactInvalidExtendedIntegerFactsWithoutEmission`
     in `tests-stark/selfhost.Lowering`: passed.
 - No broad test sweep was run.
+
+## 2026-06-26 Selfhost Literal Fact Validation Slice
+
+- Validated literal fact rows before MIR constant emission.
+- Rejected range facts that do not describe the literal value and nullability
+  facts that do not match the literal type or value.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringRejectsLiteralFactsOutsideTypeOrValueWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringLowersIntegerLiteralWithExactFactsAndSymbolBinding --filter MirLoweringLowersBoolLiteralAsI1WithExactFacts --filter MirLoweringLowersNullPointerLiteralWithNullabilityFacts --filter MirLoweringRejectsUnsupportedLiteralWithoutEmission --filter MirLoweringRejectsTypedIntegerLiteralOutsideRangeWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Global Store Fact Validation Slice
+
+- Validated stored value fact rows against the global store type before MIR store
+  emission.
+- Rejected stale scalar nullability and pointer range facts even when the target
+  global has no required backend facts.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringRejectsGlobalStoreValueFactsOutsideTypeWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringLowersGlobalLoadStoreWithFacts --filter MirLoweringLowersTypedGlobalLoadStoreWithFacts --filter MirLoweringChecksGlobalStoreBackendFactSubset --filter MirLoweringRejectsInvalidGlobalAccessWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Conditional Branch Fact Validation Slice
+
+- Validated MIR conditional-branch conditions as owned `i1` values with present
+  and type-compatible fact rows before appending branch blocks.
+- Rejected stale nullability facts, invalid bool range facts, and non-bool
+  condition values without appending conditional blocks.
+- Narrow verification:
+  - `../../stark test --filter MirBuilderAppendsConditionalBranchWithValidatedBoolFacts --filter MirBuilderRejectsConditionalBranchConditionFactsOutsideTypeWithoutBlock`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirBuilderRejectsClosedAndOutOfRangeBlockCreation --filter MirLoweringPassShellMatchesHostPipelineContract`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirFunctionBuilderTracksOwnedRangesAndDefinesFunction`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Tail-Call Block Fact Validation Slice
+
+- Validated MIR tail-call block payloads as owned `TailCall` instructions with
+  present and type-compatible fact rows before appending tail-call blocks.
+- Rejected stale nullability facts, invalid payload range facts, and non-tail
+  payload values without appending tail-call blocks.
+- Narrow verification:
+  - `../../stark test --filter MirBuilderAppendsTailCallBlockWithValidatedPayloadFacts --filter MirBuilderRejectsTailCallBlockPayloadFactsOutsideTypeWithoutBlock --filter MirLoweringLowersBecomeToTailCallBlockWithFacts --filter MirLoweringLowersTypedBecomeToTailCallBlockWithFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Return And Branch Block Builder Validation Slice
+
+- Validated return block payloads as owned values with present and
+  type-compatible fact rows before appending return blocks.
+- Validated unconditional branch block cursor state before appending branch
+  blocks.
+- Narrow verification:
+  - `../../stark test --filter MirFunctionBuilderTracksOwnedRangesAndDefinesFunction --filter MirBuilderRejectsClosedAndOutOfRangeBlockCreation --filter MirBuilderRejectsReturnBlockValueFactsOutsideTypeWithoutBlock --filter MirBuilderAppendsBranchBlockWithValidatedCursor --filter MirBuilderRejectsBranchBlockWhenBlockCursorIsStale`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringLowersValueReturnToMirReturnBlockAndPreservesFacts --filter MirLoweringLowersVoidReturnToMirReturnVoidBlock --filter MirLoweringRejectsReturnTypeMismatchWithoutBlockEmission --filter MirLoweringRejectsReturnFactsOutsideTypeWithoutBlockEmission --filter MirLoweringRejectsReturnWithoutValueFactsBeforeBlockEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Function Builder Finalization Validation Slice
+
+- Validated instruction and block cursors before finalizing a MIR function's
+  owned ranges.
+- Checked function-table append capacity before recording the function row.
+- Narrow verification:
+  - `../../stark test --filter MirFunctionBuilderTracksOwnedRangesAndDefinesFunction --filter MirBuilderRejectsFunctionFinishWhenInstructionCursorIsStale --filter MirBuilderRejectsFunctionFinishWhenBlockCursorIsStale --filter MirBuilderRejectsClosedAndOutOfRangeBlockCreation`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Explicit Entry Selection Validation Slice
+
+- Validated the block table and block cursor before changing a function builder's
+  explicit entry block.
+- Preserved builder state when stale raw block-table rows are detected.
+- Narrow verification:
+  - `../../stark test --filter MirBuilderSetsExplicitEntryBlockWithValidatedCursor --filter MirBuilderRejectsEntrySelectionWhenBlockCursorIsStale --filter MirBuilderRejectsBranchBlockWhenBlockCursorIsStale --filter MirBuilderRejectsFunctionFinishWhenBlockCursorIsStale`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Value Recording Validation Slice
+
+- Validated the instruction table and append cursor before extending a MIR
+  function builder's owned instruction range.
+- Preserved builder state when raw instruction rows exist beyond the value being
+  recorded or the value handle is absent from the instruction table.
+- Narrow verification:
+  - `../../stark test --filter MirBuilderRejectsValueRecordingWhenInstructionCursorIsStale --filter MirFunctionBuilderTracksOwnedRangesAndDefinesFunction --filter MirBuilderRejectsFunctionFinishWhenInstructionCursorIsStale --filter MirBuilderRejectsFunctionFinishWhenBlockCursorIsStale`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Block Recording Validation Slice
+
+- Validated the block table and append cursor before extending a MIR function
+  builder's owned control-flow block range.
+- Preserved builder state when raw block rows exist beyond the block being
+  recorded or the block handle is absent from the block table.
+- Narrow verification:
+  - `../../stark test --filter MirBuilderRejectsBlockRecordingWhenBlockCursorIsStale --filter MirBuilderRejectsValueRecordingWhenInstructionCursorIsStale --filter MirBuilderAppendsBranchBlockWithValidatedCursor --filter MirBuilderRejectsFunctionFinishWhenBlockCursorIsStale`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Function Backend Fact Gate Slice
+
+- Rejected Stark CFG function lowering before MIR builder creation when any
+  required backend fact category is missing.
+- Kept declaration-only functions out of the Stark CFG builder entry path.
+- Narrow verification:
+  - `../../stark test --filter MirFunctionBuilderRequiresCompleteBackendFactsBeforeFunctionLowering --filter HirBoundaryModelsTheHostHighLevelIrPass --filter HighLevelIrModuleStoresFunctionRowsAndBackendFactRequirements --filter MirLoweringPassShellMatchesHostPipelineContract`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost HIR If Branch Lowering Slice
+
+- Lowered HIR if branch terminators from block symbols into validated MIR
+  conditional blocks.
+- Rejected missing target block symbols and invalid condition facts without
+  appending a conditional block.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringSymbolMapUsesDenseSymbolSlotsAndCarriesFacts --filter MirLoweringLowersIfBranchFromBlockSymbolsWithValidatedFacts --filter MirLoweringRejectsIfBranchMissingTargetsAndBadConditionWithoutBlockEmission --filter MirBuilderAppendsConditionalBranchWithValidatedBoolFacts --filter MirBuilderRejectsConditionalBranchConditionFactsOutsideTypeWithoutBlock`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Fixed Arena Allocation Lowering Slice
+
+- Lowered fixed-size HIR arena allocations to MIR `ArenaAlloc` instructions.
+- Marked arena-using builders and attached alignment, noalias, and known-nonnull
+  pointer facts to the allocation result.
+- Rejected zero-size and invalid-alignment arena allocations before MIR emission.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersArenaAllocationWithFrameAndPointerFacts --filter MirLoweringRejectsInvalidArenaAllocationShapeWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Arena Dynamic Storage Lowering Slice
+
+- Lowered arena-backed HIR dynamic storage init and reserve operations to MIR.
+- Preserved owner alignment, noalias, known-nonnull, and fallible reserve
+  boolean range facts through MIR lowering and generated-fact recomputation.
+- Rejected invalid dynamic shapes, mismatched owner facts, and non-owner reserve
+  targets before MIR emission.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersArenaAllocationWithFrameAndPointerFacts --filter MirLoweringLowersArenaDynamicStorageInitWithFrameAndOwnerFacts --filter MirLoweringLowersArenaDynamicStorageReserveVariantsWithFacts --filter MirLoweringRejectsInvalidArenaDynamicStorageWithoutEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Arena Frame Lifecycle Lowering Slice
+
+- Emitted MIR arena frame enter instructions before the first HIR-lowered arena
+  allocation or arena-backed dynamic storage operation.
+- Emitted MIR arena frame leave instructions before return and tail-call blocks
+  for arena-using function builders.
+- Narrow verification:
+  - `../../stark test --filter MirLoweringLowersArenaAllocationWithFrameAndPointerFacts --filter MirLoweringLowersArenaDynamicStorageInitWithFrameAndOwnerFacts --filter MirLoweringLowersArenaDynamicStorageReserveVariantsWithFacts --filter MirLoweringRejectsInvalidArenaDynamicStorageWithoutEmission --filter MirLoweringClosesArenaFrameBeforeReturnBlock --filter MirLoweringLowersVoidReturnToMirReturnVoidBlock --filter MirBuilderAppendsBranchBlockWithValidatedCursor`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirBuilderRejectsBranchBlockWhenBlockCursorIsStale --filter MirBuilderSetsExplicitEntryBlockWithValidatedCursor --filter MirBuilderRejectsEntrySelectionWhenBlockCursorIsStale --filter MirBuilderAppendsConditionalBranchWithValidatedBoolFacts --filter MirLoweringLowersIfBranchFromBlockSymbolsWithValidatedFacts --filter MirLoweringRejectsIfBranchMissingTargetsAndBadConditionWithoutBlockEmission`
+    in `tests-stark/selfhost.Lowering`: passed.
+  - `../../stark test --filter MirLoweringClosesArenaFrameBeforeTailCallBlock --filter MirLoweringLowersBecomeToTailCallBlockWithFacts --filter MirBuilderAppendsTailCallBlockWithValidatedPayloadFacts`
+    in `tests-stark/selfhost.Lowering`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Volatile LLVM Global Access Slice
+
+- Attached volatile global fact rows to deterministic textual LLVM global loads
+  and stores.
+- Preserved existing range metadata attachment on volatile global loads.
+- Narrow verification:
+  - `../../stark test --filter EmitsLlvmVolatileGlobalLoadStoreFacts --filter EmitsLlvmRangeMetadataForGlobalLoads --filter EmitsLlvmGlobalLoad --filter EmitsLlvmGlobalStore --filter EmitsLlvmTypedGlobalLoadStore`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Aligned LLVM Global Access Slice
+
+- Attached global alignment fact rows to deterministic textual LLVM global loads
+  and stores.
+- Preserved existing volatile and range metadata spelling around aligned global
+  accesses.
+- Narrow verification:
+  - `../../stark test --filter EmitsLlvmAlignedGlobalLoadStoreFacts --filter EmitsLlvmVolatileGlobalLoadStoreFacts --filter EmitsLlvmRangeMetadataForGlobalLoads --filter EmitsLlvmGlobalLoad --filter EmitsLlvmGlobalStore --filter EmitsLlvmTypedGlobalLoadStore`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost LLVM Calling Convention Fact Slice
+
+- Attached exact FFI calling-convention facts to deterministic textual LLVM
+  function definitions and direct call sites.
+- Preserved existing `tailcc` priority for tail-callable functions and ordinary
+  calls to tail-callable callees.
+- Narrow verification:
+  - `../../stark test --filter CompileModuleFfiCallingConventionsReachLlvmText`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes --filter CompileModuleTailFiniteLawCallSitesLowerEffectAttributes`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter AstCallLoweringEmitsCallWithArgument --filter EmitsLlvmOrdinaryCallToTailCallableWithTailcc`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost LLVM Function Linkage Fact Slice
+
+- Attached source function linkage facts to deterministic textual LLVM function
+  definitions.
+- Lowered module-private and `internal` source functions as LLVM `internal`
+  definitions while leaving `public` and `export` source functions external.
+- Preserved range, ABI, alias, effect, tail-call, and FFI calling-convention
+  facts around the linkage header spelling.
+- Narrow verification:
+  - `../../stark test --filter CompileModuleSourceVisibilityControlsLlvmLinkage`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModulePointerCallArgumentsPreserveAbiAndAliasFacts --filter CompileModuleTailPointerCallArgumentsPreserveAbiAndAliasFacts --filter CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes --filter CompileModuleFiniteLawBranchLowersBlockEffectAttributes --filter CompileModuleFiniteEffectsPropagateThroughProvenDirectCalls --filter CompileModuleLawEffectsPropagateThroughProvenDirectCalls`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleFfiCallingConventionsReachLlvmText --filter CompileModuleForwardDirectCallsUsePrecomputedEffectFacts --filter CompilesModuleWithCallFromAst --filter CompilesTailBecomeFromAst --filter CompilesZeroArgumentTailBecomeFromAst --filter CompilesTailRecursiveBranchFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleWithMultipleArenaFunctionsEmitsValidSinglePreamble --filter CompilesTwoArgumentCallFromAst --filter CompileModuleSourceVisibilityControlsLlvmLinkage`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModulePointerParametersLowerGranularAttributes`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleWholePointerParamsEmitSeparateStorageAssume`
+    in `tests-stark/selfhost.Ir`: passed.
+  - A larger combined filter run exited with code 139 after partial success, so
+    the touched cases were verified in narrower stable selections instead.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost LLVM Function Preemption Fact Slice
+
+- Attached `dso_local` to deterministic textual LLVM definitions for
+  source-private and `internal` source functions.
+- Kept `public` and `export` source function definitions externally preemptable.
+- Narrow verification:
+  - `../../stark test --filter CompileModuleSourceVisibilityControlsLlvmLinkage`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleFfiCallingConventionsReachLlvmText --filter CompileModuleTailFiniteLawCallSitesLowerEffectAttributes --filter CompileModuleSourceVisibilityControlsLlvmLinkage`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesTailRecursiveBranchFromAst --filter CompileModuleWithMultipleArenaFunctionsEmitsValidSinglePreamble --filter CompilesTwoArgumentCallFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - A larger combined filter run exited with code 138 after reporting twelve
+    touched facts as ok, so the remaining touched cases were verified in a
+    smaller stable selection.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Local-Prefixed Terminal If Slice
+
+- Lowered source functions with local setup before terminal `if return/else
+  return` into MIR conditional blocks for AST LLVM emission and package tables.
+- Preserved local value overrides, branch return range validation, arena cleanup
+  on returning arms, and function effect prepass visibility through the branch
+  lowering path.
+- Narrow verification:
+  - `../../stark test --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesRecursiveFunctionFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesTailRecursiveBranchFromAst --filter ModulePackageImageWithAsmBuilderRoundTrips`
+    in `tests-stark/selfhost.Ir`: passed.
+  - A combined run that grouped the recursive branch fact with two other branch
+    checks exited 139 after partial success; the same facts were then verified
+    with narrower stable filters.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Braced Terminal If Slice
+
+- Parsed braced terminal `if` arms (`{ return ...; } else { return ...; }`) as
+  the same MIR conditional-block shape as compact terminal branches.
+- Reused the same branch parser for body-start branches, local-prefixed
+  branches, direct LLVM emission, effect prepass lowering, and package tables.
+- Narrow verification:
+  - `../../stark test --filter CompilesBracedTerminalIfFromAst --filter CompilesLocalPrefixedBracedTerminalIfFromAst --filter PackageTablesPreserveBracedTerminalIf --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesRecursiveFunctionFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesTailRecursiveBranchFromAst --filter ModulePackageImageWithAsmBuilderRoundTrips`
+    in `tests-stark/selfhost.Ir`: passed.
+  - A combined run that grouped the recursive branch fact with the tail/package
+    checks exited 139 after partial success; the same facts were then verified
+    with narrower stable filters.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Semicolon Terminal If Slice
+
+- Parsed semicolon-terminated compact terminal `if` arms (`return ...; else
+  return ...;`) as the same MIR conditional-block shape as compact terminal
+  branches without semicolons.
+- Preserved the existing branch parser for body-start branches, local-prefixed
+  branches, direct LLVM emission, effect prepass lowering, and package tables.
+- Narrow verification:
+  - `../../stark test --filter CompilesSemicolonTerminatedTerminalIfFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedSemicolonTerminalIfFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter PackageTablesPreserveSemicolonTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - Grouped runs containing these facts were unstable: one exited 139 after
+    partial success, and one reported failures for facts that passed
+    individually.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Return If Expression Slice
+
+- Lowered terminal source `return if ... else ...` expressions into MIR
+  conditional return blocks instead of a merge phi.
+- Preserved branch-refined return range validation, boolean arm zero-extension,
+  effect prepass visibility, package-table shape, linkage, calling convention,
+  and LLVM range attributes.
+- Rejected trailing tokens after the `else` expression instead of silently
+  ignoring malformed source.
+- Refreshed two existing return-range LLVM exact expectations for `dso_local`.
+- Narrow verification:
+  - `../../stark test --filter CompilesReturnIfExpressionFromAst --filter ReturnIfExpressionPreservesBranchRangeFacts --filter CompilesBooleanReturnIfExpressionFromAst --filter PackageTablesPreserveReturnIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleArithmeticCallArgumentLowersToLlvmRangeAttribute --filter CompileModuleBranchReturnRangeUsesComparisonProof`
+    in `tests-stark/selfhost.Ir`: passed.
+  - A larger grouped run containing these facts exited 139 after partial
+    success, so the touched cases were verified with narrower stable filters.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Returned Local If Expression Slice
+
+- Lowered immediately returned `var` locals initialized from source
+  `if ... else ...` expressions into MIR conditional return blocks.
+- Avoided a merge phi for the immediate-return shape, preserving branch-refined
+  return range validation, boolean arm zero-extension, effect prepass visibility,
+  package-table shape, and LLVM range attributes.
+- Reused the plain if-expression arm parser for terminal `return if` and returned
+  local initializer lowering.
+- Narrow verification:
+  - `../../stark test --filter CompilesReturnedLocalIfExpressionFromAst --filter ReturnedLocalIfExpressionPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfExpressionFromAst --filter PackageTablesPreserveReturnedLocalIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnIfExpressionFromAst --filter ReturnIfExpressionPreservesBranchRangeFacts --filter CompilesBooleanReturnIfExpressionFromAst --filter PackageTablesPreserveReturnIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompileModuleBranchReturnRangeUsesComparisonProof`
+    in `tests-stark/selfhost.Ir`: passed.
+  - Two grouped adjacent runs exited 139 after printing partial success, so the
+    same touched facts were verified with smaller stable filters.
+- No broad test sweep was run.

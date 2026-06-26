@@ -7,9 +7,6 @@ kind = "test"
 root = "FileSystemSymlinkTests.stark"
 output = "stdlib-filesystem-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

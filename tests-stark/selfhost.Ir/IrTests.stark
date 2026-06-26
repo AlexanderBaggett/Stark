@@ -1737,6 +1737,108 @@ fn bool EmitsLlvmRangeMetadataForGlobalLoads()
 }
 
 [Fact]
+fn bool EmitsLlvmVolatileGlobalLoadStoreFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId loaded = MirLoadGlobal(instrs, 1);
+    stack MirValueId value = MirConstInt(instrs, 9);
+    stack MirValueId stored = MirStoreGlobal(instrs, 2, value);
+    stack MirBlockId entry = MirReturnBlock(blocks, loaded);
+
+    stack mut ValueFacts emptyReturn = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut ValueFacts loadFacts = new();
+    loadFacts.MarkVolatile();
+    loadFacts.SetIntegerRange(1, 10);
+    stack u32[0 max] addedLoadFacts = globalFacts.Add(loadFacts);
+    stack mut ValueFacts storeFacts = new();
+    storeFacts.MarkVolatile();
+    stack u32[0 max] addedStoreFacts = globalFacts.Add(storeFacts);
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFacts(
+        instrs,
+        blocks,
+        "volatile_globals",
+        emptyReturn,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        0,
+        entry.Index(),
+        1,
+        3,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return addedLoadFacts == 1
+                && addedStoreFacts == 2
+                && stored.IsValid()
+                && LlvmTextEquals(
+                    sink,
+                    "define i64 @volatile_globals() {\nb1:\n  %v1 = load volatile i64, ptr @g1, !range !0\n  %v2 = add i64 0, 9\n  store volatile i64 %v2, ptr @g2\n  ret i64 %v1\n}\n!0 = !{i64 1, i64 10}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmAlignedGlobalLoadStoreFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId loaded = MirLoadGlobal(instrs, 1);
+    stack MirValueId value = MirConstInt(instrs, 13);
+    stack MirValueId stored = MirStoreGlobal(instrs, 2, value);
+    stack MirBlockId entry = MirReturnBlock(blocks, loaded);
+
+    stack mut ValueFacts emptyReturn = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut ValueFacts loadFacts = new();
+    loadFacts.SetAlignment(16);
+    loadFacts.SetIntegerRange(1, 10);
+    stack u32[0 max] addedLoadFacts = globalFacts.Add(loadFacts);
+    stack mut ValueFacts storeFacts = new();
+    storeFacts.SetAlignment(8);
+    stack u32[0 max] addedStoreFacts = globalFacts.Add(storeFacts);
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFacts(
+        instrs,
+        blocks,
+        "aligned_globals",
+        emptyReturn,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        0,
+        entry.Index(),
+        1,
+        3,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return addedLoadFacts == 1
+                && addedStoreFacts == 2
+                && stored.IsValid()
+                && LlvmTextEquals(
+                    sink,
+                    "define i64 @aligned_globals() {\nb1:\n  %v1 = load i64, ptr @g1, align 16, !range !0\n  %v2 = add i64 0, 13\n  store i64 %v2, ptr @g2, align 8\n  ret i64 %v1\n}\n!0 = !{i64 1, i64 10}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool CompileFunctionRangeSignatureLowersToLlvmRangeAttributes()
 {
     stack mut OwnedAscii sink = new();
@@ -1760,7 +1862,7 @@ fn bool CompileModuleArithmeticCallArgumentLowersToLlvmRangeAttribute()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("fn i64[0 10] id(i64[0 10] x) { return x } fn i64[0 10] main() { return id(2 + 3) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define range(i64 0, 11) i64 @f1(i64 range(i64 0, 11) %p0) {\nb1:\n  ret i64 %p0\n}\ndefine range(i64 0, 11) i64 @f2() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = call i64 @f1(i64 range(i64 5, 6) %v3), !range !0\n  ret i64 %v4\n}\n!0 = !{i64 0, i64 11}\n");
+        && LlvmTextEquals(sink, "define internal dso_local range(i64 0, 11) i64 @f1(i64 range(i64 0, 11) %p0) {\nb1:\n  ret i64 %p0\n}\ndefine internal dso_local range(i64 0, 11) i64 @f2() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = call i64 @f1(i64 range(i64 5, 6) %v3), !range !0\n  ret i64 %v4\n}\n!0 = !{i64 0, i64 11}\n");
 }
 
 [Fact]
@@ -1783,7 +1885,7 @@ fn bool CompileModuleBranchReturnRangeUsesComparisonProof()
     stack mut OwnedAscii tooWide = new();
     stack bool tooWideOk = CompileModuleFromAst("fn i64[0 10] bounded(i64[0 max] x) { if x < 12 return x else return 0 }", tooWide);
     return provenOk
-        && System.Text.Contains(proven.View(), "define range(i64 0, 11) i64 @f1")
+        && System.Text.Contains(proven.View(), "define internal dso_local range(i64 0, 11) i64 @f1")
         && !tooWideOk;
 }
 
@@ -1917,7 +2019,7 @@ fn bool CompileModulePointerParametersLowerGranularAttributes()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("fn i64 read(borrow i32 value) { return 1 } fn i64 main() { return 0 }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(ptr captures(none) readonly %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 0\n  ret i64 %v1\n}\n");
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(ptr captures(none) readonly %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine internal dso_local i64 @f2() {\nb1:\n  %v1 = add i64 0, 0\n  ret i64 %v1\n}\n");
 }
 
 [Fact]
@@ -1926,7 +2028,7 @@ fn bool CompileModuleWholePointerParamsEmitSeparateStorageAssume()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("fn i64 read2(borrow i32 left, borrow i32 right) { return 1 } fn i64 main() { return 0 }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 0\n  ret i64 %v1\n}\n")
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine internal dso_local i64 @f2() {\nb1:\n  %v1 = add i64 0, 0\n  ret i64 %v1\n}\n")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -1936,7 +2038,7 @@ fn bool CompileModulePointerCallArgumentsPreserveAbiAndAliasFacts()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("fn i64 touch(borrow i32 left, borrow i32 right) { return 1 } fn i64 main(borrow i32 left, borrow i32 right) { return touch(left, right) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = call i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)\n  ret i64 %v3\n}\n")
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine internal dso_local i64 @f2(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = call i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)\n  ret i64 %v3\n}\n")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -1946,7 +2048,7 @@ fn bool CompileModuleTailPointerCallArgumentsPreserveAbiAndAliasFacts()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("tail fn touch(borrow i32 left, borrow i32 right) { return 1 } tail fn bounce(borrow i32 left, borrow i32 right) { become touch(left, right) }", sink);
     return ok
-        && System.Text.Contains(sink.View(), "define tailcc i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)")
+        && System.Text.Contains(sink.View(), "define internal dso_local tailcc i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)")
         && System.Text.Contains(sink.View(), "%v3 = musttail call tailcc i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1)")
         && System.Text.Contains(sink.View(), "call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = musttail")
         && ClangVerifiesLlvmText(sink);
@@ -1978,7 +2080,7 @@ fn bool CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("finite law fn id(x) { return x } fn main() { return id(7) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 range(i64 7, 8) %v1) memory(none) nosync nofree willreturn mustprogress norecurse\n  ret i64 %v2\n}\n")
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine internal dso_local i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 range(i64 7, 8) %v1) memory(none) nosync nofree willreturn mustprogress norecurse\n  ret i64 %v2\n}\n")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -1988,7 +2090,7 @@ fn bool CompileModuleFiniteLawBranchLowersBlockEffectAttributes()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("finite law fn pick(x, y) { if x < y return x else return y }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0, i64 %p1) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p0\nb3:\n  ret i64 %p1\n}\n");
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(i64 %p0, i64 %p1) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p0\nb3:\n  ret i64 %p1\n}\n");
 }
 
 [Fact]
@@ -1997,7 +2099,7 @@ fn bool CompileModuleFiniteEffectsPropagateThroughProvenDirectCalls()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("finite fn one() { return 1 } finite fn two() { return one() }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1() willreturn mustprogress norecurse {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() willreturn mustprogress norecurse {\nb1:\n  %v1 = call i64 @f1() willreturn mustprogress norecurse\n  ret i64 %v1\n}\n");
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1() willreturn mustprogress norecurse {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine internal dso_local i64 @f2() willreturn mustprogress norecurse {\nb1:\n  %v1 = call i64 @f1() willreturn mustprogress norecurse\n  ret i64 %v1\n}\n");
 }
 
 [Fact]
@@ -2006,7 +2108,37 @@ fn bool CompileModuleLawEffectsPropagateThroughProvenDirectCalls()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("law fn id(x) { return x } law fn wrap(x) { return id(x) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  %v2 = call i64 @f1(i64 %p0) memory(none) nosync nofree norecurse\n  ret i64 %v2\n}\n");
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  ret i64 %p0\n}\ndefine internal dso_local i64 @f2(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  %v2 = call i64 @f1(i64 %p0) memory(none) nosync nofree norecurse\n  ret i64 %v2\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleFfiCallingConventionsReachLlvmText()
+{
+    stack mut OwnedAscii win64 = new();
+    stack mut OwnedAscii sysv = new();
+    stack bool win64Ok = CompileModuleFromAst("unsafe ffi(win64) fn abi(x) { return x } fn main(x) { return abi(x) }", win64);
+    stack bool sysvOk = CompileModuleFromAst("unsafe ffi(sysv) fn abi(x) { return x } fn main(x) { return abi(x) }", sysv);
+    return win64Ok
+        && sysvOk
+        && System.Text.Contains(win64.View(), "define internal dso_local win64cc i64 @f1(i64 %p0)")
+        && System.Text.Contains(win64.View(), "%v2 = call win64cc i64 @f1(i64 %p0)")
+        && System.Text.Contains(sysv.View(), "define internal dso_local x86_64_sysvcc i64 @f1(i64 %p0)")
+        && System.Text.Contains(sysv.View(), "%v2 = call x86_64_sysvcc i64 @f1(i64 %p0)");
+}
+
+[Fact]
+fn bool CompileModuleSourceVisibilityControlsLlvmLinkage()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn hidden(x) { return x } internal fn helper(x) { return hidden(x) } public fn api(x) { return helper(x) } export fn entry(x) { return api(x) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f2(i64 %p0)")
+        && System.Text.Contains(sink.View(), "define i64 @f3(i64 %p0)")
+        && System.Text.Contains(sink.View(), "define i64 @f4(i64 %p0)")
+        && !System.Text.Contains(sink.View(), "define internal dso_local i64 @f3")
+        && !System.Text.Contains(sink.View(), "define internal dso_local i64 @f4")
+        && ClangVerifiesLlvmText(sink);
 }
 
 [Fact]
@@ -2026,7 +2158,7 @@ fn bool CompileModuleForwardDirectCallsUsePrecomputedEffectFacts()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAstChecked("finite law fn wrap(x) { return id(x) } fn main() { return wrap(7) } finite law fn id(x) { return x }", sink);
     return ok
-        && System.Text.Contains(sink.View(), "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse")
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse")
         && System.Text.Contains(sink.View(), "%v2 = call i64 @f3(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse")
         && System.Text.Contains(sink.View(), "%v2 = call i64 @f1(i64 range(i64 7, 8) %v1) memory(none) nosync nofree willreturn mustprogress norecurse")
         && ClangVerifiesLlvmText(sink);
@@ -4706,7 +4838,7 @@ fn bool CompilesModuleWithCallFromAst()
     stack bool ok = CompileModuleFromAst("fn double(x) { return x + x } fn main() { return double(5) }", sink);
     stack mut OwnedAscii ghost = new();
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call i64 @f1(i64 range(i64 5, 6) %v1)\n  ret i64 %v2\n}\n")
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine internal dso_local i64 @f2() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call i64 @f1(i64 range(i64 5, 6) %v1)\n  ret i64 %v2\n}\n")
         && !CompileModuleFromAst("fn main() { return ghost() }", ghost);
 }
 
@@ -4719,7 +4851,7 @@ fn bool CompilesTailBecomeFromAst()
     stack mut OwnedAscii nonTailTarget = new();
     stack mut OwnedAscii mismatchedAbi = new();
     return ok
-        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0) {\nb1:\n  ret i64 %p0\n}\ndefine tailcc i64 @f2(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\ndefine i64 @f3() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call tailcc i64 @f2(i64 range(i64 5, 6) %v1)\n  ret i64 %v2\n}\n")
+        && LlvmTextEquals(sink, "define internal dso_local tailcc i64 @f1(i64 %p0) {\nb1:\n  ret i64 %p0\n}\ndefine internal dso_local tailcc i64 @f2(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\ndefine internal dso_local i64 @f3() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call tailcc i64 @f2(i64 range(i64 5, 6) %v1)\n  ret i64 %v2\n}\n")
         && !CompileModuleFromAst("tail fn done(x) { return x } fn bad(x) { become done(x) }", nonTailFunction)
         && !CompileModuleFromAst("fn plain(x) { return x } tail fn bad(x) { become plain(x) }", nonTailTarget)
         && !CompileModuleFromAst("tail fn one(x) { return x } tail fn two(x, y) { become one(x) }", mismatchedAbi);
@@ -4731,7 +4863,7 @@ fn bool CompilesZeroArgumentTailBecomeFromAst()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAstChecked("tail fn done() { return 7 } tail fn bounce() { become done() } fn main() { return bounce() }", sink);
     return ok
-        && LlvmTextEquals(sink, "define tailcc i64 @f1() {\nb1:\n  %v1 = add i64 0, 7\n  ret i64 %v1\n}\ndefine tailcc i64 @f2() {\nb1:\n  %v1 = musttail call tailcc i64 @f1()\n  ret i64 %v1\n}\ndefine i64 @f3() {\nb1:\n  %v1 = call tailcc i64 @f2()\n  ret i64 %v1\n}\n")
+        && LlvmTextEquals(sink, "define internal dso_local tailcc i64 @f1() {\nb1:\n  %v1 = add i64 0, 7\n  ret i64 %v1\n}\ndefine internal dso_local tailcc i64 @f2() {\nb1:\n  %v1 = musttail call tailcc i64 @f1()\n  ret i64 %v1\n}\ndefine internal dso_local i64 @f3() {\nb1:\n  %v1 = call tailcc i64 @f2()\n  ret i64 %v1\n}\n")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -4866,7 +4998,7 @@ fn bool CompilesTailRecursiveBranchFromAst()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAstChecked("tail fn count(n, acc) { if n == 0 return acc else become count(n - 1, acc + 1) } fn main() { return count(3, 0) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 0\n  %v3 = icmp eq i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p1\nb3:\n  %v6 = add i64 0, 1\n  %v7 = sub i64 %p0, %v6\n  %v9 = add i64 0, 1\n  %v10 = add i64 %p1, %v9\n  %v11 = musttail call tailcc i64 @f1(i64 %v7, i64 %v10)\n  ret i64 %v11\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 0\n  %v3 = call tailcc i64 @f1(i64 range(i64 3, 4) %v1, i64 range(i64 0, 1) %v2)\n  ret i64 %v3\n}\n");
+        && LlvmTextEquals(sink, "define internal dso_local tailcc i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 0\n  %v3 = icmp eq i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p1\nb3:\n  %v6 = add i64 0, 1\n  %v7 = sub i64 %p0, %v6\n  %v9 = add i64 0, 1\n  %v10 = add i64 %p1, %v9\n  %v11 = musttail call tailcc i64 @f1(i64 %v7, i64 %v10)\n  ret i64 %v11\n}\ndefine internal dso_local i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 0\n  %v3 = call tailcc i64 @f1(i64 range(i64 3, 4) %v1, i64 range(i64 0, 1) %v2)\n  ret i64 %v3\n}\n");
 }
 
 [Fact]
@@ -4961,8 +5093,8 @@ fn bool CompileModuleWithMultipleArenaFunctionsEmitsValidSinglePreamble()
     stack bool ok = CompileModuleFromAst("struct Box { i64 value; } fn first() { arena Box box = new Box(); return 1 } fn second() { arena Box other = new Box(); return 2 }", sink);
     return ok
         && System.Text.Contains(sink.View(), "declare noalias nonnull noundef ptr @__stark_arena_alloc")
-        && System.Text.Contains(sink.View(), "define i64 @f1()")
-        && System.Text.Contains(sink.View(), "define i64 @f2()")
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1()")
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f2()")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -5032,7 +5164,7 @@ fn bool CompilesTwoArgumentCallFromAst()
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAst("fn add(a, b) { return a + b } fn main() { return add(3, 4) }", sink);
     return ok
-        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 4\n  %v3 = call i64 @f1(i64 range(i64 3, 4) %v1, i64 range(i64 4, 5) %v2)\n  ret i64 %v3\n}\n");
+        && LlvmTextEquals(sink, "define internal dso_local i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\ndefine internal dso_local i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 4\n  %v3 = call i64 @f1(i64 range(i64 3, 4) %v1, i64 range(i64 4, 5) %v2)\n  ret i64 %v3\n}\n");
 }
 
 [Fact]
@@ -5148,6 +5280,335 @@ fn bool CompilesRecursiveFunctionFromAst()
     stack mut OwnedAscii s = new();
     stack bool ok = CompileModuleFromAst("fn fact(n) { if n < 1 return 1 else return n * fact(n - 1) } fn main() { return fact(5) }", s);
     return ok && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = x + 1; if y < 10 return y else return x } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f2()")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesSemicolonTerminatedTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { if x < 10 return x; else return 10; } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedSemicolonTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = x + 1; if y < 10 return y; else return x; } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesReturnIfExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { return if x < 10 x else 10 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii trailing = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && System.Text.Contains(s.View(), "ret i64 %v")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn pick(x) { return if x < 10 x else 10 x } fn main() { return pick(3) }", trailing);
+}
+
+[Fact]
+fn bool ReturnIfExpressionPreservesBranchRangeFacts()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 10] pick(i64[0 max] x) { return if x < 10 x else 10 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "range(i64 0, 11)")
+        && System.Text.Contains(s.View(), "br i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[0 9] pick(i64[0 max] x) { return if x < 10 x else 10 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanReturnIfExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { return if x < 10 x < 5 else x == 10 } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesReturnedLocalIfExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = if x < 10 x else 10; return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii trailing = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && System.Text.Contains(s.View(), "ret i64 %v")
+        && !System.Text.Contains(s.View(), " phi ")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn pick(x) { var y = if x < 10 x else 10 x; return y } fn main() { return pick(3) }", trailing);
+}
+
+[Fact]
+fn bool ReturnedLocalIfExpressionPreservesBranchRangeFacts()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 10] pick(i64[0 max] x) { var y = if x < 10 x else 10; return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "range(i64 0, 11)")
+        && System.Text.Contains(s.View(), "br i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[0 9] pick(i64[0 max] x) { var y = if x < 10 x else 10; return y } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanReturnedLocalIfExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = if x < 10 x < 5 else x == 10; return y } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && !System.Text.Contains(s.View(), " phi ")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesReturnedLocalIfStatementFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = 0; if x < 10 y = x; else y = 10; return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii mismatchedTarget = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && System.Text.Contains(s.View(), "ret i64 %v")
+        && !System.Text.Contains(s.View(), " phi ")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn pick(x) { var y = 0; if x < 10 y = x; else z = 10; return y } fn main() { return pick(3) }", mismatchedTarget);
+}
+
+[Fact]
+fn bool ReturnedLocalIfStatementPreservesBranchRangeFacts()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 10] pick(i64[0 max] x) { var y = 0; if x < 10 y = x; else y = 10; return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "range(i64 0, 11)")
+        && System.Text.Contains(s.View(), "br i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[0 9] pick(i64[0 max] x) { var y = 0; if x < 10 y = x; else y = 10; return y } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanReturnedLocalIfStatementFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = 0 == 0; if x < 10 y = x < 5; else y = x == 10; return y } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && !System.Text.Contains(s.View(), " phi ")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesBracedTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { if x < 10 { return x; } else { return 10; } } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && System.Text.Contains(s.View(), "ret i64 %v")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedBracedTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn pick(x) { var y = x + 1; if y < 10 { return y; } else { return x; } } fn main() { return pick(3) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && System.Text.Contains(s.View(), "ret i64 %p0")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalPrefixedTerminalIf()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = x + 1; if y < 10 return y else return x }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 4
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSemicolonTerminalIf()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { if x < 10 return x; else return 10; }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 3
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveReturnIfExpression()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { return if x < 10 x else 10 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 3
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveReturnedLocalIfExpression()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = if x < 10 x else 10; return y }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 3
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveReturnedLocalIfStatement()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = 0; if x < 10 y = x; else y = 10; return y }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 3
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveBracedTerminalIf()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { if x < 10 { return x; } else { return 10; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 3
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
 }
 
 [Fact]

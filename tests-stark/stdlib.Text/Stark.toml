@@ -7,9 +7,6 @@ kind = "test"
 root = "TextBuilderTests.stark"
 output = "stdlib-text-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

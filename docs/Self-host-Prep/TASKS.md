@@ -229,10 +229,17 @@ Execution constraints:
   - [x] Define the self-host HIR model or explicit direct-to-MIR boundary.
   - [x] Port the MIR lowering pass shell.
   - [x] Port function builder state.
+  - [x] Gate function-builder entry on complete MIR backend fact coverage.
+  - [x] Validate value recording before extending builder-owned instruction ranges.
+  - [x] Validate block recording before extending builder-owned control-flow ranges.
+  - [x] Validate function-builder finalization before recording owned function ranges.
+  - [x] Validate explicit function-builder entry selection before changing entry blocks.
   - [x] Port lowering symbol maps.
   - [x] Port MIR block creation.
+  - [x] Validate return and branch block append helpers before recording builder-owned control-flow blocks.
   - [~] Lower literals.
     - [x] Lower integer and boolean literals to typed MIR constants with exact range facts.
+    - [x] Validate literal fact rows before emitting MIR constants.
     - [x] Reject unsupported literal families before emitting partial MIR.
     - [ ] Lower character and text literals through the MIR constant storage model.
     - [ ] Lower floating-point literals once MIR has typed float constants.
@@ -280,9 +287,18 @@ Execution constraints:
     - [x] Lower i64 global references and stores through MIR load/store while preserving declared facts.
     - [x] Lower typed global definitions and typed global load/store once MIR global storage records value types.
     - [x] Lower module-scope global declarations and initializers from HIR.
+    - [x] Validate stored value fact rows before emitting global stores.
   - [ ] Lower raw pointers.
   - [ ] Lower address-taking.
-  - [ ] Lower if expressions and statements.
+  - [~] Lower if expressions and statements.
+    - [x] Validate conditional branch conditions before emitting MIR conditional blocks.
+    - [x] Lower HIR if branch terminators from block symbols to validated MIR conditional blocks.
+    - [x] Lower local-prefixed terminal source `if` returns into MIR conditional blocks.
+    - [x] Lower braced terminal source `if` return branches into MIR conditional blocks.
+    - [x] Lower semicolon-terminated compact terminal source `if` returns into MIR conditional blocks.
+    - [x] Lower terminal source `return if ... else ...` expressions into MIR conditional return blocks.
+    - [x] Lower immediately returned local source if-expression initializers into MIR conditional return blocks.
+    - [ ] Lower source if statements and if expressions into MIR conditional blocks.
   - [ ] Lower loops.
   - [ ] Lower `for` and `foreach`.
   - [ ] Lower switch.
@@ -291,14 +307,17 @@ Execution constraints:
     - [x] Lower direct i64 `become` calls to MIR tail-call payloads and terminator blocks with facts.
     - [x] Lower typed non-i64 `become` calls once typed tail-call terminator emission exists.
     - [x] Validate carried argument facts before emitting MIR tail-call payloads.
+    - [x] Validate tail-call payload fact rows before emitting MIR tail-call blocks.
   - [~] Lower recursion and tail calls.
     - [x] Preserve direct i64 tail-call payloads through HIR-to-MIR lowering.
     - [x] Lower typed tail-call terminators for all scalar MIR return types.
-    - [ ] Lower self-recursive source functions through the full HIR body pipeline.
+  - [ ] Lower self-recursive source functions through the full HIR body pipeline.
   - [ ] Lower object construction.
   - [ ] Lower enum payloads.
-  - [ ] Lower dynamic storage.
-  - [ ] Lower all storage selectors.
+  - [~] Lower dynamic storage.
+    - [x] Lower arena-backed HIR dynamic storage init and reserve operations to MIR.
+  - [~] Lower all storage selectors.
+    - [x] Lower fixed-size HIR arena allocations to MIR arena allocation instructions.
   - [ ] Port runtime drop lowering.
   - [ ] Port destructor call insertion.
   - [ ] Port ownership-driven cleanup.
@@ -313,6 +332,11 @@ Execution constraints:
     - [x] Reject stale pointer range facts before emitting MIR return blocks.
     - [x] Reject stale pointer range facts before emitting call and tail-call argument payloads.
     - [x] Reject integer range facts outside scalar operand types before emitting binary and compound arithmetic.
+    - [x] Reject literal range facts that do not describe emitted scalar constants.
+    - [x] Reject stale pointer range facts before emitting MIR global stores.
+    - [x] Reject invalid condition range facts before emitting MIR conditional branches.
+    - [x] Reject invalid tail-call payload range facts before emitting MIR tail-call blocks.
+    - [x] Attach boolean range facts to fallible arena dynamic storage reserve results.
     - [ ] Audit range fact validation when each remaining HIR value producer is added.
   - [~] Preserve pointer nullability facts through MIR lowering.
     - [x] Reject pointer nullability facts on scalar HIR values at the common value-fact compatibility boundary.
@@ -321,19 +345,33 @@ Execution constraints:
     - [x] Reject stale scalar nullability facts before emitting MIR return blocks.
     - [x] Reject stale scalar nullability facts before emitting call and tail-call argument payloads.
     - [x] Reject stale scalar nullability facts before emitting binary and compound arithmetic.
+    - [x] Reject invalid scalar and false pointer nullability facts before emitting constants.
+    - [x] Reject stale scalar nullability facts before emitting MIR global stores.
+    - [x] Reject stale scalar nullability facts before emitting MIR conditional branches.
+    - [x] Reject stale scalar nullability facts before emitting MIR tail-call blocks.
+    - [x] Attach known-nonnull pointer facts to fixed-size arena allocation results.
+    - [x] Attach known-nonnull pointer facts to arena dynamic storage owner results.
     - [ ] Audit nullability fact validation when each remaining pointer-producing HIR construct is added.
   - [~] Preserve alias facts through MIR lowering.
     - [x] Enforce noalias global-store obligations before MIR store emission.
+    - [x] Attach noalias facts to fixed-size arena allocation results.
+    - [x] Attach noalias facts to arena dynamic storage owner results.
     - [ ] Audit alias fact transfer when each remaining memory-producing HIR construct is added.
   - [~] Preserve ABI facts through MIR lowering.
     - [x] Enforce calling-ABI global-store obligations before MIR store emission.
     - [ ] Audit ABI fact transfer when each remaining callable-producing HIR construct is added.
   - [~] Preserve layout facts through MIR lowering.
     - [x] Enforce alignment global-store obligations before MIR store emission.
+    - [x] Attach alignment facts to fixed-size arena allocation results.
+    - [x] Attach alignment facts to arena dynamic storage owner results.
     - [ ] Audit layout fact transfer when each remaining aggregate and pointer-producing HIR construct is added.
   - [ ] Preserve ownership facts through MIR lowering.
   - [ ] Preserve assembly facts through MIR lowering.
-  - [ ] Preserve arena facts through MIR lowering.
+  - [~] Preserve arena facts through MIR lowering.
+    - [x] Mark MIR function builders that lower fixed-size arena allocations as arena-frame users.
+    - [x] Mark MIR function builders that lower arena dynamic storage operations as arena-frame users.
+    - [x] Emit arena frame enter and leave instructions for arena-using MIR function exits.
+    - [ ] Audit arena fact transfer when each remaining arena-producing HIR construct is added.
   - [ ] Preserve drop facts through MIR lowering.
 
 - [ ] Implement SSA lowering.
@@ -387,13 +425,32 @@ Execution constraints:
   - [x] Add LLVM diagnostic message wrappers.
   - [x] Add deterministic LLVM dispose wrappers.
   - [ ] Build LLVM modules directly from ABI/SSA through libLLVM.
-  - [ ] Attach range facts to LLVM IR.
-  - [ ] Attach noalias facts to LLVM IR.
-  - [ ] Attach readonly facts to LLVM IR.
-  - [ ] Attach alignment facts to LLVM IR.
-  - [ ] Attach volatile facts to LLVM IR.
-  - [ ] Attach calling-convention facts to LLVM IR.
-  - [ ] Attach linkage facts to LLVM IR.
+  - [~] Attach range facts to LLVM IR.
+    - [x] Attach scalar function return and parameter range facts in deterministic textual LLVM emission.
+    - [x] Attach call-result and global-load range metadata in deterministic textual LLVM emission.
+    - [ ] Attach range facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach noalias facts to LLVM IR.
+    - [x] Emit whole-parameter disjoint facts as deterministic textual LLVM separate-storage assumes.
+    - [x] Attach noalias arena allocation facts in deterministic textual LLVM emission.
+    - [ ] Attach noalias facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach readonly facts to LLVM IR.
+    - [x] Attach readonly borrow parameter facts in deterministic textual LLVM emission.
+    - [ ] Attach readonly facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach alignment facts to LLVM IR.
+    - [x] Attach global load/store alignment facts in deterministic textual LLVM emission.
+    - [ ] Attach alignment facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach volatile facts to LLVM IR.
+    - [x] Attach volatile global load/store facts in deterministic textual LLVM emission.
+    - [ ] Attach volatile facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach calling-convention facts to LLVM IR.
+    - [x] Attach tail-callable function and call-site facts as deterministic textual `tailcc` and `musttail`.
+    - [x] Attach FFI and target ABI calling conventions in textual LLVM emission.
+    - [ ] Attach calling-convention facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach linkage facts to LLVM IR.
+    - [x] Attach source function linkage facts in deterministic textual LLVM emission.
+    - [x] Attach source function non-preemption facts in deterministic textual `dso_local` emission.
+    - [ ] Attach source global linkage facts after source-backed global lowering exists.
+    - [ ] Attach linkage facts through the libLLVM module builder after ABI/SSA object emission lands.
   - [ ] Attach section facts to LLVM IR.
   - [ ] Attach visibility facts to LLVM IR.
   - [ ] Emit object files through libLLVM.

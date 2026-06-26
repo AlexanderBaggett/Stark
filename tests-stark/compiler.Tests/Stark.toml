@@ -7,9 +7,6 @@ kind = "test"
 root = "CompilerTests.stark"
 output = "compiler-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 

@@ -336,15 +336,14 @@ Path dependencies cover v1:
 
 ```toml
 [dependencies]
-vendor = { path = "../../vendor" }
+math-core = { path = "../math-core" }
 ```
 
 That handles multi project repos and native backed packages inside the same
 solution. `System.*` modules come from the standard library discovery path, and
 `Vendor.*` modules come from bundled vendor discovery, so projects do not list
-`stdlib` as an ordinary dependency. A project may still depend on `vendor` when
-it wants to build the repo-local vendor package and consume its native metadata
-as an explicit path dependency. Versioned and registry dependencies come later.
+`stdlib` or the official bundled vendor library as ordinary dependencies.
+Versioned and registry dependencies come later.
 
 ## Native Packages
 
@@ -449,9 +448,6 @@ kind = "executable"
 [executable]
 root = "BreakoutRaylib.stark"
 output = "breakout-raylib"
-
-[dependencies]
-vendor = { path = "../../vendor" }
 ```
 
 ### `Stark.solution.toml`

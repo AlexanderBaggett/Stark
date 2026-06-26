@@ -7,9 +7,6 @@ kind = "test"
 root = "TomlTests.stark"
 output = "stdlib-toml-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [profiles.dev]
 opt = 0
 
