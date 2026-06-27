@@ -470,12 +470,22 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
         }
 
+        if (type.functionPointerType() is { } functionPointerType)
+        {
+            return ResolveFunctionPointerType(functionPointerType, genericParameters, currentModuleName, comptimeGenericParameters);
+        }
+
         if (type.integerType() is { } integerType)
         {
             return ResolveIntegerType(integerType);
         }
 
-        return ResolveBuiltinType(type.builtinType());
+        if (type.builtinType() is { } builtinType)
+        {
+            return ResolveBuiltinType(builtinType);
+        }
+
+        return ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName, comptimeGenericParameters);
     }
 
     private StarkTypeSymbol ResolveFunctionPointerType(

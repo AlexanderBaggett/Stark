@@ -24576,29 +24576,7 @@ public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementL
 
     if (kind == Compiler.Parsing.ExprKind.Conversion)
     {
-        stack TokenKind targetKind = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprLeftAt(node));
-        if (targetKind == TokenKind.Bool)
-        {
-            return ExprType.Bool;
-        }
-
-        if (targetKind == TokenKind.IntegerType)
-        {
-            return ExprType.Int;
-        }
-
-        if (targetKind == TokenKind.FloatType)
-        {
-            return ExprType.Float;
-        }
-
-        if (targetKind == TokenKind.AsciiView
-            || targetKind == TokenKind.AsciiOwned
-            || targetKind == TokenKind.UnicodeView
-            || targetKind == TokenKind.UnicodeOwned)
-        {
-            return ExprType.Text;
-        }
+        return MapTypeToken(stream, body.ExprLeftAt(node));
     }
 
     if (kind == Compiler.Parsing.ExprKind.Conditional)

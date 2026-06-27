@@ -16469,6 +16469,13 @@ fn bool UnsafeFunctionItemsPromoteToUnsafeFunctionPointersAndCallsRequireUnsafeC
 
 [Fact]
 [Collection("diagnostics", "type-checking")]
+fn bool FfiFunctionBodiesPromoteToNativeCallbackFunctionPointers()
+{
+    return FfiFunctionBodiesPromoteToNativeCallbackFunctionPointersImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "type-checking")]
 fn bool UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositions()
 {
     return UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositionsImpl();
@@ -17347,6 +17354,13 @@ fn bool DynamicStorageSpareRangeCanBindInitSliceView()
 fn bool TextLiteralsHaveConstProvenanceForConstParameters()
 {
     return TextLiteralsHaveConstProvenanceForConstParametersImpl();
+}
+
+[Fact]
+[Collection("type-checking", "type-checking")]
+fn bool ImportedSourceConstantAliasesResolveInDeclaringModuleScope()
+{
+    return ImportedSourceConstantAliasesResolveInDeclaringModuleScopeImpl();
 }
 
 [Fact]

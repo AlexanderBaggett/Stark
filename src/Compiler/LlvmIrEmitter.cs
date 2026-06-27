@@ -2715,6 +2715,7 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Float when type.BitWidth == 64 => "double",
             StarkTypeKind.Float when type.BitWidth == 80 => "x86_fp80",
             StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
+            StarkTypeKind.CVaList => "ptr",
             StarkTypeKind.RawPointer => "ptr",
             StarkTypeKind.FunctionPointer => "ptr",
             StarkTypeKind.LlvmVector when type.ElementType is not null && type.FixedLength is int vectorLength => $"<{vectorLength} x {MapType(type.ElementType)}>",

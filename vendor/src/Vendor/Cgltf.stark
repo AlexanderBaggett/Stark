@@ -1,0 +1,974 @@
+import System.C
+module Vendor.Cgltf
+
+public const CgltfNoIndex = 18446744073709551615;
+
+internal const CGLTF_SUCCESS = 0;
+internal const STARK_CGLTF_INVALID_ARGUMENT = -1;
+internal const STARK_CGLTF_OUT_OF_RANGE = -2;
+internal const STARK_CGLTF_DESTINATION_TOO_SMALL = -3;
+
+internal const NAME_MESH = 1;
+internal const NAME_MATERIAL = 2;
+internal const NAME_BUFFER = 3;
+internal const NAME_BUFFER_URI = 4;
+internal const NAME_NODE = 5;
+internal const NAME_SCENE = 6;
+internal const NAME_ANIMATION = 7;
+
+internal struct CgltfDocumentNative
+{
+    i8[min max] Opaque;
+}
+
+public enum CgltfError
+{
+    InvalidArgument,
+    OutOfRange,
+    DestinationTooSmall,
+    DataTooShort,
+    UnknownFormat,
+    InvalidJson,
+    InvalidGltf,
+    InvalidOptions,
+    FileNotFound,
+    IoError,
+    OutOfMemory,
+    LegacyGltf,
+    Native(i32[min max]),
+}
+
+public enum CgltfStatus
+{
+    [Ok] Ok,
+    [Err] Err(CgltfError),
+}
+
+public enum DocumentResult
+{
+    [Ok] Ok(Document),
+    [Err] Err(CgltfError),
+}
+
+public enum CountsResult
+{
+    [Ok] Ok(DocumentCounts),
+    [Err] Err(CgltfError),
+}
+
+public enum MeshInfoResult
+{
+    [Ok] Ok(MeshInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum MaterialInfoResult
+{
+    [Ok] Ok(MaterialInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum BufferInfoResult
+{
+    [Ok] Ok(BufferInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum NodeInfoResult
+{
+    [Ok] Ok(NodeInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum SceneInfoResult
+{
+    [Ok] Ok(SceneInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum AnimationInfoResult
+{
+    [Ok] Ok(AnimationInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum AccessorInfoResult
+{
+    [Ok] Ok(AccessorInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum PrimitiveInfoResult
+{
+    [Ok] Ok(PrimitiveInfo),
+    [Err] Err(CgltfError),
+}
+
+public enum NameCopyResult
+{
+    [Ok] Ok(u64[0 max]),
+    [Err] Err(CgltfError),
+}
+
+public enum BufferLoadPolicy
+{
+    MetadataOnly,
+    LoadExternalBuffers,
+}
+
+public enum AlphaMode
+{
+    Opaque,
+    Mask,
+    Blend,
+    Unknown,
+}
+
+public enum ComponentType
+{
+    Invalid,
+    I8,
+    U8,
+    I16,
+    U16,
+    U32,
+    F32,
+}
+
+public enum AccessorType
+{
+    Invalid,
+    Scalar,
+    Vec2,
+    Vec3,
+    Vec4,
+    Mat2,
+    Mat3,
+    Mat4,
+}
+
+public enum PrimitiveMode
+{
+    Invalid,
+    Points,
+    Lines,
+    LineLoop,
+    LineStrip,
+    Triangles,
+    TriangleStrip,
+    TriangleFan,
+}
+
+public struct Document
+{
+    internal rawmutptr<CgltfDocumentNative> Handle;
+
+    Document()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Document self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_cgltf_free(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+[StructLayout(C)]
+public struct DocumentCounts
+{
+    public u64[0 max] Meshes;
+    public u64[0 max] Materials;
+    public u64[0 max] Buffers;
+    public u64[0 max] BufferViews;
+    public u64[0 max] Accessors;
+    public u64[0 max] Images;
+    public u64[0 max] Textures;
+    public u64[0 max] Samplers;
+    public u64[0 max] Skins;
+    public u64[0 max] Cameras;
+    public u64[0 max] Lights;
+    public u64[0 max] Nodes;
+    public u64[0 max] Scenes;
+    public u64[0 max] Animations;
+}
+
+public struct MeshInfo
+{
+    public u64[0 max] NameByteLength;
+    public u64[0 max] PrimitiveCount;
+    public u64[0 max] WeightCount;
+    public u64[0 max] TargetNameCount;
+}
+
+public struct MaterialInfo
+{
+    public u64[0 max] NameByteLength;
+    public bool HasPbrMetallicRoughness;
+    public bool HasPbrSpecularGlossiness;
+    public AlphaMode Alpha;
+    public bool DoubleSided;
+    public bool Unlit;
+}
+
+public struct BufferInfo
+{
+    public u64[0 max] NameByteLength;
+    public u64[0 max] UriByteLength;
+    public u64[0 max] SizeBytes;
+    public bool IsLoaded;
+}
+
+public struct NodeInfo
+{
+    public u64[0 max] NameByteLength;
+    public u64[0 max] ChildCount;
+    public u64[0 max] WeightCount;
+    public bool HasMesh;
+    public u64[0 max] MeshIndex;
+    public bool HasCamera;
+    public u64[0 max] CameraIndex;
+    public bool HasSkin;
+    public u64[0 max] SkinIndex;
+    public bool HasTranslation;
+    public bool HasRotation;
+    public bool HasScale;
+    public bool HasMatrix;
+}
+
+public struct SceneInfo
+{
+    public u64[0 max] NameByteLength;
+    public u64[0 max] NodeCount;
+}
+
+public struct AnimationInfo
+{
+    public u64[0 max] NameByteLength;
+    public u64[0 max] SamplerCount;
+    public u64[0 max] ChannelCount;
+}
+
+public struct AccessorInfo
+{
+    public u64[0 max] NameByteLength;
+    public u64[0 max] Count;
+    public u64[0 max] Stride;
+    public ComponentType Component;
+    public AccessorType Type;
+    public bool Normalized;
+    public bool HasBufferView;
+    public u64[0 max] BufferViewIndex;
+    public bool IsSparse;
+}
+
+public struct PrimitiveInfo
+{
+    public PrimitiveMode Mode;
+    public u64[0 max] AttributeCount;
+    public u64[0 max] TargetCount;
+    public bool HasIndices;
+    public u64[0 max] IndicesAccessorIndex;
+    public bool HasMaterial;
+    public u64[0 max] MaterialIndex;
+}
+
+[StructLayout(C)]
+internal struct NativeMeshInfo
+{
+    u64[0 max] NameBytes;
+    u64[0 max] Primitives;
+    u64[0 max] Weights;
+    u64[0 max] TargetNames;
+}
+
+[StructLayout(C)]
+internal struct NativeMaterialInfo
+{
+    u64[0 max] NameBytes;
+    i32[min max] HasPbrMetallicRoughness;
+    i32[min max] HasPbrSpecularGlossiness;
+    i32[min max] AlphaModeValue;
+    i32[min max] DoubleSided;
+    i32[min max] Unlit;
+}
+
+[StructLayout(C)]
+internal struct NativeBufferInfo
+{
+    u64[0 max] NameBytes;
+    u64[0 max] UriBytes;
+    u64[0 max] SizeBytes;
+    i32[min max] IsLoaded;
+}
+
+[StructLayout(C)]
+internal struct NativeNodeInfo
+{
+    u64[0 max] NameBytes;
+    u64[0 max] Children;
+    u64[0 max] Weights;
+    u64[0 max] MeshIndex;
+    u64[0 max] CameraIndex;
+    u64[0 max] SkinIndex;
+    i32[min max] HasMesh;
+    i32[min max] HasCamera;
+    i32[min max] HasSkin;
+    i32[min max] HasTranslation;
+    i32[min max] HasRotation;
+    i32[min max] HasScale;
+    i32[min max] HasMatrix;
+}
+
+[StructLayout(C)]
+internal struct NativeSceneInfo
+{
+    u64[0 max] NameBytes;
+    u64[0 max] Nodes;
+}
+
+[StructLayout(C)]
+internal struct NativeAnimationInfo
+{
+    u64[0 max] NameBytes;
+    u64[0 max] Samplers;
+    u64[0 max] Channels;
+}
+
+[StructLayout(C)]
+internal struct NativeAccessorInfo
+{
+    u64[0 max] NameBytes;
+    u64[0 max] Count;
+    u64[0 max] Stride;
+    u64[0 max] BufferViewIndex;
+    i32[min max] ComponentTypeValue;
+    i32[min max] TypeValue;
+    i32[min max] Normalized;
+    i32[min max] HasBufferView;
+    i32[min max] IsSparse;
+}
+
+[StructLayout(C)]
+internal struct NativePrimitiveInfo
+{
+    u64[0 max] Attributes;
+    u64[0 max] Targets;
+    u64[0 max] IndicesAccessorIndex;
+    u64[0 max] MaterialIndex;
+    i32[min max] TypeValue;
+    i32[min max] HasIndices;
+    i32[min max] HasMaterial;
+}
+
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_parse_memory(
+    rawptr<u8[0 max]> data,
+    System.C.c_size_t dataSize,
+    System.C.c_int validate,
+    rawmutptr<rawmutptr<CgltfDocumentNative>> document);
+
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_parse_file(
+    rawptr<System.C.c_char> path,
+    System.C.c_int loadBuffers,
+    System.C.c_int validate,
+    rawmutptr<rawmutptr<CgltfDocumentNative>> document);
+
+internal unsafe ffi(c) fn void stark_cgltf_free(rawmutptr<CgltfDocumentNative> document);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_validate(rawmutptr<CgltfDocumentNative> document);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_counts(rawmutptr<CgltfDocumentNative> document, rawmutptr<DocumentCounts> counts);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_mesh_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeMeshInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_material_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeMaterialInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_buffer_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeBufferInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_node_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeNodeInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_scene_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeSceneInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_animation_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeAnimationInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_accessor_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] index, rawmutptr<NativeAccessorInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_get_primitive_info(rawmutptr<CgltfDocumentNative> document, u64[0 max] meshIndex, u64[0 max] primitiveIndex, rawmutptr<NativePrimitiveInfo> info);
+internal unsafe ffi(c) fn System.C.c_int stark_cgltf_copy_name(
+    rawmutptr<CgltfDocumentNative> document,
+    System.C.c_int kind,
+    u64[0 max] index,
+    rawmutptr<i8[min max]> destination,
+    System.C.c_size_t destinationCapacity,
+    rawmutptr<u64[0 max]> bytesCopied);
+
+internal finite law CgltfError ErrorFromNative(i32[min max] code)
+{
+    switch (code)
+    {
+        case -1:
+            return CgltfError.InvalidArgument;
+        case -2:
+            return CgltfError.OutOfRange;
+        case -3:
+            return CgltfError.DestinationTooSmall;
+        case 1:
+            return CgltfError.DataTooShort;
+        case 2:
+            return CgltfError.UnknownFormat;
+        case 3:
+            return CgltfError.InvalidJson;
+        case 4:
+            return CgltfError.InvalidGltf;
+        case 5:
+            return CgltfError.InvalidOptions;
+        case 6:
+            return CgltfError.FileNotFound;
+        case 7:
+            return CgltfError.IoError;
+        case 8:
+            return CgltfError.OutOfMemory;
+        case 9:
+            return CgltfError.LegacyGltf;
+        default:
+            return CgltfError.Native(code);
+    }
+}
+
+internal finite law CgltfStatus StatusFromNative(System.C.c_int code)
+{
+    if (code == CGLTF_SUCCESS)
+    {
+        return CgltfStatus.Ok;
+    }
+
+    return CgltfStatus.Err(ErrorFromNative((i32[min max])code));
+}
+
+internal finite law System.C.c_int BoolToNative(bool value)
+{
+    if (value)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+internal finite law System.C.c_int BufferPolicyToNative(BufferLoadPolicy policy)
+{
+    switch (policy)
+    {
+        case BufferLoadPolicy.MetadataOnly:
+            return 0;
+        case BufferLoadPolicy.LoadExternalBuffers:
+            return 1;
+    }
+}
+
+internal finite law bool NativeBool(i32[min max] value)
+{
+    return value != 0;
+}
+
+internal finite law AlphaMode AlphaModeFromNative(i32[min max] value)
+{
+    switch (value)
+    {
+        case 0:
+            return AlphaMode.Opaque;
+        case 1:
+            return AlphaMode.Mask;
+        case 2:
+            return AlphaMode.Blend;
+        default:
+            return AlphaMode.Unknown;
+    }
+}
+
+internal finite law ComponentType ComponentTypeFromNative(i32[min max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return ComponentType.I8;
+        case 2:
+            return ComponentType.U8;
+        case 3:
+            return ComponentType.I16;
+        case 4:
+            return ComponentType.U16;
+        case 5:
+            return ComponentType.U32;
+        case 6:
+            return ComponentType.F32;
+        default:
+            return ComponentType.Invalid;
+    }
+}
+
+internal finite law AccessorType AccessorTypeFromNative(i32[min max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return AccessorType.Scalar;
+        case 2:
+            return AccessorType.Vec2;
+        case 3:
+            return AccessorType.Vec3;
+        case 4:
+            return AccessorType.Vec4;
+        case 5:
+            return AccessorType.Mat2;
+        case 6:
+            return AccessorType.Mat3;
+        case 7:
+            return AccessorType.Mat4;
+        default:
+            return AccessorType.Invalid;
+    }
+}
+
+internal finite law PrimitiveMode PrimitiveModeFromNative(i32[min max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return PrimitiveMode.Points;
+        case 2:
+            return PrimitiveMode.Lines;
+        case 3:
+            return PrimitiveMode.LineLoop;
+        case 4:
+            return PrimitiveMode.LineStrip;
+        case 5:
+            return PrimitiveMode.Triangles;
+        case 6:
+            return PrimitiveMode.TriangleStrip;
+        case 7:
+            return PrimitiveMode.TriangleFan;
+        default:
+            return PrimitiveMode.Invalid;
+    }
+}
+
+internal finite law MeshInfo MeshInfoFromNative(NativeMeshInfo info)
+{
+    return new MeshInfo()
+    {
+        NameByteLength = info.NameBytes,
+        PrimitiveCount = info.Primitives,
+        WeightCount = info.Weights,
+        TargetNameCount = info.TargetNames
+    };
+}
+
+internal finite law MaterialInfo MaterialInfoFromNative(NativeMaterialInfo info)
+{
+    return new MaterialInfo()
+    {
+        NameByteLength = info.NameBytes,
+        HasPbrMetallicRoughness = NativeBool(info.HasPbrMetallicRoughness),
+        HasPbrSpecularGlossiness = NativeBool(info.HasPbrSpecularGlossiness),
+        Alpha = AlphaModeFromNative(info.AlphaModeValue),
+        DoubleSided = NativeBool(info.DoubleSided),
+        Unlit = NativeBool(info.Unlit)
+    };
+}
+
+internal finite law BufferInfo BufferInfoFromNative(NativeBufferInfo info)
+{
+    return new BufferInfo()
+    {
+        NameByteLength = info.NameBytes,
+        UriByteLength = info.UriBytes,
+        SizeBytes = info.SizeBytes,
+        IsLoaded = NativeBool(info.IsLoaded)
+    };
+}
+
+internal finite law NodeInfo NodeInfoFromNative(NativeNodeInfo info)
+{
+    return new NodeInfo()
+    {
+        NameByteLength = info.NameBytes,
+        ChildCount = info.Children,
+        WeightCount = info.Weights,
+        HasMesh = NativeBool(info.HasMesh),
+        MeshIndex = info.MeshIndex,
+        HasCamera = NativeBool(info.HasCamera),
+        CameraIndex = info.CameraIndex,
+        HasSkin = NativeBool(info.HasSkin),
+        SkinIndex = info.SkinIndex,
+        HasTranslation = NativeBool(info.HasTranslation),
+        HasRotation = NativeBool(info.HasRotation),
+        HasScale = NativeBool(info.HasScale),
+        HasMatrix = NativeBool(info.HasMatrix)
+    };
+}
+
+internal finite law SceneInfo SceneInfoFromNative(NativeSceneInfo info)
+{
+    return new SceneInfo()
+    {
+        NameByteLength = info.NameBytes,
+        NodeCount = info.Nodes
+    };
+}
+
+internal finite law AnimationInfo AnimationInfoFromNative(NativeAnimationInfo info)
+{
+    return new AnimationInfo()
+    {
+        NameByteLength = info.NameBytes,
+        SamplerCount = info.Samplers,
+        ChannelCount = info.Channels
+    };
+}
+
+internal finite law AccessorInfo AccessorInfoFromNative(NativeAccessorInfo info)
+{
+    return new AccessorInfo()
+    {
+        NameByteLength = info.NameBytes,
+        Count = info.Count,
+        Stride = info.Stride,
+        Component = ComponentTypeFromNative(info.ComponentTypeValue),
+        Type = AccessorTypeFromNative(info.TypeValue),
+        Normalized = NativeBool(info.Normalized),
+        HasBufferView = NativeBool(info.HasBufferView),
+        BufferViewIndex = info.BufferViewIndex,
+        IsSparse = NativeBool(info.IsSparse)
+    };
+}
+
+internal finite law PrimitiveInfo PrimitiveInfoFromNative(NativePrimitiveInfo info)
+{
+    return new PrimitiveInfo()
+    {
+        Mode = PrimitiveModeFromNative(info.TypeValue),
+        AttributeCount = info.Attributes,
+        TargetCount = info.Targets,
+        HasIndices = NativeBool(info.HasIndices),
+        IndicesAccessorIndex = info.IndicesAccessorIndex,
+        HasMaterial = NativeBool(info.HasMaterial),
+        MaterialIndex = info.MaterialIndex
+    };
+}
+
+public fn DocumentResult ParseFromMemory(borrow u8[0 max][] encoded, bool validate)
+{
+    if (encoded.Length == 0)
+    {
+        return DocumentResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut rawmutptr<CgltfDocumentNative> handle = null;
+        stack System.C.c_size_t byteLength = encoded.Length;
+        stack System.C.c_int status = stark_cgltf_parse_memory(
+            &encoded[0],
+            byteLength,
+            BoolToNative(validate),
+            &handle);
+        if (status != CGLTF_SUCCESS)
+        {
+            return DocumentResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        stack mut Document document = new();
+        document.Handle = handle;
+        return DocumentResult.Ok(document);
+    }
+}
+
+public fn DocumentResult ParseFromFile(ascii path, BufferLoadPolicy bufferPolicy, bool validate)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> preparedPath = System.C.FromAscii(path);
+    switch (preparedPath)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return DocumentResult.Err(CgltfError.InvalidArgument);
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cPath):
+            unsafe
+            {
+                stack mut rawmutptr<CgltfDocumentNative> handle = null;
+                stack System.C.c_int status = stark_cgltf_parse_file(
+                    cPath.Data(),
+                    BufferPolicyToNative(bufferPolicy),
+                    BoolToNative(validate),
+                    &handle);
+                if (status != CGLTF_SUCCESS)
+                {
+                    return DocumentResult.Err(ErrorFromNative((i32[min max])status));
+                }
+
+                stack mut Document document = new();
+                document.Handle = handle;
+                return DocumentResult.Ok(document);
+            }
+    }
+}
+
+public fn CgltfStatus Validate(borrow Document document)
+{
+    if (document.IsEmpty())
+    {
+        return CgltfStatus.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_cgltf_validate(document.Handle));
+    }
+}
+
+public fn CountsResult GetCounts(borrow Document document)
+{
+    if (document.IsEmpty())
+    {
+        return CountsResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut DocumentCounts counts = new();
+        stack System.C.c_int status = stark_cgltf_get_counts(document.Handle, &counts);
+        if (status != CGLTF_SUCCESS)
+        {
+            return CountsResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return CountsResult.Ok(counts);
+    }
+}
+
+public fn MeshInfoResult GetMeshInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return MeshInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeMeshInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_mesh_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return MeshInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return MeshInfoResult.Ok(MeshInfoFromNative(info));
+    }
+}
+
+public fn MaterialInfoResult GetMaterialInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return MaterialInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeMaterialInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_material_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return MaterialInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return MaterialInfoResult.Ok(MaterialInfoFromNative(info));
+    }
+}
+
+public fn BufferInfoResult GetBufferInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return BufferInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeBufferInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_buffer_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return BufferInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return BufferInfoResult.Ok(BufferInfoFromNative(info));
+    }
+}
+
+public fn NodeInfoResult GetNodeInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return NodeInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeNodeInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_node_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return NodeInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return NodeInfoResult.Ok(NodeInfoFromNative(info));
+    }
+}
+
+public fn SceneInfoResult GetSceneInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return SceneInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeSceneInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_scene_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return SceneInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return SceneInfoResult.Ok(SceneInfoFromNative(info));
+    }
+}
+
+public fn AnimationInfoResult GetAnimationInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return AnimationInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeAnimationInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_animation_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return AnimationInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return AnimationInfoResult.Ok(AnimationInfoFromNative(info));
+    }
+}
+
+public fn AccessorInfoResult GetAccessorInfo(borrow Document document, u64[0 max] index)
+{
+    if (document.IsEmpty())
+    {
+        return AccessorInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativeAccessorInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_accessor_info(document.Handle, index, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return AccessorInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return AccessorInfoResult.Ok(AccessorInfoFromNative(info));
+    }
+}
+
+public fn PrimitiveInfoResult GetPrimitiveInfo(borrow Document document, u64[0 max] meshIndex, u64[0 max] primitiveIndex)
+{
+    if (document.IsEmpty())
+    {
+        return PrimitiveInfoResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut NativePrimitiveInfo info = new();
+        stack System.C.c_int status = stark_cgltf_get_primitive_info(document.Handle, meshIndex, primitiveIndex, &info);
+        if (status != CGLTF_SUCCESS)
+        {
+            return PrimitiveInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return PrimitiveInfoResult.Ok(PrimitiveInfoFromNative(info));
+    }
+}
+
+internal fn NameCopyResult CopyNameBytes(
+    borrow Document document,
+    System.C.c_int kind,
+    u64[0 max] index,
+    borrow mut i8[min max][] destination)
+{
+    if (document.IsEmpty())
+    {
+        return NameCopyResult.Err(CgltfError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut rawmutptr<i8[min max]> output = null;
+        if (destination.Length != 0)
+        {
+            output = &destination[0];
+        }
+
+        stack mut u64[0 max] bytesCopied = 0;
+        stack System.C.c_size_t capacity = destination.Length;
+        stack System.C.c_int status = stark_cgltf_copy_name(document.Handle, kind, index, output, capacity, &bytesCopied);
+        if (status != CGLTF_SUCCESS)
+        {
+            return NameCopyResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return NameCopyResult.Ok(bytesCopied);
+    }
+}
+
+public fn NameCopyResult CopyMeshNameBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_MESH, index, destination);
+}
+
+public fn NameCopyResult CopyMaterialNameBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_MATERIAL, index, destination);
+}
+
+public fn NameCopyResult CopyBufferNameBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_BUFFER, index, destination);
+}
+
+public fn NameCopyResult CopyBufferUriBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_BUFFER_URI, index, destination);
+}
+
+public fn NameCopyResult CopyNodeNameBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_NODE, index, destination);
+}
+
+public fn NameCopyResult CopySceneNameBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_SCENE, index, destination);
+}
+
+public fn NameCopyResult CopyAnimationNameBytes(borrow Document document, u64[0 max] index, borrow mut i8[min max][] destination)
+{
+    return CopyNameBytes(document, NAME_ANIMATION, index, destination);
+}

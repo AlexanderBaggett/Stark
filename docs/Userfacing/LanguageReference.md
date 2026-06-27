@@ -45,12 +45,19 @@ Rules:
 
 `System.*` modules are Stark's standard library. `Vendor.*` modules are a
 separate bundled vendor library for bindings to established native libraries;
-for example, `import Vendor.Raylib` imports the bundled raylib binding surface.
+for example, imports such as `import Vendor.Raylib`, `import Vendor.SQLite`,
+`import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.Miniaudio`,
+`import Vendor.STB.Image`, or `import Vendor.Cgltf` bring bundled native
+binding surfaces into scope.
 Project builds discover `Vendor` artifacts beside `System` artifacts: first
-from the active stage, then repo `vendor/dist` package images or `vendor/src`
-source, then an installed compiler bundle. Native-backed vendor packages carry
-their link metadata, so machine-local include/library paths belong in
-`Stark.user.toml` or user config rather than in source.
+from the active stage, then target-specific repo `vendor/dist/<target-triple>`
+package images plus flat `vendor/dist` fallback package images or `vendor/src`
+source, then an installed compiler bundle. User commands can still pass
+`-I vendor/dist`; package-image resolution filters target-named subdirectories
+to the active target so a Linux native payload is not selected for a Windows
+build. Native-backed vendor packages carry their link metadata, so machine-local
+include/library paths belong in `Stark.user.toml` or user config rather than in
+source.
 
 ### 2.1 Comments
 
@@ -128,20 +135,24 @@ The current package author surface is CLI metadata:
 ```bash
 compiler vendor/src/Vendor/Raylib.stark --emit-lib \
   -I vendor/src \
-  -o vendor/dist/libVendorRaylib.a \
-  --package-image-output vendor/dist/libVendorRaylib.starkpkg \
+  -o vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.a \
+  --package-image-output vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.starkpkg \
   --native-pkg-config raylib
 ```
 
-The package records those native dependency declarations. A downstream executable that imports the package gathers the package owned native build metadata automatically.
+The package records those native dependency declarations. Native-backed package
+images that bundle platform payloads should be emitted under
+`vendor/dist/<target-triple>/`; downstream executables can import them through
+the broader `-I vendor/dist` search root and gather the package owned native
+build metadata automatically.
 
 When the native dependency is not available through `pkg-config`, the package can use explicit metadata:
 
 ```bash
 compiler vendor/src/Vendor/Raylib.stark --emit-lib \
   -I vendor/src \
-  -o vendor/dist/libVendorRaylib.a \
-  --package-image-output vendor/dist/libVendorRaylib.starkpkg \
+  -o vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.a \
+  --package-image-output vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.starkpkg \
   --native-include-dir /path/to/raylib/src \
   --native-library-dir /path/to/raylib/src \
   --native-library raylib
@@ -599,6 +610,14 @@ a compatible function item or non-capturing lambda; `null` is not assignable to 
 must be explicitly initialized when an aggregate initializer would otherwise
 zero-fill them.
 
+Unsafe FFI loader APIs may return symbols as raw pointers. In an unsafe context,
+an explicit cast from `rawptr<T>` or `rawmutptr<T>` to a compatible `fnptr<...>`
+is allowed when the program has already proven the pointer is non-null and names
+a function with that exact ABI and signature. The reverse cast from `fnptr<...>`
+to a raw pointer is also unsafe and explicit. These casts use ordinary Stark cast
+syntax (`(Callback)symbol`) and are intended for native dispatch tables; they do
+not check the foreign signature at runtime.
+
 Function pointer types also carry memory-separation contracts for memory-backed
 parameters. Because `fnptr` parameter lists do not name parameters, contract
 clauses use synthetic names `arg0`, `arg1`, and so on. Memory-backed `fnptr`
@@ -618,6 +637,38 @@ fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])>
 ```
 
 An ordinary `fnptr<fn ...>` (and `fnptr<ffi(c) fn ...>` without `unsafe`) is a safe callable pointer, and an unsafe function item cannot be promoted into it, because that would hide the unsafe requirement from later calls. To carry an unsafe foreign callback, write the `unsafe` keyword inside the `fnptr` type (`fnptr<unsafe ffi(c) fn ...>`) and promote inside an unsafe context; calling it still requires unsafe (see 13.3). Otherwise, call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
+
+Native callback registration uses the same thin function-pointer model. A
+non-capturing Stark function with a matching `unsafe ffi(abi)` signature can be
+passed to a foreign API that expects a function pointer:
+
+```stark
+alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+{
+    return;
+}
+
+unsafe ffi(c) fn void RegisterAudio(AudioCallback callback);
+
+unsafe fn void Install()
+{
+    RegisterAudio(FillAudio);
+    return;
+}
+```
+
+The callback body lowers as a C-ABI function, and the registration call passes
+its address directly. `export` is only needed when foreign code looks up the
+callback by symbol name; it is not required when Stark passes the function
+pointer value. Capturing lambdas and closures are not valid thin native
+callbacks because C receives no closure storage. A safe wrapper may accept or
+store a `fnptr<unsafe ffi(...) fn ...>` callback without becoming `unsafe`
+itself; creating that callback from an unsafe function item and invoking it both
+still require an unsafe context. C callback shapes that include target-specific
+types not yet modeled by Stark, such as `va_list`, require a dedicated ABI
+carrier or a real native adapter.
 
 ### 5.6 Lambdas and Capture Modes
 
@@ -2745,6 +2796,20 @@ fn System.C.CStringResult<System.C.c_int> PrintName(ascii name)
 
 See 13.5 for the `System.C` C-string types.
 
+C APIs that receive an already-built `va_list` use `System.C.VaList`, not
+`ffi varargs`. `VaList` is a target-specific C ABI carrier for fixed-arity
+`vprintf`-style functions and callbacks. It is valid only as an unsafe
+`ffi(c)`-compatible function parameter, an `ffi(c)`-compatible function-pointer
+parameter, or the direct pointee of `rawptr<System.C.VaList>` /
+`rawmutptr<System.C.VaList>`. It cannot be stored, returned, constructed, or
+used as an ordinary Stark value.
+
+```stark
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> sqlite3_vmprintf(
+    rawptr<System.C.c_char> format,
+    System.C.VaList args);
+```
+
 ### 13.2 Assembly Functions
 
 Assembly functions are Stark's current low level inline assembly boundary. They
@@ -2919,7 +2984,7 @@ C headers spell integer and pointer-size types as `int`, `long`, `size_t`, and s
 | `System.C.c_short` | `short` | `System.C.c_size_t` | `size_t` |
 | `System.C.c_ushort` | `unsigned short` | `System.C.c_ptrdiff_t` | `ptrdiff_t` |
 | `System.C.c_int` | `int` | `System.C.c_void` | `void` (raw pointee only) |
-| `System.C.c_uint` | `unsigned int` | | |
+| `System.C.c_uint` | `unsigned int` | `System.C.VaList` | `va_list` (ABI parameter carrier only) |
 | `System.C.c_long` | `long` | | |
 
 These are **target-resolved aliases**: the compiler maps each one onto an ordinary Stark sized primitive for the active target before layout, type checking, and codegen. They do not create a second integer type system, hidden conversions, or distinct ABI identities. For example, `System.C.c_int` resolves to `i32[min max]`, and `System.C.c_long` resolves to `i32[min max]` on ILP32/LLP64 targets but `i64[min max]` on LP64 targets. Two aliases that resolve to the same primitive are the same runtime type on that target.
@@ -2949,6 +3014,8 @@ unsafe fn i64[min max] StableCount()
 `c_char` signedness is target-dependent. Plain `System.C.c_char` follows the target's `char` signedness (exposed as the compile-time bool `System.C.c_char_is_signed`); `System.C.c_schar` is always signed 8-bit and `System.C.c_uchar` is always unsigned 8-bit. Use `c_char` only where the header says `char`. For byte buffers that are not text, use `System.C.c_uchar` or `u8[0 max]`. `c_char` signedness is a C ABI fact, not an encoding fact, and there is no implicit conversion between `rawptr<System.C.c_char>` and Stark `ascii`.
 
 `System.C.c_void` is an incomplete foreign pointee. It is valid only as the direct pointee of a raw pointer (`rawptr<System.C.c_void>` / `rawmutptr<System.C.c_void>`); using it as a value, field, array element, or function return is a compile-time error (STK3050). C functions that return `void` use Stark's ordinary `void` return type. Conversions between `rawptr<System.C.c_void>` and a typed raw pointer are explicit raw pointer conversions and stay unsafe.
+
+`System.C.VaList` models C `va_list` at ABI edges. It is valid only as an unsafe `ffi(c)`-compatible function parameter, an `ffi(c)`-compatible function-pointer parameter, or the direct pointee of `rawptr<System.C.VaList>` / `rawmutptr<System.C.VaList>`; using it as a normal value, local, field, array element, or return type is a compile-time error (STK3051). Stark code still cannot construct a C `va_list` or define a C-style variadic body.
 
 For ABI aggregates, C aliases preserve layout intent; the layout engine resolves each field alias for the active target before computing offsets (see 8.7):
 

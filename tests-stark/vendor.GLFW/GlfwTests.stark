@@ -1,0 +1,76 @@
+import Vendor.GLFW
+module GlfwTests
+
+finite law bool IsHeadlessCompatibleError(GlfwError error)
+{
+    switch (error)
+    {
+        case GlfwError.PlatformUnavailable:
+            return true;
+        case GlfwError.PlatformError:
+            return true;
+        case GlfwError.ApiUnavailable:
+            return true;
+        case GlfwError.WindowCreationFailed:
+            return true;
+        default:
+            return false;
+    }
+}
+
+[Fact]
+fn bool VersionReportsSupportedMajor()
+{
+    stack Version version = GetVersion();
+    return version.Major >= 3;
+}
+
+[Fact]
+fn bool InitializeSucceedsOrReportsHeadlessCompatibleError()
+{
+    switch (Initialize())
+    {
+        case LibraryResult.Ok(var library):
+            return !library.IsEmpty();
+        case LibraryResult.Err(var error):
+            return IsHeadlessCompatibleError(error);
+    }
+}
+
+[Fact]
+fn bool HiddenNoApiWindowCanBeCreatedWhenPlatformIsAvailable()
+{
+    switch (Initialize())
+    {
+        case LibraryResult.Err(var error):
+            return IsHeadlessCompatibleError(error);
+        case LibraryResult.Ok(var library):
+            DefaultWindowHints();
+            SetClientApiHint(ClientApi.None);
+            SetWindowHintBool(WindowHint.Visible, false);
+            switch (CreateWindow(32, 32, "Stark GLFW test"))
+            {
+                case WindowResult.Err(var error):
+                    return IsHeadlessCompatibleError(error);
+                case WindowResult.Ok(var window):
+                    stack Size size = GetWindowSize(window);
+                    return !window.IsEmpty()
+                        && size.Width > 0
+                        && size.Height > 0
+                        && WindowShouldClose(window) == false;
+            }
+    }
+}
+
+[Fact]
+fn bool EmptyWindowBridgeRejectsInvalidHandle()
+{
+    stack mut Window window = new();
+    switch (EnableEventBridge(window))
+    {
+        case GlfwStatus.Ok:
+            return false;
+        case GlfwStatus.Err(var error):
+            return error == GlfwError.InvalidArgument;
+    }
+}

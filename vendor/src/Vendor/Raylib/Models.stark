@@ -2,6 +2,31 @@ import Vendor.Raylib.Types
 export import Vendor.Raylib.Types
 module Vendor.Raylib.Models
 
+internal unsafe inline finite law rawptr<i8[min max]> ReadI8OrNull(borrow i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawptr<Matrix> ReadMatricesOrNull(borrow Matrix[] values)
+{
+    if (values.Length == 0)
+    {
+        return null;
+    }
+
+    return &values[0];
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
+
 [LinkName("DrawLine3D")]
 internal unsafe ffi fn void stark_raylib_DrawLine3D(Vector3 startPos, Vector3 endPos, Color color);
 public fn void DrawLine3D(Vector3 startPos, Vector3 endPos, Color color) {
@@ -341,11 +366,17 @@ public fn Mesh UploadMesh(Mesh mesh, bool isDynamic) {
 
 [LinkName("UpdateMeshBuffer")]
 internal unsafe ffi fn void stark_raylib_UpdateMeshBuffer(Mesh mesh, i32[min max] index, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset);
-public unsafe fn void UpdateMeshBuffer(Mesh mesh, i32[min max] index, rawptr<i8[min max]> data, i32[min max] dataSize, i32[min max] offset) {
-    unsafe {
-        stark_raylib_UpdateMeshBuffer(mesh, index, data, dataSize, offset);
+public fn RaylibStatus UpdateMeshBuffer(Mesh mesh, i32[min max] index, borrow i8[min max][] data, i32[min max] offset) {
+    if (TooManyForI32(data.Length))
+    {
+        return RaylibStatus.TooManyItems;
     }
-    return;
+
+    unsafe {
+        stark_raylib_UpdateMeshBuffer(mesh, index, ReadI8OrNull(data), (i32[min max])data.Length, offset);
+    }
+
+    return RaylibStatus.Ok;
 }
 
 [LinkName("UnloadMesh")]
@@ -368,11 +399,17 @@ public fn void DrawMesh(Mesh mesh, Material material, Matrix transform) {
 
 [LinkName("DrawMeshInstanced")]
 internal unsafe ffi fn void stark_raylib_DrawMeshInstanced(Mesh mesh, Material material, rawptr<Matrix> transforms, i32[min max] instances);
-public unsafe fn void DrawMeshInstanced(Mesh mesh, Material material, rawptr<Matrix> transforms, i32[min max] instances) {
-    unsafe {
-        stark_raylib_DrawMeshInstanced(mesh, material, transforms, instances);
+public fn RaylibStatus DrawMeshInstanced(Mesh mesh, Material material, borrow Matrix[] transforms) {
+    if (TooManyForI32(transforms.Length))
+    {
+        return RaylibStatus.TooManyItems;
     }
-    return;
+
+    unsafe {
+        stark_raylib_DrawMeshInstanced(mesh, material, ReadMatricesOrNull(transforms), (i32[min max])transforms.Length);
+    }
+
+    return RaylibStatus.Ok;
 }
 
 [LinkName("GetMeshBoundingBox")]
@@ -497,7 +534,8 @@ public fn Mesh GenMeshCubicmap(Image cubicmap, Vector3 cubeSize) {
     }
 }
 
-public unsafe ffi fn rawmutptr<Material> LoadMaterials(ascii fileName, rawmutptr<i32[min max]> materialCount);
+[LinkName("LoadMaterials")]
+internal unsafe ffi fn rawmutptr<Material> LoadMaterials(ascii fileName, rawmutptr<i32[min max]> materialCount);
 [LinkName("LoadMaterialDefault")]
 internal unsafe ffi fn Material stark_raylib_LoadMaterialDefault();
 public fn Material LoadMaterialDefault() {
@@ -533,6 +571,10 @@ public fn Material SetMaterialTexture(Material material, i32[min max] mapType, T
     return result;
 }
 
+public fn Material SetMaterialTexture(Material material, MaterialMapIndex mapType, Texture2D texture) {
+    return SetMaterialTexture(material, MaterialMapIndexNative(mapType), texture);
+}
+
 [LinkName("SetModelMeshMaterial")]
 internal unsafe ffi fn void stark_raylib_SetModelMeshMaterial(rawmutptr<Model> model, i32[min max] meshId, i32[min max] materialId);
 public fn Model SetModelMeshMaterial(Model model, i32[min max] meshId, i32[min max] materialId) {
@@ -543,7 +585,8 @@ public fn Model SetModelMeshMaterial(Model model, i32[min max] meshId, i32[min m
     return result;
 }
 
-public unsafe ffi fn rawmutptr<ModelAnimation> LoadModelAnimations(ascii fileName, rawmutptr<i32[min max]> animCount);
+[LinkName("LoadModelAnimations")]
+internal unsafe ffi fn rawmutptr<ModelAnimation> LoadModelAnimations(ascii fileName, rawmutptr<i32[min max]> animCount);
 [LinkName("UpdateModelAnimation")]
 internal unsafe ffi fn void stark_raylib_UpdateModelAnimation(Model model, ModelAnimation anim, f32 frame);
 public fn void UpdateModelAnimation(Model model, ModelAnimation anim, f32 frame) {
@@ -562,7 +605,8 @@ public fn void UpdateModelAnimationEx(Model model, ModelAnimation animA, f32 fra
     return;
 }
 
-public unsafe ffi fn void UnloadModelAnimations(rawmutptr<ModelAnimation> animations, i32[min max] animCount);
+[LinkName("UnloadModelAnimations")]
+internal unsafe ffi fn void UnloadModelAnimations(rawmutptr<ModelAnimation> animations, i32[min max] animCount);
 [LinkName("IsModelAnimationValid")]
 internal unsafe ffi fn bool stark_raylib_IsModelAnimationValid(Model model, ModelAnimation anim);
 public fn bool IsModelAnimationValid(Model model, ModelAnimation anim) {

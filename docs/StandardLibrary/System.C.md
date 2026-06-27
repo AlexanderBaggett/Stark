@@ -20,7 +20,7 @@ system, hidden conversions, or distinct ABI identities.
 | `c_short` | `short` | `c_size_t` | `size_t` |
 | `c_ushort` | `unsigned short` | `c_ptrdiff_t` | `ptrdiff_t` |
 | `c_int` | `int` | `c_void` | `void` (raw pointee only) |
-| `c_uint` | `unsigned int` | | |
+| `c_uint` | `unsigned int` | `VaList` | `va_list` (ABI parameter carrier only) |
 | `c_long` | `long` | | |
 
 Resolution depends on the target's C data model. For example `c_int` is always
@@ -36,6 +36,11 @@ Resolution depends on the target's C data model. For example `c_int` is always
   pointee of `rawptr<c_void>` / `rawmutptr<c_void>`; using it as a value, field,
   array element, or function return is a compile-time error. C functions
   returning `void` use Stark's ordinary `void` return type.
+* `VaList` models C `va_list` for fixed-arity C APIs and callbacks that receive
+  an existing varargs list. It is valid only as an unsafe `ffi(c)`-compatible
+  function parameter, an `ffi(c)`-compatible function-pointer parameter, or the
+  direct pointee of `rawptr<VaList>` / `rawmutptr<VaList>`. Stark code cannot
+  construct a `VaList`, store it, return it, or define C-style variadic bodies.
 * No implicit conversion exists between `rawptr<c_char>` and Stark `ascii`, or
   between `rawptr<c_void>` and a typed raw pointer. To leave the platform-width
   surface, bind the alias value into a Stark-typed local or cast it to a Stark
@@ -47,6 +52,7 @@ public unsafe ffi(c) fn c_int close(c_int fd);
 public unsafe ffi(c) fn c_size_t strlen(rawptr<c_char> text);
 public unsafe ffi(c) fn rawmutptr<c_void> malloc(c_size_t bytes);
 public unsafe ffi(c) fn void free(rawmutptr<c_void> ptr);
+public unsafe ffi(c) fn rawmutptr<c_char> vformat(rawptr<c_char> format, VaList args);
 ```
 
 ## Public Types

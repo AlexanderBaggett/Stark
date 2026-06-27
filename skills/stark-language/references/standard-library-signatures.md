@@ -53,7 +53,9 @@ Compiler-known C primitive aliases (target-resolved to Stark sized primitives):
 
 `c_char`, `c_schar`, `c_uchar`, `c_short`, `c_ushort`, `c_int`, `c_uint`,
 `c_long`, `c_ulong`, `c_longlong`, `c_ulonglong`, `c_size_t`, `c_ptrdiff_t`, and
-`c_void` (incomplete pointee, valid only behind `rawptr`/`rawmutptr`). The
+`c_void` (incomplete pointee, valid only behind `rawptr`/`rawmutptr`). `VaList`
+models C `va_list` only as an unsafe `ffi(c)`-compatible parameter, an `ffi(c)`
+function-pointer parameter, or a direct raw-pointer pointee. The
 compile-time bool `System.C.c_char_is_signed` reports the target's plain-`char`
 signedness. `c_int` is `i32[min max]`; `c_long` is `i32[min max]` on
 ILP32/LLP64 and `i64[min max]` on LP64; `c_size_t` is `u64[0 max]` on 64-bit and

@@ -1,0 +1,973 @@
+import System.C
+module Vendor.SDL3
+
+public const SDL3MaxNativeByteCount = 2147483647;
+
+public const InitAudio = 16;
+public const InitVideo = 32;
+public const InitJoystick = 512;
+public const InitHaptic = 4096;
+public const InitGamepad = 8192;
+public const InitEvents = 16384;
+public const InitSensor = 32768;
+public const InitCamera = 65536;
+
+public const WindowFullscreen = 1;
+public const WindowOpenGL = 2;
+public const WindowHidden = 8;
+public const WindowBorderless = 16;
+public const WindowResizable = 32;
+public const WindowMinimized = 64;
+public const WindowMaximized = 128;
+public const WindowMouseGrabbed = 256;
+public const WindowInputFocus = 512;
+public const WindowMouseFocus = 1024;
+public const WindowExternal = 2048;
+public const WindowHighPixelDensity = 8192;
+public const WindowMouseCapture = 16384;
+public const WindowAlwaysOnTop = 32768;
+public const WindowUtility = 131072;
+public const WindowTooltip = 262144;
+public const WindowPopupMenu = 524288;
+public const WindowKeyboardGrabbed = 1048576;
+public const WindowVulkan = 268435456;
+public const WindowMetal = 536870912;
+public const WindowTransparent = 1073741824;
+public const WindowNotFocusable = 2147483648;
+
+public const EventQuit = 256;
+public const EventWindowShown = 514;
+public const EventWindowHidden = 515;
+public const EventWindowExposed = 516;
+public const EventWindowMoved = 517;
+public const EventWindowResized = 518;
+public const EventWindowPixelSizeChanged = 519;
+public const EventWindowCloseRequested = 528;
+public const EventKeyDown = 768;
+public const EventKeyUp = 769;
+public const EventMouseMotion = 1024;
+public const EventMouseButtonDown = 1025;
+public const EventMouseButtonUp = 1026;
+public const EventMouseWheel = 1027;
+public const EventAudioDeviceAdded = 4352;
+public const EventAudioDeviceRemoved = 4353;
+public const EventAudioDeviceFormatChanged = 4354;
+
+public const KeyReturn = 13;
+public const KeyEscape = 27;
+public const KeySpace = 32;
+
+public const MouseButtonLeft = 1;
+public const MouseButtonMiddle = 2;
+public const MouseButtonRight = 3;
+
+public const AudioU8 = 8;
+public const AudioS8 = 32776;
+public const AudioS16LE = 32784;
+public const AudioS16BE = 36880;
+public const AudioS32LE = 32800;
+public const AudioS32BE = 36896;
+public const AudioF32LE = 33056;
+public const AudioF32BE = 37152;
+public const DefaultPlaybackDevice = 4294967295;
+public const DefaultRecordingDevice = 4294967294;
+
+internal const SDL_TRUE = 1;
+internal const SDL_FALSE = 0;
+
+internal struct SDLWindowNative
+{
+    i8[min max] Opaque;
+}
+
+internal struct SDLRendererNative
+{
+    i8[min max] Opaque;
+}
+
+internal struct SDLAudioStreamNative
+{
+    i8[min max] Opaque;
+}
+
+public enum SdlError
+{
+    CString(System.C.CStringError),
+    InvalidArgument,
+    InitFailed,
+    MetadataFailed,
+    WindowCreationFailed,
+    RendererCreationFailed,
+    AudioStreamCreationFailed,
+    BufferTooLarge,
+    NativeFailure,
+}
+
+public enum SdlStatus
+{
+    [Ok] Ok,
+    [Err] Err(SdlError),
+}
+
+public enum LibraryResult
+{
+    [Ok] Ok(Library),
+    [Err] Err(SdlError),
+}
+
+public enum WindowResult
+{
+    [Ok] Ok(Window),
+    [Err] Err(SdlError),
+}
+
+public enum RendererResult
+{
+    [Ok] Ok(Renderer),
+    [Err] Err(SdlError),
+}
+
+public enum EventPollResult
+{
+    [Ok] Some(SdlEvent),
+    [Err] None,
+}
+
+public enum AudioStreamResult
+{
+    [Ok] Ok(AudioStream),
+    [Err] Err(SdlError),
+}
+
+public enum AudioDataResult
+{
+    [Ok] Ok(u32[0 2147483647]),
+    [Err] Err(SdlError),
+}
+
+public enum AudioAvailableResult
+{
+    [Ok] Ok(u32[0 2147483647]),
+    [Err] Err(SdlError),
+}
+
+public enum SdlEventKind
+{
+    Quit,
+    Window,
+    KeyDown,
+    KeyUp,
+    MouseMotion,
+    MouseButtonDown,
+    MouseButtonUp,
+    MouseWheel,
+    AudioDevice,
+    Unknown(u32[0 max]),
+}
+
+public struct Version
+{
+    public i32[min max] Major;
+    public i32[min max] Minor;
+    public i32[min max] Patch;
+}
+
+public struct Size
+{
+    public i32[min max] Width;
+    public i32[min max] Height;
+}
+
+public struct Color
+{
+    public u8[0 max] R;
+    public u8[0 max] G;
+    public u8[0 max] B;
+    public u8[0 max] A;
+}
+
+[StructLayout(C)]
+public struct AudioSpec
+{
+    public u32[0 max] Format;
+    public i32[min max] Channels;
+    public i32[min max] Frequency;
+}
+
+public struct SdlEvent
+{
+    public u32[0 max] Type;
+    public SdlEventKind Kind;
+    public u64[0 max] Timestamp;
+    public u32[0 max] WindowId;
+    public u32[0 max] Which;
+    public i32[min max] A;
+    public i32[min max] B;
+    public i32[min max] C;
+    public i32[min max] D;
+    public f32 X;
+    public f32 Y;
+    public f32 XRelative;
+    public f32 YRelative;
+}
+
+public struct Library
+{
+    bool IsInitialized;
+
+    Library()
+    {
+        self.IsInitialized = false;
+    }
+
+    public inline finite law bool IsEmpty(borrow Library self)
+    {
+        return !self.IsInitialized;
+    }
+
+    mut drop
+    {
+        if (self.IsInitialized)
+        {
+            unsafe
+            {
+                stark_sdl3_quit();
+            }
+
+            self.IsInitialized = false;
+        }
+    }
+}
+
+public struct Window
+{
+    internal rawmutptr<SDLWindowNative> Handle;
+
+    Window()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Window self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_sdl3_destroy_window(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct Renderer
+{
+    internal rawmutptr<SDLRendererNative> Handle;
+
+    Renderer()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Renderer self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_sdl3_destroy_renderer(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct AudioStream
+{
+    internal rawmutptr<SDLAudioStreamNative> Handle;
+
+    AudioStream()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow AudioStream self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_sdl3_destroy_audio_stream(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+[StructLayout(C)]
+internal struct NativeEvent
+{
+    u32[0 max] Type;
+    u64[0 max] Timestamp;
+    u32[0 max] WindowId;
+    u32[0 max] Which;
+    i32[min max] A;
+    i32[min max] B;
+    i32[min max] C;
+    i32[min max] D;
+    f32 X;
+    f32 Y;
+    f32 XRelative;
+    f32 YRelative;
+}
+
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_init(u32[0 max] flags);
+internal unsafe ffi(c) fn void stark_sdl3_quit();
+internal unsafe ffi(c) fn u32[0 max] stark_sdl3_was_init(u32[0 max] flags);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_set_app_metadata(
+    rawptr<System.C.c_char> appName,
+    rawptr<System.C.c_char> appVersion,
+    rawptr<System.C.c_char> appIdentifier);
+internal unsafe ffi(c) fn rawptr<System.C.c_char> stark_sdl3_get_error();
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_get_version();
+internal unsafe ffi(c) fn rawmutptr<SDLWindowNative> stark_sdl3_create_window(
+    rawptr<System.C.c_char> title,
+    System.C.c_int width,
+    System.C.c_int height,
+    u64[0 max] flags);
+internal unsafe ffi(c) fn void stark_sdl3_destroy_window(rawmutptr<SDLWindowNative> window);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_set_window_size(
+    rawmutptr<SDLWindowNative> window,
+    System.C.c_int width,
+    System.C.c_int height);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_get_window_size(
+    rawmutptr<SDLWindowNative> window,
+    rawmutptr<System.C.c_int> width,
+    rawmutptr<System.C.c_int> height);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_show_window(rawmutptr<SDLWindowNative> window);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_hide_window(rawmutptr<SDLWindowNative> window);
+internal unsafe ffi(c) fn rawmutptr<SDLRendererNative> stark_sdl3_create_renderer(
+    rawmutptr<SDLWindowNative> window,
+    rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn void stark_sdl3_destroy_renderer(rawmutptr<SDLRendererNative> renderer);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_set_render_draw_color(
+    rawmutptr<SDLRendererNative> renderer,
+    u8[0 max] r,
+    u8[0 max] g,
+    u8[0 max] b,
+    u8[0 max] a);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_render_clear(rawmutptr<SDLRendererNative> renderer);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_render_present(rawmutptr<SDLRendererNative> renderer);
+internal unsafe ffi(c) fn void stark_sdl3_pump_events();
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_poll_event(rawmutptr<NativeEvent> event);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_wait_event_timeout(
+    rawmutptr<NativeEvent> event,
+    System.C.c_int timeoutMilliseconds);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_push_quit_event();
+internal unsafe ffi(c) fn rawmutptr<SDLAudioStreamNative> stark_sdl3_open_audio_device_stream(
+    u32[0 max] deviceId,
+    rawptr<AudioSpec> spec);
+internal unsafe ffi(c) fn void stark_sdl3_destroy_audio_stream(rawmutptr<SDLAudioStreamNative> stream);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_put_audio_stream_data(
+    rawmutptr<SDLAudioStreamNative> stream,
+    rawptr<System.C.c_void> data,
+    System.C.c_int length);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_get_audio_stream_data(
+    rawmutptr<SDLAudioStreamNative> stream,
+    rawmutptr<System.C.c_void> data,
+    System.C.c_int length);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_get_audio_stream_available(rawmutptr<SDLAudioStreamNative> stream);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_flush_audio_stream(rawmutptr<SDLAudioStreamNative> stream);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_clear_audio_stream(rawmutptr<SDLAudioStreamNative> stream);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_pause_audio_stream_device(rawmutptr<SDLAudioStreamNative> stream);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_resume_audio_stream_device(rawmutptr<SDLAudioStreamNative> stream);
+internal unsafe ffi(c) fn System.C.c_int stark_sdl3_audio_stream_device_paused(rawmutptr<SDLAudioStreamNative> stream);
+
+internal finite law bool NativeBool(System.C.c_int value)
+{
+    return value != SDL_FALSE;
+}
+
+internal finite law SdlStatus StatusFromNative(System.C.c_int value, SdlError error)
+{
+    if (NativeBool(value))
+    {
+        return SdlStatus.Ok;
+    }
+
+    return SdlStatus.Err(error);
+}
+
+internal finite law SdlEventKind EventKindFromNative(u32[0 max] eventType)
+{
+    switch (eventType)
+    {
+        case 256:
+            return SdlEventKind.Quit;
+        case 514:
+        case 515:
+        case 516:
+        case 517:
+        case 518:
+        case 519:
+        case 520:
+        case 521:
+        case 522:
+        case 523:
+        case 524:
+        case 525:
+        case 526:
+        case 527:
+        case 528:
+        case 529:
+        case 530:
+        case 531:
+        case 532:
+        case 533:
+        case 534:
+        case 535:
+        case 536:
+        case 537:
+            return SdlEventKind.Window;
+        case 768:
+            return SdlEventKind.KeyDown;
+        case 769:
+            return SdlEventKind.KeyUp;
+        case 1024:
+            return SdlEventKind.MouseMotion;
+        case 1025:
+            return SdlEventKind.MouseButtonDown;
+        case 1026:
+            return SdlEventKind.MouseButtonUp;
+        case 1027:
+            return SdlEventKind.MouseWheel;
+        case 4352:
+        case 4353:
+        case 4354:
+            return SdlEventKind.AudioDevice;
+        default:
+            return SdlEventKind.Unknown(eventType);
+    }
+}
+
+internal finite law SdlEvent EventFromNative(NativeEvent event)
+{
+    return new SdlEvent()
+    {
+        Type = event.Type,
+        Kind = EventKindFromNative(event.Type),
+        Timestamp = event.Timestamp,
+        WindowId = event.WindowId,
+        Which = event.Which,
+        A = event.A,
+        B = event.B,
+        C = event.C,
+        D = event.D,
+        X = event.X,
+        Y = event.Y,
+        XRelative = event.XRelative,
+        YRelative = event.YRelative
+    };
+}
+
+internal finite law Version VersionFromPacked(i32[min max] packed)
+{
+    return new Version()
+    {
+        Major = packed / 1000000,
+        Minor = (packed / 1000) % 1000,
+        Patch = packed % 1000
+    };
+}
+
+public fn Version GetVersion()
+{
+    unsafe
+    {
+        return VersionFromPacked((i32[min max])stark_sdl3_get_version());
+    }
+}
+
+public fn u32[0 max] WasInitialized(u32[0 max] flags)
+{
+    unsafe
+    {
+        return stark_sdl3_was_init(flags);
+    }
+}
+
+public fn LibraryResult Initialize(u32[0 max] flags)
+{
+    unsafe
+    {
+        if (!NativeBool(stark_sdl3_init(flags)))
+        {
+            return LibraryResult.Err(SdlError.InitFailed);
+        }
+
+        stack mut Library library = new();
+        library.IsInitialized = true;
+        return LibraryResult.Ok(library);
+    }
+}
+
+public fn SdlStatus SetAppMetadata(ascii appName, ascii appVersion, ascii appIdentifier)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> appNameResult = System.C.FromAscii(appName);
+    switch (appNameResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return SdlStatus.Err(SdlError.CString(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cAppName):
+            stack System.C.CStringResult<System.C.OwnedCStr> appVersionResult = System.C.FromAscii(appVersion);
+            switch (appVersionResult)
+            {
+                case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+                    return SdlStatus.Err(SdlError.CString(error));
+                case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cAppVersion):
+                    stack System.C.CStringResult<System.C.OwnedCStr> appIdentifierResult = System.C.FromAscii(appIdentifier);
+                    switch (appIdentifierResult)
+                    {
+                        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+                            return SdlStatus.Err(SdlError.CString(error));
+                        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cAppIdentifier):
+                            unsafe
+                            {
+                                return StatusFromNative(
+                                    stark_sdl3_set_app_metadata(
+                                        cAppName.Data(),
+                                        cAppVersion.Data(),
+                                        cAppIdentifier.Data()),
+                                    SdlError.MetadataFailed);
+                            }
+                    }
+            }
+    }
+}
+
+public fn WindowResult CreateWindow(
+    u16[1 32767] width,
+    u16[1 32767] height,
+    u64[0 max] flags,
+    ascii title)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> titleResult = System.C.FromAscii(title);
+    switch (titleResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return WindowResult.Err(SdlError.CString(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cTitle):
+            unsafe
+            {
+                stack System.C.c_int nativeWidth = width;
+                stack System.C.c_int nativeHeight = height;
+                stack rawmutptr<SDLWindowNative> handle = stark_sdl3_create_window(
+                    cTitle.Data(),
+                    nativeWidth,
+                    nativeHeight,
+                    flags);
+                if (handle == null)
+                {
+                    return WindowResult.Err(SdlError.WindowCreationFailed);
+                }
+
+                stack mut Window window = new();
+                window.Handle = handle;
+                return WindowResult.Ok(window);
+            }
+    }
+}
+
+public fn WindowResult CreateHiddenWindow(u16[1 32767] width, u16[1 32767] height, ascii title)
+{
+    return CreateWindow(width, height, WindowHidden, title);
+}
+
+public fn SdlStatus SetWindowSize(mut borrow Window window, u16[1 32767] width, u16[1 32767] height)
+{
+    if (window.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeWidth = width;
+        stack System.C.c_int nativeHeight = height;
+        return StatusFromNative(
+            stark_sdl3_set_window_size(window.Handle, nativeWidth, nativeHeight),
+            SdlError.NativeFailure);
+    }
+}
+
+public fn Size GetWindowSize(borrow Window window)
+{
+    unsafe
+    {
+        stack mut System.C.c_int width = 0;
+        stack mut System.C.c_int height = 0;
+        if (window.Handle != null)
+        {
+            stark_sdl3_get_window_size(window.Handle, &width, &height);
+        }
+
+        return new Size()
+        {
+            Width = (i32[min max])width,
+            Height = (i32[min max])height
+        };
+    }
+}
+
+public fn SdlStatus ShowWindow(mut borrow Window window)
+{
+    if (window.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_show_window(window.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn SdlStatus HideWindow(mut borrow Window window)
+{
+    if (window.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_hide_window(window.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn RendererResult CreateDefaultRenderer(mut borrow Window window)
+{
+    if (window.IsEmpty())
+    {
+        return RendererResult.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<SDLRendererNative> handle = stark_sdl3_create_renderer(window.Handle, null);
+        if (handle == null)
+        {
+            return RendererResult.Err(SdlError.RendererCreationFailed);
+        }
+
+        stack mut Renderer renderer = new();
+        renderer.Handle = handle;
+        return RendererResult.Ok(renderer);
+    }
+}
+
+public fn RendererResult CreateNamedRenderer(mut borrow Window window, ascii name)
+{
+    if (window.IsEmpty())
+    {
+        return RendererResult.Err(SdlError.InvalidArgument);
+    }
+
+    stack System.C.CStringResult<System.C.OwnedCStr> nameResult = System.C.FromAscii(name);
+    switch (nameResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return RendererResult.Err(SdlError.CString(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cName):
+            unsafe
+            {
+                stack rawmutptr<SDLRendererNative> handle = stark_sdl3_create_renderer(window.Handle, cName.Data());
+                if (handle == null)
+                {
+                    return RendererResult.Err(SdlError.RendererCreationFailed);
+                }
+
+                stack mut Renderer renderer = new();
+                renderer.Handle = handle;
+                return RendererResult.Ok(renderer);
+            }
+    }
+}
+
+public fn SdlStatus SetRenderDrawColor(mut borrow Renderer renderer, Color color)
+{
+    if (renderer.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(
+            stark_sdl3_set_render_draw_color(renderer.Handle, color.R, color.G, color.B, color.A),
+            SdlError.NativeFailure);
+    }
+}
+
+public fn SdlStatus RenderClear(mut borrow Renderer renderer)
+{
+    if (renderer.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_render_clear(renderer.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn SdlStatus RenderPresent(mut borrow Renderer renderer)
+{
+    if (renderer.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_render_present(renderer.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn void PumpEvents()
+{
+    unsafe
+    {
+        stark_sdl3_pump_events();
+    }
+}
+
+public fn EventPollResult PollEvent()
+{
+    unsafe
+    {
+        stack mut NativeEvent nativeEvent = new();
+        if (!NativeBool(stark_sdl3_poll_event(&nativeEvent)))
+        {
+            return EventPollResult.None;
+        }
+
+        return EventPollResult.Some(EventFromNative(nativeEvent));
+    }
+}
+
+public fn EventPollResult WaitEventTimeout(i32[min max] timeoutMilliseconds)
+{
+    unsafe
+    {
+        stack System.C.c_int nativeTimeout = timeoutMilliseconds;
+        stack mut NativeEvent nativeEvent = new();
+        if (!NativeBool(stark_sdl3_wait_event_timeout(&nativeEvent, nativeTimeout)))
+        {
+            return EventPollResult.None;
+        }
+
+        return EventPollResult.Some(EventFromNative(nativeEvent));
+    }
+}
+
+public fn SdlStatus PushQuitEvent()
+{
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_push_quit_event(), SdlError.NativeFailure);
+    }
+}
+
+public inline finite law AudioSpec MakeAudioSpec(u32[0 max] format, u8[1 64] channels, u24[1 768000] frequency)
+{
+    return new AudioSpec()
+    {
+        Format = format,
+        Channels = (i32[min max])channels,
+        Frequency = (i32[min max])frequency
+    };
+}
+
+public fn AudioStreamResult OpenAudioDeviceStream(u32[0 max] deviceId, AudioSpec spec)
+{
+    unsafe
+    {
+        stack rawmutptr<SDLAudioStreamNative> handle = stark_sdl3_open_audio_device_stream(deviceId, &spec);
+        if (handle == null)
+        {
+            return AudioStreamResult.Err(SdlError.AudioStreamCreationFailed);
+        }
+
+        stack mut AudioStream stream = new();
+        stream.Handle = handle;
+        return AudioStreamResult.Ok(stream);
+    }
+}
+
+public fn AudioStreamResult OpenDefaultPlaybackStream(AudioSpec spec)
+{
+    return OpenAudioDeviceStream(DefaultPlaybackDevice, spec);
+}
+
+public fn SdlStatus PutAudioStreamBytes(mut borrow AudioStream stream, borrow u8[0 max][] data)
+{
+    if (stream.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    if (data.Length == 0)
+    {
+        return SdlStatus.Ok;
+    }
+
+    if (data.Length > SDL3MaxNativeByteCount)
+    {
+        return SdlStatus.Err(SdlError.BufferTooLarge);
+    }
+
+    unsafe
+    {
+        stack rawptr<System.C.c_void> dataPointer = (rawptr<System.C.c_void>)(&data[0]);
+        stack System.C.c_int nativeLength = (i32[min max])data.Length;
+        return StatusFromNative(
+            stark_sdl3_put_audio_stream_data(stream.Handle, dataPointer, nativeLength),
+            SdlError.NativeFailure);
+    }
+}
+
+public fn AudioDataResult GetAudioStreamBytes(mut borrow AudioStream stream, borrow mut u8[0 max][] destination)
+{
+    if (stream.IsEmpty())
+    {
+        return AudioDataResult.Err(SdlError.InvalidArgument);
+    }
+
+    if (destination.Length == 0)
+    {
+        return AudioDataResult.Ok(0);
+    }
+
+    if (destination.Length > SDL3MaxNativeByteCount)
+    {
+        return AudioDataResult.Err(SdlError.BufferTooLarge);
+    }
+
+    unsafe
+    {
+        stack rawmutptr<System.C.c_void> destinationPointer = (rawmutptr<System.C.c_void>)(&destination[0]);
+        stack System.C.c_int nativeLength = (i32[min max])destination.Length;
+        stack System.C.c_int read = stark_sdl3_get_audio_stream_data(
+            stream.Handle,
+            destinationPointer,
+            nativeLength);
+        if (read < 0)
+        {
+            return AudioDataResult.Err(SdlError.NativeFailure);
+        }
+
+        return AudioDataResult.Ok((u32[0 2147483647])read);
+    }
+}
+
+public fn AudioAvailableResult GetAudioStreamAvailableBytes(borrow AudioStream stream)
+{
+    if (stream.IsEmpty())
+    {
+        return AudioAvailableResult.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int available = stark_sdl3_get_audio_stream_available(stream.Handle);
+        if (available < 0)
+        {
+            return AudioAvailableResult.Err(SdlError.NativeFailure);
+        }
+
+        return AudioAvailableResult.Ok((u32[0 2147483647])available);
+    }
+}
+
+public fn SdlStatus FlushAudioStream(mut borrow AudioStream stream)
+{
+    if (stream.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_flush_audio_stream(stream.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn SdlStatus ClearAudioStream(mut borrow AudioStream stream)
+{
+    if (stream.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_clear_audio_stream(stream.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn SdlStatus PauseAudioStreamDevice(mut borrow AudioStream stream)
+{
+    if (stream.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_pause_audio_stream_device(stream.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn SdlStatus ResumeAudioStreamDevice(mut borrow AudioStream stream)
+{
+    if (stream.IsEmpty())
+    {
+        return SdlStatus.Err(SdlError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_sdl3_resume_audio_stream_device(stream.Handle), SdlError.NativeFailure);
+    }
+}
+
+public fn bool AudioStreamDevicePaused(borrow AudioStream stream)
+{
+    if (stream.IsEmpty())
+    {
+        return false;
+    }
+
+    unsafe
+    {
+        return NativeBool(stark_sdl3_audio_stream_device_paused(stream.Handle));
+    }
+}

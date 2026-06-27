@@ -37,7 +37,8 @@ internal static class StarkCDataModelFacts
         "c_ulonglong",
         "c_size_t",
         "c_ptrdiff_t",
-        "c_void"
+        "c_void",
+        "VaList"
     };
 
     public static bool TryResolveAlias(
@@ -59,6 +60,20 @@ internal static class StarkCDataModelFacts
         {
             type = StarkTypeSymbols.WithCSourceAlias(
                 StarkTypeSymbols.CVoid,
+                QualifyAliasName(localAliasName));
+            return true;
+        }
+
+        if (string.Equals(localAliasName, "VaList", StringComparison.Ordinal))
+        {
+            if (!TryResolve(targetInfo, out _))
+            {
+                diagnostic = $"Target '{targetInfo?.Triple ?? "<host>"}' does not define a C ABI va_list carrier for System.C.VaList.";
+                return true;
+            }
+
+            type = StarkTypeSymbols.WithCSourceAlias(
+                StarkTypeSymbols.CVaList,
                 QualifyAliasName(localAliasName));
             return true;
         }

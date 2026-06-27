@@ -1,0 +1,8 @@
+[project]
+name = "stb-image"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "StbImageResize.stark"
+output = "stb-image-resize"

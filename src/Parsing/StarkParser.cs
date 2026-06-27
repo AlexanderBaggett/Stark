@@ -37,191 +37,191 @@ public partial class StarkParser : Parser {
 	protected static DFA[] decisionToDFA;
 	protected static PredictionContextCache sharedContextCache = new PredictionContextCache();
 	public const int
-		IMPORT=1, MODULE=2, INTERNAL=3, PUBLIC=4, EXPORT=5, FN=6, FINITE=7, LAW=8,
-		INLINE=9, NOINLINE=10, INLINEHINT=11, HOT=12, COLD=13, FFI=14, VARARGS=15,
-		UNSAFE=16, STRICTFP=17, ASM=18, CLOBBER=19, IN=20, STRUCT=21, RECORD=22,
-		ENUM=23, TRAIT=24, DOCTRINE=25, ALIAS=26, DROP=27, FROM=28, STACK=29,
-		HEAP=30, REGISTER=31, STATIC=32, ARENA=33, SIZEOF=34, ALIGNOF=35, BORROW=36,
-		RETBORROW=37, STOREBORROW=38, FROZEN=39, SHARED=40, OUT=41, INIT=42, DYN=43,
-		DYNAMIC=44, RAWPTR=45, RAWMUTPTR=46, FNPTR=47, CLOSURE=48, MUT=49, ONCE=50,
-		DISJOINT=51, OVERLAP=52, SAME=53, ASSUME=54, IF=55, IS=56, ELSE=57, SWITCH=58,
-		CASE=59, DEFAULT=60, WHEN=61, WHILE=62, FOR=63, RETURN=64, BECOME=65,
-		BREAK=66, CONTINUE=67, TRY=68, COMPTIME=69, NEW=70, CONST=71, WHERE=72,
-		VAR=73, INFINITE=74, NONDETERMINISTIC=75, WILLEXIT=76, INDEPENDENT=77,
-		VOID=78, BOOL=79, ASCII=80, UNICODE=81, ASCIISTRING=82, UNICODESTRING=83,
-		TRUE=84, FALSE=85, NULL=86, WEIGHT_LITERAL=87, INTEGER_TYPE=88, FLOAT_TYPE=89,
-		INVALID_INTEGER_TYPE=90, INVALID_FLOAT_TYPE=91, WRAP_ADD_ASSIGN=92, WRAP_SUB_ASSIGN=93,
-		WRAP_MUL_ASSIGN=94, SAT_ADD_ASSIGN=95, SAT_SUB_ASSIGN=96, SAT_MUL_ASSIGN=97,
-		ADD_ASSIGN=98, SUB_ASSIGN=99, MUL_ASSIGN=100, DIV_ASSIGN=101, MOD_ASSIGN=102,
-		AND_ASSIGN=103, OR_ASSIGN=104, XOR_ASSIGN=105, EQ=106, NEQ=107, LTE=108,
-		GTE=109, AND_AND=110, OR_OR=111, POW=112, WRAP_ADD=113, WRAP_SUB=114,
-		WRAP_MUL=115, SAT_ADD=116, SAT_SUB=117, SAT_MUL=118, ASSIGN=119, LT=120,
-		GT=121, PLUS=122, MINUS=123, STAR=124, DIV=125, MOD=126, AND=127, OR=128,
-		CARET=129, BANG=130, TILDE=131, QUESTION=132, ARROW=133, COLON=134, SEMI=135,
-		COMMA=136, RANGE=137, DOT=138, DOLLAR=139, LPAREN=140, RPAREN=141, LBRACE=142,
-		RBRACE=143, LBRACK=144, RBRACK=145, DISCARD=146, Identifier=147, IntegerLiteral=148,
-		FloatLiteral=149, CharacterLiteral=150, StringLiteral=151, LINE_COMMENT=152,
+		IMPORT=1, MODULE=2, INTERNAL=3, PUBLIC=4, EXPORT=5, FN=6, FINITE=7, LAW=8, 
+		INLINE=9, NOINLINE=10, INLINEHINT=11, HOT=12, COLD=13, FFI=14, VARARGS=15, 
+		UNSAFE=16, STRICTFP=17, ASM=18, CLOBBER=19, IN=20, STRUCT=21, RECORD=22, 
+		ENUM=23, TRAIT=24, DOCTRINE=25, ALIAS=26, DROP=27, FROM=28, STACK=29, 
+		HEAP=30, REGISTER=31, STATIC=32, ARENA=33, SIZEOF=34, ALIGNOF=35, BORROW=36, 
+		RETBORROW=37, STOREBORROW=38, FROZEN=39, SHARED=40, OUT=41, INIT=42, DYN=43, 
+		DYNAMIC=44, RAWPTR=45, RAWMUTPTR=46, FNPTR=47, CLOSURE=48, MUT=49, ONCE=50, 
+		DISJOINT=51, OVERLAP=52, SAME=53, ASSUME=54, IF=55, IS=56, ELSE=57, SWITCH=58, 
+		CASE=59, DEFAULT=60, WHEN=61, WHILE=62, FOR=63, RETURN=64, BECOME=65, 
+		BREAK=66, CONTINUE=67, TRY=68, COMPTIME=69, NEW=70, CONST=71, WHERE=72, 
+		VAR=73, INFINITE=74, NONDETERMINISTIC=75, WILLEXIT=76, INDEPENDENT=77, 
+		VOID=78, BOOL=79, ASCII=80, UNICODE=81, ASCIISTRING=82, UNICODESTRING=83, 
+		TRUE=84, FALSE=85, NULL=86, WEIGHT_LITERAL=87, INTEGER_TYPE=88, FLOAT_TYPE=89, 
+		INVALID_INTEGER_TYPE=90, INVALID_FLOAT_TYPE=91, WRAP_ADD_ASSIGN=92, WRAP_SUB_ASSIGN=93, 
+		WRAP_MUL_ASSIGN=94, SAT_ADD_ASSIGN=95, SAT_SUB_ASSIGN=96, SAT_MUL_ASSIGN=97, 
+		ADD_ASSIGN=98, SUB_ASSIGN=99, MUL_ASSIGN=100, DIV_ASSIGN=101, MOD_ASSIGN=102, 
+		AND_ASSIGN=103, OR_ASSIGN=104, XOR_ASSIGN=105, EQ=106, NEQ=107, LTE=108, 
+		GTE=109, AND_AND=110, OR_OR=111, POW=112, WRAP_ADD=113, WRAP_SUB=114, 
+		WRAP_MUL=115, SAT_ADD=116, SAT_SUB=117, SAT_MUL=118, ASSIGN=119, LT=120, 
+		GT=121, PLUS=122, MINUS=123, STAR=124, DIV=125, MOD=126, AND=127, OR=128, 
+		CARET=129, BANG=130, TILDE=131, QUESTION=132, ARROW=133, COLON=134, SEMI=135, 
+		COMMA=136, RANGE=137, DOT=138, DOLLAR=139, LPAREN=140, RPAREN=141, LBRACE=142, 
+		RBRACE=143, LBRACK=144, RBRACK=145, DISCARD=146, Identifier=147, IntegerLiteral=148, 
+		FloatLiteral=149, CharacterLiteral=150, StringLiteral=151, LINE_COMMENT=152, 
 		BLOCK_COMMENT=153, WS=154;
 	public const int
-		RULE_compilationUnit = 0, RULE_importDeclaration = 1, RULE_moduleDeclaration = 2,
-		RULE_attributeList = 3, RULE_attribute = 4, RULE_attributeCondition = 5,
-		RULE_attributeArgument = 6, RULE_topLevelDeclaration = 7, RULE_visibilityModifier = 8,
-		RULE_functionDeclaration = 9, RULE_functionKind = 10, RULE_functionModifier = 11,
-		RULE_ffiModifier = 12, RULE_ffiAbiSpecifier = 13, RULE_ffiAbi = 14, RULE_ffiPlatformAbiEntry = 15,
-		RULE_ffiPlatformKey = 16, RULE_returnType = 17, RULE_parameterList = 18,
-		RULE_parameter = 19, RULE_parameterContractPrefix = 20, RULE_parameterMemoryContractClause = 21,
-		RULE_parameterMemoryContract = 22, RULE_valueContract = 23, RULE_valueContractOperator = 24,
-		RULE_disjointContract = 25, RULE_overlapContract = 26, RULE_sameContract = 27,
-		RULE_deadOnReturnContract = 28, RULE_lawPredicateContract = 29, RULE_typeParameterList = 30,
-		RULE_typeParameter = 31, RULE_typeParameterConstraints = 32, RULE_functionBody = 33,
-		RULE_asmSpecifier = 34, RULE_asmClauseList = 35, RULE_asmClause = 36,
-		RULE_asmInputClause = 37, RULE_asmOutputClause = 38, RULE_asmClobberClause = 39,
-		RULE_asmFunctionBody = 40, RULE_structDeclaration = 41, RULE_recordDeclaration = 42,
-		RULE_enumDeclaration = 43, RULE_traitDeclaration = 44, RULE_doctrineDeclaration = 45,
-		RULE_typeAliasDeclaration = 46, RULE_primaryConstructorParameters = 47,
-		RULE_baseTraitList = 48, RULE_structBody = 49, RULE_recordBody = 50, RULE_enumBody = 51,
-		RULE_traitBody = 52, RULE_doctrineBody = 53, RULE_structMember = 54, RULE_recordMember = 55,
-		RULE_enumVariantDeclaration = 56, RULE_enumVariantPayload = 57, RULE_enumVariantFieldDeclaration = 58,
-		RULE_traitMember = 59, RULE_doctrineMember = 60, RULE_associatedTypeDeclaration = 61,
-		RULE_fieldDeclaration = 62, RULE_methodDeclaration = 63, RULE_traitMethodDeclaration = 64,
-		RULE_doctrineMethodDeclaration = 65, RULE_doctrineFunctionKind = 66, RULE_constructorDeclaration = 67,
-		RULE_destructorDeclaration = 68, RULE_globalConstantDeclaration = 69,
-		RULE_globalVariableDeclaration = 70, RULE_constantDeclarators = 71, RULE_constantDeclarator = 72,
-		RULE_variableDeclarators = 73, RULE_variableDeclarator = 74, RULE_variableStorageCapacity = 75,
-		RULE_variableInitializer = 76, RULE_storageClass = 77, RULE_type_ = 78,
-		RULE_typeQualifier = 79, RULE_nonArrayType = 80, RULE_dynamicType = 81,
-		RULE_dynTraitType = 82, RULE_dynStoragePrefix = 83, RULE_rawPointerType = 84,
-		RULE_functionPointerType = 85, RULE_functionPointerSignature = 86, RULE_functionPointerAbiModifier = 87,
-		RULE_closureType = 88, RULE_closureStoragePrefix = 89, RULE_closureSignature = 90,
-		RULE_tailKeyword = 91, RULE_closureCallCapability = 92, RULE_functionPointerParameterList = 93,
-		RULE_simpleType = 94, RULE_integerType = 95, RULE_builtinType = 96, RULE_arraySuffix = 97,
-		RULE_rangeConstraint = 98, RULE_rangeEndpointToken = 99, RULE_typeArgumentList = 100,
-		RULE_genericArgument = 101, RULE_block = 102, RULE_statement = 103, RULE_labeledStatement = 104,
-		RULE_unsafeStatement = 105, RULE_assumeStatement = 106, RULE_localConstantDeclaration = 107,
-		RULE_localVariableDeclaration = 108, RULE_ifStatement = 109, RULE_disjointRuntimeCondition = 110,
-		RULE_switchStatement = 111, RULE_switchSection = 112, RULE_switchLabel = 113,
-		RULE_whenClause = 114, RULE_whileStatement = 115, RULE_forStatement = 116,
-		RULE_forTraversal = 117, RULE_traversalIndexBinding = 118, RULE_traversalElementBinding = 119,
-		RULE_forInitializer = 120, RULE_localForVariableDeclaration = 121, RULE_forCondition = 122,
-		RULE_forIterator = 123, RULE_loopBehavior = 124, RULE_loopContract = 125,
-		RULE_weightSpecifier = 126, RULE_returnStatement = 127, RULE_becomeStatement = 128,
-		RULE_breakStatement = 129, RULE_continueStatement = 130, RULE_expressionStatement = 131,
-		RULE_emptyStatement = 132, RULE_pattern = 133, RULE_rangePattern = 134,
-		RULE_listPattern = 135, RULE_aggregatePattern = 136, RULE_genericEnumAggregatePattern = 137,
-		RULE_aggregatePatternSuffix = 138, RULE_enumNamedFieldPattern = 139, RULE_namedPatternPayload = 140,
-		RULE_namedPatternMember = 141, RULE_expressionList = 142, RULE_expression = 143,
-		RULE_assignmentExpression = 144, RULE_assignmentOperator = 145, RULE_conditionalExpression = 146,
-		RULE_logicalOrExpression = 147, RULE_logicalAndExpression = 148, RULE_bitwiseOrExpression = 149,
-		RULE_bitwiseXorExpression = 150, RULE_bitwiseAndExpression = 151, RULE_equalityExpression = 152,
-		RULE_relationalExpression = 153, RULE_shiftExpression = 154, RULE_additiveExpression = 155,
-		RULE_multiplicativeExpression = 156, RULE_unaryExpression = 157, RULE_unaryOperator = 158,
-		RULE_conversionType = 159, RULE_conversionNonArrayType = 160, RULE_powerExpression = 161,
-		RULE_postfixExpression = 162, RULE_postfixPart = 163, RULE_primaryExpression = 164,
-		RULE_lambdaExpression = 165, RULE_lambdaStoragePrefix = 166, RULE_captureClause = 167,
-		RULE_captureBinding = 168, RULE_captureMode = 169, RULE_lambdaParameterList = 170,
-		RULE_enumConstructorExpression = 171, RULE_objectCreationExpression = 172,
-		RULE_arenaObjectCreationArgumentList = 173, RULE_enumConstructorInitializer = 174,
-		RULE_enumConstructorMember = 175, RULE_argumentList = 176, RULE_argument = 177,
-		RULE_objectInitializer = 178, RULE_memberInitializer = 179, RULE_arrayInitializer = 180,
-		RULE_literal = 181, RULE_signedIntegerLiteral = 182, RULE_genericQualifiedName = 183,
-		RULE_genericEnumCaseReference = 184, RULE_qualifiedName = 185, RULE_dottedName = 186,
+		RULE_compilationUnit = 0, RULE_importDeclaration = 1, RULE_moduleDeclaration = 2, 
+		RULE_attributeList = 3, RULE_attribute = 4, RULE_attributeCondition = 5, 
+		RULE_attributeArgument = 6, RULE_topLevelDeclaration = 7, RULE_visibilityModifier = 8, 
+		RULE_functionDeclaration = 9, RULE_functionKind = 10, RULE_functionModifier = 11, 
+		RULE_ffiModifier = 12, RULE_ffiAbiSpecifier = 13, RULE_ffiAbi = 14, RULE_ffiPlatformAbiEntry = 15, 
+		RULE_ffiPlatformKey = 16, RULE_returnType = 17, RULE_parameterList = 18, 
+		RULE_parameter = 19, RULE_parameterContractPrefix = 20, RULE_parameterMemoryContractClause = 21, 
+		RULE_parameterMemoryContract = 22, RULE_valueContract = 23, RULE_valueContractOperator = 24, 
+		RULE_disjointContract = 25, RULE_overlapContract = 26, RULE_sameContract = 27, 
+		RULE_deadOnReturnContract = 28, RULE_lawPredicateContract = 29, RULE_typeParameterList = 30, 
+		RULE_typeParameter = 31, RULE_typeParameterConstraints = 32, RULE_functionBody = 33, 
+		RULE_asmSpecifier = 34, RULE_asmClauseList = 35, RULE_asmClause = 36, 
+		RULE_asmInputClause = 37, RULE_asmOutputClause = 38, RULE_asmClobberClause = 39, 
+		RULE_asmFunctionBody = 40, RULE_structDeclaration = 41, RULE_recordDeclaration = 42, 
+		RULE_enumDeclaration = 43, RULE_traitDeclaration = 44, RULE_doctrineDeclaration = 45, 
+		RULE_typeAliasDeclaration = 46, RULE_primaryConstructorParameters = 47, 
+		RULE_baseTraitList = 48, RULE_structBody = 49, RULE_recordBody = 50, RULE_enumBody = 51, 
+		RULE_traitBody = 52, RULE_doctrineBody = 53, RULE_structMember = 54, RULE_recordMember = 55, 
+		RULE_enumVariantDeclaration = 56, RULE_enumVariantPayload = 57, RULE_enumVariantFieldDeclaration = 58, 
+		RULE_traitMember = 59, RULE_doctrineMember = 60, RULE_associatedTypeDeclaration = 61, 
+		RULE_fieldDeclaration = 62, RULE_methodDeclaration = 63, RULE_traitMethodDeclaration = 64, 
+		RULE_doctrineMethodDeclaration = 65, RULE_doctrineFunctionKind = 66, RULE_constructorDeclaration = 67, 
+		RULE_destructorDeclaration = 68, RULE_globalConstantDeclaration = 69, 
+		RULE_globalVariableDeclaration = 70, RULE_constantDeclarators = 71, RULE_constantDeclarator = 72, 
+		RULE_variableDeclarators = 73, RULE_variableDeclarator = 74, RULE_variableStorageCapacity = 75, 
+		RULE_variableInitializer = 76, RULE_storageClass = 77, RULE_type_ = 78, 
+		RULE_typeQualifier = 79, RULE_nonArrayType = 80, RULE_dynamicType = 81, 
+		RULE_dynTraitType = 82, RULE_dynStoragePrefix = 83, RULE_rawPointerType = 84, 
+		RULE_functionPointerType = 85, RULE_functionPointerSignature = 86, RULE_functionPointerAbiModifier = 87, 
+		RULE_closureType = 88, RULE_closureStoragePrefix = 89, RULE_closureSignature = 90, 
+		RULE_tailKeyword = 91, RULE_closureCallCapability = 92, RULE_functionPointerParameterList = 93, 
+		RULE_simpleType = 94, RULE_integerType = 95, RULE_builtinType = 96, RULE_arraySuffix = 97, 
+		RULE_rangeConstraint = 98, RULE_rangeEndpointToken = 99, RULE_typeArgumentList = 100, 
+		RULE_genericArgument = 101, RULE_block = 102, RULE_statement = 103, RULE_labeledStatement = 104, 
+		RULE_unsafeStatement = 105, RULE_assumeStatement = 106, RULE_localConstantDeclaration = 107, 
+		RULE_localVariableDeclaration = 108, RULE_ifStatement = 109, RULE_disjointRuntimeCondition = 110, 
+		RULE_switchStatement = 111, RULE_switchSection = 112, RULE_switchLabel = 113, 
+		RULE_whenClause = 114, RULE_whileStatement = 115, RULE_forStatement = 116, 
+		RULE_forTraversal = 117, RULE_traversalIndexBinding = 118, RULE_traversalElementBinding = 119, 
+		RULE_forInitializer = 120, RULE_localForVariableDeclaration = 121, RULE_forCondition = 122, 
+		RULE_forIterator = 123, RULE_loopBehavior = 124, RULE_loopContract = 125, 
+		RULE_weightSpecifier = 126, RULE_returnStatement = 127, RULE_becomeStatement = 128, 
+		RULE_breakStatement = 129, RULE_continueStatement = 130, RULE_expressionStatement = 131, 
+		RULE_emptyStatement = 132, RULE_pattern = 133, RULE_rangePattern = 134, 
+		RULE_listPattern = 135, RULE_aggregatePattern = 136, RULE_genericEnumAggregatePattern = 137, 
+		RULE_aggregatePatternSuffix = 138, RULE_enumNamedFieldPattern = 139, RULE_namedPatternPayload = 140, 
+		RULE_namedPatternMember = 141, RULE_expressionList = 142, RULE_expression = 143, 
+		RULE_assignmentExpression = 144, RULE_assignmentOperator = 145, RULE_conditionalExpression = 146, 
+		RULE_logicalOrExpression = 147, RULE_logicalAndExpression = 148, RULE_bitwiseOrExpression = 149, 
+		RULE_bitwiseXorExpression = 150, RULE_bitwiseAndExpression = 151, RULE_equalityExpression = 152, 
+		RULE_relationalExpression = 153, RULE_shiftExpression = 154, RULE_additiveExpression = 155, 
+		RULE_multiplicativeExpression = 156, RULE_unaryExpression = 157, RULE_unaryOperator = 158, 
+		RULE_conversionType = 159, RULE_conversionNonArrayType = 160, RULE_powerExpression = 161, 
+		RULE_postfixExpression = 162, RULE_postfixPart = 163, RULE_primaryExpression = 164, 
+		RULE_lambdaExpression = 165, RULE_lambdaStoragePrefix = 166, RULE_captureClause = 167, 
+		RULE_captureBinding = 168, RULE_captureMode = 169, RULE_lambdaParameterList = 170, 
+		RULE_enumConstructorExpression = 171, RULE_objectCreationExpression = 172, 
+		RULE_arenaObjectCreationArgumentList = 173, RULE_enumConstructorInitializer = 174, 
+		RULE_enumConstructorMember = 175, RULE_argumentList = 176, RULE_argument = 177, 
+		RULE_objectInitializer = 178, RULE_memberInitializer = 179, RULE_arrayInitializer = 180, 
+		RULE_literal = 181, RULE_signedIntegerLiteral = 182, RULE_genericQualifiedName = 183, 
+		RULE_genericEnumCaseReference = 184, RULE_qualifiedName = 185, RULE_dottedName = 186, 
 		RULE_enumCaseTarget = 187;
 	public static readonly string[] ruleNames = {
-		"compilationUnit", "importDeclaration", "moduleDeclaration", "attributeList",
-		"attribute", "attributeCondition", "attributeArgument", "topLevelDeclaration",
-		"visibilityModifier", "functionDeclaration", "functionKind", "functionModifier",
-		"ffiModifier", "ffiAbiSpecifier", "ffiAbi", "ffiPlatformAbiEntry", "ffiPlatformKey",
-		"returnType", "parameterList", "parameter", "parameterContractPrefix",
-		"parameterMemoryContractClause", "parameterMemoryContract", "valueContract",
-		"valueContractOperator", "disjointContract", "overlapContract", "sameContract",
-		"deadOnReturnContract", "lawPredicateContract", "typeParameterList", "typeParameter",
-		"typeParameterConstraints", "functionBody", "asmSpecifier", "asmClauseList",
-		"asmClause", "asmInputClause", "asmOutputClause", "asmClobberClause",
-		"asmFunctionBody", "structDeclaration", "recordDeclaration", "enumDeclaration",
-		"traitDeclaration", "doctrineDeclaration", "typeAliasDeclaration", "primaryConstructorParameters",
-		"baseTraitList", "structBody", "recordBody", "enumBody", "traitBody",
-		"doctrineBody", "structMember", "recordMember", "enumVariantDeclaration",
-		"enumVariantPayload", "enumVariantFieldDeclaration", "traitMember", "doctrineMember",
-		"associatedTypeDeclaration", "fieldDeclaration", "methodDeclaration",
-		"traitMethodDeclaration", "doctrineMethodDeclaration", "doctrineFunctionKind",
-		"constructorDeclaration", "destructorDeclaration", "globalConstantDeclaration",
-		"globalVariableDeclaration", "constantDeclarators", "constantDeclarator",
-		"variableDeclarators", "variableDeclarator", "variableStorageCapacity",
-		"variableInitializer", "storageClass", "type_", "typeQualifier", "nonArrayType",
-		"dynamicType", "dynTraitType", "dynStoragePrefix", "rawPointerType", "functionPointerType",
-		"functionPointerSignature", "functionPointerAbiModifier", "closureType",
-		"closureStoragePrefix", "closureSignature", "tailKeyword", "closureCallCapability",
-		"functionPointerParameterList", "simpleType", "integerType", "builtinType",
-		"arraySuffix", "rangeConstraint", "rangeEndpointToken", "typeArgumentList",
-		"genericArgument", "block", "statement", "labeledStatement", "unsafeStatement",
-		"assumeStatement", "localConstantDeclaration", "localVariableDeclaration",
-		"ifStatement", "disjointRuntimeCondition", "switchStatement", "switchSection",
-		"switchLabel", "whenClause", "whileStatement", "forStatement", "forTraversal",
-		"traversalIndexBinding", "traversalElementBinding", "forInitializer",
-		"localForVariableDeclaration", "forCondition", "forIterator", "loopBehavior",
-		"loopContract", "weightSpecifier", "returnStatement", "becomeStatement",
-		"breakStatement", "continueStatement", "expressionStatement", "emptyStatement",
-		"pattern", "rangePattern", "listPattern", "aggregatePattern", "genericEnumAggregatePattern",
-		"aggregatePatternSuffix", "enumNamedFieldPattern", "namedPatternPayload",
-		"namedPatternMember", "expressionList", "expression", "assignmentExpression",
-		"assignmentOperator", "conditionalExpression", "logicalOrExpression",
-		"logicalAndExpression", "bitwiseOrExpression", "bitwiseXorExpression",
-		"bitwiseAndExpression", "equalityExpression", "relationalExpression",
-		"shiftExpression", "additiveExpression", "multiplicativeExpression", "unaryExpression",
-		"unaryOperator", "conversionType", "conversionNonArrayType", "powerExpression",
-		"postfixExpression", "postfixPart", "primaryExpression", "lambdaExpression",
-		"lambdaStoragePrefix", "captureClause", "captureBinding", "captureMode",
-		"lambdaParameterList", "enumConstructorExpression", "objectCreationExpression",
-		"arenaObjectCreationArgumentList", "enumConstructorInitializer", "enumConstructorMember",
-		"argumentList", "argument", "objectInitializer", "memberInitializer",
-		"arrayInitializer", "literal", "signedIntegerLiteral", "genericQualifiedName",
+		"compilationUnit", "importDeclaration", "moduleDeclaration", "attributeList", 
+		"attribute", "attributeCondition", "attributeArgument", "topLevelDeclaration", 
+		"visibilityModifier", "functionDeclaration", "functionKind", "functionModifier", 
+		"ffiModifier", "ffiAbiSpecifier", "ffiAbi", "ffiPlatformAbiEntry", "ffiPlatformKey", 
+		"returnType", "parameterList", "parameter", "parameterContractPrefix", 
+		"parameterMemoryContractClause", "parameterMemoryContract", "valueContract", 
+		"valueContractOperator", "disjointContract", "overlapContract", "sameContract", 
+		"deadOnReturnContract", "lawPredicateContract", "typeParameterList", "typeParameter", 
+		"typeParameterConstraints", "functionBody", "asmSpecifier", "asmClauseList", 
+		"asmClause", "asmInputClause", "asmOutputClause", "asmClobberClause", 
+		"asmFunctionBody", "structDeclaration", "recordDeclaration", "enumDeclaration", 
+		"traitDeclaration", "doctrineDeclaration", "typeAliasDeclaration", "primaryConstructorParameters", 
+		"baseTraitList", "structBody", "recordBody", "enumBody", "traitBody", 
+		"doctrineBody", "structMember", "recordMember", "enumVariantDeclaration", 
+		"enumVariantPayload", "enumVariantFieldDeclaration", "traitMember", "doctrineMember", 
+		"associatedTypeDeclaration", "fieldDeclaration", "methodDeclaration", 
+		"traitMethodDeclaration", "doctrineMethodDeclaration", "doctrineFunctionKind", 
+		"constructorDeclaration", "destructorDeclaration", "globalConstantDeclaration", 
+		"globalVariableDeclaration", "constantDeclarators", "constantDeclarator", 
+		"variableDeclarators", "variableDeclarator", "variableStorageCapacity", 
+		"variableInitializer", "storageClass", "type_", "typeQualifier", "nonArrayType", 
+		"dynamicType", "dynTraitType", "dynStoragePrefix", "rawPointerType", "functionPointerType", 
+		"functionPointerSignature", "functionPointerAbiModifier", "closureType", 
+		"closureStoragePrefix", "closureSignature", "tailKeyword", "closureCallCapability", 
+		"functionPointerParameterList", "simpleType", "integerType", "builtinType", 
+		"arraySuffix", "rangeConstraint", "rangeEndpointToken", "typeArgumentList", 
+		"genericArgument", "block", "statement", "labeledStatement", "unsafeStatement", 
+		"assumeStatement", "localConstantDeclaration", "localVariableDeclaration", 
+		"ifStatement", "disjointRuntimeCondition", "switchStatement", "switchSection", 
+		"switchLabel", "whenClause", "whileStatement", "forStatement", "forTraversal", 
+		"traversalIndexBinding", "traversalElementBinding", "forInitializer", 
+		"localForVariableDeclaration", "forCondition", "forIterator", "loopBehavior", 
+		"loopContract", "weightSpecifier", "returnStatement", "becomeStatement", 
+		"breakStatement", "continueStatement", "expressionStatement", "emptyStatement", 
+		"pattern", "rangePattern", "listPattern", "aggregatePattern", "genericEnumAggregatePattern", 
+		"aggregatePatternSuffix", "enumNamedFieldPattern", "namedPatternPayload", 
+		"namedPatternMember", "expressionList", "expression", "assignmentExpression", 
+		"assignmentOperator", "conditionalExpression", "logicalOrExpression", 
+		"logicalAndExpression", "bitwiseOrExpression", "bitwiseXorExpression", 
+		"bitwiseAndExpression", "equalityExpression", "relationalExpression", 
+		"shiftExpression", "additiveExpression", "multiplicativeExpression", "unaryExpression", 
+		"unaryOperator", "conversionType", "conversionNonArrayType", "powerExpression", 
+		"postfixExpression", "postfixPart", "primaryExpression", "lambdaExpression", 
+		"lambdaStoragePrefix", "captureClause", "captureBinding", "captureMode", 
+		"lambdaParameterList", "enumConstructorExpression", "objectCreationExpression", 
+		"arenaObjectCreationArgumentList", "enumConstructorInitializer", "enumConstructorMember", 
+		"argumentList", "argument", "objectInitializer", "memberInitializer", 
+		"arrayInitializer", "literal", "signedIntegerLiteral", "genericQualifiedName", 
 		"genericEnumCaseReference", "qualifiedName", "dottedName", "enumCaseTarget"
 	};
 
 	private static readonly string[] _LiteralNames = {
-		null, "'import'", "'module'", "'internal'", "'public'", "'export'", "'fn'",
-		"'finite'", "'law'", "'inline'", "'noinline'", "'inlinehint'", "'hot'",
-		"'cold'", "'ffi'", "'varargs'", "'unsafe'", "'strictfp'", "'asm'", "'clobber'",
-		"'in'", "'struct'", "'record'", "'enum'", "'trait'", "'doctrine'", "'alias'",
-		"'drop'", "'from'", "'stack'", "'heap'", "'register'", "'static'", "'arena'",
-		"'sizeof'", "'alignof'", "'borrow'", "'retborrow'", "'storeborrow'", "'frozen'",
-		"'shared'", "'out'", "'init'", "'dyn'", "'dynamic'", "'rawptr'", "'rawmutptr'",
-		"'fnptr'", "'closure'", "'mut'", "'once'", "'disjoint'", "'overlap'",
-		"'same'", "'assume'", "'if'", "'is'", "'else'", "'switch'", "'case'",
-		"'default'", "'when'", "'while'", "'for'", "'return'", "'become'", "'break'",
-		"'continue'", "'try'", "'comptime'", "'new'", "'const'", "'where'", "'var'",
-		"'infinite'", "'non-deterministic'", "'willexit'", "'independent'", "'void'",
-		"'bool'", "'ascii'", "'unicode'", "'Ascii'", "'Unicode'", "'true'", "'false'",
-		"'null'", null, null, null, null, null, "'+%='", "'-%='", "'*%='", "'+|='",
-		"'-|='", "'*|='", "'+='", "'-='", "'*='", "'/='", "'%='", "'&='", "'|='",
-		"'^='", "'=='", "'!='", "'<='", "'>='", "'&&'", "'||'", "'**'", "'+%'",
-		"'-%'", "'*%'", "'+|'", "'-|'", "'*|'", "'='", "'<'", "'>'", "'+'", "'-'",
-		"'*'", "'/'", "'%'", "'&'", "'|'", "'^'", "'!'", "'~'", "'?'", "'=>'",
-		"':'", "';'", "','", "'..'", "'.'", "'$'", "'('", "')'", "'{'", "'}'",
+		null, "'import'", "'module'", "'internal'", "'public'", "'export'", "'fn'", 
+		"'finite'", "'law'", "'inline'", "'noinline'", "'inlinehint'", "'hot'", 
+		"'cold'", "'ffi'", "'varargs'", "'unsafe'", "'strictfp'", "'asm'", "'clobber'", 
+		"'in'", "'struct'", "'record'", "'enum'", "'trait'", "'doctrine'", "'alias'", 
+		"'drop'", "'from'", "'stack'", "'heap'", "'register'", "'static'", "'arena'", 
+		"'sizeof'", "'alignof'", "'borrow'", "'retborrow'", "'storeborrow'", "'frozen'", 
+		"'shared'", "'out'", "'init'", "'dyn'", "'dynamic'", "'rawptr'", "'rawmutptr'", 
+		"'fnptr'", "'closure'", "'mut'", "'once'", "'disjoint'", "'overlap'", 
+		"'same'", "'assume'", "'if'", "'is'", "'else'", "'switch'", "'case'", 
+		"'default'", "'when'", "'while'", "'for'", "'return'", "'become'", "'break'", 
+		"'continue'", "'try'", "'comptime'", "'new'", "'const'", "'where'", "'var'", 
+		"'infinite'", "'non-deterministic'", "'willexit'", "'independent'", "'void'", 
+		"'bool'", "'ascii'", "'unicode'", "'Ascii'", "'Unicode'", "'true'", "'false'", 
+		"'null'", null, null, null, null, null, "'+%='", "'-%='", "'*%='", "'+|='", 
+		"'-|='", "'*|='", "'+='", "'-='", "'*='", "'/='", "'%='", "'&='", "'|='", 
+		"'^='", "'=='", "'!='", "'<='", "'>='", "'&&'", "'||'", "'**'", "'+%'", 
+		"'-%'", "'*%'", "'+|'", "'-|'", "'*|'", "'='", "'<'", "'>'", "'+'", "'-'", 
+		"'*'", "'/'", "'%'", "'&'", "'|'", "'^'", "'!'", "'~'", "'?'", "'=>'", 
+		"':'", "';'", "','", "'..'", "'.'", "'$'", "'('", "')'", "'{'", "'}'", 
 		"'['", "']'", "'_'"
 	};
 	private static readonly string[] _SymbolicNames = {
-		null, "IMPORT", "MODULE", "INTERNAL", "PUBLIC", "EXPORT", "FN", "FINITE",
-		"LAW", "INLINE", "NOINLINE", "INLINEHINT", "HOT", "COLD", "FFI", "VARARGS",
-		"UNSAFE", "STRICTFP", "ASM", "CLOBBER", "IN", "STRUCT", "RECORD", "ENUM",
-		"TRAIT", "DOCTRINE", "ALIAS", "DROP", "FROM", "STACK", "HEAP", "REGISTER",
-		"STATIC", "ARENA", "SIZEOF", "ALIGNOF", "BORROW", "RETBORROW", "STOREBORROW",
-		"FROZEN", "SHARED", "OUT", "INIT", "DYN", "DYNAMIC", "RAWPTR", "RAWMUTPTR",
-		"FNPTR", "CLOSURE", "MUT", "ONCE", "DISJOINT", "OVERLAP", "SAME", "ASSUME",
-		"IF", "IS", "ELSE", "SWITCH", "CASE", "DEFAULT", "WHEN", "WHILE", "FOR",
-		"RETURN", "BECOME", "BREAK", "CONTINUE", "TRY", "COMPTIME", "NEW", "CONST",
-		"WHERE", "VAR", "INFINITE", "NONDETERMINISTIC", "WILLEXIT", "INDEPENDENT",
-		"VOID", "BOOL", "ASCII", "UNICODE", "ASCIISTRING", "UNICODESTRING", "TRUE",
-		"FALSE", "NULL", "WEIGHT_LITERAL", "INTEGER_TYPE", "FLOAT_TYPE", "INVALID_INTEGER_TYPE",
-		"INVALID_FLOAT_TYPE", "WRAP_ADD_ASSIGN", "WRAP_SUB_ASSIGN", "WRAP_MUL_ASSIGN",
-		"SAT_ADD_ASSIGN", "SAT_SUB_ASSIGN", "SAT_MUL_ASSIGN", "ADD_ASSIGN", "SUB_ASSIGN",
-		"MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN", "AND_ASSIGN", "OR_ASSIGN", "XOR_ASSIGN",
-		"EQ", "NEQ", "LTE", "GTE", "AND_AND", "OR_OR", "POW", "WRAP_ADD", "WRAP_SUB",
-		"WRAP_MUL", "SAT_ADD", "SAT_SUB", "SAT_MUL", "ASSIGN", "LT", "GT", "PLUS",
-		"MINUS", "STAR", "DIV", "MOD", "AND", "OR", "CARET", "BANG", "TILDE",
-		"QUESTION", "ARROW", "COLON", "SEMI", "COMMA", "RANGE", "DOT", "DOLLAR",
-		"LPAREN", "RPAREN", "LBRACE", "RBRACE", "LBRACK", "RBRACK", "DISCARD",
-		"Identifier", "IntegerLiteral", "FloatLiteral", "CharacterLiteral", "StringLiteral",
+		null, "IMPORT", "MODULE", "INTERNAL", "PUBLIC", "EXPORT", "FN", "FINITE", 
+		"LAW", "INLINE", "NOINLINE", "INLINEHINT", "HOT", "COLD", "FFI", "VARARGS", 
+		"UNSAFE", "STRICTFP", "ASM", "CLOBBER", "IN", "STRUCT", "RECORD", "ENUM", 
+		"TRAIT", "DOCTRINE", "ALIAS", "DROP", "FROM", "STACK", "HEAP", "REGISTER", 
+		"STATIC", "ARENA", "SIZEOF", "ALIGNOF", "BORROW", "RETBORROW", "STOREBORROW", 
+		"FROZEN", "SHARED", "OUT", "INIT", "DYN", "DYNAMIC", "RAWPTR", "RAWMUTPTR", 
+		"FNPTR", "CLOSURE", "MUT", "ONCE", "DISJOINT", "OVERLAP", "SAME", "ASSUME", 
+		"IF", "IS", "ELSE", "SWITCH", "CASE", "DEFAULT", "WHEN", "WHILE", "FOR", 
+		"RETURN", "BECOME", "BREAK", "CONTINUE", "TRY", "COMPTIME", "NEW", "CONST", 
+		"WHERE", "VAR", "INFINITE", "NONDETERMINISTIC", "WILLEXIT", "INDEPENDENT", 
+		"VOID", "BOOL", "ASCII", "UNICODE", "ASCIISTRING", "UNICODESTRING", "TRUE", 
+		"FALSE", "NULL", "WEIGHT_LITERAL", "INTEGER_TYPE", "FLOAT_TYPE", "INVALID_INTEGER_TYPE", 
+		"INVALID_FLOAT_TYPE", "WRAP_ADD_ASSIGN", "WRAP_SUB_ASSIGN", "WRAP_MUL_ASSIGN", 
+		"SAT_ADD_ASSIGN", "SAT_SUB_ASSIGN", "SAT_MUL_ASSIGN", "ADD_ASSIGN", "SUB_ASSIGN", 
+		"MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN", "AND_ASSIGN", "OR_ASSIGN", "XOR_ASSIGN", 
+		"EQ", "NEQ", "LTE", "GTE", "AND_AND", "OR_OR", "POW", "WRAP_ADD", "WRAP_SUB", 
+		"WRAP_MUL", "SAT_ADD", "SAT_SUB", "SAT_MUL", "ASSIGN", "LT", "GT", "PLUS", 
+		"MINUS", "STAR", "DIV", "MOD", "AND", "OR", "CARET", "BANG", "TILDE", 
+		"QUESTION", "ARROW", "COLON", "SEMI", "COMMA", "RANGE", "DOT", "DOLLAR", 
+		"LPAREN", "RPAREN", "LBRACE", "RBRACE", "LBRACK", "RBRACK", "DISCARD", 
+		"Identifier", "IntegerLiteral", "FloatLiteral", "CharacterLiteral", "StringLiteral", 
 		"LINE_COMMENT", "BLOCK_COMMENT", "WS"
 	};
 	public static readonly IVocabulary DefaultVocabulary = new Vocabulary(_LiteralNames, _SymbolicNames);
@@ -327,7 +327,7 @@ public partial class StarkParser : Parser {
 					State = 383;
 					topLevelDeclaration();
 					}
-					}
+					} 
 				}
 				State = 388;
 				ErrorHandler.Sync(this);
@@ -516,7 +516,7 @@ public partial class StarkParser : Parser {
 					State = 409;
 					attribute();
 					}
-					}
+					} 
 				}
 				State = 414;
 				ErrorHandler.Sync(this);
@@ -616,7 +616,7 @@ public partial class StarkParser : Parser {
 							State = 424;
 							attributeArgument();
 							}
-							}
+							} 
 						}
 						State = 429;
 						ErrorHandler.Sync(this);
@@ -855,7 +855,7 @@ public partial class StarkParser : Parser {
 					State = 451;
 					attributeList();
 					}
-					}
+					} 
 				}
 				State = 456;
 				ErrorHandler.Sync(this);
@@ -1062,7 +1062,7 @@ public partial class StarkParser : Parser {
 					State = 473;
 					functionModifier();
 					}
-					}
+					} 
 				}
 				State = 478;
 				ErrorHandler.Sync(this);
@@ -1106,7 +1106,7 @@ public partial class StarkParser : Parser {
 					State = 489;
 					typeParameterConstraints();
 					}
-					}
+					} 
 				}
 				State = 494;
 				ErrorHandler.Sync(this);
@@ -1506,7 +1506,7 @@ public partial class StarkParser : Parser {
 						State = 539;
 						ffiPlatformAbiEntry();
 						}
-						}
+						} 
 					}
 					State = 544;
 					ErrorHandler.Sync(this);
@@ -1773,7 +1773,7 @@ public partial class StarkParser : Parser {
 						State = 567;
 						parameter();
 						}
-						}
+						} 
 					}
 					State = 572;
 					ErrorHandler.Sync(this);
@@ -1966,7 +1966,7 @@ public partial class StarkParser : Parser {
 					State = 594;
 					parameterMemoryContract();
 					}
-					}
+					} 
 				}
 				State = 599;
 				ErrorHandler.Sync(this);
@@ -2786,7 +2786,7 @@ public partial class StarkParser : Parser {
 					State = 684;
 					asmClause();
 					}
-					}
+					} 
 				}
 				State = 689;
 				ErrorHandler.Sync(this);
@@ -3041,7 +3041,7 @@ public partial class StarkParser : Parser {
 					State = 714;
 					Match(StringLiteral);
 					}
-					}
+					} 
 				}
 				State = 719;
 				ErrorHandler.Sync(this);
@@ -3672,7 +3672,7 @@ public partial class StarkParser : Parser {
 					State = 797;
 					structMember();
 					}
-					}
+					} 
 				}
 				State = 802;
 				ErrorHandler.Sync(this);
@@ -3735,7 +3735,7 @@ public partial class StarkParser : Parser {
 					State = 806;
 					recordMember();
 					}
-					}
+					} 
 				}
 				State = 811;
 				ErrorHandler.Sync(this);
@@ -3812,7 +3812,7 @@ public partial class StarkParser : Parser {
 						State = 817;
 						enumVariantDeclaration();
 						}
-						}
+						} 
 					}
 					State = 822;
 					ErrorHandler.Sync(this);
@@ -3888,7 +3888,7 @@ public partial class StarkParser : Parser {
 					State = 831;
 					traitMember();
 					}
-					}
+					} 
 				}
 				State = 836;
 				ErrorHandler.Sync(this);
@@ -3951,7 +3951,7 @@ public partial class StarkParser : Parser {
 					State = 840;
 					doctrineMember();
 					}
-					}
+					} 
 				}
 				State = 845;
 				ErrorHandler.Sync(this);
@@ -4025,7 +4025,7 @@ public partial class StarkParser : Parser {
 					State = 848;
 					attributeList();
 					}
-					}
+					} 
 				}
 				State = 853;
 				ErrorHandler.Sync(this);
@@ -4131,7 +4131,7 @@ public partial class StarkParser : Parser {
 					State = 861;
 					attributeList();
 					}
-					}
+					} 
 				}
 				State = 866;
 				ErrorHandler.Sync(this);
@@ -4324,7 +4324,7 @@ public partial class StarkParser : Parser {
 							State = 887;
 							type_();
 							}
-							}
+							} 
 						}
 						State = 892;
 						ErrorHandler.Sync(this);
@@ -4371,7 +4371,7 @@ public partial class StarkParser : Parser {
 							State = 902;
 							enumVariantFieldDeclaration();
 							}
-							}
+							} 
 						}
 						State = 907;
 						ErrorHandler.Sync(this);
@@ -4507,7 +4507,7 @@ public partial class StarkParser : Parser {
 					State = 922;
 					attributeList();
 					}
-					}
+					} 
 				}
 				State = 927;
 				ErrorHandler.Sync(this);
@@ -4586,7 +4586,7 @@ public partial class StarkParser : Parser {
 					State = 932;
 					attributeList();
 					}
-					}
+					} 
 				}
 				State = 937;
 				ErrorHandler.Sync(this);
@@ -4833,7 +4833,7 @@ public partial class StarkParser : Parser {
 					State = 963;
 					functionModifier();
 					}
-					}
+					} 
 				}
 				State = 968;
 				ErrorHandler.Sync(this);
@@ -4867,7 +4867,7 @@ public partial class StarkParser : Parser {
 					State = 976;
 					typeParameterConstraints();
 					}
-					}
+					} 
 				}
 				State = 981;
 				ErrorHandler.Sync(this);
@@ -4969,7 +4969,7 @@ public partial class StarkParser : Parser {
 					State = 990;
 					functionModifier();
 					}
-					}
+					} 
 				}
 				State = 995;
 				ErrorHandler.Sync(this);
@@ -5003,7 +5003,7 @@ public partial class StarkParser : Parser {
 					State = 1003;
 					typeParameterConstraints();
 					}
-					}
+					} 
 				}
 				State = 1008;
 				ErrorHandler.Sync(this);
@@ -5105,7 +5105,7 @@ public partial class StarkParser : Parser {
 					State = 1017;
 					functionModifier();
 					}
-					}
+					} 
 				}
 				State = 1022;
 				ErrorHandler.Sync(this);
@@ -5139,7 +5139,7 @@ public partial class StarkParser : Parser {
 					State = 1030;
 					typeParameterConstraints();
 					}
-					}
+					} 
 				}
 				State = 1035;
 				ErrorHandler.Sync(this);
@@ -5935,7 +5935,7 @@ public partial class StarkParser : Parser {
 					State = 1129;
 					arraySuffix();
 					}
-					}
+					} 
 				}
 				State = 1134;
 				ErrorHandler.Sync(this);
@@ -6866,7 +6866,7 @@ public partial class StarkParser : Parser {
 						State = 1229;
 						type_();
 						}
-						}
+						} 
 					}
 					State = 1234;
 					ErrorHandler.Sync(this);
@@ -9679,7 +9679,7 @@ public partial class StarkParser : Parser {
 						State = 1563;
 						pattern();
 						}
-						}
+						} 
 					}
 					State = 1568;
 					ErrorHandler.Sync(this);
@@ -9890,7 +9890,7 @@ public partial class StarkParser : Parser {
 							State = 1588;
 							pattern();
 							}
-							}
+							} 
 						}
 						State = 1593;
 						ErrorHandler.Sync(this);
@@ -10035,7 +10035,7 @@ public partial class StarkParser : Parser {
 						State = 1609;
 						namedPatternMember();
 						}
-						}
+						} 
 					}
 					State = 1614;
 					ErrorHandler.Sync(this);
@@ -10464,7 +10464,7 @@ public partial class StarkParser : Parser {
 					State = 1660;
 					logicalAndExpression();
 					}
-					}
+					} 
 				}
 				State = 1665;
 				ErrorHandler.Sync(this);
@@ -10529,7 +10529,7 @@ public partial class StarkParser : Parser {
 					State = 1668;
 					bitwiseOrExpression();
 					}
-					}
+					} 
 				}
 				State = 1673;
 				ErrorHandler.Sync(this);
@@ -10594,7 +10594,7 @@ public partial class StarkParser : Parser {
 					State = 1676;
 					bitwiseXorExpression();
 					}
-					}
+					} 
 				}
 				State = 1681;
 				ErrorHandler.Sync(this);
@@ -10659,7 +10659,7 @@ public partial class StarkParser : Parser {
 					State = 1684;
 					bitwiseAndExpression();
 					}
-					}
+					} 
 				}
 				State = 1689;
 				ErrorHandler.Sync(this);
@@ -10724,7 +10724,7 @@ public partial class StarkParser : Parser {
 					State = 1692;
 					equalityExpression();
 					}
-					}
+					} 
 				}
 				State = 1697;
 				ErrorHandler.Sync(this);
@@ -10801,7 +10801,7 @@ public partial class StarkParser : Parser {
 					State = 1700;
 					relationalExpression();
 					}
-					}
+					} 
 				}
 				State = 1705;
 				ErrorHandler.Sync(this);
@@ -10886,7 +10886,7 @@ public partial class StarkParser : Parser {
 					State = 1708;
 					shiftExpression();
 					}
-					}
+					} 
 				}
 				State = 1713;
 				ErrorHandler.Sync(this);
@@ -10979,7 +10979,7 @@ public partial class StarkParser : Parser {
 					State = 1721;
 					additiveExpression();
 					}
-					}
+					} 
 				}
 				State = 1726;
 				ErrorHandler.Sync(this);
@@ -11072,7 +11072,7 @@ public partial class StarkParser : Parser {
 					State = 1729;
 					multiplicativeExpression();
 					}
-					}
+					} 
 				}
 				State = 1734;
 				ErrorHandler.Sync(this);
@@ -11161,7 +11161,7 @@ public partial class StarkParser : Parser {
 					State = 1737;
 					unaryExpression();
 					}
-					}
+					} 
 				}
 				State = 1742;
 				ErrorHandler.Sync(this);
@@ -11423,11 +11423,17 @@ public partial class StarkParser : Parser {
 		[System.Diagnostics.DebuggerNonUserCode] public RawPointerTypeContext rawPointerType() {
 			return GetRuleContext<RawPointerTypeContext>(0);
 		}
+		[System.Diagnostics.DebuggerNonUserCode] public FunctionPointerTypeContext functionPointerType() {
+			return GetRuleContext<FunctionPointerTypeContext>(0);
+		}
 		[System.Diagnostics.DebuggerNonUserCode] public IntegerTypeContext integerType() {
 			return GetRuleContext<IntegerTypeContext>(0);
 		}
 		[System.Diagnostics.DebuggerNonUserCode] public BuiltinTypeContext builtinType() {
 			return GetRuleContext<BuiltinTypeContext>(0);
+		}
+		[System.Diagnostics.DebuggerNonUserCode] public SimpleTypeContext simpleType() {
+			return GetRuleContext<SimpleTypeContext>(0);
 		}
 		public ConversionNonArrayTypeContext(ParserRuleContext parent, int invokingState)
 			: base(parent, invokingState)
@@ -11447,38 +11453,44 @@ public partial class StarkParser : Parser {
 		ConversionNonArrayTypeContext _localctx = new ConversionNonArrayTypeContext(Context, State);
 		EnterRule(_localctx, 320, RULE_conversionNonArrayType);
 		try {
-			State = 1778;
+			State = 1780;
 			ErrorHandler.Sync(this);
-			switch (TokenStream.LA(1)) {
-			case RAWPTR:
-			case RAWMUTPTR:
+			switch ( Interpreter.AdaptivePredict(TokenStream,189,Context) ) {
+			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
 				State = 1775;
 				rawPointerType();
 				}
 				break;
-			case INTEGER_TYPE:
+			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
 				State = 1776;
-				integerType();
+				functionPointerType();
 				}
 				break;
-			case BOOL:
-			case ASCII:
-			case UNICODE:
-			case ASCIISTRING:
-			case UNICODESTRING:
-			case FLOAT_TYPE:
+			case 3:
 				EnterOuterAlt(_localctx, 3);
 				{
 				State = 1777;
+				integerType();
+				}
+				break;
+			case 4:
+				EnterOuterAlt(_localctx, 4);
+				{
+				State = 1778;
 				builtinType();
 				}
 				break;
-			default:
-				throw new NoViableAltException(this);
+			case 5:
+				EnterOuterAlt(_localctx, 5);
+				{
+				State = 1779;
+				simpleType();
+				}
+				break;
 			}
 		}
 		catch (RecognitionException re) {
@@ -11520,16 +11532,16 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1780;
+			State = 1782;
 			postfixExpression();
-			State = 1783;
+			State = 1785;
 			ErrorHandler.Sync(this);
 			switch ( Interpreter.AdaptivePredict(TokenStream,190,Context) ) {
 			case 1:
 				{
-				State = 1781;
+				State = 1783;
 				Match(POW);
-				State = 1782;
+				State = 1784;
 				unaryExpression();
 				}
 				break;
@@ -11578,21 +11590,21 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1785;
+			State = 1787;
 			primaryExpression();
-			State = 1789;
+			State = 1791;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,191,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					State = 1786;
+					State = 1788;
 					postfixPart();
 					}
-					}
+					} 
 				}
-				State = 1791;
+				State = 1793;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,191,Context);
 			}
@@ -11639,41 +11651,41 @@ public partial class StarkParser : Parser {
 		EnterRule(_localctx, 326, RULE_postfixPart);
 		int _la;
 		try {
-			State = 1800;
+			State = 1802;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case LPAREN:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 1792;
+				State = 1794;
 				argumentList();
 				}
 				break;
 			case LBRACK:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 1793;
-				Match(LBRACK);
 				State = 1795;
+				Match(LBRACK);
+				State = 1797;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 				if (((((_la - 30)) & ~0x3f) == 0 && ((1L << (_la - 30)) & 126102713711726641L) != 0) || ((((_la - 114)) & ~0x3f) == 0 && ((1L << (_la - 114)) & 266388842241L) != 0)) {
 					{
-					State = 1794;
+					State = 1796;
 					expressionList();
 					}
 				}
 
-				State = 1797;
+				State = 1799;
 				Match(RBRACK);
 				}
 				break;
 			case DOT:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 1798;
+				State = 1800;
 				Match(DOT);
-				State = 1799;
+				State = 1801;
 				Match(Identifier);
 				}
 				break;
@@ -11747,108 +11759,108 @@ public partial class StarkParser : Parser {
 		PrimaryExpressionContext _localctx = new PrimaryExpressionContext(Context, State);
 		EnterRule(_localctx, 328, RULE_primaryExpression);
 		try {
-			State = 1826;
+			State = 1828;
 			ErrorHandler.Sync(this);
 			switch ( Interpreter.AdaptivePredict(TokenStream,194,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 1802;
+				State = 1804;
 				lambdaExpression();
 				}
 				break;
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 1803;
+				State = 1805;
 				literal();
 				}
 				break;
 			case 3:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 1804;
+				State = 1806;
 				Match(COMPTIME);
-				State = 1805;
+				State = 1807;
 				block();
 				}
 				break;
 			case 4:
 				EnterOuterAlt(_localctx, 4);
 				{
-				State = 1806;
-				Match(SIZEOF);
-				State = 1807;
-				Match(LPAREN);
 				State = 1808;
-				type_();
+				Match(SIZEOF);
 				State = 1809;
+				Match(LPAREN);
+				State = 1810;
+				type_();
+				State = 1811;
 				Match(RPAREN);
 				}
 				break;
 			case 5:
 				EnterOuterAlt(_localctx, 5);
 				{
-				State = 1811;
-				Match(ALIGNOF);
-				State = 1812;
-				Match(LPAREN);
 				State = 1813;
-				type_();
+				Match(ALIGNOF);
 				State = 1814;
+				Match(LPAREN);
+				State = 1815;
+				type_();
+				State = 1816;
 				Match(RPAREN);
 				}
 				break;
 			case 6:
 				EnterOuterAlt(_localctx, 6);
 				{
-				State = 1816;
+				State = 1818;
 				enumConstructorExpression();
 				}
 				break;
 			case 7:
 				EnterOuterAlt(_localctx, 7);
 				{
-				State = 1817;
+				State = 1819;
 				genericEnumCaseReference();
 				}
 				break;
 			case 8:
 				EnterOuterAlt(_localctx, 8);
 				{
-				State = 1818;
+				State = 1820;
 				genericQualifiedName();
 				}
 				break;
 			case 9:
 				EnterOuterAlt(_localctx, 9);
 				{
-				State = 1819;
+				State = 1821;
 				Match(Identifier);
 				}
 				break;
 			case 10:
 				EnterOuterAlt(_localctx, 10);
 				{
-				State = 1820;
+				State = 1822;
 				qualifiedName();
 				}
 				break;
 			case 11:
 				EnterOuterAlt(_localctx, 11);
 				{
-				State = 1821;
+				State = 1823;
 				objectCreationExpression();
 				}
 				break;
 			case 12:
 				EnterOuterAlt(_localctx, 12);
 				{
-				State = 1822;
-				Match(LPAREN);
-				State = 1823;
-				expression();
 				State = 1824;
+				Match(LPAREN);
+				State = 1825;
+				expression();
+				State = 1826;
 				Match(RPAREN);
 				}
 				break;
@@ -11903,31 +11915,31 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1829;
+			State = 1831;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==HEAP) {
 				{
-				State = 1828;
+				State = 1830;
 				lambdaStoragePrefix();
 				}
 			}
 
-			State = 1832;
+			State = 1834;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==Identifier) {
 				{
-				State = 1831;
+				State = 1833;
 				captureClause();
 				}
 			}
 
-			State = 1834;
+			State = 1836;
 			lambdaParameterList();
-			State = 1835;
+			State = 1837;
 			Match(ARROW);
-			State = 1838;
+			State = 1840;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case HEAP:
@@ -11955,13 +11967,13 @@ public partial class StarkParser : Parser {
 			case CharacterLiteral:
 			case StringLiteral:
 				{
-				State = 1836;
+				State = 1838;
 				expression();
 				}
 				break;
 			case LBRACE:
 				{
-				State = 1837;
+				State = 1839;
 				block();
 				}
 				break;
@@ -12003,7 +12015,7 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1840;
+			State = 1842;
 			Match(HEAP);
 			}
 		}
@@ -12054,49 +12066,49 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1842;
+			State = 1844;
 			Match(Identifier);
-			State = 1843;
+			State = 1845;
 			Match(LPAREN);
-			State = 1852;
+			State = 1854;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 570646534881280L) != 0) || _la==Identifier) {
 				{
-				State = 1844;
+				State = 1846;
 				captureBinding();
-				State = 1849;
+				State = 1851;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,198,Context);
 				while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 					if ( _alt==1 ) {
 						{
 						{
-						State = 1845;
+						State = 1847;
 						Match(COMMA);
-						State = 1846;
+						State = 1848;
 						captureBinding();
 						}
-						}
+						} 
 					}
-					State = 1851;
+					State = 1853;
 					ErrorHandler.Sync(this);
 					_alt = Interpreter.AdaptivePredict(TokenStream,198,Context);
 				}
 				}
 			}
 
-			State = 1855;
+			State = 1857;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1854;
+				State = 1856;
 				Match(COMMA);
 				}
 			}
 
-			State = 1857;
+			State = 1859;
 			Match(RPAREN);
 			}
 		}
@@ -12138,19 +12150,19 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1860;
+			State = 1862;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==UNSAFE) {
 				{
-				State = 1859;
+				State = 1861;
 				Match(UNSAFE);
 				}
 			}
 
-			State = 1862;
+			State = 1864;
 			captureMode();
-			State = 1863;
+			State = 1865;
 			Match(Identifier);
 			}
 		}
@@ -12192,7 +12204,7 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1865;
+			State = 1867;
 			_la = TokenStream.LA(1);
 			if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 570646534815744L) != 0) || _la==Identifier) ) {
 			ErrorHandler.RecoverInline(this);
@@ -12249,47 +12261,47 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1867;
+			State = 1869;
 			Match(LPAREN);
-			State = 1876;
+			State = 1878;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 3377632074793472L) != 0) || ((((_la - 71)) & ~0x3f) == 0 && ((1L << (_la - 71)) & 401153L) != 0) || _la==Identifier) {
 				{
-				State = 1868;
+				State = 1870;
 				parameter();
-				State = 1873;
+				State = 1875;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,202,Context);
 				while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 					if ( _alt==1 ) {
 						{
 						{
-						State = 1869;
+						State = 1871;
 						Match(COMMA);
-						State = 1870;
+						State = 1872;
 						parameter();
 						}
-						}
+						} 
 					}
-					State = 1875;
+					State = 1877;
 					ErrorHandler.Sync(this);
 					_alt = Interpreter.AdaptivePredict(TokenStream,202,Context);
 				}
 				}
 			}
 
-			State = 1879;
+			State = 1881;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1878;
+				State = 1880;
 				Match(COMMA);
 				}
 			}
 
-			State = 1881;
+			State = 1883;
 			Match(RPAREN);
 			}
 		}
@@ -12331,9 +12343,9 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1883;
+			State = 1885;
 			enumCaseTarget();
-			State = 1884;
+			State = 1886;
 			enumConstructorInitializer();
 			}
 		}
@@ -12380,32 +12392,32 @@ public partial class StarkParser : Parser {
 		ObjectCreationExpressionContext _localctx = new ObjectCreationExpressionContext(Context, State);
 		EnterRule(_localctx, 344, RULE_objectCreationExpression);
 		try {
-			State = 1904;
+			State = 1906;
 			ErrorHandler.Sync(this);
 			switch ( Interpreter.AdaptivePredict(TokenStream,209,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 1886;
+				State = 1888;
 				Match(NEW);
-				State = 1887;
-				type_();
 				State = 1889;
+				type_();
+				State = 1891;
 				ErrorHandler.Sync(this);
 				switch ( Interpreter.AdaptivePredict(TokenStream,205,Context) ) {
 				case 1:
 					{
-					State = 1888;
+					State = 1890;
 					argumentList();
 					}
 					break;
 				}
-				State = 1892;
+				State = 1894;
 				ErrorHandler.Sync(this);
 				switch ( Interpreter.AdaptivePredict(TokenStream,206,Context) ) {
 				case 1:
 					{
-					State = 1891;
+					State = 1893;
 					objectInitializer();
 					}
 					break;
@@ -12415,16 +12427,16 @@ public partial class StarkParser : Parser {
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 1894;
+				State = 1896;
 				Match(NEW);
-				State = 1895;
-				arenaObjectCreationArgumentList();
 				State = 1897;
+				arenaObjectCreationArgumentList();
+				State = 1899;
 				ErrorHandler.Sync(this);
 				switch ( Interpreter.AdaptivePredict(TokenStream,207,Context) ) {
 				case 1:
 					{
-					State = 1896;
+					State = 1898;
 					objectInitializer();
 					}
 					break;
@@ -12434,16 +12446,16 @@ public partial class StarkParser : Parser {
 			case 3:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 1899;
+				State = 1901;
 				Match(NEW);
-				State = 1900;
-				argumentList();
 				State = 1902;
+				argumentList();
+				State = 1904;
 				ErrorHandler.Sync(this);
 				switch ( Interpreter.AdaptivePredict(TokenStream,208,Context) ) {
 				case 1:
 					{
-					State = 1901;
+					State = 1903;
 					objectInitializer();
 					}
 					break;
@@ -12499,39 +12511,39 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1906;
+			State = 1908;
 			Match(LPAREN);
-			State = 1907;
+			State = 1909;
 			Match(ARENA);
-			State = 1912;
+			State = 1914;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,210,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					State = 1908;
+					State = 1910;
 					Match(COMMA);
-					State = 1909;
+					State = 1911;
 					argument();
 					}
-					}
+					} 
 				}
-				State = 1914;
+				State = 1916;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,210,Context);
 			}
-			State = 1916;
+			State = 1918;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1915;
+				State = 1917;
 				Match(COMMA);
 				}
 			}
 
-			State = 1918;
+			State = 1920;
 			Match(RPAREN);
 			}
 		}
@@ -12581,47 +12593,47 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1920;
+			State = 1922;
 			Match(LBRACE);
-			State = 1929;
+			State = 1931;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==Identifier) {
 				{
-				State = 1921;
+				State = 1923;
 				enumConstructorMember();
-				State = 1926;
+				State = 1928;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,212,Context);
 				while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 					if ( _alt==1 ) {
 						{
 						{
-						State = 1922;
+						State = 1924;
 						Match(COMMA);
-						State = 1923;
+						State = 1925;
 						enumConstructorMember();
 						}
-						}
+						} 
 					}
-					State = 1928;
+					State = 1930;
 					ErrorHandler.Sync(this);
 					_alt = Interpreter.AdaptivePredict(TokenStream,212,Context);
 				}
 				}
 			}
 
-			State = 1932;
+			State = 1934;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1931;
+				State = 1933;
 				Match(COMMA);
 				}
 			}
 
-			State = 1934;
+			State = 1936;
 			Match(RBRACE);
 			}
 		}
@@ -12662,11 +12674,11 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1936;
-			Match(Identifier);
-			State = 1937;
-			Match(COLON);
 			State = 1938;
+			Match(Identifier);
+			State = 1939;
+			Match(COLON);
+			State = 1940;
 			expression();
 			}
 		}
@@ -12716,47 +12728,47 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1940;
+			State = 1942;
 			Match(LPAREN);
-			State = 1949;
+			State = 1951;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (((((_la - 30)) & ~0x3f) == 0 && ((1L << (_la - 30)) & 126102713711726641L) != 0) || ((((_la - 114)) & ~0x3f) == 0 && ((1L << (_la - 114)) & 266388842241L) != 0)) {
 				{
-				State = 1941;
+				State = 1943;
 				argument();
-				State = 1946;
+				State = 1948;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,215,Context);
 				while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 					if ( _alt==1 ) {
 						{
 						{
-						State = 1942;
+						State = 1944;
 						Match(COMMA);
-						State = 1943;
+						State = 1945;
 						argument();
 						}
-						}
+						} 
 					}
-					State = 1948;
+					State = 1950;
 					ErrorHandler.Sync(this);
 					_alt = Interpreter.AdaptivePredict(TokenStream,215,Context);
 				}
 				}
 			}
 
-			State = 1952;
+			State = 1954;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1951;
+				State = 1953;
 				Match(COMMA);
 				}
 			}
 
-			State = 1954;
+			State = 1956;
 			Match(RPAREN);
 			}
 		}
@@ -12795,7 +12807,7 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1956;
+			State = 1958;
 			expression();
 			}
 		}
@@ -12845,39 +12857,39 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1958;
+			State = 1960;
 			Match(LBRACE);
-			State = 1959;
+			State = 1961;
 			memberInitializer();
-			State = 1964;
+			State = 1966;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,218,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					State = 1960;
+					State = 1962;
 					Match(COMMA);
-					State = 1961;
+					State = 1963;
 					memberInitializer();
 					}
-					}
+					} 
 				}
-				State = 1966;
+				State = 1968;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,218,Context);
 			}
-			State = 1968;
+			State = 1970;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1967;
+				State = 1969;
 				Match(COMMA);
 				}
 			}
 
-			State = 1970;
+			State = 1972;
 			Match(RBRACE);
 			}
 		}
@@ -12918,11 +12930,11 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1972;
-			Match(Identifier);
-			State = 1973;
-			Match(ASSIGN);
 			State = 1974;
+			Match(Identifier);
+			State = 1975;
+			Match(ASSIGN);
+			State = 1976;
 			variableInitializer();
 			}
 		}
@@ -12972,39 +12984,39 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 1976;
+			State = 1978;
 			Match(LBRACE);
-			State = 1977;
+			State = 1979;
 			variableInitializer();
-			State = 1982;
+			State = 1984;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,220,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					State = 1978;
+					State = 1980;
 					Match(COMMA);
-					State = 1979;
+					State = 1981;
 					variableInitializer();
 					}
-					}
+					} 
 				}
-				State = 1984;
+				State = 1986;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,220,Context);
 			}
-			State = 1986;
+			State = 1988;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==COMMA) {
 				{
-				State = 1985;
+				State = 1987;
 				Match(COMMA);
 				}
 			}
 
-			State = 1988;
+			State = 1990;
 			Match(RBRACE);
 			}
 		}
@@ -13048,65 +13060,65 @@ public partial class StarkParser : Parser {
 		LiteralContext _localctx = new LiteralContext(Context, State);
 		EnterRule(_localctx, 362, RULE_literal);
 		try {
-			State = 1999;
+			State = 2001;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
 			case MINUS:
 			case IntegerLiteral:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 1990;
+				State = 1992;
 				signedIntegerLiteral();
 				}
 				break;
 			case FloatLiteral:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 1991;
+				State = 1993;
 				Match(FloatLiteral);
 				}
 				break;
 			case DOLLAR:
 				EnterOuterAlt(_localctx, 3);
 				{
-				State = 1992;
+				State = 1994;
 				Match(DOLLAR);
-				State = 1993;
+				State = 1995;
 				Match(StringLiteral);
 				}
 				break;
 			case StringLiteral:
 				EnterOuterAlt(_localctx, 4);
 				{
-				State = 1994;
+				State = 1996;
 				Match(StringLiteral);
 				}
 				break;
 			case CharacterLiteral:
 				EnterOuterAlt(_localctx, 5);
 				{
-				State = 1995;
+				State = 1997;
 				Match(CharacterLiteral);
 				}
 				break;
 			case TRUE:
 				EnterOuterAlt(_localctx, 6);
 				{
-				State = 1996;
+				State = 1998;
 				Match(TRUE);
 				}
 				break;
 			case FALSE:
 				EnterOuterAlt(_localctx, 7);
 				{
-				State = 1997;
+				State = 1999;
 				Match(FALSE);
 				}
 				break;
 			case NULL:
 				EnterOuterAlt(_localctx, 8);
 				{
-				State = 1998;
+				State = 2000;
 				Match(NULL);
 				}
 				break;
@@ -13149,17 +13161,17 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 2002;
+			State = 2004;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			if (_la==MINUS) {
 				{
-				State = 2001;
+				State = 2003;
 				Match(MINUS);
 				}
 			}
 
-			State = 2004;
+			State = 2006;
 			Match(IntegerLiteral);
 			}
 		}
@@ -13201,9 +13213,9 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 2006;
+			State = 2008;
 			qualifiedName();
-			State = 2007;
+			State = 2009;
 			typeArgumentList();
 			}
 		}
@@ -13244,11 +13256,11 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 2009;
-			genericQualifiedName();
-			State = 2010;
-			Match(DOT);
 			State = 2011;
+			genericQualifiedName();
+			State = 2012;
+			Match(DOT);
+			State = 2013;
 			Match(Identifier);
 			}
 		}
@@ -13293,23 +13305,23 @@ public partial class StarkParser : Parser {
 			int _alt;
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 2013;
+			State = 2015;
 			Match(Identifier);
-			State = 2018;
+			State = 2020;
 			ErrorHandler.Sync(this);
 			_alt = Interpreter.AdaptivePredict(TokenStream,224,Context);
 			while ( _alt!=2 && _alt!=global::Antlr4.Runtime.Atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					State = 2014;
+					State = 2016;
 					Match(DOT);
-					State = 2015;
+					State = 2017;
 					Match(Identifier);
 					}
-					}
+					} 
 				}
-				State = 2020;
+				State = 2022;
 				ErrorHandler.Sync(this);
 				_alt = Interpreter.AdaptivePredict(TokenStream,224,Context);
 			}
@@ -13356,21 +13368,21 @@ public partial class StarkParser : Parser {
 		try {
 			EnterOuterAlt(_localctx, 1);
 			{
-			State = 2021;
+			State = 2023;
 			Match(Identifier);
-			State = 2024;
+			State = 2026;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
 			do {
 				{
 				{
-				State = 2022;
+				State = 2024;
 				Match(DOT);
-				State = 2023;
+				State = 2025;
 				Match(Identifier);
 				}
 				}
-				State = 2026;
+				State = 2028;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
 			} while ( _la==DOT );
@@ -13412,20 +13424,20 @@ public partial class StarkParser : Parser {
 		EnumCaseTargetContext _localctx = new EnumCaseTargetContext(Context, State);
 		EnterRule(_localctx, 374, RULE_enumCaseTarget);
 		try {
-			State = 2030;
+			State = 2032;
 			ErrorHandler.Sync(this);
 			switch ( Interpreter.AdaptivePredict(TokenStream,226,Context) ) {
 			case 1:
 				EnterOuterAlt(_localctx, 1);
 				{
-				State = 2028;
+				State = 2030;
 				dottedName();
 				}
 				break;
 			case 2:
 				EnterOuterAlt(_localctx, 2);
 				{
-				State = 2029;
+				State = 2031;
 				genericEnumCaseReference();
 				}
 				break;
@@ -13463,7 +13475,7 @@ public partial class StarkParser : Parser {
 	}
 
 	private static int[] _serializedATN = {
-		4,1,154,2033,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,6,2,
+		4,1,154,2035,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,6,2,
 		7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,13,2,14,7,14,
 		2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,7,19,2,20,7,20,2,21,7,21,
 		2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,2,26,7,26,2,27,7,27,2,28,7,28,
@@ -13614,144 +13626,144 @@ public partial class StarkParser : Parser {
 		12,156,1742,9,156,1,157,1,157,1,157,1,157,1,157,1,157,1,157,1,157,1,157,
 		1,157,1,157,1,157,1,157,1,157,1,157,3,157,1759,8,157,1,158,1,158,1,159,
 		5,159,1764,8,159,10,159,12,159,1767,9,159,1,159,1,159,5,159,1771,8,159,
-		10,159,12,159,1774,9,159,1,160,1,160,1,160,3,160,1779,8,160,1,161,1,161,
-		1,161,3,161,1784,8,161,1,162,1,162,5,162,1788,8,162,10,162,12,162,1791,
-		9,162,1,163,1,163,1,163,3,163,1796,8,163,1,163,1,163,1,163,3,163,1801,
-		8,163,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,
+		10,159,12,159,1774,9,159,1,160,1,160,1,160,1,160,1,160,3,160,1781,8,160,
+		1,161,1,161,1,161,3,161,1786,8,161,1,162,1,162,5,162,1790,8,162,10,162,
+		12,162,1793,9,162,1,163,1,163,1,163,3,163,1798,8,163,1,163,1,163,1,163,
+		3,163,1803,8,163,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,
 		1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,1,164,
-		1,164,3,164,1827,8,164,1,165,3,165,1830,8,165,1,165,3,165,1833,8,165,1,
-		165,1,165,1,165,1,165,3,165,1839,8,165,1,166,1,166,1,167,1,167,1,167,1,
-		167,1,167,5,167,1848,8,167,10,167,12,167,1851,9,167,3,167,1853,8,167,1,
-		167,3,167,1856,8,167,1,167,1,167,1,168,3,168,1861,8,168,1,168,1,168,1,
-		168,1,169,1,169,1,170,1,170,1,170,1,170,5,170,1872,8,170,10,170,12,170,
-		1875,9,170,3,170,1877,8,170,1,170,3,170,1880,8,170,1,170,1,170,1,171,1,
-		171,1,171,1,172,1,172,1,172,3,172,1890,8,172,1,172,3,172,1893,8,172,1,
-		172,1,172,1,172,3,172,1898,8,172,1,172,1,172,1,172,3,172,1903,8,172,3,
-		172,1905,8,172,1,173,1,173,1,173,1,173,5,173,1911,8,173,10,173,12,173,
-		1914,9,173,1,173,3,173,1917,8,173,1,173,1,173,1,174,1,174,1,174,1,174,
-		5,174,1925,8,174,10,174,12,174,1928,9,174,3,174,1930,8,174,1,174,3,174,
-		1933,8,174,1,174,1,174,1,175,1,175,1,175,1,175,1,176,1,176,1,176,1,176,
-		5,176,1945,8,176,10,176,12,176,1948,9,176,3,176,1950,8,176,1,176,3,176,
-		1953,8,176,1,176,1,176,1,177,1,177,1,178,1,178,1,178,1,178,5,178,1963,
-		8,178,10,178,12,178,1966,9,178,1,178,3,178,1969,8,178,1,178,1,178,1,179,
-		1,179,1,179,1,179,1,180,1,180,1,180,1,180,5,180,1981,8,180,10,180,12,180,
-		1984,9,180,1,180,3,180,1987,8,180,1,180,1,180,1,181,1,181,1,181,1,181,
-		1,181,1,181,1,181,1,181,1,181,3,181,2000,8,181,1,182,3,182,2003,8,182,
-		1,182,1,182,1,183,1,183,1,183,1,184,1,184,1,184,1,184,1,185,1,185,1,185,
-		5,185,2017,8,185,10,185,12,185,2020,9,185,1,186,1,186,1,186,4,186,2025,
-		8,186,11,186,12,186,2026,1,187,1,187,3,187,2031,8,187,1,187,0,0,188,0,
-		2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,
-		52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,98,
-		100,102,104,106,108,110,112,114,116,118,120,122,124,126,128,130,132,134,
-		136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,170,
-		172,174,176,178,180,182,184,186,188,190,192,194,196,198,200,202,204,206,
-		208,210,212,214,216,218,220,222,224,226,228,230,232,234,236,238,240,242,
-		244,246,248,250,252,254,256,258,260,262,264,266,268,270,272,274,276,278,
-		280,282,284,286,288,290,292,294,296,298,300,302,304,306,308,310,312,314,
-		316,318,320,322,324,326,328,330,332,334,336,338,340,342,344,346,348,350,
-		352,354,356,358,360,362,364,366,368,370,372,374,0,17,1,0,3,5,2,0,51,51,
-		71,71,2,0,108,109,120,121,2,0,64,64,147,147,1,0,29,33,2,0,36,42,49,49,
-		2,0,9,9,30,30,1,0,49,50,2,0,79,83,89,89,4,0,112,112,122,126,140,141,147,
-		148,1,0,74,76,2,0,92,105,119,119,1,0,106,107,3,0,113,114,116,117,122,123,
-		3,0,115,115,118,118,124,126,4,0,114,114,122,124,127,127,130,131,3,0,40,
-		42,49,49,147,147,2160,0,379,1,0,0,0,2,392,1,0,0,0,4,400,1,0,0,0,6,406,
-		1,0,0,0,8,420,1,0,0,0,10,441,1,0,0,0,12,449,1,0,0,0,14,454,1,0,0,0,16,
-		471,1,0,0,0,18,476,1,0,0,0,20,511,1,0,0,0,22,524,1,0,0,0,24,526,1,0,0,
-		0,26,530,1,0,0,0,28,550,1,0,0,0,30,552,1,0,0,0,32,558,1,0,0,0,34,562,1,
-		0,0,0,36,564,1,0,0,0,38,583,1,0,0,0,40,589,1,0,0,0,42,591,1,0,0,0,44,609,
-		1,0,0,0,46,611,1,0,0,0,48,615,1,0,0,0,50,617,1,0,0,0,52,622,1,0,0,0,54,
-		627,1,0,0,0,56,632,1,0,0,0,58,638,1,0,0,0,60,643,1,0,0,0,62,659,1,0,0,
-		0,64,661,1,0,0,0,66,675,1,0,0,0,68,677,1,0,0,0,70,682,1,0,0,0,72,696,1,
-		0,0,0,74,698,1,0,0,0,76,704,1,0,0,0,78,710,1,0,0,0,80,725,1,0,0,0,82,729,
-		1,0,0,0,84,739,1,0,0,0,86,752,1,0,0,0,88,760,1,0,0,0,90,769,1,0,0,0,92,
-		776,1,0,0,0,94,785,1,0,0,0,96,787,1,0,0,0,98,796,1,0,0,0,100,805,1,0,0,
-		0,102,814,1,0,0,0,104,830,1,0,0,0,106,839,1,0,0,0,108,851,1,0,0,0,110,
-		864,1,0,0,0,112,877,1,0,0,0,114,916,1,0,0,0,116,918,1,0,0,0,118,925,1,
-		0,0,0,120,935,1,0,0,0,122,942,1,0,0,0,124,951,1,0,0,0,126,961,1,0,0,0,
-		128,993,1,0,0,0,130,1020,1,0,0,0,132,1047,1,0,0,0,134,1049,1,0,0,0,136,
-		1054,1,0,0,0,138,1073,1,0,0,0,140,1075,1,0,0,0,142,1083,1,0,0,0,144,1091,
-		1,0,0,0,146,1095,1,0,0,0,148,1103,1,0,0,0,150,1111,1,0,0,0,152,1118,1,
-		0,0,0,154,1120,1,0,0,0,156,1125,1,0,0,0,158,1135,1,0,0,0,160,1144,1,0,
-		0,0,162,1146,1,0,0,0,164,1150,1,0,0,0,166,1155,1,0,0,0,168,1167,1,0,0,
-		0,170,1169,1,0,0,0,172,1175,1,0,0,0,174,1192,1,0,0,0,176,1197,1,0,0,0,
-		178,1204,1,0,0,0,180,1207,1,0,0,0,182,1221,1,0,0,0,184,1224,1,0,0,0,186,
-		1226,1,0,0,0,188,1247,1,0,0,0,190,1249,1,0,0,0,192,1252,1,0,0,0,194,1254,
-		1,0,0,0,196,1260,1,0,0,0,198,1268,1,0,0,0,200,1270,1,0,0,0,202,1285,1,
-		0,0,0,204,1287,1,0,0,0,206,1312,1,0,0,0,208,1314,1,0,0,0,210,1321,1,0,
-		0,0,212,1326,1,0,0,0,214,1344,1,0,0,0,216,1346,1,0,0,0,218,1354,1,0,0,
-		0,220,1374,1,0,0,0,222,1379,1,0,0,0,224,1396,1,0,0,0,226,1422,1,0,0,0,
-		228,1424,1,0,0,0,230,1427,1,0,0,0,232,1480,1,0,0,0,234,1483,1,0,0,0,236,
-		1489,1,0,0,0,238,1494,1,0,0,0,240,1499,1,0,0,0,242,1501,1,0,0,0,244,1508,
-		1,0,0,0,246,1510,1,0,0,0,248,1512,1,0,0,0,250,1514,1,0,0,0,252,1516,1,
-		0,0,0,254,1518,1,0,0,0,256,1524,1,0,0,0,258,1528,1,0,0,0,260,1534,1,0,
-		0,0,262,1540,1,0,0,0,264,1543,1,0,0,0,266,1554,1,0,0,0,268,1556,1,0,0,
-		0,270,1560,1,0,0,0,272,1576,1,0,0,0,274,1580,1,0,0,0,276,1601,1,0,0,0,
-		278,1603,1,0,0,0,280,1606,1,0,0,0,282,1622,1,0,0,0,284,1626,1,0,0,0,286,
-		1634,1,0,0,0,288,1646,1,0,0,0,290,1648,1,0,0,0,292,1650,1,0,0,0,294,1658,
-		1,0,0,0,296,1666,1,0,0,0,298,1674,1,0,0,0,300,1682,1,0,0,0,302,1690,1,
-		0,0,0,304,1698,1,0,0,0,306,1706,1,0,0,0,308,1714,1,0,0,0,310,1727,1,0,
-		0,0,312,1735,1,0,0,0,314,1758,1,0,0,0,316,1760,1,0,0,0,318,1765,1,0,0,
-		0,320,1778,1,0,0,0,322,1780,1,0,0,0,324,1785,1,0,0,0,326,1800,1,0,0,0,
-		328,1826,1,0,0,0,330,1829,1,0,0,0,332,1840,1,0,0,0,334,1842,1,0,0,0,336,
-		1860,1,0,0,0,338,1865,1,0,0,0,340,1867,1,0,0,0,342,1883,1,0,0,0,344,1904,
-		1,0,0,0,346,1906,1,0,0,0,348,1920,1,0,0,0,350,1936,1,0,0,0,352,1940,1,
-		0,0,0,354,1956,1,0,0,0,356,1958,1,0,0,0,358,1972,1,0,0,0,360,1976,1,0,
-		0,0,362,1999,1,0,0,0,364,2002,1,0,0,0,366,2006,1,0,0,0,368,2009,1,0,0,
-		0,370,2013,1,0,0,0,372,2021,1,0,0,0,374,2030,1,0,0,0,376,378,3,2,1,0,377,
-		376,1,0,0,0,378,381,1,0,0,0,379,377,1,0,0,0,379,380,1,0,0,0,380,382,1,
-		0,0,0,381,379,1,0,0,0,382,386,3,4,2,0,383,385,3,14,7,0,384,383,1,0,0,0,
-		385,388,1,0,0,0,386,384,1,0,0,0,386,387,1,0,0,0,387,389,1,0,0,0,388,386,
-		1,0,0,0,389,390,5,0,0,1,390,1,1,0,0,0,391,393,5,5,0,0,392,391,1,0,0,0,
-		392,393,1,0,0,0,393,394,1,0,0,0,394,395,5,1,0,0,395,396,3,370,185,0,396,
-		3,1,0,0,0,397,399,3,6,3,0,398,397,1,0,0,0,399,402,1,0,0,0,400,398,1,0,
-		0,0,400,401,1,0,0,0,401,403,1,0,0,0,402,400,1,0,0,0,403,404,5,2,0,0,404,
-		405,3,370,185,0,405,5,1,0,0,0,406,407,5,144,0,0,407,412,3,8,4,0,408,409,
-		5,136,0,0,409,411,3,8,4,0,410,408,1,0,0,0,411,414,1,0,0,0,412,410,1,0,
-		0,0,412,413,1,0,0,0,413,416,1,0,0,0,414,412,1,0,0,0,415,417,5,136,0,0,
-		416,415,1,0,0,0,416,417,1,0,0,0,417,418,1,0,0,0,418,419,5,145,0,0,419,
-		7,1,0,0,0,420,436,3,370,185,0,421,433,5,140,0,0,422,427,3,12,6,0,423,424,
-		5,136,0,0,424,426,3,12,6,0,425,423,1,0,0,0,426,429,1,0,0,0,427,425,1,0,
-		0,0,427,428,1,0,0,0,428,431,1,0,0,0,429,427,1,0,0,0,430,432,5,136,0,0,
-		431,430,1,0,0,0,431,432,1,0,0,0,432,434,1,0,0,0,433,422,1,0,0,0,433,434,
-		1,0,0,0,434,435,1,0,0,0,435,437,5,141,0,0,436,421,1,0,0,0,436,437,1,0,
-		0,0,437,439,1,0,0,0,438,440,3,10,5,0,439,438,1,0,0,0,439,440,1,0,0,0,440,
-		9,1,0,0,0,441,442,5,72,0,0,442,443,3,58,29,0,443,11,1,0,0,0,444,450,3,
-		370,185,0,445,450,5,151,0,0,446,450,3,364,182,0,447,450,5,84,0,0,448,450,
-		5,85,0,0,449,444,1,0,0,0,449,445,1,0,0,0,449,446,1,0,0,0,449,447,1,0,0,
-		0,449,448,1,0,0,0,450,13,1,0,0,0,451,453,3,6,3,0,452,451,1,0,0,0,453,456,
-		1,0,0,0,454,452,1,0,0,0,454,455,1,0,0,0,455,458,1,0,0,0,456,454,1,0,0,
-		0,457,459,3,16,8,0,458,457,1,0,0,0,458,459,1,0,0,0,459,469,1,0,0,0,460,
-		470,3,18,9,0,461,470,3,82,41,0,462,470,3,84,42,0,463,470,3,86,43,0,464,
-		470,3,88,44,0,465,470,3,90,45,0,466,470,3,92,46,0,467,470,3,138,69,0,468,
-		470,3,140,70,0,469,460,1,0,0,0,469,461,1,0,0,0,469,462,1,0,0,0,469,463,
-		1,0,0,0,469,464,1,0,0,0,469,465,1,0,0,0,469,466,1,0,0,0,469,467,1,0,0,
-		0,469,468,1,0,0,0,470,15,1,0,0,0,471,472,7,0,0,0,472,17,1,0,0,0,473,475,
-		3,22,11,0,474,473,1,0,0,0,475,478,1,0,0,0,476,474,1,0,0,0,476,477,1,0,
-		0,0,477,480,1,0,0,0,478,476,1,0,0,0,479,481,3,68,34,0,480,479,1,0,0,0,
-		480,481,1,0,0,0,481,482,1,0,0,0,482,483,3,20,10,0,483,484,3,34,17,0,484,
-		486,5,147,0,0,485,487,3,60,30,0,486,485,1,0,0,0,486,487,1,0,0,0,487,488,
-		1,0,0,0,488,492,3,36,18,0,489,491,3,64,32,0,490,489,1,0,0,0,491,494,1,
-		0,0,0,492,490,1,0,0,0,492,493,1,0,0,0,493,498,1,0,0,0,494,492,1,0,0,0,
-		495,497,3,42,21,0,496,495,1,0,0,0,497,500,1,0,0,0,498,496,1,0,0,0,498,
-		499,1,0,0,0,499,502,1,0,0,0,500,498,1,0,0,0,501,503,3,70,35,0,502,501,
-		1,0,0,0,502,503,1,0,0,0,503,504,1,0,0,0,504,505,3,66,33,0,505,19,1,0,0,
-		0,506,507,5,7,0,0,507,512,5,8,0,0,508,512,5,7,0,0,509,512,5,8,0,0,510,
-		512,5,6,0,0,511,506,1,0,0,0,511,508,1,0,0,0,511,509,1,0,0,0,511,510,1,
-		0,0,0,512,21,1,0,0,0,513,525,5,9,0,0,514,525,5,10,0,0,515,525,5,11,0,0,
-		516,525,3,182,91,0,517,525,5,12,0,0,518,525,5,13,0,0,519,525,3,24,12,0,
-		520,525,5,15,0,0,521,525,5,16,0,0,522,525,5,17,0,0,523,525,5,32,0,0,524,
-		513,1,0,0,0,524,514,1,0,0,0,524,515,1,0,0,0,524,516,1,0,0,0,524,517,1,
-		0,0,0,524,518,1,0,0,0,524,519,1,0,0,0,524,520,1,0,0,0,524,521,1,0,0,0,
-		524,522,1,0,0,0,524,523,1,0,0,0,525,23,1,0,0,0,526,528,5,14,0,0,527,529,
-		3,26,13,0,528,527,1,0,0,0,528,529,1,0,0,0,529,25,1,0,0,0,530,531,5,140,
-		0,0,531,532,3,28,14,0,532,533,5,141,0,0,533,27,1,0,0,0,534,551,5,147,0,
-		0,535,536,5,147,0,0,536,537,5,140,0,0,537,542,3,30,15,0,538,539,5,136,
-		0,0,539,541,3,30,15,0,540,538,1,0,0,0,541,544,1,0,0,0,542,540,1,0,0,0,
-		542,543,1,0,0,0,543,546,1,0,0,0,544,542,1,0,0,0,545,547,5,136,0,0,546,
-		545,1,0,0,0,546,547,1,0,0,0,547,548,1,0,0,0,548,549,5,141,0,0,549,551,
-		1,0,0,0,550,534,1,0,0,0,550,535,1,0,0,0,551,29,1,0,0,0,552,553,3,32,16,
-		0,553,554,5,134,0,0,554,555,5,147,0,0,555,31,1,0,0,0,556,559,5,60,0,0,
-		557,559,3,370,185,0,558,556,1,0,0,0,558,557,1,0,0,0,559,33,1,0,0,0,560,
+		1,164,1,164,1,164,3,164,1829,8,164,1,165,3,165,1832,8,165,1,165,3,165,
+		1835,8,165,1,165,1,165,1,165,1,165,3,165,1841,8,165,1,166,1,166,1,167,
+		1,167,1,167,1,167,1,167,5,167,1850,8,167,10,167,12,167,1853,9,167,3,167,
+		1855,8,167,1,167,3,167,1858,8,167,1,167,1,167,1,168,3,168,1863,8,168,1,
+		168,1,168,1,168,1,169,1,169,1,170,1,170,1,170,1,170,5,170,1874,8,170,10,
+		170,12,170,1877,9,170,3,170,1879,8,170,1,170,3,170,1882,8,170,1,170,1,
+		170,1,171,1,171,1,171,1,172,1,172,1,172,3,172,1892,8,172,1,172,3,172,1895,
+		8,172,1,172,1,172,1,172,3,172,1900,8,172,1,172,1,172,1,172,3,172,1905,
+		8,172,3,172,1907,8,172,1,173,1,173,1,173,1,173,5,173,1913,8,173,10,173,
+		12,173,1916,9,173,1,173,3,173,1919,8,173,1,173,1,173,1,174,1,174,1,174,
+		1,174,5,174,1927,8,174,10,174,12,174,1930,9,174,3,174,1932,8,174,1,174,
+		3,174,1935,8,174,1,174,1,174,1,175,1,175,1,175,1,175,1,176,1,176,1,176,
+		1,176,5,176,1947,8,176,10,176,12,176,1950,9,176,3,176,1952,8,176,1,176,
+		3,176,1955,8,176,1,176,1,176,1,177,1,177,1,178,1,178,1,178,1,178,5,178,
+		1965,8,178,10,178,12,178,1968,9,178,1,178,3,178,1971,8,178,1,178,1,178,
+		1,179,1,179,1,179,1,179,1,180,1,180,1,180,1,180,5,180,1983,8,180,10,180,
+		12,180,1986,9,180,1,180,3,180,1989,8,180,1,180,1,180,1,181,1,181,1,181,
+		1,181,1,181,1,181,1,181,1,181,1,181,3,181,2002,8,181,1,182,3,182,2005,
+		8,182,1,182,1,182,1,183,1,183,1,183,1,184,1,184,1,184,1,184,1,185,1,185,
+		1,185,5,185,2019,8,185,10,185,12,185,2022,9,185,1,186,1,186,1,186,4,186,
+		2027,8,186,11,186,12,186,2028,1,187,1,187,3,187,2033,8,187,1,187,0,0,188,
+		0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,
+		50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,
+		98,100,102,104,106,108,110,112,114,116,118,120,122,124,126,128,130,132,
+		134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,
+		170,172,174,176,178,180,182,184,186,188,190,192,194,196,198,200,202,204,
+		206,208,210,212,214,216,218,220,222,224,226,228,230,232,234,236,238,240,
+		242,244,246,248,250,252,254,256,258,260,262,264,266,268,270,272,274,276,
+		278,280,282,284,286,288,290,292,294,296,298,300,302,304,306,308,310,312,
+		314,316,318,320,322,324,326,328,330,332,334,336,338,340,342,344,346,348,
+		350,352,354,356,358,360,362,364,366,368,370,372,374,0,17,1,0,3,5,2,0,51,
+		51,71,71,2,0,108,109,120,121,2,0,64,64,147,147,1,0,29,33,2,0,36,42,49,
+		49,2,0,9,9,30,30,1,0,49,50,2,0,79,83,89,89,4,0,112,112,122,126,140,141,
+		147,148,1,0,74,76,2,0,92,105,119,119,1,0,106,107,3,0,113,114,116,117,122,
+		123,3,0,115,115,118,118,124,126,4,0,114,114,122,124,127,127,130,131,3,
+		0,40,42,49,49,147,147,2164,0,379,1,0,0,0,2,392,1,0,0,0,4,400,1,0,0,0,6,
+		406,1,0,0,0,8,420,1,0,0,0,10,441,1,0,0,0,12,449,1,0,0,0,14,454,1,0,0,0,
+		16,471,1,0,0,0,18,476,1,0,0,0,20,511,1,0,0,0,22,524,1,0,0,0,24,526,1,0,
+		0,0,26,530,1,0,0,0,28,550,1,0,0,0,30,552,1,0,0,0,32,558,1,0,0,0,34,562,
+		1,0,0,0,36,564,1,0,0,0,38,583,1,0,0,0,40,589,1,0,0,0,42,591,1,0,0,0,44,
+		609,1,0,0,0,46,611,1,0,0,0,48,615,1,0,0,0,50,617,1,0,0,0,52,622,1,0,0,
+		0,54,627,1,0,0,0,56,632,1,0,0,0,58,638,1,0,0,0,60,643,1,0,0,0,62,659,1,
+		0,0,0,64,661,1,0,0,0,66,675,1,0,0,0,68,677,1,0,0,0,70,682,1,0,0,0,72,696,
+		1,0,0,0,74,698,1,0,0,0,76,704,1,0,0,0,78,710,1,0,0,0,80,725,1,0,0,0,82,
+		729,1,0,0,0,84,739,1,0,0,0,86,752,1,0,0,0,88,760,1,0,0,0,90,769,1,0,0,
+		0,92,776,1,0,0,0,94,785,1,0,0,0,96,787,1,0,0,0,98,796,1,0,0,0,100,805,
+		1,0,0,0,102,814,1,0,0,0,104,830,1,0,0,0,106,839,1,0,0,0,108,851,1,0,0,
+		0,110,864,1,0,0,0,112,877,1,0,0,0,114,916,1,0,0,0,116,918,1,0,0,0,118,
+		925,1,0,0,0,120,935,1,0,0,0,122,942,1,0,0,0,124,951,1,0,0,0,126,961,1,
+		0,0,0,128,993,1,0,0,0,130,1020,1,0,0,0,132,1047,1,0,0,0,134,1049,1,0,0,
+		0,136,1054,1,0,0,0,138,1073,1,0,0,0,140,1075,1,0,0,0,142,1083,1,0,0,0,
+		144,1091,1,0,0,0,146,1095,1,0,0,0,148,1103,1,0,0,0,150,1111,1,0,0,0,152,
+		1118,1,0,0,0,154,1120,1,0,0,0,156,1125,1,0,0,0,158,1135,1,0,0,0,160,1144,
+		1,0,0,0,162,1146,1,0,0,0,164,1150,1,0,0,0,166,1155,1,0,0,0,168,1167,1,
+		0,0,0,170,1169,1,0,0,0,172,1175,1,0,0,0,174,1192,1,0,0,0,176,1197,1,0,
+		0,0,178,1204,1,0,0,0,180,1207,1,0,0,0,182,1221,1,0,0,0,184,1224,1,0,0,
+		0,186,1226,1,0,0,0,188,1247,1,0,0,0,190,1249,1,0,0,0,192,1252,1,0,0,0,
+		194,1254,1,0,0,0,196,1260,1,0,0,0,198,1268,1,0,0,0,200,1270,1,0,0,0,202,
+		1285,1,0,0,0,204,1287,1,0,0,0,206,1312,1,0,0,0,208,1314,1,0,0,0,210,1321,
+		1,0,0,0,212,1326,1,0,0,0,214,1344,1,0,0,0,216,1346,1,0,0,0,218,1354,1,
+		0,0,0,220,1374,1,0,0,0,222,1379,1,0,0,0,224,1396,1,0,0,0,226,1422,1,0,
+		0,0,228,1424,1,0,0,0,230,1427,1,0,0,0,232,1480,1,0,0,0,234,1483,1,0,0,
+		0,236,1489,1,0,0,0,238,1494,1,0,0,0,240,1499,1,0,0,0,242,1501,1,0,0,0,
+		244,1508,1,0,0,0,246,1510,1,0,0,0,248,1512,1,0,0,0,250,1514,1,0,0,0,252,
+		1516,1,0,0,0,254,1518,1,0,0,0,256,1524,1,0,0,0,258,1528,1,0,0,0,260,1534,
+		1,0,0,0,262,1540,1,0,0,0,264,1543,1,0,0,0,266,1554,1,0,0,0,268,1556,1,
+		0,0,0,270,1560,1,0,0,0,272,1576,1,0,0,0,274,1580,1,0,0,0,276,1601,1,0,
+		0,0,278,1603,1,0,0,0,280,1606,1,0,0,0,282,1622,1,0,0,0,284,1626,1,0,0,
+		0,286,1634,1,0,0,0,288,1646,1,0,0,0,290,1648,1,0,0,0,292,1650,1,0,0,0,
+		294,1658,1,0,0,0,296,1666,1,0,0,0,298,1674,1,0,0,0,300,1682,1,0,0,0,302,
+		1690,1,0,0,0,304,1698,1,0,0,0,306,1706,1,0,0,0,308,1714,1,0,0,0,310,1727,
+		1,0,0,0,312,1735,1,0,0,0,314,1758,1,0,0,0,316,1760,1,0,0,0,318,1765,1,
+		0,0,0,320,1780,1,0,0,0,322,1782,1,0,0,0,324,1787,1,0,0,0,326,1802,1,0,
+		0,0,328,1828,1,0,0,0,330,1831,1,0,0,0,332,1842,1,0,0,0,334,1844,1,0,0,
+		0,336,1862,1,0,0,0,338,1867,1,0,0,0,340,1869,1,0,0,0,342,1885,1,0,0,0,
+		344,1906,1,0,0,0,346,1908,1,0,0,0,348,1922,1,0,0,0,350,1938,1,0,0,0,352,
+		1942,1,0,0,0,354,1958,1,0,0,0,356,1960,1,0,0,0,358,1974,1,0,0,0,360,1978,
+		1,0,0,0,362,2001,1,0,0,0,364,2004,1,0,0,0,366,2008,1,0,0,0,368,2011,1,
+		0,0,0,370,2015,1,0,0,0,372,2023,1,0,0,0,374,2032,1,0,0,0,376,378,3,2,1,
+		0,377,376,1,0,0,0,378,381,1,0,0,0,379,377,1,0,0,0,379,380,1,0,0,0,380,
+		382,1,0,0,0,381,379,1,0,0,0,382,386,3,4,2,0,383,385,3,14,7,0,384,383,1,
+		0,0,0,385,388,1,0,0,0,386,384,1,0,0,0,386,387,1,0,0,0,387,389,1,0,0,0,
+		388,386,1,0,0,0,389,390,5,0,0,1,390,1,1,0,0,0,391,393,5,5,0,0,392,391,
+		1,0,0,0,392,393,1,0,0,0,393,394,1,0,0,0,394,395,5,1,0,0,395,396,3,370,
+		185,0,396,3,1,0,0,0,397,399,3,6,3,0,398,397,1,0,0,0,399,402,1,0,0,0,400,
+		398,1,0,0,0,400,401,1,0,0,0,401,403,1,0,0,0,402,400,1,0,0,0,403,404,5,
+		2,0,0,404,405,3,370,185,0,405,5,1,0,0,0,406,407,5,144,0,0,407,412,3,8,
+		4,0,408,409,5,136,0,0,409,411,3,8,4,0,410,408,1,0,0,0,411,414,1,0,0,0,
+		412,410,1,0,0,0,412,413,1,0,0,0,413,416,1,0,0,0,414,412,1,0,0,0,415,417,
+		5,136,0,0,416,415,1,0,0,0,416,417,1,0,0,0,417,418,1,0,0,0,418,419,5,145,
+		0,0,419,7,1,0,0,0,420,436,3,370,185,0,421,433,5,140,0,0,422,427,3,12,6,
+		0,423,424,5,136,0,0,424,426,3,12,6,0,425,423,1,0,0,0,426,429,1,0,0,0,427,
+		425,1,0,0,0,427,428,1,0,0,0,428,431,1,0,0,0,429,427,1,0,0,0,430,432,5,
+		136,0,0,431,430,1,0,0,0,431,432,1,0,0,0,432,434,1,0,0,0,433,422,1,0,0,
+		0,433,434,1,0,0,0,434,435,1,0,0,0,435,437,5,141,0,0,436,421,1,0,0,0,436,
+		437,1,0,0,0,437,439,1,0,0,0,438,440,3,10,5,0,439,438,1,0,0,0,439,440,1,
+		0,0,0,440,9,1,0,0,0,441,442,5,72,0,0,442,443,3,58,29,0,443,11,1,0,0,0,
+		444,450,3,370,185,0,445,450,5,151,0,0,446,450,3,364,182,0,447,450,5,84,
+		0,0,448,450,5,85,0,0,449,444,1,0,0,0,449,445,1,0,0,0,449,446,1,0,0,0,449,
+		447,1,0,0,0,449,448,1,0,0,0,450,13,1,0,0,0,451,453,3,6,3,0,452,451,1,0,
+		0,0,453,456,1,0,0,0,454,452,1,0,0,0,454,455,1,0,0,0,455,458,1,0,0,0,456,
+		454,1,0,0,0,457,459,3,16,8,0,458,457,1,0,0,0,458,459,1,0,0,0,459,469,1,
+		0,0,0,460,470,3,18,9,0,461,470,3,82,41,0,462,470,3,84,42,0,463,470,3,86,
+		43,0,464,470,3,88,44,0,465,470,3,90,45,0,466,470,3,92,46,0,467,470,3,138,
+		69,0,468,470,3,140,70,0,469,460,1,0,0,0,469,461,1,0,0,0,469,462,1,0,0,
+		0,469,463,1,0,0,0,469,464,1,0,0,0,469,465,1,0,0,0,469,466,1,0,0,0,469,
+		467,1,0,0,0,469,468,1,0,0,0,470,15,1,0,0,0,471,472,7,0,0,0,472,17,1,0,
+		0,0,473,475,3,22,11,0,474,473,1,0,0,0,475,478,1,0,0,0,476,474,1,0,0,0,
+		476,477,1,0,0,0,477,480,1,0,0,0,478,476,1,0,0,0,479,481,3,68,34,0,480,
+		479,1,0,0,0,480,481,1,0,0,0,481,482,1,0,0,0,482,483,3,20,10,0,483,484,
+		3,34,17,0,484,486,5,147,0,0,485,487,3,60,30,0,486,485,1,0,0,0,486,487,
+		1,0,0,0,487,488,1,0,0,0,488,492,3,36,18,0,489,491,3,64,32,0,490,489,1,
+		0,0,0,491,494,1,0,0,0,492,490,1,0,0,0,492,493,1,0,0,0,493,498,1,0,0,0,
+		494,492,1,0,0,0,495,497,3,42,21,0,496,495,1,0,0,0,497,500,1,0,0,0,498,
+		496,1,0,0,0,498,499,1,0,0,0,499,502,1,0,0,0,500,498,1,0,0,0,501,503,3,
+		70,35,0,502,501,1,0,0,0,502,503,1,0,0,0,503,504,1,0,0,0,504,505,3,66,33,
+		0,505,19,1,0,0,0,506,507,5,7,0,0,507,512,5,8,0,0,508,512,5,7,0,0,509,512,
+		5,8,0,0,510,512,5,6,0,0,511,506,1,0,0,0,511,508,1,0,0,0,511,509,1,0,0,
+		0,511,510,1,0,0,0,512,21,1,0,0,0,513,525,5,9,0,0,514,525,5,10,0,0,515,
+		525,5,11,0,0,516,525,3,182,91,0,517,525,5,12,0,0,518,525,5,13,0,0,519,
+		525,3,24,12,0,520,525,5,15,0,0,521,525,5,16,0,0,522,525,5,17,0,0,523,525,
+		5,32,0,0,524,513,1,0,0,0,524,514,1,0,0,0,524,515,1,0,0,0,524,516,1,0,0,
+		0,524,517,1,0,0,0,524,518,1,0,0,0,524,519,1,0,0,0,524,520,1,0,0,0,524,
+		521,1,0,0,0,524,522,1,0,0,0,524,523,1,0,0,0,525,23,1,0,0,0,526,528,5,14,
+		0,0,527,529,3,26,13,0,528,527,1,0,0,0,528,529,1,0,0,0,529,25,1,0,0,0,530,
+		531,5,140,0,0,531,532,3,28,14,0,532,533,5,141,0,0,533,27,1,0,0,0,534,551,
+		5,147,0,0,535,536,5,147,0,0,536,537,5,140,0,0,537,542,3,30,15,0,538,539,
+		5,136,0,0,539,541,3,30,15,0,540,538,1,0,0,0,541,544,1,0,0,0,542,540,1,
+		0,0,0,542,543,1,0,0,0,543,546,1,0,0,0,544,542,1,0,0,0,545,547,5,136,0,
+		0,546,545,1,0,0,0,546,547,1,0,0,0,547,548,1,0,0,0,548,549,5,141,0,0,549,
+		551,1,0,0,0,550,534,1,0,0,0,550,535,1,0,0,0,551,29,1,0,0,0,552,553,3,32,
+		16,0,553,554,5,134,0,0,554,555,5,147,0,0,555,31,1,0,0,0,556,559,5,60,0,
+		0,557,559,3,370,185,0,558,556,1,0,0,0,558,557,1,0,0,0,559,33,1,0,0,0,560,
 		563,3,156,78,0,561,563,5,78,0,0,562,560,1,0,0,0,562,561,1,0,0,0,563,35,
 		1,0,0,0,564,573,5,140,0,0,565,570,3,38,19,0,566,567,5,136,0,0,567,569,
 		3,38,19,0,568,566,1,0,0,0,569,572,1,0,0,0,570,568,1,0,0,0,570,571,1,0,
@@ -14117,90 +14129,91 @@ public partial class StarkParser : Parser {
 		0,0,0,1765,1766,1,0,0,0,1766,1768,1,0,0,0,1767,1765,1,0,0,0,1768,1772,
 		3,320,160,0,1769,1771,3,194,97,0,1770,1769,1,0,0,0,1771,1774,1,0,0,0,1772,
 		1770,1,0,0,0,1772,1773,1,0,0,0,1773,319,1,0,0,0,1774,1772,1,0,0,0,1775,
-		1779,3,168,84,0,1776,1779,3,190,95,0,1777,1779,3,192,96,0,1778,1775,1,
-		0,0,0,1778,1776,1,0,0,0,1778,1777,1,0,0,0,1779,321,1,0,0,0,1780,1783,3,
-		324,162,0,1781,1782,5,112,0,0,1782,1784,3,314,157,0,1783,1781,1,0,0,0,
-		1783,1784,1,0,0,0,1784,323,1,0,0,0,1785,1789,3,328,164,0,1786,1788,3,326,
-		163,0,1787,1786,1,0,0,0,1788,1791,1,0,0,0,1789,1787,1,0,0,0,1789,1790,
-		1,0,0,0,1790,325,1,0,0,0,1791,1789,1,0,0,0,1792,1801,3,352,176,0,1793,
-		1795,5,144,0,0,1794,1796,3,284,142,0,1795,1794,1,0,0,0,1795,1796,1,0,0,
-		0,1796,1797,1,0,0,0,1797,1801,5,145,0,0,1798,1799,5,138,0,0,1799,1801,
-		5,147,0,0,1800,1792,1,0,0,0,1800,1793,1,0,0,0,1800,1798,1,0,0,0,1801,327,
-		1,0,0,0,1802,1827,3,330,165,0,1803,1827,3,362,181,0,1804,1805,5,69,0,0,
-		1805,1827,3,204,102,0,1806,1807,5,34,0,0,1807,1808,5,140,0,0,1808,1809,
-		3,156,78,0,1809,1810,5,141,0,0,1810,1827,1,0,0,0,1811,1812,5,35,0,0,1812,
-		1813,5,140,0,0,1813,1814,3,156,78,0,1814,1815,5,141,0,0,1815,1827,1,0,
-		0,0,1816,1827,3,342,171,0,1817,1827,3,368,184,0,1818,1827,3,366,183,0,
-		1819,1827,5,147,0,0,1820,1827,3,370,185,0,1821,1827,3,344,172,0,1822,1823,
-		5,140,0,0,1823,1824,3,286,143,0,1824,1825,5,141,0,0,1825,1827,1,0,0,0,
-		1826,1802,1,0,0,0,1826,1803,1,0,0,0,1826,1804,1,0,0,0,1826,1806,1,0,0,
-		0,1826,1811,1,0,0,0,1826,1816,1,0,0,0,1826,1817,1,0,0,0,1826,1818,1,0,
-		0,0,1826,1819,1,0,0,0,1826,1820,1,0,0,0,1826,1821,1,0,0,0,1826,1822,1,
-		0,0,0,1827,329,1,0,0,0,1828,1830,3,332,166,0,1829,1828,1,0,0,0,1829,1830,
-		1,0,0,0,1830,1832,1,0,0,0,1831,1833,3,334,167,0,1832,1831,1,0,0,0,1832,
-		1833,1,0,0,0,1833,1834,1,0,0,0,1834,1835,3,340,170,0,1835,1838,5,133,0,
-		0,1836,1839,3,286,143,0,1837,1839,3,204,102,0,1838,1836,1,0,0,0,1838,1837,
-		1,0,0,0,1839,331,1,0,0,0,1840,1841,5,30,0,0,1841,333,1,0,0,0,1842,1843,
-		5,147,0,0,1843,1852,5,140,0,0,1844,1849,3,336,168,0,1845,1846,5,136,0,
-		0,1846,1848,3,336,168,0,1847,1845,1,0,0,0,1848,1851,1,0,0,0,1849,1847,
-		1,0,0,0,1849,1850,1,0,0,0,1850,1853,1,0,0,0,1851,1849,1,0,0,0,1852,1844,
-		1,0,0,0,1852,1853,1,0,0,0,1853,1855,1,0,0,0,1854,1856,5,136,0,0,1855,1854,
-		1,0,0,0,1855,1856,1,0,0,0,1856,1857,1,0,0,0,1857,1858,5,141,0,0,1858,335,
-		1,0,0,0,1859,1861,5,16,0,0,1860,1859,1,0,0,0,1860,1861,1,0,0,0,1861,1862,
-		1,0,0,0,1862,1863,3,338,169,0,1863,1864,5,147,0,0,1864,337,1,0,0,0,1865,
-		1866,7,16,0,0,1866,339,1,0,0,0,1867,1876,5,140,0,0,1868,1873,3,38,19,0,
-		1869,1870,5,136,0,0,1870,1872,3,38,19,0,1871,1869,1,0,0,0,1872,1875,1,
-		0,0,0,1873,1871,1,0,0,0,1873,1874,1,0,0,0,1874,1877,1,0,0,0,1875,1873,
-		1,0,0,0,1876,1868,1,0,0,0,1876,1877,1,0,0,0,1877,1879,1,0,0,0,1878,1880,
-		5,136,0,0,1879,1878,1,0,0,0,1879,1880,1,0,0,0,1880,1881,1,0,0,0,1881,1882,
-		5,141,0,0,1882,341,1,0,0,0,1883,1884,3,374,187,0,1884,1885,3,348,174,0,
-		1885,343,1,0,0,0,1886,1887,5,70,0,0,1887,1889,3,156,78,0,1888,1890,3,352,
-		176,0,1889,1888,1,0,0,0,1889,1890,1,0,0,0,1890,1892,1,0,0,0,1891,1893,
-		3,356,178,0,1892,1891,1,0,0,0,1892,1893,1,0,0,0,1893,1905,1,0,0,0,1894,
-		1895,5,70,0,0,1895,1897,3,346,173,0,1896,1898,3,356,178,0,1897,1896,1,
-		0,0,0,1897,1898,1,0,0,0,1898,1905,1,0,0,0,1899,1900,5,70,0,0,1900,1902,
-		3,352,176,0,1901,1903,3,356,178,0,1902,1901,1,0,0,0,1902,1903,1,0,0,0,
-		1903,1905,1,0,0,0,1904,1886,1,0,0,0,1904,1894,1,0,0,0,1904,1899,1,0,0,
-		0,1905,345,1,0,0,0,1906,1907,5,140,0,0,1907,1912,5,33,0,0,1908,1909,5,
-		136,0,0,1909,1911,3,354,177,0,1910,1908,1,0,0,0,1911,1914,1,0,0,0,1912,
-		1910,1,0,0,0,1912,1913,1,0,0,0,1913,1916,1,0,0,0,1914,1912,1,0,0,0,1915,
-		1917,5,136,0,0,1916,1915,1,0,0,0,1916,1917,1,0,0,0,1917,1918,1,0,0,0,1918,
-		1919,5,141,0,0,1919,347,1,0,0,0,1920,1929,5,142,0,0,1921,1926,3,350,175,
-		0,1922,1923,5,136,0,0,1923,1925,3,350,175,0,1924,1922,1,0,0,0,1925,1928,
-		1,0,0,0,1926,1924,1,0,0,0,1926,1927,1,0,0,0,1927,1930,1,0,0,0,1928,1926,
-		1,0,0,0,1929,1921,1,0,0,0,1929,1930,1,0,0,0,1930,1932,1,0,0,0,1931,1933,
-		5,136,0,0,1932,1931,1,0,0,0,1932,1933,1,0,0,0,1933,1934,1,0,0,0,1934,1935,
-		5,143,0,0,1935,349,1,0,0,0,1936,1937,5,147,0,0,1937,1938,5,134,0,0,1938,
-		1939,3,286,143,0,1939,351,1,0,0,0,1940,1949,5,140,0,0,1941,1946,3,354,
-		177,0,1942,1943,5,136,0,0,1943,1945,3,354,177,0,1944,1942,1,0,0,0,1945,
-		1948,1,0,0,0,1946,1944,1,0,0,0,1946,1947,1,0,0,0,1947,1950,1,0,0,0,1948,
-		1946,1,0,0,0,1949,1941,1,0,0,0,1949,1950,1,0,0,0,1950,1952,1,0,0,0,1951,
-		1953,5,136,0,0,1952,1951,1,0,0,0,1952,1953,1,0,0,0,1953,1954,1,0,0,0,1954,
-		1955,5,141,0,0,1955,353,1,0,0,0,1956,1957,3,286,143,0,1957,355,1,0,0,0,
-		1958,1959,5,142,0,0,1959,1964,3,358,179,0,1960,1961,5,136,0,0,1961,1963,
-		3,358,179,0,1962,1960,1,0,0,0,1963,1966,1,0,0,0,1964,1962,1,0,0,0,1964,
-		1965,1,0,0,0,1965,1968,1,0,0,0,1966,1964,1,0,0,0,1967,1969,5,136,0,0,1968,
-		1967,1,0,0,0,1968,1969,1,0,0,0,1969,1970,1,0,0,0,1970,1971,5,143,0,0,1971,
-		357,1,0,0,0,1972,1973,5,147,0,0,1973,1974,5,119,0,0,1974,1975,3,152,76,
-		0,1975,359,1,0,0,0,1976,1977,5,142,0,0,1977,1982,3,152,76,0,1978,1979,
-		5,136,0,0,1979,1981,3,152,76,0,1980,1978,1,0,0,0,1981,1984,1,0,0,0,1982,
-		1980,1,0,0,0,1982,1983,1,0,0,0,1983,1986,1,0,0,0,1984,1982,1,0,0,0,1985,
-		1987,5,136,0,0,1986,1985,1,0,0,0,1986,1987,1,0,0,0,1987,1988,1,0,0,0,1988,
-		1989,5,143,0,0,1989,361,1,0,0,0,1990,2000,3,364,182,0,1991,2000,5,149,
-		0,0,1992,1993,5,139,0,0,1993,2000,5,151,0,0,1994,2000,5,151,0,0,1995,2000,
-		5,150,0,0,1996,2000,5,84,0,0,1997,2000,5,85,0,0,1998,2000,5,86,0,0,1999,
-		1990,1,0,0,0,1999,1991,1,0,0,0,1999,1992,1,0,0,0,1999,1994,1,0,0,0,1999,
-		1995,1,0,0,0,1999,1996,1,0,0,0,1999,1997,1,0,0,0,1999,1998,1,0,0,0,2000,
-		363,1,0,0,0,2001,2003,5,123,0,0,2002,2001,1,0,0,0,2002,2003,1,0,0,0,2003,
-		2004,1,0,0,0,2004,2005,5,148,0,0,2005,365,1,0,0,0,2006,2007,3,370,185,
-		0,2007,2008,3,200,100,0,2008,367,1,0,0,0,2009,2010,3,366,183,0,2010,2011,
-		5,138,0,0,2011,2012,5,147,0,0,2012,369,1,0,0,0,2013,2018,5,147,0,0,2014,
-		2015,5,138,0,0,2015,2017,5,147,0,0,2016,2014,1,0,0,0,2017,2020,1,0,0,0,
-		2018,2016,1,0,0,0,2018,2019,1,0,0,0,2019,371,1,0,0,0,2020,2018,1,0,0,0,
-		2021,2024,5,147,0,0,2022,2023,5,138,0,0,2023,2025,5,147,0,0,2024,2022,
-		1,0,0,0,2025,2026,1,0,0,0,2026,2024,1,0,0,0,2026,2027,1,0,0,0,2027,373,
-		1,0,0,0,2028,2031,3,372,186,0,2029,2031,3,368,184,0,2030,2028,1,0,0,0,
-		2030,2029,1,0,0,0,2031,375,1,0,0,0,227,379,386,392,400,412,416,427,431,
+		1781,3,168,84,0,1776,1781,3,170,85,0,1777,1781,3,190,95,0,1778,1781,3,
+		192,96,0,1779,1781,3,188,94,0,1780,1775,1,0,0,0,1780,1776,1,0,0,0,1780,
+		1777,1,0,0,0,1780,1778,1,0,0,0,1780,1779,1,0,0,0,1781,321,1,0,0,0,1782,
+		1785,3,324,162,0,1783,1784,5,112,0,0,1784,1786,3,314,157,0,1785,1783,1,
+		0,0,0,1785,1786,1,0,0,0,1786,323,1,0,0,0,1787,1791,3,328,164,0,1788,1790,
+		3,326,163,0,1789,1788,1,0,0,0,1790,1793,1,0,0,0,1791,1789,1,0,0,0,1791,
+		1792,1,0,0,0,1792,325,1,0,0,0,1793,1791,1,0,0,0,1794,1803,3,352,176,0,
+		1795,1797,5,144,0,0,1796,1798,3,284,142,0,1797,1796,1,0,0,0,1797,1798,
+		1,0,0,0,1798,1799,1,0,0,0,1799,1803,5,145,0,0,1800,1801,5,138,0,0,1801,
+		1803,5,147,0,0,1802,1794,1,0,0,0,1802,1795,1,0,0,0,1802,1800,1,0,0,0,1803,
+		327,1,0,0,0,1804,1829,3,330,165,0,1805,1829,3,362,181,0,1806,1807,5,69,
+		0,0,1807,1829,3,204,102,0,1808,1809,5,34,0,0,1809,1810,5,140,0,0,1810,
+		1811,3,156,78,0,1811,1812,5,141,0,0,1812,1829,1,0,0,0,1813,1814,5,35,0,
+		0,1814,1815,5,140,0,0,1815,1816,3,156,78,0,1816,1817,5,141,0,0,1817,1829,
+		1,0,0,0,1818,1829,3,342,171,0,1819,1829,3,368,184,0,1820,1829,3,366,183,
+		0,1821,1829,5,147,0,0,1822,1829,3,370,185,0,1823,1829,3,344,172,0,1824,
+		1825,5,140,0,0,1825,1826,3,286,143,0,1826,1827,5,141,0,0,1827,1829,1,0,
+		0,0,1828,1804,1,0,0,0,1828,1805,1,0,0,0,1828,1806,1,0,0,0,1828,1808,1,
+		0,0,0,1828,1813,1,0,0,0,1828,1818,1,0,0,0,1828,1819,1,0,0,0,1828,1820,
+		1,0,0,0,1828,1821,1,0,0,0,1828,1822,1,0,0,0,1828,1823,1,0,0,0,1828,1824,
+		1,0,0,0,1829,329,1,0,0,0,1830,1832,3,332,166,0,1831,1830,1,0,0,0,1831,
+		1832,1,0,0,0,1832,1834,1,0,0,0,1833,1835,3,334,167,0,1834,1833,1,0,0,0,
+		1834,1835,1,0,0,0,1835,1836,1,0,0,0,1836,1837,3,340,170,0,1837,1840,5,
+		133,0,0,1838,1841,3,286,143,0,1839,1841,3,204,102,0,1840,1838,1,0,0,0,
+		1840,1839,1,0,0,0,1841,331,1,0,0,0,1842,1843,5,30,0,0,1843,333,1,0,0,0,
+		1844,1845,5,147,0,0,1845,1854,5,140,0,0,1846,1851,3,336,168,0,1847,1848,
+		5,136,0,0,1848,1850,3,336,168,0,1849,1847,1,0,0,0,1850,1853,1,0,0,0,1851,
+		1849,1,0,0,0,1851,1852,1,0,0,0,1852,1855,1,0,0,0,1853,1851,1,0,0,0,1854,
+		1846,1,0,0,0,1854,1855,1,0,0,0,1855,1857,1,0,0,0,1856,1858,5,136,0,0,1857,
+		1856,1,0,0,0,1857,1858,1,0,0,0,1858,1859,1,0,0,0,1859,1860,5,141,0,0,1860,
+		335,1,0,0,0,1861,1863,5,16,0,0,1862,1861,1,0,0,0,1862,1863,1,0,0,0,1863,
+		1864,1,0,0,0,1864,1865,3,338,169,0,1865,1866,5,147,0,0,1866,337,1,0,0,
+		0,1867,1868,7,16,0,0,1868,339,1,0,0,0,1869,1878,5,140,0,0,1870,1875,3,
+		38,19,0,1871,1872,5,136,0,0,1872,1874,3,38,19,0,1873,1871,1,0,0,0,1874,
+		1877,1,0,0,0,1875,1873,1,0,0,0,1875,1876,1,0,0,0,1876,1879,1,0,0,0,1877,
+		1875,1,0,0,0,1878,1870,1,0,0,0,1878,1879,1,0,0,0,1879,1881,1,0,0,0,1880,
+		1882,5,136,0,0,1881,1880,1,0,0,0,1881,1882,1,0,0,0,1882,1883,1,0,0,0,1883,
+		1884,5,141,0,0,1884,341,1,0,0,0,1885,1886,3,374,187,0,1886,1887,3,348,
+		174,0,1887,343,1,0,0,0,1888,1889,5,70,0,0,1889,1891,3,156,78,0,1890,1892,
+		3,352,176,0,1891,1890,1,0,0,0,1891,1892,1,0,0,0,1892,1894,1,0,0,0,1893,
+		1895,3,356,178,0,1894,1893,1,0,0,0,1894,1895,1,0,0,0,1895,1907,1,0,0,0,
+		1896,1897,5,70,0,0,1897,1899,3,346,173,0,1898,1900,3,356,178,0,1899,1898,
+		1,0,0,0,1899,1900,1,0,0,0,1900,1907,1,0,0,0,1901,1902,5,70,0,0,1902,1904,
+		3,352,176,0,1903,1905,3,356,178,0,1904,1903,1,0,0,0,1904,1905,1,0,0,0,
+		1905,1907,1,0,0,0,1906,1888,1,0,0,0,1906,1896,1,0,0,0,1906,1901,1,0,0,
+		0,1907,345,1,0,0,0,1908,1909,5,140,0,0,1909,1914,5,33,0,0,1910,1911,5,
+		136,0,0,1911,1913,3,354,177,0,1912,1910,1,0,0,0,1913,1916,1,0,0,0,1914,
+		1912,1,0,0,0,1914,1915,1,0,0,0,1915,1918,1,0,0,0,1916,1914,1,0,0,0,1917,
+		1919,5,136,0,0,1918,1917,1,0,0,0,1918,1919,1,0,0,0,1919,1920,1,0,0,0,1920,
+		1921,5,141,0,0,1921,347,1,0,0,0,1922,1931,5,142,0,0,1923,1928,3,350,175,
+		0,1924,1925,5,136,0,0,1925,1927,3,350,175,0,1926,1924,1,0,0,0,1927,1930,
+		1,0,0,0,1928,1926,1,0,0,0,1928,1929,1,0,0,0,1929,1932,1,0,0,0,1930,1928,
+		1,0,0,0,1931,1923,1,0,0,0,1931,1932,1,0,0,0,1932,1934,1,0,0,0,1933,1935,
+		5,136,0,0,1934,1933,1,0,0,0,1934,1935,1,0,0,0,1935,1936,1,0,0,0,1936,1937,
+		5,143,0,0,1937,349,1,0,0,0,1938,1939,5,147,0,0,1939,1940,5,134,0,0,1940,
+		1941,3,286,143,0,1941,351,1,0,0,0,1942,1951,5,140,0,0,1943,1948,3,354,
+		177,0,1944,1945,5,136,0,0,1945,1947,3,354,177,0,1946,1944,1,0,0,0,1947,
+		1950,1,0,0,0,1948,1946,1,0,0,0,1948,1949,1,0,0,0,1949,1952,1,0,0,0,1950,
+		1948,1,0,0,0,1951,1943,1,0,0,0,1951,1952,1,0,0,0,1952,1954,1,0,0,0,1953,
+		1955,5,136,0,0,1954,1953,1,0,0,0,1954,1955,1,0,0,0,1955,1956,1,0,0,0,1956,
+		1957,5,141,0,0,1957,353,1,0,0,0,1958,1959,3,286,143,0,1959,355,1,0,0,0,
+		1960,1961,5,142,0,0,1961,1966,3,358,179,0,1962,1963,5,136,0,0,1963,1965,
+		3,358,179,0,1964,1962,1,0,0,0,1965,1968,1,0,0,0,1966,1964,1,0,0,0,1966,
+		1967,1,0,0,0,1967,1970,1,0,0,0,1968,1966,1,0,0,0,1969,1971,5,136,0,0,1970,
+		1969,1,0,0,0,1970,1971,1,0,0,0,1971,1972,1,0,0,0,1972,1973,5,143,0,0,1973,
+		357,1,0,0,0,1974,1975,5,147,0,0,1975,1976,5,119,0,0,1976,1977,3,152,76,
+		0,1977,359,1,0,0,0,1978,1979,5,142,0,0,1979,1984,3,152,76,0,1980,1981,
+		5,136,0,0,1981,1983,3,152,76,0,1982,1980,1,0,0,0,1983,1986,1,0,0,0,1984,
+		1982,1,0,0,0,1984,1985,1,0,0,0,1985,1988,1,0,0,0,1986,1984,1,0,0,0,1987,
+		1989,5,136,0,0,1988,1987,1,0,0,0,1988,1989,1,0,0,0,1989,1990,1,0,0,0,1990,
+		1991,5,143,0,0,1991,361,1,0,0,0,1992,2002,3,364,182,0,1993,2002,5,149,
+		0,0,1994,1995,5,139,0,0,1995,2002,5,151,0,0,1996,2002,5,151,0,0,1997,2002,
+		5,150,0,0,1998,2002,5,84,0,0,1999,2002,5,85,0,0,2000,2002,5,86,0,0,2001,
+		1992,1,0,0,0,2001,1993,1,0,0,0,2001,1994,1,0,0,0,2001,1996,1,0,0,0,2001,
+		1997,1,0,0,0,2001,1998,1,0,0,0,2001,1999,1,0,0,0,2001,2000,1,0,0,0,2002,
+		363,1,0,0,0,2003,2005,5,123,0,0,2004,2003,1,0,0,0,2004,2005,1,0,0,0,2005,
+		2006,1,0,0,0,2006,2007,5,148,0,0,2007,365,1,0,0,0,2008,2009,3,370,185,
+		0,2009,2010,3,200,100,0,2010,367,1,0,0,0,2011,2012,3,366,183,0,2012,2013,
+		5,138,0,0,2013,2014,5,147,0,0,2014,369,1,0,0,0,2015,2020,5,147,0,0,2016,
+		2017,5,138,0,0,2017,2019,5,147,0,0,2018,2016,1,0,0,0,2019,2022,1,0,0,0,
+		2020,2018,1,0,0,0,2020,2021,1,0,0,0,2021,371,1,0,0,0,2022,2020,1,0,0,0,
+		2023,2026,5,147,0,0,2024,2025,5,138,0,0,2025,2027,5,147,0,0,2026,2024,
+		1,0,0,0,2027,2028,1,0,0,0,2028,2026,1,0,0,0,2028,2029,1,0,0,0,2029,373,
+		1,0,0,0,2030,2033,3,372,186,0,2031,2033,3,368,184,0,2032,2030,1,0,0,0,
+		2032,2031,1,0,0,0,2033,375,1,0,0,0,227,379,386,392,400,412,416,427,431,
 		433,436,439,449,454,458,469,476,480,486,492,498,502,511,524,528,542,546,
 		550,558,562,570,573,576,583,597,601,609,649,659,669,675,687,691,696,717,
 		721,732,735,742,745,748,755,760,765,772,779,793,800,809,820,824,826,834,
@@ -14212,10 +14225,10 @@ public partial class StarkParser : Parser {
 		1381,1390,1398,1403,1412,1416,1422,1432,1439,1449,1462,1467,1471,1475,
 		1480,1483,1499,1503,1520,1530,1536,1554,1566,1569,1572,1578,1582,1591,
 		1594,1597,1601,1612,1615,1618,1631,1646,1656,1663,1671,1679,1687,1695,
-		1703,1711,1719,1724,1732,1740,1758,1765,1772,1778,1783,1789,1795,1800,
-		1826,1829,1832,1838,1849,1852,1855,1860,1873,1876,1879,1889,1892,1897,
-		1902,1904,1912,1916,1926,1929,1932,1946,1949,1952,1964,1968,1982,1986,
-		1999,2002,2018,2026,2030
+		1703,1711,1719,1724,1732,1740,1758,1765,1772,1780,1785,1791,1797,1802,
+		1828,1831,1834,1840,1851,1854,1857,1862,1875,1878,1881,1891,1894,1899,
+		1904,1906,1914,1918,1928,1931,1934,1948,1951,1954,1966,1970,1984,1988,
+		2001,2004,2020,2028,2032
 	};
 
 	public static readonly ATN _ATN =

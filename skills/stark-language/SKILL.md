@@ -13,16 +13,11 @@ A source file has imports, then one module declaration, then declarations:
 
 ```stark
 import System.Console
-import System.IO
 module Demo.App
 
 export fn i32[min max] main()
 {
-    if (WriteLine("Hello") != IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Hello");
     return 0;
 }
 ```
@@ -34,6 +29,7 @@ Rules:
 - Wildcard imports are forbidden.
 - `export import Some.Module` is the only re-export form.
 - Importing a module makes visible top-level names available by final name; use fully qualified names only for ambiguity or clarity.
+- Do not both import a module and keep qualifying its unambiguous names (`import System.Console` means call `WriteLine(...)`, not `System.Console.WriteLine(...)`).
 - One file is one module; modules are not reopened across files.
 - Comments: `//`, non-nesting `/* */`, and C#-style XML doc forms `///` and `/** */`.
 
@@ -144,6 +140,13 @@ fnptr<tail fn i32[min max](i32[min max])>
 stack fnptr<fn i32[min max](i32[min max])> square =
     (i32[min max] value) => value * value;
 ```
+
+Unsafe native loader symbols can be converted explicitly from raw pointers to
+typed function pointers after the binding has checked non-null and audited the
+ABI/signature: `stack Pfn callback = (Pfn)symbol;`. Keep this inside a small
+`unsafe` block. It lowers as an opaque pointer no-op, not through
+`ptrtoint`/`inttoptr`, so do not add C shims just to turn loader `void*`
+symbols into dispatch-table `fnptr`s.
 
 Capturing lambdas require an explicit capture list and should use a closure type, not `fnptr`:
 
@@ -1002,7 +1005,7 @@ FFI rules:
 - An `ffi` function uses the target C ABI by default; spell a different convention as `ffi(abi)` (e.g. `unsafe ffi(stdcall) fn`), or `ffi(platform(...))` for per-target selection. The ABI is part of `fnptr<ffi(c) fn ...>` type identity. Supported names: `c`, `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, `sysv`, `win64`, `aapcs`, `aapcs64`.
 - Use `[LinkName("foreign_symbol")]` on imported FFI declarations when the Stark source name should differ from the linker symbol. It changes symbol identity only; it does not adapt calling convention, parameter lowering, ownership, unwinding, or safety.
 - C-facing aggregates use layout attributes: `[StructLayout(C)]` / `[StructLayout(Explicit)]`, `[Pack(N)]`, `[Align(N)]`, and `[FieldOffset(N)]`. Default Stark layout is not a stable ABI. `[StructLayout(C)]` plus `ffi(c)` is sufficient for by-value C aggregate parameters and returns; the compiler lowers the call through the target C ABI carrier, so use a C shim only for real signature adaptation. A safe borrow of a misaligned packed field is rejected; a raw pointer to one is allowed and keeps the misalignment.
-- Use `System.C` C primitive aliases (`c_char`, `c_int`, `c_long`, `c_size_t`, `c_ptrdiff_t`, `c_void`, …) for C integer/pointer-size types instead of hand-picking widths; they target-resolve to Stark primitives. `c_char` signedness is target-dependent (`System.C.c_char_is_signed`); `c_void` is valid only behind `rawptr`/`rawmutptr`. A qualified alias is not a valid cast target — bind into a typed local to leave the platform-width surface.
+- Use `System.C` C primitive aliases (`c_char`, `c_int`, `c_long`, `c_size_t`, `c_ptrdiff_t`, `c_void`, …) for C integer/pointer-size types instead of hand-picking widths; they target-resolve to Stark primitives. `c_char` signedness is target-dependent (`System.C.c_char_is_signed`); `c_void` is valid only behind `rawptr`/`rawmutptr`. `System.C.VaList` models C `va_list` only as an unsafe `ffi(c)`-compatible parameter, an `ffi(c)` function-pointer parameter, or a direct raw-pointer pointee; never store, return, or wrap it in ordinary Stark function signatures. A qualified alias is not a valid cast target — bind into a typed local to leave the platform-width surface.
 - C `char*` strings use `System.C` types (`CStr` borrowed, `OwnedCStr` Stark-owned, `CCharBuffer` output, `ForeignOwnedCStr` foreign-owned), not Stark `ascii`/`unicode`. Convert with `FromAscii`/`ToAscii`; a `%s` varargs argument must be `rawptr<System.C.c_char>` (pass `OwnedCStr.Data()`), never Stark text.
 - Preserve foreign symbol spelling exactly. Underscore-leading identifiers are valid for FFI symbols such as `__error`; bare `_` remains discard.
 - Use safe wrappers only when they hide raw handles, combine calls, narrow a foreign surface, or define a real Stark-level abstraction.
@@ -1195,7 +1198,15 @@ Raw pointers and `storeborrow` fields deny both laws by default. `System.Threadi
 
 Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules and exposes `System.Option<T>` / `System.Result<T, E>` as aliases over `System.Core`; `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
 
-`Vendor.*` is a separate bundled vendor-library root for bindings to established native libraries. Use `import Vendor.Raylib` for the bundled raylib binding. Keep vendor bindings ABI-shaped and low-overhead; use `[LinkName("NativeSymbol")]` for direct native symbol aliases and reserve C shim sources for real ABI adaptation. Native-backed vendor packages should carry package-image native dependency metadata (`pkg-config`, optional native sources, libraries, and user-configured fallback paths) instead of requiring a package manager.
+`Vendor.*` is a separate bundled vendor-library root for bindings to established native libraries. Use imports such as `import Vendor.Raylib`, `import Vendor.SQLite`, `import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.Miniaudio`, `import Vendor.STB.Image`, or `import Vendor.Cgltf` for bundled native bindings. Keep vendor bindings ABI-shaped and low-overhead; use `[LinkName("NativeSymbol")]` for direct native symbol aliases and reserve C shim sources for real ABI adaptation such as callback bridges, lifetime conversion, C union flattening, C `bool` normalization, or single-header implementation boundaries. Native-backed vendor packages should carry package-image native dependency metadata (`pkg-config`, optional native sources, libraries, and user-configured fallback paths) instead of requiring a package manager.
+
+For examples and simple command-line progress messages, call
+`Write`, `WriteLine`, `WriteError`, and `WriteErrorLine` directly and ignore
+their `IOStatus`; do not wrap every console line in `if (WriteLine(...) !=
+IOStatus.Ok)`. Check console-write results only when failure handling changes
+the program's meaningful behavior, such as a test that asserts I/O, a tool that
+must report broken stdout/stderr distinctly, or a library API that forwards I/O
+failure as data.
 
 Public modules:
 

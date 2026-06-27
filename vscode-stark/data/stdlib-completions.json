@@ -153,6 +153,18 @@
     "documentation": "System.C\n\nVisibility: public"
   },
   {
+    "label": "VaList",
+    "insertText": "VaList",
+    "kind": "alias",
+    "module": "System.C",
+    "source": "compiler-known",
+    "detail": "compiler-known C va_list ABI carrier",
+    "signature": "System.C.VaList",
+    "visibility": "public",
+    "qualifiedName": "System.C.VaList",
+    "documentation": "`System.C.VaList` models C `va_list` only as an unsafe `ffi(c)` parameter, an `ffi(c)` function-pointer parameter, or a direct raw-pointer pointee."
+  },
+  {
     "label": "CCharBuffer",
     "insertText": "CCharBuffer",
     "kind": "struct",
@@ -8454,6 +8466,18 @@
     "documentation": "```stark\npublic inline finite void FillInitializedCodePointsInfallible( borrow mut i32[min max][] destination, i32[min max] value, u64[0 2 ** 61 - 1] count);\n```\n\nSystem.Memory\n\nVisibility: public"
   },
   {
+    "label": "FillUnsignedBytes",
+    "insertText": "FillUnsignedBytes(${1:destination}, ${2:value}, ${3:count})",
+    "kind": "function",
+    "module": "System.Memory",
+    "source": "stdlib/src/System/Memory.stark",
+    "detail": "public inline finite MemoryStatus FillUnsignedBytes( init u8[0 max][] destination, u8[0 max] value, u64[0 2 ** 63 - 1] count)",
+    "signature": "public inline finite MemoryStatus FillUnsignedBytes( init u8[0 max][] destination, u8[0 max] value, u64[0 2 ** 63 - 1] count)",
+    "visibility": "public",
+    "qualifiedName": "System.Memory.FillUnsignedBytes",
+    "documentation": "```stark\npublic inline finite MemoryStatus FillUnsignedBytes( init u8[0 max][] destination, u8[0 max] value, u64[0 2 ** 63 - 1] count);\n```\n\nSystem.Memory\n\nVisibility: public"
+  },
+  {
     "label": "InitializeBytes",
     "insertText": "InitializeBytes(${1:source}, ${2:destination}, ${3:count})",
     "kind": "function",
@@ -8500,6 +8524,18 @@
     "visibility": "public",
     "qualifiedName": "System.Memory.InitializeCodePointsDisjoint",
     "documentation": "```stark\npublic inline finite MemoryStatus InitializeCodePointsDisjoint( borrow i32[min max][] source, init i32[min max][] destination, u64[0 2 ** 61 - 1] count);\n```\n\nSystem.Memory\n\nVisibility: public"
+  },
+  {
+    "label": "InitializeUnsignedBytesFromPointerDisjoint",
+    "insertText": "InitializeUnsignedBytesFromPointerDisjoint(${1:count}, ${2:source}, ${3:destination})",
+    "kind": "function",
+    "module": "System.Memory",
+    "source": "stdlib/src/System/Memory.stark",
+    "detail": "public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint( u64[0 2 ** 63 - 1] count, rawptr<u8[0 max]> source, init u8[0 max][] destination)",
+    "signature": "public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint( u64[0 2 ** 63 - 1] count, rawptr<u8[0 max]> source, init u8[0 max][] destination)",
+    "visibility": "public",
+    "qualifiedName": "System.Memory.InitializeUnsignedBytesFromPointerDisjoint",
+    "documentation": "```stark\npublic unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint( u64[0 2 ** 63 - 1] count, rawptr<u8[0 max]> source, init u8[0 max][] destination);\n```\n\nSystem.Memory\n\nVisibility: public"
   },
   {
     "label": "MemoryError",
@@ -11055,6 +11091,18 @@
     "documentation": "```stark\npublic finite law bool ContainsElement<T>(borrow T[] values, T expected) where Copyable(T);\n```\n\nSystem.Testing\n\nVisibility: public"
   },
   {
+    "label": "ContainsReport",
+    "insertText": "ContainsReport(${1:value}, ${2:expected})",
+    "kind": "function",
+    "module": "System.Testing",
+    "source": "stdlib/src/System/Testing.stark",
+    "detail": "public fn bool ContainsReport(ascii value, ascii expected) where overlap(value, expected)",
+    "signature": "public fn bool ContainsReport(ascii value, ascii expected) where overlap(value, expected)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.ContainsReport",
+    "documentation": "```stark\npublic fn bool ContainsReport(ascii value, ascii expected) where overlap(value, expected);\n```\n\nSystem.Testing\n\nVisibility: public"
+  },
+  {
     "label": "Count",
     "insertText": "Count(${1:expected}, ${2:values})",
     "kind": "function",
@@ -11682,6 +11730,18 @@
     "documentation": "```stark\npublic finite law bool DoesNotContainElement<T>(borrow T[] values, T expected) where Copyable(T);\n```\n\nSystem.Testing\n\nVisibility: public"
   },
   {
+    "label": "DoesNotContainReport",
+    "insertText": "DoesNotContainReport(${1:value}, ${2:unexpected})",
+    "kind": "function",
+    "module": "System.Testing",
+    "source": "stdlib/src/System/Testing.stark",
+    "detail": "public fn bool DoesNotContainReport(ascii value, ascii unexpected) where overlap(value, unexpected)",
+    "signature": "public fn bool DoesNotContainReport(ascii value, ascii unexpected) where overlap(value, unexpected)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.DoesNotContainReport",
+    "documentation": "```stark\npublic fn bool DoesNotContainReport(ascii value, ascii unexpected) where overlap(value, unexpected);\n```\n\nSystem.Testing\n\nVisibility: public"
+  },
+  {
     "label": "ElapsedSince",
     "insertText": "ElapsedSince(${1:start}, ${2:now})",
     "kind": "function",
@@ -11921,6 +11981,18 @@
     "documentation": "System.Testing.HostCompiler\n\nVisibility: public"
   },
   {
+    "label": "BuildLibraryPackage",
+    "insertText": "BuildLibraryPackage(${1:compilerPath}, ${2:workingDirectory}, ${3:librarySourceName}, ${4:libraryOutputName}, ${5:packageOutputName}, ${6:timeoutMilliseconds})",
+    "kind": "function",
+    "module": "System.Testing.HostCompiler",
+    "source": "stdlib/src/System/Testing/HostCompiler.stark",
+    "detail": "public unsafe fn HostResult<bool> BuildLibraryPackage( ascii compilerPath, ascii workingDirectory, ascii librarySourceName, ascii libraryOutputName, ascii packageOutputName, u32[0 2 ** 31 - 1] timeoutMilliseconds) where overlap(compilerPath, workingDirectory), overlap(compilerPath, librarySourceName), overlap(compilerPath, libraryOutputName), overlap(compilerPath, packageOutputName), overlap(workingDirectory, librarySourceName), overlap(workingDirectory, libraryOutputName), overlap(workingDirectory, packageOutputName), overlap(librarySourceName, libraryOutputName), overlap(librarySourceName, packageOutputName), overlap(libraryOutputName, packageOutputName)",
+    "signature": "public unsafe fn HostResult<bool> BuildLibraryPackage( ascii compilerPath, ascii workingDirectory, ascii librarySourceName, ascii libraryOutputName, ascii packageOutputName, u32[0 2 ** 31 - 1] timeoutMilliseconds) where overlap(compilerPath, workingDirectory), overlap(compilerPath, librarySourceName), overlap(compilerPath, libraryOutputName), overlap(compilerPath, packageOutputName), overlap(workingDirectory, librarySourceName), overlap(workingDirectory, libraryOutputName), overlap(workingDirectory, packageOutputName), overlap(librarySourceName, libraryOutputName), overlap(librarySourceName, packageOutputName), overlap(libraryOutputName, packageOutputName)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.HostCompiler.BuildLibraryPackage",
+    "documentation": "```stark\npublic unsafe fn HostResult<bool> BuildLibraryPackage( ascii compilerPath, ascii workingDirectory, ascii librarySourceName, ascii libraryOutputName, ascii packageOutputName, u32[0 2 ** 31 - 1] timeoutMilliseconds) where overlap(compilerPath, workingDirectory), overlap(compilerPath, librarySourceName), overlap(compilerPath, libraryOutputName), overlap(compilerPath, packageOutputName), overlap(workingDirectory, librarySourceName), overlap(workingDirectory, libraryOutputName), overlap(workingDirectory, packageOutputName), overlap(librarySourceName, libraryOutputName), overlap(librarySourceName, packageOutputName), overlap(libraryOutputName, packageOutputName);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
+  },
+  {
     "label": "CompileBatch2",
     "insertText": "CompileBatch2(${1:compilerPath}, ${2:id1}, ${3:source1}, ${4:id2}, ${5:source2}, ${6:timeoutMilliseconds})",
     "kind": "function",
@@ -11969,16 +12041,64 @@
     "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactIn( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
   },
   {
-    "label": "CompileOnceArtifactToDirectory",
-    "insertText": "CompileOnceArtifactToDirectory(${1:compilerPath}, ${2:id}, ${3:sourceText}, ${4:stopAfterPassId}, ${5:artifactName}, ${6:searchDirectory}, ${7:artifactOutputDirectory}, ${8:maximumComptimeLoopIterations}, ${9:timeoutMilliseconds})",
+    "label": "CompileOnceArtifactInForTarget",
+    "insertText": "CompileOnceArtifactInForTarget(${1:compilerPath}, ${2:id}, ${3:sourceText}, ${4:stopAfterPassId}, ${5:artifactName}, ${6:searchDirectory}, ${7:maximumComptimeLoopIterations}, ${8:timeoutMilliseconds}, ${9:targetTriple})",
     "kind": "function",
     "module": "System.Testing.HostCompiler",
     "source": "stdlib/src/System/Testing/HostCompiler.stark",
-    "detail": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds)",
-    "signature": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds)",
+    "detail": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInForTarget( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple)",
+    "signature": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInForTarget( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.HostCompiler.CompileOnceArtifactInForTarget",
+    "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInForTarget( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
+  },
+  {
+    "label": "CompileOnceArtifactInForTargetWithDataLayout",
+    "insertText": "CompileOnceArtifactInForTargetWithDataLayout(${1:compilerPath}, ${2:id}, ${3:sourceText}, ${4:stopAfterPassId}, ${5:artifactName}, ${6:searchDirectory}, ${7:maximumComptimeLoopIterations}, ${8:timeoutMilliseconds}, ${9:targetTriple}, ${10:targetDataLayout})",
+    "kind": "function",
+    "module": "System.Testing.HostCompiler",
+    "source": "stdlib/src/System/Testing/HostCompiler.stark",
+    "detail": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInForTargetWithDataLayout( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout)",
+    "signature": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInForTargetWithDataLayout( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.HostCompiler.CompileOnceArtifactInForTargetWithDataLayout",
+    "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInForTargetWithDataLayout( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
+  },
+  {
+    "label": "CompileOnceArtifactInWithSeed",
+    "insertText": "CompileOnceArtifactInWithSeed(${1:compilerPath}, ${2:id}, ${3:sourceText}, ${4:stopAfterPassId}, ${5:artifactName}, ${6:searchDirectory}, ${7:maximumComptimeLoopIterations}, ${8:timeoutMilliseconds}, ${9:importedInlineCloneSeed})",
+    "kind": "function",
+    "module": "System.Testing.HostCompiler",
+    "source": "stdlib/src/System/Testing/HostCompiler.stark",
+    "detail": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInWithSeed( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii importedInlineCloneSeed)",
+    "signature": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInWithSeed( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii importedInlineCloneSeed)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.HostCompiler.CompileOnceArtifactInWithSeed",
+    "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInWithSeed( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii importedInlineCloneSeed);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
+  },
+  {
+    "label": "CompileOnceArtifactToDirectory",
+    "insertText": "CompileOnceArtifactToDirectory(${1:compilerPath}, ${2:id}, ${3:sourceText}, ${4:stopAfterPassId}, ${5:artifactName}, ${6:searchDirectory}, ${7:artifactOutputDirectory}, ${8:maximumComptimeLoopIterations}, ${9:timeoutMilliseconds}, ${10:targetTriple}, ${11:targetDataLayout})",
+    "kind": "function",
+    "module": "System.Testing.HostCompiler",
+    "source": "stdlib/src/System/Testing/HostCompiler.stark",
+    "detail": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout)",
+    "signature": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout)",
     "visibility": "public",
     "qualifiedName": "System.Testing.HostCompiler.CompileOnceArtifactToDirectory",
-    "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
+    "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
+  },
+  {
+    "label": "CompileOnceArtifactToDirectoryWithSeed",
+    "insertText": "CompileOnceArtifactToDirectoryWithSeed(${1:compilerPath}, ${2:id}, ${3:sourceText}, ${4:stopAfterPassId}, ${5:artifactName}, ${6:searchDirectory}, ${7:artifactOutputDirectory}, ${8:maximumComptimeLoopIterations}, ${9:timeoutMilliseconds}, ${10:targetTriple}, ${11:targetDataLayout}, ${12:importedInlineCloneSeed})",
+    "kind": "function",
+    "module": "System.Testing.HostCompiler",
+    "source": "stdlib/src/System/Testing/HostCompiler.stark",
+    "detail": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectoryWithSeed( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout, ascii importedInlineCloneSeed)",
+    "signature": "public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectoryWithSeed( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout, ascii importedInlineCloneSeed)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.HostCompiler.CompileOnceArtifactToDirectoryWithSeed",
+    "documentation": "```stark\npublic unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectoryWithSeed( ascii compilerPath, ascii id, ascii sourceText, ascii stopAfterPassId, ascii artifactName, ascii searchDirectory, ascii artifactOutputDirectory, u32[0 2 ** 31 - 1] maximumComptimeLoopIterations, u32[0 2 ** 31 - 1] timeoutMilliseconds, ascii targetTriple, ascii targetDataLayout, ascii importedInlineCloneSeed);\n```\n\nSystem.Testing.HostCompiler\n\nVisibility: public"
   },
   {
     "label": "CompileOnceIn",
@@ -13569,6 +13689,18 @@
     "visibility": "public",
     "qualifiedName": "System.Testing.SnapshotSucceeded",
     "documentation": "```stark\npublic finite law bool SnapshotSucceeded(SnapshotResult result);\n```\n\nSystem.Testing\n\nVisibility: public"
+  },
+  {
+    "label": "SsaFunctionBody",
+    "insertText": "SsaFunctionBody(${1:ssaText}, ${2:functionName})",
+    "kind": "function",
+    "module": "System.Testing",
+    "source": "stdlib/src/System/Testing.stark",
+    "detail": "public finite ascii SsaFunctionBody(ascii ssaText, ascii functionName) where overlap(ssaText, functionName)",
+    "signature": "public finite ascii SsaFunctionBody(ascii ssaText, ascii functionName) where overlap(ssaText, functionName)",
+    "visibility": "public",
+    "qualifiedName": "System.Testing.SsaFunctionBody",
+    "documentation": "```stark\npublic finite ascii SsaFunctionBody(ascii ssaText, ascii functionName) where overlap(ssaText, functionName);\n```\n\nSystem.Testing\n\nVisibility: public"
   },
   {
     "label": "StartsWith",

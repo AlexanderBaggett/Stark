@@ -1250,6 +1250,45 @@ export unsafe fn i32[min max] main(i32[min max] value)
     }
 }
 
+// Ported from LlvmIrEmissionTests.FfiFunctionBodiesPromoteToNativeCallbackPointers.
+[Fact]
+[Collection("ffi")]
+fn bool FfiFunctionBodiesPromoteToNativeCallbackPointers()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-ffi-body-native-callback-pointer",
+            raw"""
+module Demo
+
+alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+{
+    return;
+}
+
+unsafe ffi(c) fn void Register(AudioCallback callback);
+
+export unsafe fn void Install()
+{
+    Register(FillAudio);
+    return;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "define void @FillAudio(ptr")
+            && DoesNotContain(llvm, "define fastcc void @FillAudio")
+            && Contains(llvm, "declare void @Register(ptr")
+            && Contains(llvm, "call void @Register(ptr @FillAudio)");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LlvmTextOrderedComparisonEmissionTests
 // ---------------------------------------------------------------------------
@@ -1686,6 +1725,13 @@ fn bool RawPointerToIntegerConversionEmitsPtrtoint()
 fn bool RawPointerToRawPointerConversionIsLlvmNoOp()
 {
     return RawPointerToRawPointerConversionIsLlvmNoOpImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCall()
+{
+    return RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCallImpl();
 }
 
 [Fact]
