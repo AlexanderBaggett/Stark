@@ -20,7 +20,7 @@ and `Color`. No Raylib-specific C shim is required for these aggregate carriers.
 
 Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. Callback typedefs are exposed as raw callback pointers until Stark has a dedicated C-callable callback ABI. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
 
-## Build Smoke
+## Headless Geometry Example
 
 Build Raylib 6.0 locally:
 
@@ -31,15 +31,15 @@ tar -xzf /tmp/raylib-6.0.tar.gz -C /tmp/stark-raylib
 make -C /tmp/stark-raylib/raylib-6.0/src PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
 ```
 
-Build the Stark Raylib package once, then compile the headless smoke test from
-that package image:
+Build the Stark Raylib package once, then compile the headless geometry example
+from that package image:
 
 ```bash
 bash examples/raylib/build-package.sh
-tmpdir="$(mktemp -d /tmp/stark-raylib-smoke-XXXXXX)"
-cp examples/raylib/RaylibSmoke.stark "$tmpdir/RaylibSmoke.stark"
-./stark "$tmpdir/RaylibSmoke.stark" --emit-exe -I examples/raylib/dist -o "$tmpdir/stark-raylib-smoke"
-"$tmpdir/stark-raylib-smoke"
+tmpdir="$(mktemp -d /tmp/stark-raylib-headless-geometry-XXXXXX)"
+cp examples/raylib/RaylibHeadlessGeometry.stark "$tmpdir/RaylibHeadlessGeometry.stark"
+./stark "$tmpdir/RaylibHeadlessGeometry.stark" --emit-exe -I examples/raylib/dist -o "$tmpdir/stark-raylib-headless-geometry"
+"$tmpdir/stark-raylib-headless-geometry"
 ```
 
 If Raylib is visible through `pkg-config`, the helper script uses
@@ -58,7 +58,7 @@ The emitted package keeps Raylib native dependency metadata package-relative, so
 downstream builds only need `-I examples/raylib/dist` and do not have to repeat
 Raylib library flags.
 
-`RaylibSmoke.stark` is intentionally headless. Playable graphical examples should be run manually on machines with a display server.
+`RaylibHeadlessGeometry.stark` is intentionally headless. Playable graphical examples should be run manually on machines with a display server.
 
 The first playable user-facing example is `examples/breakout/BreakoutRaylib.stark`.
 From the repository root, build it with:

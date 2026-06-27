@@ -301,6 +301,19 @@ internal unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
     return MemoryStatus.Ok;
 }
 
+public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint(
+    u64[0 2 ** 63 - 1] count,
+    rawptr<u8[0 max]> source,
+    init u8[0 max][] destination)
+    {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        init destination[index] = *(&source[index]);
+    }
+
+    return MemoryStatus.Ok;
+}
+
 public inline finite void CopyBytesDisjointInfallible(
     borrow i8[min max][] source,
     borrow mut i8[min max][] destination,
@@ -416,6 +429,19 @@ public inline finite MemoryStatus MoveBytes(
 public inline finite MemoryStatus FillBytes(
     init i8[min max][] destination,
     i8[min max] value,
+    u64[0 2 ** 63 - 1] count)
+    {
+    for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        init destination[index] = value;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite MemoryStatus FillUnsignedBytes(
+    init u8[0 max][] destination,
+    u8[0 max] value,
     u64[0 2 ** 63 - 1] count)
     {
     for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)

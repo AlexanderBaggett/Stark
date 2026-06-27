@@ -407,6 +407,61 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("rawptr<System.C.c_void>", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void SystemCVaListIsValidOnlyAtCAbiEdges()
+    {
+        var good = Compile(
+            """
+            module Demo
+
+            alias TraceCallback = fnptr<unsafe ffi(c) fn void(rawptr<System.C.c_char>, System.C.VaList)>;
+
+            unsafe ffi(c) fn void NativeTrace(rawptr<System.C.c_char> format, System.C.VaList args);
+
+            unsafe fn rawptr<System.C.VaList> Identity(rawptr<System.C.VaList> args)
+            {
+                return args;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(good.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var nativeTrace = typeCheckModel.Functions["NativeTrace"];
+        Assert.Equal(StarkTypeKind.CVaList, nativeTrace.Parameters[1].Type.Kind);
+        Assert.Equal("System.C.VaList", nativeTrace.Parameters[1].Type.CSourceAliasName);
+
+        var bad = Compile(
+            """
+            module Demo
+
+            alias BadCallback = fnptr<fn void(System.C.VaList)>;
+
+            unsafe ffi(c) fn System.C.VaList BadReturn();
+
+            struct BadField
+            {
+                System.C.VaList Args;
+            }
+
+            unsafe fn void BadLocal()
+            {
+                stack System.C.VaList args;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3051"
+                && diagnostic.Message.Contains("System.C.VaList", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("target-specific C ABI carrier", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("x86_64-unknown-linux-gnu", true)]
     [InlineData("aarch64-unknown-linux-gnu", false)]
@@ -1012,6 +1067,35 @@ public sealed class TypeCheckingTests
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3002"
                 && diagnostic.Message.Contains("cannot be promoted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GenericFunctionItemsWithNestedCallbackParametersPassOwnershipValidation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias NativeCallback = fnptr<unsafe ffi(c) fn i32[min max](rawmutptr<i8[min max]>, i32[min max])>;
+
+            unsafe fn i32[min max] Register<T>(NativeCallback callback, storeborrow mut T data)
+            {
+                return 0;
+            }
+
+            unsafe fn i32[min max] Run()
+            {
+                stack fnptr<unsafe fn i32[min max](NativeCallback, storeborrow mut i32[min max])> op = Register<i32[min max]>;
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "ownership-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal("Register", promotion.Signature.DisplaySourceName);
     }
 
     [Fact]
@@ -2156,6 +2240,100 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FfiFunctionBodiesPromoteToNativeCallbackFunctionPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+            alias ScalarCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, i32[min max], rawmutptr<i8[min max]>)>;
+
+            unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+            {
+                return;
+            }
+
+            unsafe ffi(c) fn void RunScalar(rawmutptr<i8[min max]> context, i32[min max] argumentCount, rawmutptr<i8[min max]> values)
+            {
+                return;
+            }
+
+            unsafe ffi(c) fn void Register(AudioCallback callback);
+            unsafe ffi(c) fn void RegisterScalar(ScalarCallback callback);
+
+            fn void Store(AudioCallback callback)
+            {
+                return;
+            }
+
+            fn void StoreScalar(ScalarCallback callback)
+            {
+                return;
+            }
+
+            unsafe fn void Run()
+            {
+                Register(FillAudio);
+                Store(FillAudio);
+                RegisterScalar(RunScalar);
+                StoreScalar(RunScalar);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotions = typeCheckModel.FunctionPointerPromotions
+            .Where(static promotion => promotion.Signature.Name == "FillAudio")
+            .ToArray();
+        Assert.Equal(2, promotions.Length);
+        Assert.All(
+            promotions,
+            static promotion =>
+            {
+                Assert.Equal(StarkFfiAbi.C, promotion.Signature.FfiAbi ?? StarkFfiAbi.C);
+                Assert.True(promotion.TargetType.FunctionPointerIsUnsafe);
+                Assert.Equal(StarkFfiAbi.C, promotion.TargetType.FunctionPointerAbi);
+            });
+        var scalarPromotions = typeCheckModel.FunctionPointerPromotions
+            .Where(static promotion => promotion.Signature.Name == "RunScalar")
+            .ToArray();
+        Assert.Equal(2, scalarPromotions.Length);
+        Assert.All(
+            scalarPromotions,
+            static promotion =>
+            {
+                Assert.Equal(StarkFfiAbi.C, promotion.Signature.FfiAbi ?? StarkFfiAbi.C);
+                Assert.True(promotion.TargetType.FunctionPointerIsUnsafe);
+                Assert.Equal(StarkFfiAbi.C, promotion.TargetType.FunctionPointerAbi);
+            });
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "FillAudio");
+        Assert.Contains(typeCheckModel.AddressTakenFunctions, static addressTaken => addressTaken.Signature.Name == "RunScalar");
+
+        var missingUnsafe = Compile(
+            """
+            module Demo
+
+            alias BadCallback = fnptr<ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+            fn void Register(BadCallback callback)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(missingUnsafe.Succeeded);
+        Assert.Contains(
+            missingUnsafe.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("uses raw pointer types and must be declared 'unsafe'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositions()
     {
         var result = Compile(
@@ -2299,6 +2477,52 @@ public sealed class TypeCheckingTests
                         }
                         """,
                         "Lib/Foundation.stark")
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void ImportedSourceConstantAliasesResolveInDeclaringModuleScope()
+    {
+        var result = Compile(
+            """
+            import Lib.Facade
+            module Demo
+
+            fn i32[min max] Run()
+            {
+                return Use();
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib.Facade", "Lib/Facade.stark"),
+                        """
+                        import Lib.Native
+                        module Lib.Facade
+
+                        public fn i32[min max] Use()
+                        {
+                            return 1;
+                        }
+                        """,
+                        "Lib/Facade.stark"
+                    ),
+                    (
+                        new ResolvedModuleReference("Lib.Native", "Lib/Native.stark"),
+                        """
+                        module Lib.Native
+
+                        public const Base = 15;
+                        public const Alias = Base;
+                        public const Next = Alias + 1;
+                        """,
+                        "Lib/Native.stark"
+                    )
                 ])));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

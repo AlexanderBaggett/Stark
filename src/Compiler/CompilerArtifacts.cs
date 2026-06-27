@@ -1579,6 +1579,7 @@ public enum StarkTypeKind
     Ascii,
     Unicode,
     CVoid,
+    CVaList,
     Integer,
     Float,
     RawPointer,
@@ -1657,6 +1658,10 @@ public static class StarkTypeSymbols
         StarkTypeKind.CVoid,
         "System.C.c_void",
         CSourceAliasName: "System.C.c_void");
+    public static readonly StarkTypeSymbol CVaList = new(
+        StarkTypeKind.CVaList,
+        "System.C.VaList",
+        CSourceAliasName: "System.C.VaList");
     public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
     public static readonly StarkTypeSymbol OwnedUnicode = new(StarkTypeKind.Named, OwnedUnicodeName, NamedType: OwnedUnicodeName);
     public static readonly StarkTypeSymbol Null = new(StarkTypeKind.Null, "null");
@@ -2337,6 +2342,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Ascii or
             StarkTypeKind.Unicode or
             StarkTypeKind.CVoid or
+            StarkTypeKind.CVaList or
             StarkTypeKind.Integer or
             StarkTypeKind.Float or
             StarkTypeKind.FunctionPointer or
@@ -2380,6 +2386,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Ascii => Ascii,
             StarkTypeKind.Unicode => Unicode,
             StarkTypeKind.CVoid => WithCSourceAlias(CVoid, type.CSourceAliasName),
+            StarkTypeKind.CVaList => WithCSourceAlias(CVaList, type.CSourceAliasName),
             StarkTypeKind.Null => Null,
             StarkTypeKind.Integer => WithCSourceAlias(
                 Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),

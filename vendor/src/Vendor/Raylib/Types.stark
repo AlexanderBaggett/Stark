@@ -324,6 +324,7 @@ public enum RaylibStatus {
     Ok,
     TooManyItems,
     InvalidArgument,
+    DestinationTooSmall,
 }
 
 public struct CollisionPointResult {
@@ -338,12 +339,288 @@ public alias RenderTexture2D = RenderTexture;
 public alias Camera = Camera3D;
 public alias ModelAnimPose = rawmutptr<Transform>;
 
-public alias TraceLogCallback = rawptr<i8[min max]>;
-public alias LoadFileDataCallback = rawptr<i8[min max]>;
-public alias SaveFileDataCallback = rawptr<i8[min max]>;
-public alias LoadFileTextCallback = rawptr<i8[min max]>;
-public alias SaveFileTextCallback = rawptr<i8[min max]>;
-public alias AudioCallback = rawptr<i8[min max]>;
+public alias TraceLogCallback = fnptr<unsafe ffi(c) fn void(i32[min max], ascii, System.C.VaList)>;
+public alias LoadFileDataCallback = fnptr<unsafe ffi(c) fn rawmutptr<u8[0 max]>(ascii, rawmutptr<i32[min max]>)>;
+public alias SaveFileDataCallback = fnptr<unsafe ffi(c) fn bool(ascii, rawmutptr<i8[min max]>, i32[min max])>;
+public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;
+public alias SaveFileTextCallback = fnptr<unsafe ffi(c) fn bool(ascii, ascii)>;
+public alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+// Raylib C enum/flag carriers. These are one-field C-layout wrappers over
+// the exact scalar ABI type so typed public overloads still lower to direct
+// integer calls at the native boundary.
+[StructLayout(C)]
+public struct ConfigFlags {
+    internal u32[0 max] Value;
+}
+
+public finite law ConfigFlags ConfigFlagsFromNative(u32[0 max] value) {
+    return new ConfigFlags() { Value = value };
+}
+
+public finite law u32[0 max] ConfigFlagsNative(ConfigFlags value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct TraceLogLevel {
+    internal i32[min max] Value;
+}
+
+public finite law TraceLogLevel TraceLogLevelFromNative(i32[min max] value) {
+    return new TraceLogLevel() { Value = value };
+}
+
+public finite law i32[min max] TraceLogLevelNative(TraceLogLevel value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct KeyboardKey {
+    internal i32[min max] Value;
+}
+
+public finite law KeyboardKey KeyboardKeyFromNative(i32[min max] value) {
+    return new KeyboardKey() { Value = value };
+}
+
+public finite law i32[min max] KeyboardKeyNative(KeyboardKey value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct MouseButton {
+    internal i32[min max] Value;
+}
+
+public finite law MouseButton MouseButtonFromNative(i32[min max] value) {
+    return new MouseButton() { Value = value };
+}
+
+public finite law i32[min max] MouseButtonNative(MouseButton value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct MouseCursor {
+    internal i32[min max] Value;
+}
+
+public finite law MouseCursor MouseCursorFromNative(i32[min max] value) {
+    return new MouseCursor() { Value = value };
+}
+
+public finite law i32[min max] MouseCursorNative(MouseCursor value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct GamepadButton {
+    internal i32[min max] Value;
+}
+
+public finite law GamepadButton GamepadButtonFromNative(i32[min max] value) {
+    return new GamepadButton() { Value = value };
+}
+
+public finite law i32[min max] GamepadButtonNative(GamepadButton value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct GamepadAxis {
+    internal i32[min max] Value;
+}
+
+public finite law GamepadAxis GamepadAxisFromNative(i32[min max] value) {
+    return new GamepadAxis() { Value = value };
+}
+
+public finite law i32[min max] GamepadAxisNative(GamepadAxis value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct MaterialMapIndex {
+    internal i32[min max] Value;
+}
+
+public finite law MaterialMapIndex MaterialMapIndexFromNative(i32[min max] value) {
+    return new MaterialMapIndex() { Value = value };
+}
+
+public finite law i32[min max] MaterialMapIndexNative(MaterialMapIndex value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct ShaderLocationIndex {
+    internal i32[min max] Value;
+}
+
+public finite law ShaderLocationIndex ShaderLocationIndexFromNative(i32[min max] value) {
+    return new ShaderLocationIndex() { Value = value };
+}
+
+public finite law i32[min max] ShaderLocationIndexNative(ShaderLocationIndex value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct ShaderUniformDataType {
+    internal i32[min max] Value;
+}
+
+public finite law ShaderUniformDataType ShaderUniformDataTypeFromNative(i32[min max] value) {
+    return new ShaderUniformDataType() { Value = value };
+}
+
+public finite law i32[min max] ShaderUniformDataTypeNative(ShaderUniformDataType value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct ShaderAttributeDataType {
+    internal i32[min max] Value;
+}
+
+public finite law ShaderAttributeDataType ShaderAttributeDataTypeFromNative(i32[min max] value) {
+    return new ShaderAttributeDataType() { Value = value };
+}
+
+public finite law i32[min max] ShaderAttributeDataTypeNative(ShaderAttributeDataType value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct PixelFormat {
+    internal i32[min max] Value;
+}
+
+public finite law PixelFormat PixelFormatFromNative(i32[min max] value) {
+    return new PixelFormat() { Value = value };
+}
+
+public finite law i32[min max] PixelFormatNative(PixelFormat value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct TextureFilter {
+    internal i32[min max] Value;
+}
+
+public finite law TextureFilter TextureFilterFromNative(i32[min max] value) {
+    return new TextureFilter() { Value = value };
+}
+
+public finite law i32[min max] TextureFilterNative(TextureFilter value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct TextureWrap {
+    internal i32[min max] Value;
+}
+
+public finite law TextureWrap TextureWrapFromNative(i32[min max] value) {
+    return new TextureWrap() { Value = value };
+}
+
+public finite law i32[min max] TextureWrapNative(TextureWrap value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct CubemapLayout {
+    internal i32[min max] Value;
+}
+
+public finite law CubemapLayout CubemapLayoutFromNative(i32[min max] value) {
+    return new CubemapLayout() { Value = value };
+}
+
+public finite law i32[min max] CubemapLayoutNative(CubemapLayout value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct FontType {
+    internal i32[min max] Value;
+}
+
+public finite law FontType FontTypeFromNative(i32[min max] value) {
+    return new FontType() { Value = value };
+}
+
+public finite law i32[min max] FontTypeNative(FontType value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct BlendMode {
+    internal i32[min max] Value;
+}
+
+public finite law BlendMode BlendModeFromNative(i32[min max] value) {
+    return new BlendMode() { Value = value };
+}
+
+public finite law i32[min max] BlendModeNative(BlendMode value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct Gesture {
+    internal u32[0 max] Value;
+}
+
+public finite law Gesture GestureFromNative(u32[0 max] value) {
+    return new Gesture() { Value = value };
+}
+
+public finite law u32[0 max] GestureNative(Gesture value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct CameraMode {
+    internal i32[min max] Value;
+}
+
+public finite law CameraMode CameraModeFromNative(i32[min max] value) {
+    return new CameraMode() { Value = value };
+}
+
+public finite law i32[min max] CameraModeNative(CameraMode value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct CameraProjection {
+    internal i32[min max] Value;
+}
+
+public finite law CameraProjection CameraProjectionFromNative(i32[min max] value) {
+    return new CameraProjection() { Value = value };
+}
+
+public finite law i32[min max] CameraProjectionNative(CameraProjection value) {
+    return value.Value;
+}
+
+[StructLayout(C)]
+public struct NPatchLayout {
+    internal i32[min max] Value;
+}
+
+public finite law NPatchLayout NPatchLayoutFromNative(i32[min max] value) {
+    return new NPatchLayout() { Value = value };
+}
+
+public finite law i32[min max] NPatchLayoutNative(NPatchLayout value) {
+    return value.Value;
+}
 
 public const RAYLIB_VERSION_MAJOR = 6;
 public const RAYLIB_VERSION_MINOR = 0;
@@ -707,6 +984,943 @@ public const MATERIAL_MAP_DIFFUSE = 0;
 public const MATERIAL_MAP_SPECULAR = 1;
 public const SHADER_LOC_MAP_DIFFUSE = 15;
 public const SHADER_LOC_MAP_SPECULAR = 16;
+
+// Typed Raylib enum/flag values. Keep the uppercase integer constants above as compatibility aliases.
+public finite law ConfigFlags ConfigFlagVsyncHint() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_VSYNC_HINT);
+}
+public finite law ConfigFlags ConfigFlagFullscreenMode() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_FULLSCREEN_MODE);
+}
+public finite law ConfigFlags ConfigFlagWindowResizable() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_RESIZABLE);
+}
+public finite law ConfigFlags ConfigFlagWindowUndecorated() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_UNDECORATED);
+}
+public finite law ConfigFlags ConfigFlagWindowHidden() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_HIDDEN);
+}
+public finite law ConfigFlags ConfigFlagWindowMinimized() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_MINIMIZED);
+}
+public finite law ConfigFlags ConfigFlagWindowMaximized() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_MAXIMIZED);
+}
+public finite law ConfigFlags ConfigFlagWindowUnfocused() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_UNFOCUSED);
+}
+public finite law ConfigFlags ConfigFlagWindowTopmost() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_TOPMOST);
+}
+public finite law ConfigFlags ConfigFlagWindowAlwaysRun() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_ALWAYS_RUN);
+}
+public finite law ConfigFlags ConfigFlagWindowTransparent() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_TRANSPARENT);
+}
+public finite law ConfigFlags ConfigFlagWindowHighdpi() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_HIGHDPI);
+}
+public finite law ConfigFlags ConfigFlagWindowMousePassthrough() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_WINDOW_MOUSE_PASSTHROUGH);
+}
+public finite law ConfigFlags ConfigFlagBorderlessWindowedMode() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_BORDERLESS_WINDOWED_MODE);
+}
+public finite law ConfigFlags ConfigFlagMsaa4xHint() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_MSAA_4X_HINT);
+}
+public finite law ConfigFlags ConfigFlagInterlacedHint() {
+    return ConfigFlagsFromNative((u32[0 max])FLAG_INTERLACED_HINT);
+}
+
+public finite law TraceLogLevel TraceLogAll() {
+    return TraceLogLevelFromNative((i32[min max])LOG_ALL);
+}
+public finite law TraceLogLevel TraceLogTrace() {
+    return TraceLogLevelFromNative((i32[min max])LOG_TRACE);
+}
+public finite law TraceLogLevel TraceLogDebug() {
+    return TraceLogLevelFromNative((i32[min max])LOG_DEBUG);
+}
+public finite law TraceLogLevel TraceLogInfo() {
+    return TraceLogLevelFromNative((i32[min max])LOG_INFO);
+}
+public finite law TraceLogLevel TraceLogWarning() {
+    return TraceLogLevelFromNative((i32[min max])LOG_WARNING);
+}
+public finite law TraceLogLevel TraceLogError() {
+    return TraceLogLevelFromNative((i32[min max])LOG_ERROR);
+}
+public finite law TraceLogLevel TraceLogFatal() {
+    return TraceLogLevelFromNative((i32[min max])LOG_FATAL);
+}
+public finite law TraceLogLevel TraceLogNone() {
+    return TraceLogLevelFromNative((i32[min max])LOG_NONE);
+}
+
+public finite law KeyboardKey KeyNull() {
+    return KeyboardKeyFromNative((i32[min max])KEY_NULL);
+}
+public finite law KeyboardKey KeyApostrophe() {
+    return KeyboardKeyFromNative((i32[min max])KEY_APOSTROPHE);
+}
+public finite law KeyboardKey KeyComma() {
+    return KeyboardKeyFromNative((i32[min max])KEY_COMMA);
+}
+public finite law KeyboardKey KeyMinus() {
+    return KeyboardKeyFromNative((i32[min max])KEY_MINUS);
+}
+public finite law KeyboardKey KeyPeriod() {
+    return KeyboardKeyFromNative((i32[min max])KEY_PERIOD);
+}
+public finite law KeyboardKey KeySlash() {
+    return KeyboardKeyFromNative((i32[min max])KEY_SLASH);
+}
+public finite law KeyboardKey KeyZero() {
+    return KeyboardKeyFromNative((i32[min max])KEY_ZERO);
+}
+public finite law KeyboardKey KeyOne() {
+    return KeyboardKeyFromNative((i32[min max])KEY_ONE);
+}
+public finite law KeyboardKey KeyTwo() {
+    return KeyboardKeyFromNative((i32[min max])KEY_TWO);
+}
+public finite law KeyboardKey KeyThree() {
+    return KeyboardKeyFromNative((i32[min max])KEY_THREE);
+}
+public finite law KeyboardKey KeyFour() {
+    return KeyboardKeyFromNative((i32[min max])KEY_FOUR);
+}
+public finite law KeyboardKey KeyFive() {
+    return KeyboardKeyFromNative((i32[min max])KEY_FIVE);
+}
+public finite law KeyboardKey KeySix() {
+    return KeyboardKeyFromNative((i32[min max])KEY_SIX);
+}
+public finite law KeyboardKey KeySeven() {
+    return KeyboardKeyFromNative((i32[min max])KEY_SEVEN);
+}
+public finite law KeyboardKey KeyEight() {
+    return KeyboardKeyFromNative((i32[min max])KEY_EIGHT);
+}
+public finite law KeyboardKey KeyNine() {
+    return KeyboardKeyFromNative((i32[min max])KEY_NINE);
+}
+public finite law KeyboardKey KeySemicolon() {
+    return KeyboardKeyFromNative((i32[min max])KEY_SEMICOLON);
+}
+public finite law KeyboardKey KeyEqual() {
+    return KeyboardKeyFromNative((i32[min max])KEY_EQUAL);
+}
+public finite law KeyboardKey KeyA() {
+    return KeyboardKeyFromNative((i32[min max])KEY_A);
+}
+public finite law KeyboardKey KeyB() {
+    return KeyboardKeyFromNative((i32[min max])KEY_B);
+}
+public finite law KeyboardKey KeyC() {
+    return KeyboardKeyFromNative((i32[min max])KEY_C);
+}
+public finite law KeyboardKey KeyD() {
+    return KeyboardKeyFromNative((i32[min max])KEY_D);
+}
+public finite law KeyboardKey KeyE() {
+    return KeyboardKeyFromNative((i32[min max])KEY_E);
+}
+public finite law KeyboardKey KeyF() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F);
+}
+public finite law KeyboardKey KeyG() {
+    return KeyboardKeyFromNative((i32[min max])KEY_G);
+}
+public finite law KeyboardKey KeyH() {
+    return KeyboardKeyFromNative((i32[min max])KEY_H);
+}
+public finite law KeyboardKey KeyI() {
+    return KeyboardKeyFromNative((i32[min max])KEY_I);
+}
+public finite law KeyboardKey KeyJ() {
+    return KeyboardKeyFromNative((i32[min max])KEY_J);
+}
+public finite law KeyboardKey KeyK() {
+    return KeyboardKeyFromNative((i32[min max])KEY_K);
+}
+public finite law KeyboardKey KeyL() {
+    return KeyboardKeyFromNative((i32[min max])KEY_L);
+}
+public finite law KeyboardKey KeyM() {
+    return KeyboardKeyFromNative((i32[min max])KEY_M);
+}
+public finite law KeyboardKey KeyN() {
+    return KeyboardKeyFromNative((i32[min max])KEY_N);
+}
+public finite law KeyboardKey KeyO() {
+    return KeyboardKeyFromNative((i32[min max])KEY_O);
+}
+public finite law KeyboardKey KeyP() {
+    return KeyboardKeyFromNative((i32[min max])KEY_P);
+}
+public finite law KeyboardKey KeyQ() {
+    return KeyboardKeyFromNative((i32[min max])KEY_Q);
+}
+public finite law KeyboardKey KeyR() {
+    return KeyboardKeyFromNative((i32[min max])KEY_R);
+}
+public finite law KeyboardKey KeyS() {
+    return KeyboardKeyFromNative((i32[min max])KEY_S);
+}
+public finite law KeyboardKey KeyT() {
+    return KeyboardKeyFromNative((i32[min max])KEY_T);
+}
+public finite law KeyboardKey KeyU() {
+    return KeyboardKeyFromNative((i32[min max])KEY_U);
+}
+public finite law KeyboardKey KeyV() {
+    return KeyboardKeyFromNative((i32[min max])KEY_V);
+}
+public finite law KeyboardKey KeyW() {
+    return KeyboardKeyFromNative((i32[min max])KEY_W);
+}
+public finite law KeyboardKey KeyX() {
+    return KeyboardKeyFromNative((i32[min max])KEY_X);
+}
+public finite law KeyboardKey KeyY() {
+    return KeyboardKeyFromNative((i32[min max])KEY_Y);
+}
+public finite law KeyboardKey KeyZ() {
+    return KeyboardKeyFromNative((i32[min max])KEY_Z);
+}
+public finite law KeyboardKey KeyLeftBracket() {
+    return KeyboardKeyFromNative((i32[min max])KEY_LEFT_BRACKET);
+}
+public finite law KeyboardKey KeyBackslash() {
+    return KeyboardKeyFromNative((i32[min max])KEY_BACKSLASH);
+}
+public finite law KeyboardKey KeyRightBracket() {
+    return KeyboardKeyFromNative((i32[min max])KEY_RIGHT_BRACKET);
+}
+public finite law KeyboardKey KeyGrave() {
+    return KeyboardKeyFromNative((i32[min max])KEY_GRAVE);
+}
+public finite law KeyboardKey KeySpace() {
+    return KeyboardKeyFromNative((i32[min max])KEY_SPACE);
+}
+public finite law KeyboardKey KeyEscape() {
+    return KeyboardKeyFromNative((i32[min max])KEY_ESCAPE);
+}
+public finite law KeyboardKey KeyEnter() {
+    return KeyboardKeyFromNative((i32[min max])KEY_ENTER);
+}
+public finite law KeyboardKey KeyTab() {
+    return KeyboardKeyFromNative((i32[min max])KEY_TAB);
+}
+public finite law KeyboardKey KeyBackspace() {
+    return KeyboardKeyFromNative((i32[min max])KEY_BACKSPACE);
+}
+public finite law KeyboardKey KeyInsert() {
+    return KeyboardKeyFromNative((i32[min max])KEY_INSERT);
+}
+public finite law KeyboardKey KeyDelete() {
+    return KeyboardKeyFromNative((i32[min max])KEY_DELETE);
+}
+public finite law KeyboardKey KeyRight() {
+    return KeyboardKeyFromNative((i32[min max])KEY_RIGHT);
+}
+public finite law KeyboardKey KeyLeft() {
+    return KeyboardKeyFromNative((i32[min max])KEY_LEFT);
+}
+public finite law KeyboardKey KeyDown() {
+    return KeyboardKeyFromNative((i32[min max])KEY_DOWN);
+}
+public finite law KeyboardKey KeyUp() {
+    return KeyboardKeyFromNative((i32[min max])KEY_UP);
+}
+public finite law KeyboardKey KeyPageUp() {
+    return KeyboardKeyFromNative((i32[min max])KEY_PAGE_UP);
+}
+public finite law KeyboardKey KeyPageDown() {
+    return KeyboardKeyFromNative((i32[min max])KEY_PAGE_DOWN);
+}
+public finite law KeyboardKey KeyHome() {
+    return KeyboardKeyFromNative((i32[min max])KEY_HOME);
+}
+public finite law KeyboardKey KeyEnd() {
+    return KeyboardKeyFromNative((i32[min max])KEY_END);
+}
+public finite law KeyboardKey KeyCapsLock() {
+    return KeyboardKeyFromNative((i32[min max])KEY_CAPS_LOCK);
+}
+public finite law KeyboardKey KeyScrollLock() {
+    return KeyboardKeyFromNative((i32[min max])KEY_SCROLL_LOCK);
+}
+public finite law KeyboardKey KeyNumLock() {
+    return KeyboardKeyFromNative((i32[min max])KEY_NUM_LOCK);
+}
+public finite law KeyboardKey KeyPrintScreen() {
+    return KeyboardKeyFromNative((i32[min max])KEY_PRINT_SCREEN);
+}
+public finite law KeyboardKey KeyPause() {
+    return KeyboardKeyFromNative((i32[min max])KEY_PAUSE);
+}
+public finite law KeyboardKey KeyF1() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F1);
+}
+public finite law KeyboardKey KeyF2() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F2);
+}
+public finite law KeyboardKey KeyF3() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F3);
+}
+public finite law KeyboardKey KeyF4() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F4);
+}
+public finite law KeyboardKey KeyF5() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F5);
+}
+public finite law KeyboardKey KeyF6() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F6);
+}
+public finite law KeyboardKey KeyF7() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F7);
+}
+public finite law KeyboardKey KeyF8() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F8);
+}
+public finite law KeyboardKey KeyF9() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F9);
+}
+public finite law KeyboardKey KeyF10() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F10);
+}
+public finite law KeyboardKey KeyF11() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F11);
+}
+public finite law KeyboardKey KeyF12() {
+    return KeyboardKeyFromNative((i32[min max])KEY_F12);
+}
+public finite law KeyboardKey KeyLeftShift() {
+    return KeyboardKeyFromNative((i32[min max])KEY_LEFT_SHIFT);
+}
+public finite law KeyboardKey KeyLeftControl() {
+    return KeyboardKeyFromNative((i32[min max])KEY_LEFT_CONTROL);
+}
+public finite law KeyboardKey KeyLeftAlt() {
+    return KeyboardKeyFromNative((i32[min max])KEY_LEFT_ALT);
+}
+public finite law KeyboardKey KeyLeftSuper() {
+    return KeyboardKeyFromNative((i32[min max])KEY_LEFT_SUPER);
+}
+public finite law KeyboardKey KeyRightShift() {
+    return KeyboardKeyFromNative((i32[min max])KEY_RIGHT_SHIFT);
+}
+public finite law KeyboardKey KeyRightControl() {
+    return KeyboardKeyFromNative((i32[min max])KEY_RIGHT_CONTROL);
+}
+public finite law KeyboardKey KeyRightAlt() {
+    return KeyboardKeyFromNative((i32[min max])KEY_RIGHT_ALT);
+}
+public finite law KeyboardKey KeyRightSuper() {
+    return KeyboardKeyFromNative((i32[min max])KEY_RIGHT_SUPER);
+}
+public finite law KeyboardKey KeyKbMenu() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KB_MENU);
+}
+public finite law KeyboardKey KeyKp0() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_0);
+}
+public finite law KeyboardKey KeyKp1() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_1);
+}
+public finite law KeyboardKey KeyKp2() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_2);
+}
+public finite law KeyboardKey KeyKp3() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_3);
+}
+public finite law KeyboardKey KeyKp4() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_4);
+}
+public finite law KeyboardKey KeyKp5() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_5);
+}
+public finite law KeyboardKey KeyKp6() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_6);
+}
+public finite law KeyboardKey KeyKp7() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_7);
+}
+public finite law KeyboardKey KeyKp8() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_8);
+}
+public finite law KeyboardKey KeyKp9() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_9);
+}
+public finite law KeyboardKey KeyKpDecimal() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_DECIMAL);
+}
+public finite law KeyboardKey KeyKpDivide() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_DIVIDE);
+}
+public finite law KeyboardKey KeyKpMultiply() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_MULTIPLY);
+}
+public finite law KeyboardKey KeyKpSubtract() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_SUBTRACT);
+}
+public finite law KeyboardKey KeyKpAdd() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_ADD);
+}
+public finite law KeyboardKey KeyKpEnter() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_ENTER);
+}
+public finite law KeyboardKey KeyKpEqual() {
+    return KeyboardKeyFromNative((i32[min max])KEY_KP_EQUAL);
+}
+public finite law KeyboardKey KeyBack() {
+    return KeyboardKeyFromNative((i32[min max])KEY_BACK);
+}
+public finite law KeyboardKey KeyMenu() {
+    return KeyboardKeyFromNative((i32[min max])KEY_MENU);
+}
+public finite law KeyboardKey KeyVolumeUp() {
+    return KeyboardKeyFromNative((i32[min max])KEY_VOLUME_UP);
+}
+public finite law KeyboardKey KeyVolumeDown() {
+    return KeyboardKeyFromNative((i32[min max])KEY_VOLUME_DOWN);
+}
+
+public finite law MouseButton MouseButtonLeft() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_LEFT);
+}
+public finite law MouseButton MouseButtonRight() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_RIGHT);
+}
+public finite law MouseButton MouseButtonMiddle() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_MIDDLE);
+}
+public finite law MouseButton MouseButtonSide() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_SIDE);
+}
+public finite law MouseButton MouseButtonExtra() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_EXTRA);
+}
+public finite law MouseButton MouseButtonForward() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_FORWARD);
+}
+public finite law MouseButton MouseButtonBack() {
+    return MouseButtonFromNative((i32[min max])MOUSE_BUTTON_BACK);
+}
+
+public finite law MouseCursor MouseCursorDefault() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_DEFAULT);
+}
+public finite law MouseCursor MouseCursorArrow() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_ARROW);
+}
+public finite law MouseCursor MouseCursorIbeam() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_IBEAM);
+}
+public finite law MouseCursor MouseCursorCrosshair() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_CROSSHAIR);
+}
+public finite law MouseCursor MouseCursorPointingHand() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_POINTING_HAND);
+}
+public finite law MouseCursor MouseCursorResizeEw() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_RESIZE_EW);
+}
+public finite law MouseCursor MouseCursorResizeNs() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_RESIZE_NS);
+}
+public finite law MouseCursor MouseCursorResizeNwse() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_RESIZE_NWSE);
+}
+public finite law MouseCursor MouseCursorResizeNesw() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_RESIZE_NESW);
+}
+public finite law MouseCursor MouseCursorResizeAll() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_RESIZE_ALL);
+}
+public finite law MouseCursor MouseCursorNotAllowed() {
+    return MouseCursorFromNative((i32[min max])MOUSE_CURSOR_NOT_ALLOWED);
+}
+
+public finite law GamepadButton GamepadButtonUnknown() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_UNKNOWN);
+}
+public finite law GamepadButton GamepadButtonLeftFaceUp() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_FACE_UP);
+}
+public finite law GamepadButton GamepadButtonLeftFaceRight() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_FACE_RIGHT);
+}
+public finite law GamepadButton GamepadButtonLeftFaceDown() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_FACE_DOWN);
+}
+public finite law GamepadButton GamepadButtonLeftFaceLeft() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_FACE_LEFT);
+}
+public finite law GamepadButton GamepadButtonRightFaceUp() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_FACE_UP);
+}
+public finite law GamepadButton GamepadButtonRightFaceRight() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_FACE_RIGHT);
+}
+public finite law GamepadButton GamepadButtonRightFaceDown() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+}
+public finite law GamepadButton GamepadButtonRightFaceLeft() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_FACE_LEFT);
+}
+public finite law GamepadButton GamepadButtonLeftTrigger1() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_TRIGGER_1);
+}
+public finite law GamepadButton GamepadButtonLeftTrigger2() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_TRIGGER_2);
+}
+public finite law GamepadButton GamepadButtonRightTrigger1() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_TRIGGER_1);
+}
+public finite law GamepadButton GamepadButtonRightTrigger2() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_TRIGGER_2);
+}
+public finite law GamepadButton GamepadButtonMiddleLeft() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_MIDDLE_LEFT);
+}
+public finite law GamepadButton GamepadButtonMiddle() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_MIDDLE);
+}
+public finite law GamepadButton GamepadButtonMiddleRight() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_MIDDLE_RIGHT);
+}
+public finite law GamepadButton GamepadButtonLeftThumb() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_LEFT_THUMB);
+}
+public finite law GamepadButton GamepadButtonRightThumb() {
+    return GamepadButtonFromNative((i32[min max])GAMEPAD_BUTTON_RIGHT_THUMB);
+}
+
+public finite law GamepadAxis GamepadAxisLeftX() {
+    return GamepadAxisFromNative((i32[min max])GAMEPAD_AXIS_LEFT_X);
+}
+public finite law GamepadAxis GamepadAxisLeftY() {
+    return GamepadAxisFromNative((i32[min max])GAMEPAD_AXIS_LEFT_Y);
+}
+public finite law GamepadAxis GamepadAxisRightX() {
+    return GamepadAxisFromNative((i32[min max])GAMEPAD_AXIS_RIGHT_X);
+}
+public finite law GamepadAxis GamepadAxisRightY() {
+    return GamepadAxisFromNative((i32[min max])GAMEPAD_AXIS_RIGHT_Y);
+}
+public finite law GamepadAxis GamepadAxisLeftTrigger() {
+    return GamepadAxisFromNative((i32[min max])GAMEPAD_AXIS_LEFT_TRIGGER);
+}
+public finite law GamepadAxis GamepadAxisRightTrigger() {
+    return GamepadAxisFromNative((i32[min max])GAMEPAD_AXIS_RIGHT_TRIGGER);
+}
+
+public finite law MaterialMapIndex MaterialMapAlbedo() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_ALBEDO);
+}
+public finite law MaterialMapIndex MaterialMapMetalness() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_METALNESS);
+}
+public finite law MaterialMapIndex MaterialMapNormal() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_NORMAL);
+}
+public finite law MaterialMapIndex MaterialMapRoughness() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_ROUGHNESS);
+}
+public finite law MaterialMapIndex MaterialMapOcclusion() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_OCCLUSION);
+}
+public finite law MaterialMapIndex MaterialMapEmission() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_EMISSION);
+}
+public finite law MaterialMapIndex MaterialMapHeight() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_HEIGHT);
+}
+public finite law MaterialMapIndex MaterialMapCubemap() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_CUBEMAP);
+}
+public finite law MaterialMapIndex MaterialMapIrradiance() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_IRRADIANCE);
+}
+public finite law MaterialMapIndex MaterialMapPrefilter() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_PREFILTER);
+}
+public finite law MaterialMapIndex MaterialMapBrdf() {
+    return MaterialMapIndexFromNative((i32[min max])MATERIAL_MAP_BRDF);
+}
+
+public finite law ShaderLocationIndex ShaderLocationVertexPosition() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_POSITION);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexTexcoord01() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_TEXCOORD01);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexTexcoord02() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_TEXCOORD02);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexNormal() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_NORMAL);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexTangent() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_TANGENT);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexColor() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_COLOR);
+}
+public finite law ShaderLocationIndex ShaderLocationMatrixMvp() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MATRIX_MVP);
+}
+public finite law ShaderLocationIndex ShaderLocationMatrixView() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MATRIX_VIEW);
+}
+public finite law ShaderLocationIndex ShaderLocationMatrixProjection() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MATRIX_PROJECTION);
+}
+public finite law ShaderLocationIndex ShaderLocationMatrixModel() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MATRIX_MODEL);
+}
+public finite law ShaderLocationIndex ShaderLocationMatrixNormal() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MATRIX_NORMAL);
+}
+public finite law ShaderLocationIndex ShaderLocationVectorView() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VECTOR_VIEW);
+}
+public finite law ShaderLocationIndex ShaderLocationColorDiffuse() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_COLOR_DIFFUSE);
+}
+public finite law ShaderLocationIndex ShaderLocationColorSpecular() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_COLOR_SPECULAR);
+}
+public finite law ShaderLocationIndex ShaderLocationColorAmbient() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_COLOR_AMBIENT);
+}
+public finite law ShaderLocationIndex ShaderLocationMapAlbedo() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_ALBEDO);
+}
+public finite law ShaderLocationIndex ShaderLocationMapMetalness() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_METALNESS);
+}
+public finite law ShaderLocationIndex ShaderLocationMapNormal() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_NORMAL);
+}
+public finite law ShaderLocationIndex ShaderLocationMapRoughness() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_ROUGHNESS);
+}
+public finite law ShaderLocationIndex ShaderLocationMapOcclusion() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_OCCLUSION);
+}
+public finite law ShaderLocationIndex ShaderLocationMapEmission() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_EMISSION);
+}
+public finite law ShaderLocationIndex ShaderLocationMapHeight() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_HEIGHT);
+}
+public finite law ShaderLocationIndex ShaderLocationMapCubemap() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_CUBEMAP);
+}
+public finite law ShaderLocationIndex ShaderLocationMapIrradiance() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_IRRADIANCE);
+}
+public finite law ShaderLocationIndex ShaderLocationMapPrefilter() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_PREFILTER);
+}
+public finite law ShaderLocationIndex ShaderLocationMapBrdf() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MAP_BRDF);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexBoneids() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_BONEIDS);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexBoneweights() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_BONEWEIGHTS);
+}
+public finite law ShaderLocationIndex ShaderLocationMatrixBonetransforms() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_MATRIX_BONETRANSFORMS);
+}
+public finite law ShaderLocationIndex ShaderLocationVertexInstancetransform() {
+    return ShaderLocationIndexFromNative((i32[min max])SHADER_LOC_VERTEX_INSTANCETRANSFORM);
+}
+
+public finite law ShaderUniformDataType ShaderUniformFloat() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_FLOAT);
+}
+public finite law ShaderUniformDataType ShaderUniformVec2() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_VEC2);
+}
+public finite law ShaderUniformDataType ShaderUniformVec3() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_VEC3);
+}
+public finite law ShaderUniformDataType ShaderUniformVec4() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_VEC4);
+}
+public finite law ShaderUniformDataType ShaderUniformInt() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_INT);
+}
+public finite law ShaderUniformDataType ShaderUniformIvec2() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_IVEC2);
+}
+public finite law ShaderUniformDataType ShaderUniformIvec3() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_IVEC3);
+}
+public finite law ShaderUniformDataType ShaderUniformIvec4() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_IVEC4);
+}
+public finite law ShaderUniformDataType ShaderUniformUint() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_UINT);
+}
+public finite law ShaderUniformDataType ShaderUniformUivec2() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_UIVEC2);
+}
+public finite law ShaderUniformDataType ShaderUniformUivec3() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_UIVEC3);
+}
+public finite law ShaderUniformDataType ShaderUniformUivec4() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_UIVEC4);
+}
+public finite law ShaderUniformDataType ShaderUniformSampler2d() {
+    return ShaderUniformDataTypeFromNative((i32[min max])SHADER_UNIFORM_SAMPLER2D);
+}
+
+public finite law ShaderAttributeDataType ShaderAttributeFloat() {
+    return ShaderAttributeDataTypeFromNative((i32[min max])SHADER_ATTRIB_FLOAT);
+}
+public finite law ShaderAttributeDataType ShaderAttributeVec2() {
+    return ShaderAttributeDataTypeFromNative((i32[min max])SHADER_ATTRIB_VEC2);
+}
+public finite law ShaderAttributeDataType ShaderAttributeVec3() {
+    return ShaderAttributeDataTypeFromNative((i32[min max])SHADER_ATTRIB_VEC3);
+}
+public finite law ShaderAttributeDataType ShaderAttributeVec4() {
+    return ShaderAttributeDataTypeFromNative((i32[min max])SHADER_ATTRIB_VEC4);
+}
+
+public finite law PixelFormat PixelFormatUncompressedGrayscale() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_GRAYSCALE);
+}
+public finite law PixelFormat PixelFormatUncompressedGrayAlpha() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA);
+}
+public finite law PixelFormat PixelFormatUncompressedR5g6b5() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R5G6B5);
+}
+public finite law PixelFormat PixelFormatUncompressedR8g8b8() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+}
+public finite law PixelFormat PixelFormatUncompressedR5g5b5a1() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R5G5B5A1);
+}
+public finite law PixelFormat PixelFormatUncompressedR4g4b4a4() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R4G4B4A4);
+}
+public finite law PixelFormat PixelFormatUncompressedR8g8b8a8() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+}
+public finite law PixelFormat PixelFormatUncompressedR32() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R32);
+}
+public finite law PixelFormat PixelFormatUncompressedR32g32b32() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R32G32B32);
+}
+public finite law PixelFormat PixelFormatUncompressedR32g32b32a32() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R32G32B32A32);
+}
+public finite law PixelFormat PixelFormatUncompressedR16() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R16);
+}
+public finite law PixelFormat PixelFormatUncompressedR16g16b16() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R16G16B16);
+}
+public finite law PixelFormat PixelFormatUncompressedR16g16b16a16() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+}
+public finite law PixelFormat PixelFormatCompressedDxt1Rgb() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_DXT1_RGB);
+}
+public finite law PixelFormat PixelFormatCompressedDxt1Rgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_DXT1_RGBA);
+}
+public finite law PixelFormat PixelFormatCompressedDxt3Rgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_DXT3_RGBA);
+}
+public finite law PixelFormat PixelFormatCompressedDxt5Rgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_DXT5_RGBA);
+}
+public finite law PixelFormat PixelFormatCompressedEtc1Rgb() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_ETC1_RGB);
+}
+public finite law PixelFormat PixelFormatCompressedEtc2Rgb() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_ETC2_RGB);
+}
+public finite law PixelFormat PixelFormatCompressedEtc2EacRgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_ETC2_EAC_RGBA);
+}
+public finite law PixelFormat PixelFormatCompressedPvrtRgb() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_PVRT_RGB);
+}
+public finite law PixelFormat PixelFormatCompressedPvrtRgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_PVRT_RGBA);
+}
+public finite law PixelFormat PixelFormatCompressedAstc4x4Rgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_ASTC_4x4_RGBA);
+}
+public finite law PixelFormat PixelFormatCompressedAstc8x8Rgba() {
+    return PixelFormatFromNative((i32[min max])PIXELFORMAT_COMPRESSED_ASTC_8x8_RGBA);
+}
+
+public finite law TextureFilter TextureFilterPoint() {
+    return TextureFilterFromNative((i32[min max])TEXTURE_FILTER_POINT);
+}
+public finite law TextureFilter TextureFilterBilinear() {
+    return TextureFilterFromNative((i32[min max])TEXTURE_FILTER_BILINEAR);
+}
+public finite law TextureFilter TextureFilterTrilinear() {
+    return TextureFilterFromNative((i32[min max])TEXTURE_FILTER_TRILINEAR);
+}
+public finite law TextureFilter TextureFilterAnisotropic4x() {
+    return TextureFilterFromNative((i32[min max])TEXTURE_FILTER_ANISOTROPIC_4X);
+}
+public finite law TextureFilter TextureFilterAnisotropic8x() {
+    return TextureFilterFromNative((i32[min max])TEXTURE_FILTER_ANISOTROPIC_8X);
+}
+public finite law TextureFilter TextureFilterAnisotropic16x() {
+    return TextureFilterFromNative((i32[min max])TEXTURE_FILTER_ANISOTROPIC_16X);
+}
+
+public finite law TextureWrap TextureWrapRepeat() {
+    return TextureWrapFromNative((i32[min max])TEXTURE_WRAP_REPEAT);
+}
+public finite law TextureWrap TextureWrapClamp() {
+    return TextureWrapFromNative((i32[min max])TEXTURE_WRAP_CLAMP);
+}
+public finite law TextureWrap TextureWrapMirrorRepeat() {
+    return TextureWrapFromNative((i32[min max])TEXTURE_WRAP_MIRROR_REPEAT);
+}
+public finite law TextureWrap TextureWrapMirrorClamp() {
+    return TextureWrapFromNative((i32[min max])TEXTURE_WRAP_MIRROR_CLAMP);
+}
+
+public finite law CubemapLayout CubemapLayoutAutoDetect() {
+    return CubemapLayoutFromNative((i32[min max])CUBEMAP_LAYOUT_AUTO_DETECT);
+}
+public finite law CubemapLayout CubemapLayoutLineVertical() {
+    return CubemapLayoutFromNative((i32[min max])CUBEMAP_LAYOUT_LINE_VERTICAL);
+}
+public finite law CubemapLayout CubemapLayoutLineHorizontal() {
+    return CubemapLayoutFromNative((i32[min max])CUBEMAP_LAYOUT_LINE_HORIZONTAL);
+}
+public finite law CubemapLayout CubemapLayoutCrossThreeByFour() {
+    return CubemapLayoutFromNative((i32[min max])CUBEMAP_LAYOUT_CROSS_THREE_BY_FOUR);
+}
+public finite law CubemapLayout CubemapLayoutCrossFourByThree() {
+    return CubemapLayoutFromNative((i32[min max])CUBEMAP_LAYOUT_CROSS_FOUR_BY_THREE);
+}
+
+public finite law FontType FontTypeDefault() {
+    return FontTypeFromNative((i32[min max])FONT_DEFAULT);
+}
+public finite law FontType FontTypeBitmap() {
+    return FontTypeFromNative((i32[min max])FONT_BITMAP);
+}
+public finite law FontType FontTypeSdf() {
+    return FontTypeFromNative((i32[min max])FONT_SDF);
+}
+
+public finite law BlendMode BlendAlpha() {
+    return BlendModeFromNative((i32[min max])BLEND_ALPHA);
+}
+public finite law BlendMode BlendAdditive() {
+    return BlendModeFromNative((i32[min max])BLEND_ADDITIVE);
+}
+public finite law BlendMode BlendMultiplied() {
+    return BlendModeFromNative((i32[min max])BLEND_MULTIPLIED);
+}
+public finite law BlendMode BlendAddColors() {
+    return BlendModeFromNative((i32[min max])BLEND_ADD_COLORS);
+}
+public finite law BlendMode BlendSubtractColors() {
+    return BlendModeFromNative((i32[min max])BLEND_SUBTRACT_COLORS);
+}
+public finite law BlendMode BlendAlphaPremultiply() {
+    return BlendModeFromNative((i32[min max])BLEND_ALPHA_PREMULTIPLY);
+}
+public finite law BlendMode BlendCustom() {
+    return BlendModeFromNative((i32[min max])BLEND_CUSTOM);
+}
+public finite law BlendMode BlendCustomSeparate() {
+    return BlendModeFromNative((i32[min max])BLEND_CUSTOM_SEPARATE);
+}
+
+public finite law Gesture GestureNone() {
+    return GestureFromNative((u32[0 max])GESTURE_NONE);
+}
+public finite law Gesture GestureTap() {
+    return GestureFromNative((u32[0 max])GESTURE_TAP);
+}
+public finite law Gesture GestureDoubletap() {
+    return GestureFromNative((u32[0 max])GESTURE_DOUBLETAP);
+}
+public finite law Gesture GestureHold() {
+    return GestureFromNative((u32[0 max])GESTURE_HOLD);
+}
+public finite law Gesture GestureDrag() {
+    return GestureFromNative((u32[0 max])GESTURE_DRAG);
+}
+public finite law Gesture GestureSwipeRight() {
+    return GestureFromNative((u32[0 max])GESTURE_SWIPE_RIGHT);
+}
+public finite law Gesture GestureSwipeLeft() {
+    return GestureFromNative((u32[0 max])GESTURE_SWIPE_LEFT);
+}
+public finite law Gesture GestureSwipeUp() {
+    return GestureFromNative((u32[0 max])GESTURE_SWIPE_UP);
+}
+public finite law Gesture GestureSwipeDown() {
+    return GestureFromNative((u32[0 max])GESTURE_SWIPE_DOWN);
+}
+public finite law Gesture GesturePinchIn() {
+    return GestureFromNative((u32[0 max])GESTURE_PINCH_IN);
+}
+public finite law Gesture GesturePinchOut() {
+    return GestureFromNative((u32[0 max])GESTURE_PINCH_OUT);
+}
+
+public finite law CameraMode CameraModeCustom() {
+    return CameraModeFromNative((i32[min max])CAMERA_CUSTOM);
+}
+public finite law CameraMode CameraModeFree() {
+    return CameraModeFromNative((i32[min max])CAMERA_FREE);
+}
+public finite law CameraMode CameraModeOrbital() {
+    return CameraModeFromNative((i32[min max])CAMERA_ORBITAL);
+}
+public finite law CameraMode CameraModeFirstPerson() {
+    return CameraModeFromNative((i32[min max])CAMERA_FIRST_PERSON);
+}
+public finite law CameraMode CameraModeThirdPerson() {
+    return CameraModeFromNative((i32[min max])CAMERA_THIRD_PERSON);
+}
+
+public finite law CameraProjection CameraProjectionPerspective() {
+    return CameraProjectionFromNative((i32[min max])CAMERA_PERSPECTIVE);
+}
+public finite law CameraProjection CameraProjectionOrthographic() {
+    return CameraProjectionFromNative((i32[min max])CAMERA_ORTHOGRAPHIC);
+}
+
+public finite law NPatchLayout NPatchLayoutNinePatch() {
+    return NPatchLayoutFromNative((i32[min max])NPATCH_NINE_PATCH);
+}
+public finite law NPatchLayout NPatchLayoutThreePatchVertical() {
+    return NPatchLayoutFromNative((i32[min max])NPATCH_THREE_PATCH_VERTICAL);
+}
+public finite law NPatchLayout NPatchLayoutThreePatchHorizontal() {
+    return NPatchLayoutFromNative((i32[min max])NPATCH_THREE_PATCH_HORIZONTAL);
+}
 
 public finite law Color LIGHTGRAY() {
     return Rgba(200, 200, 200, 255);

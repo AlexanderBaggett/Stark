@@ -524,6 +524,12 @@ internal static class ProjectCliDriver
 
         compileArgs.Add("--target");
         compileArgs.Add(session.TargetTriple);
+        if (!string.IsNullOrWhiteSpace(session.TargetDataLayout))
+        {
+            compileArgs.Add("--target-data-layout");
+            compileArgs.Add(session.TargetDataLayout);
+        }
+
         compileArgs.Add("--package-profile");
         compileArgs.Add(session.Profile == BuildProfile.Release ? "release" : "dev");
         if (!string.IsNullOrWhiteSpace(session.ToolchainDirectory))
@@ -1070,6 +1076,7 @@ internal static class ProjectCliDriver
         builder.Append("v1\n");
         builder.Append("profile=").Append(session.Profile).Append('\n');
         builder.Append("triple=").Append(session.TargetTriple).Append('\n');
+        builder.Append("data-layout=").Append(session.TargetDataLayout ?? string.Empty).Append('\n');
         builder.Append("stage=").Append(session.StageName).Append('\n');
         builder.Append("kind=").Append(project.Kind).Append('\n');
         builder.Append("output=").Append(project.OutputName).Append('\n');
@@ -1776,10 +1783,19 @@ internal static class ProjectCliDriver
         var forwardedToolchainDirectory = ResolveForwardedToolchainDirectory(options, userConfig);
 
         var targetTriple = options.TargetTriple;
+        string? targetDataLayout = null;
+        LlvmTargetInfo? detectedTargetInfo = null;
         if (string.IsNullOrWhiteSpace(targetTriple)
-            && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo, targetToolchain))
+            && NativeToolchain.TryDetectDefaultTargetInfo(out detectedTargetInfo, targetToolchain))
         {
             targetTriple = detectedTargetInfo.Triple;
+            targetDataLayout = detectedTargetInfo.DataLayout;
+        }
+        else if (!string.IsNullOrWhiteSpace(targetTriple)
+            && NativeToolchain.TryDetectDefaultTargetInfo(out detectedTargetInfo, targetToolchain)
+            && string.Equals(detectedTargetInfo.Triple, targetTriple.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            targetDataLayout = detectedTargetInfo.DataLayout;
         }
 
         if (string.IsNullOrWhiteSpace(targetTriple))
@@ -1792,6 +1808,7 @@ internal static class ProjectCliDriver
             Profile: options.Profile,
             BuildRootDirectory: buildRootDirectory,
             TargetTriple: targetTriple.Trim(),
+            TargetDataLayout: targetDataLayout,
             StageName: options.StageName,
             ToolchainDirectory: forwardedToolchainDirectory,
             EmitPackageImageJsonInspection: options.EmitPackageImageJsonInspection,
@@ -1941,20 +1958,21 @@ internal static class ProjectCliDriver
             Path.GetFullPath(stageDirectory),
             IncludeInCompilerSearch: true,
             Directory.Exists(stageDirectory) ? "present" : "missing"));
-        AddDevelopmentBundledLibrarySearchPaths(session.BuildRootDirectory, root, paths);
-        AddInstalledBundledLibrarySearchPaths(AppContext.BaseDirectory, root, paths);
+        AddDevelopmentBundledLibrarySearchPaths(session.BuildRootDirectory, root, session.TargetTriple, paths);
+        AddInstalledBundledLibrarySearchPaths(AppContext.BaseDirectory, root, session.TargetTriple, paths);
     }
 
     private static void AddDevelopmentBundledLibrarySearchPaths(
         string buildRootDirectory,
         BundledLibraryRoot root,
+        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
         foreach (var rootDirectory in GetDevelopmentBundledLibraryRootCandidates(buildRootDirectory, root))
         {
             if (IsDevelopmentBundledLibraryDirectory(rootDirectory))
             {
-                AddBundledLibrarySearchDirectories(rootDirectory, root, "repo development", paths);
+                AddBundledLibrarySearchDirectories(rootDirectory, root, "repo development", targetTriple, paths);
                 return;
             }
 
@@ -2001,11 +2019,12 @@ internal static class ProjectCliDriver
     private static void AddInstalledBundledLibrarySearchPaths(
         string compilerBaseDirectory,
         BundledLibraryRoot root,
+        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
         foreach (var rootDirectory in GetInstalledBundledLibraryRootCandidates(compilerBaseDirectory, root))
         {
-            AddBundledLibrarySearchDirectories(rootDirectory, root, "installed bundle", paths);
+            AddBundledLibrarySearchDirectories(rootDirectory, root, "installed bundle", targetTriple, paths);
         }
     }
 
@@ -2027,6 +2046,7 @@ internal static class ProjectCliDriver
         string rootDirectory,
         BundledLibraryRoot root,
         string tier,
+        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
         if (!Directory.Exists(rootDirectory))
@@ -2042,9 +2062,26 @@ internal static class ProjectCliDriver
 
         var includedAny = false;
         var distDirectory = Path.Combine(rootDirectory, "dist");
-        if (ContainsPackageImages(distDirectory))
+
+        var targetDistDirectory = Path.Combine(distDirectory, NormalizeBuildPathSegment(targetTriple));
+        if (ContainsPackageImages(targetDistDirectory))
         {
-            AddDistinctSearchPath(paths, root, tier, distDirectory, "package images");
+            AddDistinctSearchPath(paths, root, tier, targetDistDirectory, "target package images");
+            includedAny = true;
+        }
+        else if (Directory.Exists(targetDistDirectory))
+        {
+            paths.Add(new BundledLibrarySearchPath(
+                root,
+                tier,
+                Path.GetFullPath(targetDistDirectory),
+                IncludeInCompilerSearch: false,
+                "no target package images"));
+        }
+
+        if (ContainsPackageImages(distDirectory, SearchOption.TopDirectoryOnly))
+        {
+            AddDistinctSearchPath(paths, root, tier, distDirectory, includedAny ? "flat fallback package images" : "package images");
             includedAny = true;
         }
         else if (Directory.Exists(distDirectory))
@@ -2593,6 +2630,7 @@ internal static class ProjectCliDriver
         BuildProfile Profile,
         string BuildRootDirectory,
         string TargetTriple,
+        string? TargetDataLayout,
         string StageName,
         string? ToolchainDirectory,
         bool EmitPackageImageJsonInspection,

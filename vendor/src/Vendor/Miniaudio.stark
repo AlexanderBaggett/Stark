@@ -1,0 +1,608 @@
+import System.C
+module Vendor.Miniaudio
+
+public const MiniAudioMaxNativeSampleCount = 9223372036854775807;
+
+internal const MA_SUCCESS = 0;
+internal const MA_INVALID_ARGS = -2;
+internal const MA_OUT_OF_MEMORY = -4;
+internal const MA_INVALID_FILE = -10;
+internal const MA_TOO_BIG = -11;
+internal const MA_AT_END = -17;
+internal const MA_UNAVAILABLE = -22;
+internal const MA_INVALID_DATA = -33;
+internal const MA_FORMAT_NOT_SUPPORTED = -200;
+internal const MA_NO_DEVICE = -204;
+internal const MA_BACKEND_NOT_ENABLED = -208;
+internal const MA_FAILED_TO_INIT_BACKEND = -400;
+internal const MA_FAILED_TO_OPEN_BACKEND_DEVICE = -401;
+
+internal const MA_FORMAT_S16 = 2;
+internal const MA_FORMAT_F32 = 5;
+
+internal struct MiniAudioDecoderNative
+{
+    i8[min max] Opaque;
+}
+
+internal struct MiniAudioPlaybackNative
+{
+    i8[min max] Opaque;
+}
+
+public enum SampleFormat
+{
+    S16,
+    F32,
+}
+
+public enum MiniAudioError
+{
+    InvalidArgument,
+    OutOfMemory,
+    InvalidFile,
+    SourceTooLarge,
+    AtEnd,
+    Unavailable,
+    InvalidData,
+    FormatNotSupported,
+    NoDevice,
+    BackendUnavailable,
+    WrongSampleFormat,
+    DestinationTooSmall,
+    Native(i32[min max]),
+}
+
+public enum MiniAudioStatus
+{
+    [Ok] Ok,
+    [Err] Err(MiniAudioError),
+}
+
+public enum DecoderResult
+{
+    [Ok] Ok(Decoder),
+    [Err] Err(MiniAudioError),
+}
+
+public enum DecoderInfoResult
+{
+    [Ok] Ok(DecoderInfo),
+    [Err] Err(MiniAudioError),
+}
+
+public enum ReadFramesResult
+{
+    [Ok] Ok(u64[0 max]),
+    [Err] Err(MiniAudioError),
+}
+
+public enum PlaybackDeviceResult
+{
+    [Ok] Ok(PlaybackDevice),
+    [Err] Err(MiniAudioError),
+}
+
+public struct DecoderInfo
+{
+    public SampleFormat Format;
+    public u8[1 254] Channels;
+    public u32[1 max] SampleRate;
+    public u64[0 max] LengthInPcmFrames;
+}
+
+public struct Decoder
+{
+    internal rawmutptr<MiniAudioDecoderNative> Handle;
+    internal SampleFormat OutputFormat;
+    internal u8[1 254] OutputChannels;
+    internal u32[1 max] OutputSampleRate;
+
+    Decoder()
+    {
+        self.Handle = null;
+        self.OutputFormat = SampleFormat.F32;
+        self.OutputChannels = 1;
+        self.OutputSampleRate = 1;
+    }
+
+    public inline finite law bool IsEmpty(borrow Decoder self)
+    {
+        return self.Handle == null;
+    }
+
+    public inline finite law SampleFormat Format(borrow Decoder self)
+    {
+        return self.OutputFormat;
+    }
+
+    public inline finite law u8[1 254] Channels(borrow Decoder self)
+    {
+        return self.OutputChannels;
+    }
+
+    public inline finite law u32[1 max] SampleRate(borrow Decoder self)
+    {
+        return self.OutputSampleRate;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_ma_decoder_destroy(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct PlaybackDevice
+{
+    internal rawmutptr<MiniAudioPlaybackNative> Handle;
+
+    PlaybackDevice()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow PlaybackDevice self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_ma_playback_destroy(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+internal unsafe ffi(c) fn System.C.c_int stark_ma_decoder_create_memory(
+    rawptr<u8[0 max]> data,
+    System.C.c_size_t dataSize,
+    System.C.c_int format,
+    u32[0 max] channels,
+    u32[0 max] sampleRate,
+    rawmutptr<rawmutptr<MiniAudioDecoderNative>> decoder);
+
+internal unsafe ffi(c) fn System.C.c_int stark_ma_decoder_create_file(
+    rawptr<System.C.c_char> path,
+    System.C.c_int format,
+    u32[0 max] channels,
+    u32[0 max] sampleRate,
+    rawmutptr<rawmutptr<MiniAudioDecoderNative>> decoder);
+
+internal unsafe ffi(c) fn void stark_ma_decoder_destroy(rawmutptr<MiniAudioDecoderNative> decoder);
+
+internal unsafe ffi(c) fn System.C.c_int stark_ma_decoder_get_info(
+    rawmutptr<MiniAudioDecoderNative> decoder,
+    rawmutptr<System.C.c_int> format,
+    rawmutptr<u32[0 max]> channels,
+    rawmutptr<u32[0 max]> sampleRate,
+    rawmutptr<u64[0 max]> lengthInPcmFrames);
+
+internal unsafe ffi(c) fn System.C.c_int stark_ma_decoder_read_pcm_frames(
+    rawmutptr<MiniAudioDecoderNative> decoder,
+    rawmutptr<System.C.c_void> output,
+    u64[0 max] frameCount,
+    rawmutptr<u64[0 max]> framesRead);
+
+internal unsafe ffi(c) fn System.C.c_int stark_ma_decoder_seek_to_pcm_frame(
+    rawmutptr<MiniAudioDecoderNative> decoder,
+    u64[0 max] frameIndex);
+
+internal unsafe ffi(c) fn System.C.c_int stark_ma_playback_create_f32(
+    rawptr<f32> samples,
+    u64[0 max] frameCount,
+    u32[0 max] channels,
+    u32[0 max] sampleRate,
+    rawmutptr<rawmutptr<MiniAudioPlaybackNative>> device);
+
+internal unsafe ffi(c) fn void stark_ma_playback_destroy(rawmutptr<MiniAudioPlaybackNative> device);
+internal unsafe ffi(c) fn System.C.c_int stark_ma_playback_start(rawmutptr<MiniAudioPlaybackNative> device);
+internal unsafe ffi(c) fn System.C.c_int stark_ma_playback_stop(rawmutptr<MiniAudioPlaybackNative> device);
+internal unsafe ffi(c) fn System.C.c_int stark_ma_playback_is_complete(rawmutptr<MiniAudioPlaybackNative> device);
+
+internal finite law System.C.c_int NativeFormat(SampleFormat format)
+{
+    switch (format)
+    {
+        case SampleFormat.S16:
+            return MA_FORMAT_S16;
+        case SampleFormat.F32:
+            return MA_FORMAT_F32;
+    }
+}
+
+internal finite law SampleFormat SampleFormatFromNative(System.C.c_int format)
+{
+    switch (format)
+    {
+        case 2:
+            return SampleFormat.S16;
+        case 5:
+            return SampleFormat.F32;
+        default:
+            return SampleFormat.F32;
+    }
+}
+
+internal finite law MiniAudioError ErrorFromNative(i32[min max] code)
+{
+    switch (code)
+    {
+        case -2:
+            return MiniAudioError.InvalidArgument;
+        case -4:
+            return MiniAudioError.OutOfMemory;
+        case -10:
+            return MiniAudioError.InvalidFile;
+        case -11:
+            return MiniAudioError.SourceTooLarge;
+        case -17:
+            return MiniAudioError.AtEnd;
+        case -22:
+            return MiniAudioError.Unavailable;
+        case -33:
+            return MiniAudioError.InvalidData;
+        case -200:
+            return MiniAudioError.FormatNotSupported;
+        case -204:
+            return MiniAudioError.NoDevice;
+        case -208:
+            return MiniAudioError.BackendUnavailable;
+        case -400:
+            return MiniAudioError.BackendUnavailable;
+        case -401:
+            return MiniAudioError.BackendUnavailable;
+        default:
+            return MiniAudioError.Native(code);
+    }
+}
+
+internal finite law MiniAudioStatus StatusFromNative(System.C.c_int code)
+{
+    if (code == MA_SUCCESS)
+    {
+        return MiniAudioStatus.Ok;
+    }
+
+    return MiniAudioStatus.Err(ErrorFromNative((i32[min max])code));
+}
+
+internal finite law u64[0 max] RequiredSampleCountOrZero(u64[0 max] frameCount, u8[1 254] channels)
+{
+    if (frameCount > MiniAudioMaxNativeSampleCount / (u64[0 max])channels)
+    {
+        return 0;
+    }
+
+    return frameCount * (u64[0 max])channels;
+}
+
+internal unsafe fn DecoderInfoResult GetInfoForHandle(rawmutptr<MiniAudioDecoderNative> handle)
+{
+    if (handle == null)
+    {
+        return DecoderInfoResult.Err(MiniAudioError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut System.C.c_int nativeFormat = 0;
+        stack mut u32[0 max] channels = 0;
+        stack mut u32[0 max] sampleRate = 0;
+        stack mut u64[0 max] length = 0;
+        stack System.C.c_int status = stark_ma_decoder_get_info(
+            handle,
+            &nativeFormat,
+            &channels,
+            &sampleRate,
+            &length);
+        if (status != MA_SUCCESS)
+        {
+            return DecoderInfoResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        if (channels == 0 || channels > 254 || sampleRate == 0)
+        {
+            return DecoderInfoResult.Err(MiniAudioError.InvalidData);
+        }
+
+        return DecoderInfoResult.Ok(new DecoderInfo()
+        {
+            Format = SampleFormatFromNative(nativeFormat),
+            Channels = (u8[1 254])channels,
+            SampleRate = (u32[1 max])sampleRate,
+            LengthInPcmFrames = length
+        });
+    }
+}
+
+internal unsafe fn DecoderResult DecoderFromHandle(rawmutptr<MiniAudioDecoderNative> handle)
+{
+    unsafe
+    {
+        switch (GetInfoForHandle(handle))
+        {
+            case DecoderInfoResult.Err(var error):
+                if (handle != null)
+                {
+                    stark_ma_decoder_destroy(handle);
+                }
+
+                return DecoderResult.Err(error);
+            case DecoderInfoResult.Ok(var info):
+                stack mut Decoder decoder = new();
+                decoder.Handle = handle;
+                decoder.OutputFormat = info.Format;
+                decoder.OutputChannels = info.Channels;
+                decoder.OutputSampleRate = info.SampleRate;
+                return DecoderResult.Ok(decoder);
+        }
+    }
+}
+
+public fn DecoderResult OpenDecoderFromMemory(
+    borrow u8[0 max][] encoded,
+    SampleFormat outputFormat,
+    u8[0 254] outputChannels,
+    u32[0 max] outputSampleRate)
+{
+    if (encoded.Length == 0)
+    {
+        return DecoderResult.Err(MiniAudioError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut rawmutptr<MiniAudioDecoderNative> handle = null;
+        stack System.C.c_size_t encodedLength = encoded.Length;
+        stack System.C.c_int status = stark_ma_decoder_create_memory(
+            &encoded[0],
+            encodedLength,
+            NativeFormat(outputFormat),
+            outputChannels,
+            outputSampleRate,
+            &handle);
+        if (status != MA_SUCCESS)
+        {
+            return DecoderResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return DecoderFromHandle(handle);
+    }
+}
+
+public fn DecoderResult OpenDecoderFromFile(
+    ascii path,
+    SampleFormat outputFormat,
+    u8[0 254] outputChannels,
+    u32[0 max] outputSampleRate)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> preparedPath = System.C.FromAscii(path);
+    switch (preparedPath)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return DecoderResult.Err(MiniAudioError.InvalidArgument);
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cPath):
+            unsafe
+            {
+                stack mut rawmutptr<MiniAudioDecoderNative> handle = null;
+                stack System.C.c_int status = stark_ma_decoder_create_file(
+                    cPath.Data(),
+                    NativeFormat(outputFormat),
+                    outputChannels,
+                    outputSampleRate,
+                    &handle);
+                if (status != MA_SUCCESS)
+                {
+                    return DecoderResult.Err(ErrorFromNative((i32[min max])status));
+                }
+
+                return DecoderFromHandle(handle);
+            }
+    }
+}
+
+public fn DecoderInfoResult GetDecoderInfo(borrow Decoder decoder)
+{
+    unsafe
+    {
+        return GetInfoForHandle(decoder.Handle);
+    }
+}
+
+public fn ReadFramesResult ReadF32Frames(
+    borrow Decoder decoder,
+    borrow mut f32[] destination,
+    u64[0 max] frameCount)
+{
+    if (decoder.IsEmpty())
+    {
+        return ReadFramesResult.Err(MiniAudioError.InvalidArgument);
+    }
+
+    if (decoder.Format() != SampleFormat.F32)
+    {
+        return ReadFramesResult.Err(MiniAudioError.WrongSampleFormat);
+    }
+
+    if (frameCount == 0)
+    {
+        return ReadFramesResult.Ok(0);
+    }
+
+    stack u64[0 max] required = RequiredSampleCountOrZero(frameCount, decoder.Channels());
+    if (required == 0)
+    {
+        return ReadFramesResult.Err(MiniAudioError.SourceTooLarge);
+    }
+
+    if (destination.Length < required)
+    {
+        return ReadFramesResult.Err(MiniAudioError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack mut u64[0 max] framesRead = 0;
+        stack System.C.c_int status = stark_ma_decoder_read_pcm_frames(
+            decoder.Handle,
+            (rawmutptr<System.C.c_void>)(&destination[0]),
+            frameCount,
+            &framesRead);
+        if (status != MA_SUCCESS)
+        {
+            return ReadFramesResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return ReadFramesResult.Ok(framesRead);
+    }
+}
+
+public fn ReadFramesResult ReadS16Frames(
+    borrow Decoder decoder,
+    borrow mut i16[min max][] destination,
+    u64[0 max] frameCount)
+{
+    if (decoder.IsEmpty())
+    {
+        return ReadFramesResult.Err(MiniAudioError.InvalidArgument);
+    }
+
+    if (decoder.Format() != SampleFormat.S16)
+    {
+        return ReadFramesResult.Err(MiniAudioError.WrongSampleFormat);
+    }
+
+    if (frameCount == 0)
+    {
+        return ReadFramesResult.Ok(0);
+    }
+
+    stack u64[0 max] required = RequiredSampleCountOrZero(frameCount, decoder.Channels());
+    if (required == 0)
+    {
+        return ReadFramesResult.Err(MiniAudioError.SourceTooLarge);
+    }
+
+    if (destination.Length < required)
+    {
+        return ReadFramesResult.Err(MiniAudioError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack mut u64[0 max] framesRead = 0;
+        stack System.C.c_int status = stark_ma_decoder_read_pcm_frames(
+            decoder.Handle,
+            (rawmutptr<System.C.c_void>)(&destination[0]),
+            frameCount,
+            &framesRead);
+        if (status != MA_SUCCESS)
+        {
+            return ReadFramesResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return ReadFramesResult.Ok(framesRead);
+    }
+}
+
+public fn MiniAudioStatus SeekToPcmFrame(borrow Decoder decoder, u64[0 max] frameIndex)
+{
+    if (decoder.IsEmpty())
+    {
+        return MiniAudioStatus.Err(MiniAudioError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_ma_decoder_seek_to_pcm_frame(decoder.Handle, frameIndex));
+    }
+}
+
+public fn PlaybackDeviceResult CreatePlaybackDeviceF32(
+    borrow f32[] samples,
+    u64[1 max] frameCount,
+    u8[1 254] channels,
+    u32[1 max] sampleRate)
+{
+    stack u64[0 max] required = RequiredSampleCountOrZero(frameCount, channels);
+    if (required == 0)
+    {
+        return PlaybackDeviceResult.Err(MiniAudioError.SourceTooLarge);
+    }
+
+    if (samples.Length < required)
+    {
+        return PlaybackDeviceResult.Err(MiniAudioError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack mut rawmutptr<MiniAudioPlaybackNative> handle = null;
+        stack System.C.c_int status = stark_ma_playback_create_f32(
+            &samples[0],
+            frameCount,
+            channels,
+            sampleRate,
+            &handle);
+        if (status != MA_SUCCESS)
+        {
+            return PlaybackDeviceResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        stack mut PlaybackDevice device = new();
+        device.Handle = handle;
+        return PlaybackDeviceResult.Ok(device);
+    }
+}
+
+public fn MiniAudioStatus Start(mut borrow PlaybackDevice device)
+{
+    if (device.IsEmpty())
+    {
+        return MiniAudioStatus.Err(MiniAudioError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_ma_playback_start(device.Handle));
+    }
+}
+
+public fn MiniAudioStatus Stop(mut borrow PlaybackDevice device)
+{
+    if (device.IsEmpty())
+    {
+        return MiniAudioStatus.Err(MiniAudioError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_ma_playback_stop(device.Handle));
+    }
+}
+
+public fn bool IsComplete(borrow PlaybackDevice device)
+{
+    if (device.IsEmpty())
+    {
+        return true;
+    }
+
+    unsafe
+    {
+        return stark_ma_playback_is_complete(device.Handle) != 0;
+    }
+}

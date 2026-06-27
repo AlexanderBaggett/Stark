@@ -863,7 +863,7 @@ internal static class CompilerCli
             var combinedLibrarySearchDirectories = CombineDistinct(
                 toolchainOptions.LibrarySearchDirectories,
                 nativeDependencyResult.LibrarySearchDirectories);
-            var combinedExplicitLinkArguments = CombineDistinct(
+            var combinedExplicitLinkArguments = CombineOrdered(
                 nativeDependencyResult.LinkArguments,
                 toolchainOptions.LinkArguments);
             var linkArguments = BuildImplicitLinkArguments(
@@ -1971,7 +1971,7 @@ internal static class CompilerCli
             return null;
         }
 
-        IModuleSourceResolver resolver = new FileSystemModuleResolver(resolvedDirectories);
+        IModuleSourceResolver resolver = new FileSystemModuleResolver(resolvedDirectories, targetInfo);
         if (targetInfo is not null)
         {
             resolver = new TargetAwareStdLibModuleResolver(resolver, resolvedDirectories, targetInfo);
@@ -2529,7 +2529,7 @@ internal static class CompilerCli
             true,
             objectPaths,
             CombineDistinct(librarySearchDirectories),
-            CombineDistinct(linkArguments),
+            CombineOrdered(linkArguments),
             CombineDistinct(runtimeLibraryPaths),
             [],
             null);
@@ -2737,7 +2737,7 @@ internal static class CompilerCli
         return NativePkgConfigResolveResult.Successful(
             CombineDistinct(includeDirectories),
             CombineDistinct(librarySearchDirectories),
-            CombineDistinct(linkArguments));
+            CombineOrdered(linkArguments));
     }
 
     private static IReadOnlyList<string> SplitPkgConfigFlags(string text)
@@ -3253,6 +3253,25 @@ internal static class CompilerCli
             {
                 combined.Add(trimmed);
             }
+        }
+
+        return combined;
+    }
+
+    private static IReadOnlyList<string> CombineOrdered(
+        IEnumerable<string> first,
+        IEnumerable<string>? second = null)
+    {
+        var combined = new List<string>();
+
+        foreach (var value in first.Concat(second ?? []))
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            combined.Add(value.Trim());
         }
 
         return combined;
@@ -5135,7 +5154,7 @@ internal static class CompilerCli
                 IncludeDirectories: NormalizePathList(IncludeDirectories, packageImageDirectory),
                 LibraryDirectories: NormalizePathList(LibraryDirectories, packageImageDirectory),
                 Libraries: NormalizeTextList(Libraries),
-                LinkArguments: NormalizeTextList(LinkArguments),
+                LinkArguments: NormalizeOrderedTextList(LinkArguments),
                 PkgConfigPackages: NormalizeTextList(PkgConfigPackages));
         }
 
@@ -5202,6 +5221,16 @@ internal static class CompilerCli
                 .Where(static value => !string.IsNullOrWhiteSpace(value))
                 .Select(static value => value.Trim())
                 .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            return normalized.Length == 0 ? null : normalized;
+        }
+
+        private static IReadOnlyList<string>? NormalizeOrderedTextList(IReadOnlyList<string> values)
+        {
+            var normalized = values
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim())
                 .ToArray();
 
             return normalized.Length == 0 ? null : normalized;

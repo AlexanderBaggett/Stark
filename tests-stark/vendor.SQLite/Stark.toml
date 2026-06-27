@@ -1,0 +1,21 @@
+[project]
+name = "vendor-sqlite-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "SQLiteTests.stark"
+output = "vendor-sqlite-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/SQLiteTextBinding.c"]
+pkg-config = ["sqlite3"]
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

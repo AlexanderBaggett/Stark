@@ -205,7 +205,7 @@ internal static class NativeToolchain
                     return false;
                 }
 
-                targetInfo = new LlvmTargetInfo(triple, dataLayout);
+                targetInfo = new LlvmTargetInfo(triple, NormalizeDetectedDataLayout(dataLayout, triple));
                 return true;
             }
             finally
@@ -994,6 +994,71 @@ internal static class NativeToolchain
         return firstQuote >= 0 && lastQuote > firstQuote
             ? line[(firstQuote + 1)..lastQuote]
             : null;
+    }
+
+    private static string? NormalizeDetectedDataLayout(string? dataLayout, string triple)
+    {
+        if (string.IsNullOrWhiteSpace(dataLayout)
+            || HasDefaultPointerLayout(dataLayout)
+            || !TryInferDefaultPointerBits(triple, out var pointerBits))
+        {
+            return dataLayout;
+        }
+
+        var tokens = dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        if (tokens.Count == 0)
+        {
+            return dataLayout;
+        }
+
+        var insertIndex = tokens.Count > 1 && tokens[1].StartsWith("m:", StringComparison.Ordinal) ? 2 : 1;
+        tokens.Insert(insertIndex, $"p:{pointerBits}:{pointerBits}");
+        return string.Join("-", tokens);
+    }
+
+    private static bool HasDefaultPointerLayout(string dataLayout)
+    {
+        foreach (var token in dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.StartsWith("p:", StringComparison.Ordinal)
+                || token.StartsWith("p0:", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryInferDefaultPointerBits(string triple, out int pointerBits)
+    {
+        var lower = triple.Trim().ToLowerInvariant();
+        if (lower.StartsWith("i386-", StringComparison.Ordinal)
+            || lower.StartsWith("i486-", StringComparison.Ordinal)
+            || lower.StartsWith("i586-", StringComparison.Ordinal)
+            || lower.StartsWith("i686-", StringComparison.Ordinal)
+            || lower.StartsWith("x86-", StringComparison.Ordinal)
+            || lower.StartsWith("armv7", StringComparison.Ordinal)
+            || lower.StartsWith("armv6", StringComparison.Ordinal)
+            || lower.StartsWith("wasm32-", StringComparison.Ordinal))
+        {
+            pointerBits = 32;
+            return true;
+        }
+
+        if (lower.StartsWith("x86_64-", StringComparison.Ordinal)
+            || lower.StartsWith("amd64-", StringComparison.Ordinal)
+            || lower.StartsWith("aarch64-", StringComparison.Ordinal)
+            || lower.StartsWith("arm64-", StringComparison.Ordinal)
+            || lower.StartsWith("riscv64-", StringComparison.Ordinal)
+            || lower.StartsWith("wasm64-", StringComparison.Ordinal))
+        {
+            pointerBits = 64;
+            return true;
+        }
+
+        pointerBits = 0;
+        return false;
     }
 
     private static void AppendTargetCodegenArguments(ICollection<string> arguments, LlvmTargetInfo? targetInfo, bool compileOnly)

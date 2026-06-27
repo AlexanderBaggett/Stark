@@ -18,16 +18,11 @@ export fn i32[min max] main()
 
 ```stark
 import System.Console
-import System.IO
 module Demo.Console
 
 export fn i32[min max] main()
 {
-    if (WriteLine("Hello from Stark") != IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Hello from Stark");
     return 0;
 }
 ```

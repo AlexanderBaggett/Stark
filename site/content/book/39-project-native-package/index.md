@@ -30,7 +30,16 @@ projects consume it through ordinary package dependencies.
 Build a Stark package that wraps a native library and lets downstream Stark
 executables depend on it without repeating native link details.
 
-Use the Raylib example as the concrete model for this package shape.
+Use the Raylib example as the concrete model for direct symbol bindings and
+C-layout aggregate carriers. Use `Vendor.SDL3` as the model when a native
+adapter is required for real ABI reasons: SDL3 keeps C `bool` returns,
+`SDL_Event`'s union layout, nullable handles, and callback-shaped audio entry
+points inside `Sdl3Binding.c`, while safe Stark callers use handles, result
+enums, flat event values, and caller-owned byte buffers.
+Use `Vendor.Miniaudio` and `Vendor.Cgltf` as models for pinned single-header
+source drops behind small native implementation files. Use `Vendor.GLFW` as the
+model for native callback bridges that translate C callbacks into caller-polled
+Stark values without retaining Stark closures in foreign code.
 
 ## Step 2: Write The Stark Wrapper First
 

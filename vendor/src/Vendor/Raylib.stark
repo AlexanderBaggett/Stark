@@ -1,3 +1,5 @@
+import Vendor.Raymath
+import Vendor.Rlgl
 export import Vendor.Raylib.Types
 export import Vendor.Raylib.Core
 export import Vendor.Raylib.Shapes
@@ -5,4 +7,5 @@ export import Vendor.Raylib.Textures
 export import Vendor.Raylib.Text
 export import Vendor.Raylib.Models
 export import Vendor.Raylib.Audio
+export import Vendor.Raylib.Owners
 module Vendor.Raylib

@@ -1,6 +1,132 @@
 import Vendor.Raylib.Types
+import Vendor.Raylib.Core
 export import Vendor.Raylib.Types
 module Vendor.Raylib.Textures
+
+public enum RaylibColorsResult
+{
+    [Ok] Ok(RaylibOwnedColors),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedColors
+{
+    internal rawmutptr<Color> Data;
+    internal u64[0 2 ** 63 - 1] Count;
+    internal bool Palette;
+
+    RaylibOwnedColors()
+    {
+        self.Data = null;
+        self.Count = 0;
+        self.Palette = false;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedColors self)
+    {
+        return self.Count;
+    }
+
+    public fn bool TryGet(borrow RaylibOwnedColors self, u64[0 2 ** 63 - 1] index, out Color value)
+    {
+        value = BLANK();
+        if (index >= self.Count || self.Data == null)
+        {
+            return false;
+        }
+
+        unsafe
+        {
+            value = *(&self.Data[index]);
+        }
+
+        return true;
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedColors self, borrow mut Color[] destination)
+    {
+        if (destination.Length < self.Count)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < self.Count)
+            {
+                destination[index] = *(&self.Data[index]);
+                index += 1;
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    public fn void Close(mut borrow RaylibOwnedColors self)
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                if (self.Palette)
+                {
+                    stark_raylib_UnloadImagePalette(self.Data);
+                }
+                else
+                {
+                    stark_raylib_UnloadImageColors(self.Data);
+                }
+
+                self.Data = null;
+                self.Count = 0;
+                self.Palette = false;
+            }
+        }
+
+        return;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+internal unsafe inline finite law rawptr<u8[0 max]> ReadU8OrNull(borrow u8[0 max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawptr<i8[min max]> ReadI8OrNull(borrow i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal unsafe inline finite law rawmutptr<i8[min max]> MutI8OrNull(borrow mut i8[min max][] data)
+{
+    if (data.Length == 0)
+    {
+        return null;
+    }
+
+    return &data[0];
+}
+
+internal inline finite law bool TooManyForI32(u64[0 max] length)
+{
+    return length > (u64[0 max])(2 ** 31 - 1);
+}
 
 [LinkName("LoadImage")]
 internal unsafe ffi fn Image stark_raylib_LoadImage(ascii fileName);
@@ -18,27 +144,48 @@ public fn Image LoadImageRaw(ascii fileName, i32[min max] width, i32[min max] he
     }
 }
 
+public fn Image LoadImageRaw(ascii fileName, i32[min max] width, i32[min max] height, PixelFormat format, i32[min max] headerSize) {
+    return LoadImageRaw(fileName, width, height, PixelFormatNative(format), headerSize);
+}
+
 [LinkName("LoadImageAnim")]
 internal unsafe ffi fn Image stark_raylib_LoadImageAnim(ascii fileName, rawmutptr<i32[min max]> frames);
-public unsafe fn Image LoadImageAnim(ascii fileName, rawmutptr<i32[min max]> frames) {
+public fn Image LoadImageAnim(ascii fileName, out i32[min max] frames) {
     unsafe {
-        return stark_raylib_LoadImageAnim(fileName, frames);
+        stack mut i32[min max] frameCount = 0;
+        stack Image image = stark_raylib_LoadImageAnim(fileName, &frameCount);
+        frames = frameCount;
+        return image;
     }
 }
 
 [LinkName("LoadImageAnimFromMemory")]
 internal unsafe ffi fn Image stark_raylib_LoadImageAnimFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames);
-public unsafe fn Image LoadImageAnimFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames) {
+public fn Image LoadImageAnimFromMemory(ascii fileType, borrow u8[0 max][] fileData, out i32[min max] frames) {
+    if (TooManyForI32(fileData.Length))
+    {
+        frames = 0;
+        return DefaultImage();
+    }
+
     unsafe {
-        return stark_raylib_LoadImageAnimFromMemory(fileType, fileData, dataSize, frames);
+        stack mut i32[min max] frameCount = 0;
+        stack Image image = stark_raylib_LoadImageAnimFromMemory(fileType, ReadU8OrNull(fileData), (i32[min max])fileData.Length, &frameCount);
+        frames = frameCount;
+        return image;
     }
 }
 
 [LinkName("LoadImageFromMemory")]
 internal unsafe ffi fn Image stark_raylib_LoadImageFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize);
-public unsafe fn Image LoadImageFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize) {
+public fn Image LoadImageFromMemory(ascii fileType, borrow u8[0 max][] fileData) {
+    if (TooManyForI32(fileData.Length))
+    {
+        return DefaultImage();
+    }
+
     unsafe {
-        return stark_raylib_LoadImageFromMemory(fileType, fileData, dataSize);
+        return stark_raylib_LoadImageFromMemory(fileType, ReadU8OrNull(fileData), (i32[min max])fileData.Length);
     }
 }
 
@@ -85,9 +232,11 @@ public fn bool ExportImage(Image image, ascii fileName) {
 
 [LinkName("ExportImageToMemory")]
 internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_ExportImageToMemory(Image image, ascii fileType, rawmutptr<i32[min max]> fileSize);
-public unsafe fn rawmutptr<u8[0 max]> ExportImageToMemory(Image image, ascii fileType, rawmutptr<i32[min max]> fileSize) {
+public fn RaylibBytesResult ExportImageToMemory(Image image, ascii fileType) {
     unsafe {
-        return stark_raylib_ExportImageToMemory(image, fileType, fileSize);
+        stack mut i32[min max] fileSize = 0;
+        stack rawmutptr<u8[0 max]> data = stark_raylib_ExportImageToMemory(image, fileType, &fileSize);
+        return OwnedBytesFromPointer(data, fileSize);
     }
 }
 
@@ -219,6 +368,10 @@ public fn Image ImageFormat(Image image, i32[min max] newFormat) {
         stark_raylib_ImageFormat(&result, newFormat);
     }
     return result;
+}
+
+public fn Image ImageFormat(Image image, PixelFormat newFormat) {
+    return ImageFormat(image, PixelFormatNative(newFormat));
 }
 
 [LinkName("ImageToPOT")]
@@ -474,22 +627,52 @@ public fn Image ImageColorReplace(Image image, Color color, Color replace) {
 
 [LinkName("LoadImageColors")]
 internal unsafe ffi fn rawmutptr<Color> stark_raylib_LoadImageColors(Image image);
-public unsafe fn rawmutptr<Color> LoadImageColors(Image image) {
+public fn RaylibColorsResult LoadImageColors(Image image) {
     unsafe {
-        return stark_raylib_LoadImageColors(image);
+        stack rawmutptr<Color> colors = stark_raylib_LoadImageColors(image);
+        if (colors == null || image.Width <= 0 || image.Height <= 0)
+        {
+            return RaylibColorsResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        return RaylibColorsResult.Ok(new RaylibOwnedColors()
+        {
+            Data = colors,
+            Count = (u64[0 2 ** 63 - 1])image.Width * (u64[0 2 ** 63 - 1])image.Height,
+            Palette = false
+        });
     }
 }
 
 [LinkName("LoadImagePalette")]
 internal unsafe ffi fn rawmutptr<Color> stark_raylib_LoadImagePalette(Image image, i32[min max] maxPaletteSize, rawmutptr<i32[min max]> colorCount);
-public unsafe fn rawmutptr<Color> LoadImagePalette(Image image, i32[min max] maxPaletteSize, rawmutptr<i32[min max]> colorCount) {
+public fn RaylibColorsResult LoadImagePalette(Image image, i32[min max] maxPaletteSize) {
+    if (maxPaletteSize <= 0)
+    {
+        return RaylibColorsResult.Err(RaylibStatus.InvalidArgument);
+    }
+
     unsafe {
-        return stark_raylib_LoadImagePalette(image, maxPaletteSize, colorCount);
+        stack mut i32[min max] colorCount = 0;
+        stack rawmutptr<Color> colors = stark_raylib_LoadImagePalette(image, maxPaletteSize, &colorCount);
+        if (colors == null || colorCount < 0)
+        {
+            return RaylibColorsResult.Err(RaylibStatus.InvalidArgument);
+        }
+
+        return RaylibColorsResult.Ok(new RaylibOwnedColors()
+        {
+            Data = colors,
+            Count = (u64[0 2 ** 63 - 1])colorCount,
+            Palette = true
+        });
     }
 }
 
-public unsafe ffi fn void UnloadImageColors(rawmutptr<Color> colors);
-public unsafe ffi fn void UnloadImagePalette(rawmutptr<Color> colors);
+[LinkName("UnloadImageColors")]
+internal unsafe ffi fn void stark_raylib_UnloadImageColors(rawmutptr<Color> colors);
+[LinkName("UnloadImagePalette")]
+internal unsafe ffi fn void stark_raylib_UnloadImagePalette(rawmutptr<Color> colors);
 [LinkName("GetImageAlphaBorder")]
 internal unsafe ffi fn Rectangle stark_raylib_GetImageAlphaBorder(Image image, f32 threshold);
 public fn Rectangle GetImageAlphaBorder(Image image, f32 threshold) {
@@ -772,6 +955,10 @@ public fn TextureCubemap LoadTextureCubemap(Image image, i32[min max] layout) {
     }
 }
 
+public fn TextureCubemap LoadTextureCubemap(Image image, CubemapLayout layout) {
+    return LoadTextureCubemap(image, CubemapLayoutNative(layout));
+}
+
 [LinkName("LoadRenderTexture")]
 internal unsafe ffi fn RenderTexture2D stark_raylib_LoadRenderTexture(i32[min max] width, i32[min max] height);
 public fn RenderTexture2D LoadRenderTexture(i32[min max] width, i32[min max] height) {
@@ -816,20 +1003,32 @@ public fn void UnloadRenderTexture(RenderTexture2D target) {
 
 [LinkName("UpdateTexture")]
 internal unsafe ffi fn void stark_raylib_UpdateTexture(Texture2D texture, rawptr<i8[min max]> pixels);
-public unsafe fn void UpdateTexture(Texture2D texture, rawptr<i8[min max]> pixels) {
-    unsafe {
-        stark_raylib_UpdateTexture(texture, pixels);
+public fn RaylibStatus UpdateTexture(Texture2D texture, borrow i8[min max][] pixels) {
+    if (pixels.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
     }
-    return;
+
+    unsafe {
+        stark_raylib_UpdateTexture(texture, ReadI8OrNull(pixels));
+    }
+
+    return RaylibStatus.Ok;
 }
 
 [LinkName("UpdateTextureRec")]
 internal unsafe ffi fn void stark_raylib_UpdateTextureRec(Texture2D texture, Rectangle rec, rawptr<i8[min max]> pixels);
-public unsafe fn void UpdateTextureRec(Texture2D texture, Rectangle rec, rawptr<i8[min max]> pixels) {
-    unsafe {
-        stark_raylib_UpdateTextureRec(texture, rec, pixels);
+public fn RaylibStatus UpdateTextureRec(Texture2D texture, Rectangle rec, borrow i8[min max][] pixels) {
+    if (pixels.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
     }
-    return;
+
+    unsafe {
+        stark_raylib_UpdateTextureRec(texture, rec, ReadI8OrNull(pixels));
+    }
+
+    return RaylibStatus.Ok;
 }
 
 [LinkName("GenTextureMipmaps")]
@@ -851,12 +1050,22 @@ public fn void SetTextureFilter(Texture2D texture, i32[min max] filter) {
     return;
 }
 
+public fn void SetTextureFilter(Texture2D texture, TextureFilter filter) {
+    SetTextureFilter(texture, TextureFilterNative(filter));
+    return;
+}
+
 [LinkName("SetTextureWrap")]
 internal unsafe ffi fn void stark_raylib_SetTextureWrap(Texture2D texture, i32[min max] wrap);
 public fn void SetTextureWrap(Texture2D texture, i32[min max] wrap) {
     unsafe {
         stark_raylib_SetTextureWrap(texture, wrap);
     }
+    return;
+}
+
+public fn void SetTextureWrap(Texture2D texture, TextureWrap wrap) {
+    SetTextureWrap(texture, TextureWrapNative(wrap));
     return;
 }
 
@@ -1027,20 +1236,39 @@ public fn Color GetColor(u32[0 max] hexValue) {
 }
 
 [LinkName("GetPixelColor")]
-internal unsafe ffi fn Color stark_raylib_GetPixelColor(rawmutptr<i8[min max]> srcPtr, i32[min max] format);
-public unsafe fn Color GetPixelColor(rawmutptr<i8[min max]> srcPtr, i32[min max] format) {
-    unsafe {
-        return stark_raylib_GetPixelColor(srcPtr, format);
+internal unsafe ffi fn Color stark_raylib_GetPixelColor(rawptr<i8[min max]> srcPtr, i32[min max] format);
+public fn Color GetPixelColor(borrow i8[min max][] source, i32[min max] format) {
+    if (source.Length == 0)
+    {
+        return BLANK();
     }
+
+    unsafe {
+        return stark_raylib_GetPixelColor(ReadI8OrNull(source), format);
+    }
+}
+
+public fn Color GetPixelColor(borrow i8[min max][] source, PixelFormat format) {
+    return GetPixelColor(source, PixelFormatNative(format));
 }
 
 [LinkName("SetPixelColor")]
 internal unsafe ffi fn void stark_raylib_SetPixelColor(rawmutptr<i8[min max]> dstPtr, Color color, i32[min max] format);
-public unsafe fn void SetPixelColor(rawmutptr<i8[min max]> dstPtr, Color color, i32[min max] format) {
-    unsafe {
-        stark_raylib_SetPixelColor(dstPtr, color, format);
+public fn RaylibStatus SetPixelColor(borrow mut i8[min max][] destination, Color color, i32[min max] format) {
+    if (destination.Length == 0)
+    {
+        return RaylibStatus.InvalidArgument;
     }
-    return;
+
+    unsafe {
+        stark_raylib_SetPixelColor(MutI8OrNull(destination), color, format);
+    }
+
+    return RaylibStatus.Ok;
+}
+
+public fn RaylibStatus SetPixelColor(borrow mut i8[min max][] destination, Color color, PixelFormat format) {
+    return SetPixelColor(destination, color, PixelFormatNative(format));
 }
 
 [LinkName("GetPixelDataSize")]
@@ -1049,4 +1277,8 @@ public fn i32[min max] GetPixelDataSize(i32[min max] width, i32[min max] height,
     unsafe {
         return stark_raylib_GetPixelDataSize(width, height, format);
     }
+}
+
+public fn i32[min max] GetPixelDataSize(i32[min max] width, i32[min max] height, PixelFormat format) {
+    return GetPixelDataSize(width, height, PixelFormatNative(format));
 }

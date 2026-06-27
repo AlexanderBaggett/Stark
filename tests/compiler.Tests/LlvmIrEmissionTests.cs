@@ -168,6 +168,36 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCall()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Pfn = fnptr<unsafe ffi(c) fn i32[min max](i32[min max])>;
+
+            unsafe fn i32[min max] Apply(rawptr<i8[min max]> pointer, i32[min max] value)
+            {
+                unsafe
+                {
+                    stack Pfn callback = (Pfn)pointer;
+                    return callback(value);
+                }
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var body = ExtractDefinitionBody(llvm, "Apply");
+
+        Assert.Contains("call i32 %arg_pointer(i32 %arg_value)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ptrtoint", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("inttoptr", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("bitcast", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
     {
         var result = Compile(
@@ -7629,8 +7659,8 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Theory]
-    [InlineData("x86_64-unknown-linux-gnu", "declare i64 @NativeLong(i64) nounwind", "call i64 @NativeLong(i64 1)")]
-    [InlineData("x86_64-pc-windows-msvc", "declare i32 @NativeLong(i64) nounwind", "call i32 @NativeLong(i64 1)")]
+    [InlineData("x86_64-unknown-linux-gnu", "declare i64 @NativeLong(i64) nounwind", "call i64 @NativeLong(i64 range(i64 1, 2) 1)")]
+    [InlineData("x86_64-pc-windows-msvc", "declare i32 @NativeLong(i64) nounwind", "call i32 @NativeLong(i64 range(i64 1, 2) 1)")]
     public void SystemCPrimitiveAliasesLowerToTargetLlvmTypes(
         string targetTriple,
         string expectedNativeLongDeclaration,
@@ -7659,6 +7689,35 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains(expectedNativeLongCall, llvm);
         Assert.Contains("declare void @NativeFree(ptr) nounwind", llvm);
         Assert.Contains("call void @NativeFree(ptr %arg_ptr)", llvm);
+    }
+
+    [Fact]
+    public void SystemCVaListLowersAsTargetCAbiPointerCarrier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_char> NativeFormat(
+                rawptr<System.C.c_char> format,
+                System.C.VaList args);
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_char> ForwardFormat(
+                rawptr<System.C.c_char> format,
+                System.C.VaList args)
+            {
+                return NativeFormat(format, args);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare ptr @NativeFormat(ptr readonly, ptr) nounwind", llvm);
+        Assert.Contains("define ptr @ForwardFormat(ptr readonly %arg_format, ptr %arg_args)", llvm);
+        Assert.Contains("call ptr @NativeFormat(ptr readonly %arg_format, ptr %arg_args)", llvm);
     }
 
     [Fact]
@@ -7707,6 +7766,38 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("declare win64cc i32 @Callback(i32) nounwind", llvm);
         Assert.Matches(@"declare win64cc i32 @Register\(ptr(?: [^,\)]*)?, i32\) nounwind", llvm);
         Assert.Matches(@"call win64cc i32 @Register\(ptr(?: [^,\)]*)? @Callback, i32 %arg_value\)", llvm);
+    }
+
+    [Fact]
+    public void FfiFunctionBodiesPromoteToNativeCallbackPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+            unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+            {
+                return;
+            }
+
+            unsafe ffi(c) fn void Register(AudioCallback callback);
+
+            export unsafe fn void Install()
+            {
+                Register(FillAudio);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"define void @FillAudio\(ptr(?: [^,\)]*)? %arg_bufferData, i32(?: [^,\)]*)? %arg_frames\)", llvm);
+        Assert.DoesNotContain("define fastcc void @FillAudio", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"declare void @Register\(ptr(?: [^,\)]*)?\) nounwind", llvm);
+        Assert.Matches(@"call void @Register\(ptr(?: [^,\)]*)? @FillAudio\)", ExtractDefinitionBody(llvm, "Install"));
     }
 
     [Fact]
@@ -11624,6 +11715,43 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
         Assert.DoesNotContain("%abi_arg_value_value", llvm);
         Assert.DoesNotContain("store %Big", llvm);
+    }
+
+    [Fact]
+    public void LargeAggregateIndirectParameterInsertedIntoAggregateFieldMaterializesValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big
+            {
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
+            }
+
+            struct Box
+            {
+                Big Value;
+            }
+
+            unsafe fn Box Wrap(Big value)
+            {
+                stack mut Box box = new Box();
+                box.Value = value;
+                return box;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+        var wrapBody = ExtractDefinitionBody(llvm, "Wrap");
+
+        Assert.Contains("define fastcc void @Wrap(ptr noalias sret(%Box) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("load %Big, ptr %arg_value", wrapBody);
+        Assert.DoesNotMatch(@"insertvalue %Box [^\n]+, %Big %arg_value,", wrapBody);
     }
 
     [Fact]

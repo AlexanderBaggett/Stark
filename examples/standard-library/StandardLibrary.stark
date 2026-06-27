@@ -1,4 +1,5 @@
-import System
+import System.BitOperations
+import System.Console
 module StandardLibraryExample
 
 finite law bool BitOperationsWork() {
@@ -6,9 +7,9 @@ finite law bool BitOperationsWork() {
     stack i32[min max] lowBit = 1;
     stack i32[min max] rotateAmount = 3;
 
-    return System.BitOperations.PopCount(answerBits) == 3
-        && System.BitOperations.LeadingZeroCount(lowBit) == 31
-        && System.BitOperations.RotateLeft(lowBit, rotateAmount) == 8;
+    return PopCount(answerBits) == 3
+        && LeadingZeroCount(lowBit) == 31
+        && RotateLeft(lowBit, rotateAmount) == 8;
 }
 
 export unsafe fn i32[min max] main() {
@@ -16,9 +17,6 @@ export unsafe fn i32[min max] main() {
         return 1;
     }
 
-    if (System.Console.WriteLine("Standard library ready") != System.IO.IOStatus.Ok) {
-        return 2;
-    }
-
+    WriteLine("Standard library ready");
     return 0;
 }

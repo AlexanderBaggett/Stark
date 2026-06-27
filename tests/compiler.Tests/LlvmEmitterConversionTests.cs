@@ -67,6 +67,28 @@ public sealed class LlvmEmitterConversionTests
     }
 
     [Fact]
+    public void RawPointerToFunctionPointerConversionIsLlvmNoOp()
+    {
+        var sourceType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.CVoid, isMutable: false);
+        var targetType = StarkTypeSymbols.FunctionPointer(
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Integer(32),
+            [StarkTypeSymbols.Integer(32)],
+            ffiAbi: StarkFfiAbi.C,
+            isUnsafe: true);
+        var llvm = EmitSingleConversion(
+            targetType,
+            new SsaNullConstant(sourceType));
+
+        Assert.Contains("define", llvm);
+        Assert.Contains("@Run()", llvm);
+        Assert.DoesNotContain("ptrtoint", llvm);
+        Assert.DoesNotContain("inttoptr", llvm);
+        Assert.DoesNotContain("bitcast", llvm);
+        Assert.Contains("ret ptr null", llvm);
+    }
+
+    [Fact]
     public void SameWidthIntegerConversionIsEmittedAsAlias()
     {
         var integerType = StarkTypeSymbols.Integer(32);

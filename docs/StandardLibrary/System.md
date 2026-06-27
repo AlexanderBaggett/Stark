@@ -60,7 +60,7 @@ export fn i32 main()
   the ordinary `[Ok]`/`[Err]` enums in `System.Core`.
 - `System.Console` and `System.IO.File` are usable today.
 - `System.BitOperations` currently exposes integer bit-manipulation helpers.
-- `System.C` currently exposes target-mapped C primitive aliases and C string interop helpers.
+- `System.C` currently exposes target-mapped C primitive aliases, the `VaList` C ABI carrier, and C string interop helpers.
 - `System.Compiler.IntegerFacts` currently exposes bounded `i1024`/`u1024`
   compiler integer-fact helpers for range, storage, tag, checked arithmetic,
   known-bit, and two's-complement reasoning.

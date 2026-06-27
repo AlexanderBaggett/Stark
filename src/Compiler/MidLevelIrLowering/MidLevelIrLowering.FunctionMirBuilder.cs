@@ -10533,6 +10533,7 @@ internal sealed partial class MidLevelIrLowerer
             if (IsMemoryFullInitSliceHelper(
                     signature,
                     "InitializeBytesFromPointerDisjoint",
+                    "InitializeUnsignedBytesFromPointerDisjoint",
                     "InitializeCodePointsFromPointerDisjoint"))
             {
                 destinationIndex = 2;
@@ -10540,7 +10541,7 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            if (IsMemoryFullInitSliceHelper(signature, "FillBytes", "FillCodePoints"))
+            if (IsMemoryFullInitSliceHelper(signature, "FillBytes", "FillUnsignedBytes", "FillCodePoints"))
             {
                 destinationIndex = 0;
                 countIndex = 2;
@@ -13702,6 +13703,14 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             if (operand.Type.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
+            {
+                return EmitTemporary(
+                    new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
+                    "ptrcast");
+            }
+
+            if ((operand.Type.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.FunctionPointer)
+                || (operand.Type.Kind == StarkTypeKind.FunctionPointer && targetType.Kind == StarkTypeKind.RawPointer))
             {
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),

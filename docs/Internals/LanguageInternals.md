@@ -316,6 +316,21 @@ discovery tiers used for `System`/`stdlib`. Native-backed vendor packages are
 expected to carry package-image native dependency metadata so final executable
 links get the required C sources, `pkg-config` packages, libraries, and user
 configured fallback paths without a package manager.
+Safe public vendor surfaces should keep raw handles and ABI-only carrier shapes
+inside the binding whenever possible. For example, `Vendor.SDL3` exposes safe
+Stark handles and result enums while its package-owned `Sdl3Binding.c` adapter
+normalizes SDL's C `bool` returns, flattens the `SDL_Event` union into a
+C-layout event record, and avoids exposing callback-shaped audio APIs to safe
+Stark callers. This is a legitimate native adapter use: it preserves
+allocation-free event/audio paths without making ordinary Stark code reason
+about C unions, nullable handles, or callback lifetimes.
+`Vendor.Miniaudio` and `Vendor.Cgltf` use pinned single-header source drops
+behind small C implementation files, keeping native ownership and callback
+details internal while Stark callers operate on safe handles and caller-owned
+buffers. `Vendor.GLFW` uses a package-owned callback bridge for window events,
+while `Vendor.Raylib`, `Vendor.Raymath`, and `Vendor.Rlgl` use direct
+`[LinkName]` declarations and C-layout aggregate carriers where the native ABI
+is already expressible.
 
 Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
 modules keep the dynamic-storage contracts validated during the comparison
@@ -440,7 +455,32 @@ signatures. Compatibility is checked on the lowered ABI return, parameter kinds,
 parameter LLVM types, and varargs flag, because that is the boundary LLVM and
 the native linker observe.
 
-### 3.2 C ABI Aggregate Carriers
+### 3.2 C `va_list` Carrier
+
+`System.C.VaList` is a compiler-known C ABI carrier, not an ordinary source
+struct. Type resolution recognizes the `System.C.VaList` spelling through the
+same compiler-known `System.C` alias path as `c_int`, `c_size_t`, and `c_void`.
+
+The type checker permits `System.C.VaList` only in places where the frontend can
+preserve the C ABI contract:
+
+- a direct parameter of an unsafe `ffi(c)`-compatible function
+- a direct parameter of an `ffi(c)`-compatible `fnptr`
+- the direct pointee of `rawptr<System.C.VaList>` or
+  `rawmutptr<System.C.VaList>`
+
+Direct locals, fields, arrays, returns, ordinary Stark function parameters, and
+non-FFI callback parameters are rejected with STK3051. This keeps `va_list`
+from becoming part of Stark's own calling convention or layout model.
+
+LLVM ABI emission lowers a direct `System.C.VaList` parameter to the active
+target's C ABI carrier. On the currently supported C varargs ABIs this is an
+opaque pointer (`ptr`), matching the shape Clang exposes for `va_list`
+parameters on those targets. Package images preserve the source alias spelling
+so downstream source bridges re-emit `System.C.VaList` rather than an
+implementation pointer type.
+
+### 3.3 C ABI Aggregate Carriers
 
 `[StructLayout(C)]` controls memory layout; `ffi(c)` controls the call ABI. When
 both apply to a by-value aggregate parameter or return, ABI lowering classifies
@@ -654,6 +694,33 @@ assignment and rejects aggregate initializer shapes that would zero-fill a
 function-pointer field or fixed-array element. LLVM ABI emission may therefore
 mark direct function-pointer parameters and direct function-pointer returns as
 `nonnull` without relying on a backend guess.
+
+Native callback registration is the direct composition of `ffi(abi)` function
+bodies and `fnptr<unsafe ffi(abi) fn ...>` promotion. When a Stark function body
+is declared with `unsafe ffi(c)` or another explicit ABI, the function-effect
+model marks it as FFI, ABI lowering uses the target C calling convention rather
+than `fastcc`, and promotion to a matching unsafe FFI function-pointer type
+records the function as address-taken. LLVM emission defines the callback body
+with the foreign ABI and passes the symbol address directly to the registering
+foreign function; no thunk, closure allocation, or trampoline is introduced.
+`export` only changes symbol visibility for name-based lookup and is not needed
+when the foreign side receives the callback pointer as an argument. Callback
+registration wrappers may remain safe when their surface accepts an already
+unsafe `fnptr<unsafe ffi(...) fn ...>`; declaration checking treats the unsafe
+function-pointer carrier as the proof boundary while direct raw pointer
+parameters and safe function pointers with raw pointer parameters still require
+an unsafe function. Callback signatures containing ABI-sensitive C helper types
+that Stark does not yet model exactly, such as `va_list`, must stay at a raw
+unsafe edge or use a native adapter until a target-aware carrier exists.
+Unsafe explicit conversions between raw pointers and function pointers are the
+escape hatch for native loader APIs. Type checking accepts only an explicit
+cast in an unsafe context; callers are responsible for proving the raw pointer
+is non-null and names code with the exact ABI/signature carried by the `fnptr`
+type. MIR and SSA carry this as a normal conversion, but LLVM opaque pointer
+emission treats raw-pointer/function-pointer conversions as value-shape no-ops:
+no `ptrtoint`, `inttoptr`, or `bitcast` is emitted, and downstream uses format
+the original `ptr` value directly. This preserves pointer provenance and
+keeps dispatch-table construction free of wrapper calls.
 When a `fnptr` parameter is a bounded raw pointer such as
 `rawptr<T>[arg1]`, the synthetic `arg1` count is part of the callable ABI
 contract. Indirect-call lowering reconstructs a synthetic callee signature with

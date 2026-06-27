@@ -94,13 +94,14 @@ internal static class SsaDynamicStorageCallFactPolicy
         if (MatchesMemoryHelper(
                 functionName,
                 "InitializeBytesFromPointerDisjoint",
+                "InitializeUnsignedBytesFromPointerDisjoint",
                 "InitializeCodePointsFromPointerDisjoint"))
         {
             destinationIndex = 2;
             return true;
         }
 
-        if (MatchesMemoryHelper(functionName, "FillBytes", "FillCodePoints"))
+        if (MatchesMemoryHelper(functionName, "FillBytes", "FillUnsignedBytes", "FillCodePoints"))
         {
             destinationIndex = 0;
             return true;

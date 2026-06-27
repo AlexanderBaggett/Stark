@@ -1,0 +1,8 @@
+[project]
+name = "glfw"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "GlfwHiddenWindow.stark"
+output = "glfw-hidden-window"

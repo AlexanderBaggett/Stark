@@ -489,7 +489,7 @@ internal static partial class PackageImageBuilder
         var includeDirectories = NormalizeNativeDependencyList(dependencies.IncludeDirectories);
         var libraryDirectories = NormalizeNativeDependencyList(dependencies.LibraryDirectories);
         var libraries = NormalizeNativeDependencyList(dependencies.Libraries);
-        var linkArguments = NormalizeNativeDependencyList(dependencies.LinkArguments);
+        var linkArguments = NormalizeNativeLinkArgumentList(dependencies.LinkArguments);
         var pkgConfigPackages = NormalizeNativeDependencyList(dependencies.PkgConfigPackages);
 
         if (sources is null
@@ -522,6 +522,21 @@ internal static partial class PackageImageBuilder
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value.Trim())
             .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return normalized.Length == 0 ? null : normalized;
+    }
+
+    private static IReadOnlyList<string>? NormalizeNativeLinkArgumentList(IReadOnlyList<string>? values)
+    {
+        if (values is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var normalized = values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim())
             .ToArray();
 
         return normalized.Length == 0 ? null : normalized;

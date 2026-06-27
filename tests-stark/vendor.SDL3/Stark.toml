@@ -1,0 +1,21 @@
+[project]
+name = "vendor-sdl3-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "Sdl3Tests.stark"
+output = "vendor-sdl3-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/Sdl3Binding.c"]
+pkg-config = ["sdl3"]
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

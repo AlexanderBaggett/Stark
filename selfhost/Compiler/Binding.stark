@@ -20082,6 +20082,10 @@ internal fn u32[0 max] MemberStructNameToken(borrow DeclarationTable table, asci
         stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
         return StructFieldTypeHead(table, source, stream, receiverStruct, body.ExprTokenAt(node));
     }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return body.ExprLeftAt(node);
+    }
 
     return 0;
 }
@@ -20929,6 +20933,10 @@ internal fn u32[0 max] ParameterRootIndexPlusOneForArgument(borrow ReferenceTabl
     else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
     {
         return ParameterRootIndexPlusOneForArgument(refs, body, body.ExprLeftAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ParameterRootIndexPlusOneForArgument(refs, body, body.ExprRightAt(node));
     }
 
     return 0;
@@ -21990,6 +21998,10 @@ internal fn u32[0 max] LocalSymbolRootForExpression(borrow ReferenceTable refs, 
     {
         return LocalSymbolRootForExpression(refs, body, body.ExprLeftAt(node));
     }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return LocalSymbolRootForExpression(refs, body, body.ExprRightAt(node));
+    }
 
     return 0;
 }
@@ -22121,6 +22133,10 @@ internal fn bool ExpressionRootIsLongLivedStorage(borrow DeclarationTable table,
     {
         return ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, body.ExprLeftAt(node));
     }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, body.ExprRightAt(node));
+    }
 
     return false;
 }
@@ -22149,6 +22165,11 @@ internal fn bool ExpressionContainsArenaSelectorNew(borrow StatementList body, b
     if (NewExpressionUsesArenaSelector(body, stream, node))
     {
         return true;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ExpressionContainsArenaSelectorNew(body, stream, body.ExprRightAt(node));
     }
 
     if (kind == Compiler.Parsing.ExprKind.Unary || kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index
@@ -22218,6 +22239,10 @@ internal fn bool ExpressionIsArenaDerived(
     else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Unary)
     {
         return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node));
     }
     else if (kind == Compiler.Parsing.ExprKind.Assign)
     {

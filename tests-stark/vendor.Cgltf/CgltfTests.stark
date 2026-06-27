@@ -1,0 +1,207 @@
+import Vendor.Cgltf
+module CgltfTests
+
+const AssetPath = "../../examples/cgltf/assets/tiny-triangle.gltf";
+
+fn DocumentResult OpenTinyAsset(BufferLoadPolicy policy)
+{
+    return ParseFromFile(AssetPath, policy, true);
+}
+
+finite law bool NameIsTriangleMesh(borrow i8[min max][] bytes, u64[0 max] length)
+{
+    return length == 12
+        && bytes[0] == 84
+        && bytes[1] == 114
+        && bytes[2] == 105
+        && bytes[3] == 97
+        && bytes[4] == 110
+        && bytes[5] == 103
+        && bytes[6] == 108
+        && bytes[7] == 101
+        && bytes[8] == 77
+        && bytes[9] == 101
+        && bytes[10] == 115
+        && bytes[11] == 104;
+}
+
+[Fact]
+fn bool ParseFileReportsCoreCounts()
+{
+    switch (OpenTinyAsset(BufferLoadPolicy.LoadExternalBuffers))
+    {
+        case DocumentResult.Err(var error):
+            return false;
+        case DocumentResult.Ok(var document):
+            switch (GetCounts(document))
+            {
+                case CountsResult.Err(var countsError):
+                    return false;
+                case CountsResult.Ok(var counts):
+                    return counts.Meshes == 1
+                        && counts.Materials == 1
+                        && counts.Buffers == 1
+                        && counts.BufferViews == 2
+                        && counts.Accessors == 2
+                        && counts.Nodes == 1
+                        && counts.Scenes == 1
+                        && counts.Animations == 0;
+            }
+    }
+}
+
+[Fact]
+fn bool MeshPrimitiveAndMaterialViewsAreTyped()
+{
+    switch (OpenTinyAsset(BufferLoadPolicy.LoadExternalBuffers))
+    {
+        case DocumentResult.Err(var error):
+            return false;
+        case DocumentResult.Ok(var document):
+            switch (GetMeshInfo(document, 0))
+            {
+                case MeshInfoResult.Err(var meshError):
+                    return false;
+                case MeshInfoResult.Ok(var mesh):
+                    if (mesh.NameByteLength != 12 || mesh.PrimitiveCount != 1)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (GetPrimitiveInfo(document, 0, 0))
+            {
+                case PrimitiveInfoResult.Err(var primitiveError):
+                    return false;
+                case PrimitiveInfoResult.Ok(var primitive):
+                    if (primitive.Mode != PrimitiveMode.Triangles
+                        || primitive.AttributeCount != 1
+                        || !primitive.HasIndices
+                        || primitive.IndicesAccessorIndex != 1
+                        || !primitive.HasMaterial
+                        || primitive.MaterialIndex != 0)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (GetMaterialInfo(document, 0))
+            {
+                case MaterialInfoResult.Err(var materialError):
+                    return false;
+                case MaterialInfoResult.Ok(var material):
+                    return material.NameByteLength == 7
+                        && material.HasPbrMetallicRoughness
+                        && material.Alpha == AlphaMode.Opaque
+                        && !material.DoubleSided;
+            }
+    }
+}
+
+[Fact]
+fn bool AccessorAndBufferViewsExposeLoadedBufferFacts()
+{
+    switch (OpenTinyAsset(BufferLoadPolicy.LoadExternalBuffers))
+    {
+        case DocumentResult.Err(var error):
+            return false;
+        case DocumentResult.Ok(var document):
+            switch (GetBufferInfo(document, 0))
+            {
+                case BufferInfoResult.Err(var bufferError):
+                    return false;
+                case BufferInfoResult.Ok(var buffer):
+                    if (buffer.NameByteLength != 8
+                        || buffer.UriByteLength == 0
+                        || buffer.SizeBytes != 42
+                        || !buffer.IsLoaded)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (GetAccessorInfo(document, 0))
+            {
+                case AccessorInfoResult.Err(var accessorError):
+                    return false;
+                case AccessorInfoResult.Ok(var accessor):
+                    if (accessor.Count != 3
+                        || accessor.Component != ComponentType.F32
+                        || accessor.Type != AccessorType.Vec3
+                        || !accessor.HasBufferView
+                        || accessor.BufferViewIndex != 0
+                        || accessor.IsSparse)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (GetAccessorInfo(document, 1))
+            {
+                case AccessorInfoResult.Err(var indexAccessorError):
+                    return false;
+                case AccessorInfoResult.Ok(var indexAccessor):
+                    return indexAccessor.Count == 3
+                        && indexAccessor.Component == ComponentType.U16
+                        && indexAccessor.Type == AccessorType.Scalar
+                        && indexAccessor.HasBufferView
+                        && indexAccessor.BufferViewIndex == 1;
+            }
+    }
+}
+
+[Fact]
+fn bool MetadataOnlyKeepsBufferUnloaded()
+{
+    switch (OpenTinyAsset(BufferLoadPolicy.MetadataOnly))
+    {
+        case DocumentResult.Err(var error):
+            return false;
+        case DocumentResult.Ok(var document):
+            switch (GetBufferInfo(document, 0))
+            {
+                case BufferInfoResult.Err(var bufferError):
+                    return false;
+                case BufferInfoResult.Ok(var buffer):
+                    return buffer.SizeBytes == 42 && !buffer.IsLoaded;
+            }
+    }
+}
+
+[Fact]
+fn bool CopyMeshNameBytesCopiesExpectedName()
+{
+    switch (OpenTinyAsset(BufferLoadPolicy.LoadExternalBuffers))
+    {
+        case DocumentResult.Err(var error):
+            return false;
+        case DocumentResult.Ok(var document):
+            stack mut i8[min max][16] meshName = { 0 };
+            stack mut i8[min max][] meshNameBytes = meshName;
+            switch (CopyMeshNameBytes(document, 0, meshNameBytes))
+            {
+                case NameCopyResult.Err(var copyError):
+                    return false;
+                case NameCopyResult.Ok(var bytesCopied):
+                    return NameIsTriangleMesh(meshNameBytes, bytesCopied);
+            }
+    }
+}
+
+[Fact]
+fn bool OutOfRangeIndexReturnsOutOfRange()
+{
+    switch (OpenTinyAsset(BufferLoadPolicy.LoadExternalBuffers))
+    {
+        case DocumentResult.Err(var error):
+            return false;
+        case DocumentResult.Ok(var document):
+            switch (GetMeshInfo(document, 99))
+            {
+                case MeshInfoResult.Ok(var mesh):
+                    return false;
+                case MeshInfoResult.Err(var error):
+                    return error == CgltfError.OutOfRange;
+            }
+    }
+}

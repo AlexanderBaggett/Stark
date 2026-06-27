@@ -3790,6 +3790,10 @@ internal sealed class SsaIrValidator
                 return;
             case StarkTypeKind.RawPointer when targetType.Kind == StarkTypeKind.RawPointer:
                 return;
+            case StarkTypeKind.RawPointer when targetType.Kind == StarkTypeKind.FunctionPointer:
+                return;
+            case StarkTypeKind.FunctionPointer when targetType.Kind == StarkTypeKind.RawPointer:
+                return;
             case StarkTypeKind.RawPointer when targetType.Kind == StarkTypeKind.Integer:
                 ValidateConcreteIntegerType(function, targetType, "conversion target", location);
                 return;
