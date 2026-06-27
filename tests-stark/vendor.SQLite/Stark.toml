@@ -7,12 +7,14 @@ kind = "test"
 root = "SQLiteTests.stark"
 output = "vendor-sqlite-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [native]
 sources = ["../../vendor/SQLiteTextBinding.c"]
 pkg-config = ["sqlite3"]
+
+[native.fallback.macos]
+include-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/sqlite"]
+library-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/sqlite"]
+libraries = ["sqlite3"]
 
 [profiles.dev]
 opt = 0

@@ -5,6 +5,21 @@ native libraries. It is separate from `System` so the standard library can stay
 small and portable while common native bindings are still available without a
 package manager.
 
+## Native Payloads
+
+Native-backed vendor packages ship target-local headers, static libraries, and
+licenses under `vendor/dist/<target-triple>/native/<package>/`. Package images
+in the same target directory are built against those relative paths so downstream
+imports keep the native facts they need without using package managers. The
+payload layout intentionally mirrors Raylib: the native library and public
+headers live directly under `native/<package>/`, with any upstream include
+namespace below that directory. The current macOS arm64 payload is under
+`vendor/dist/arm64-apple-macosx26.0.0/native/` and includes GLFW, Raylib, SDL3,
+and SQLite.
+
+Build scripts prefer bundled target-local payloads when present, then fall back
+to `pkg-config` or explicit environment variables for local development.
+
 ## Miniaudio
 
 Use the bundled Miniaudio binding with:
@@ -81,8 +96,10 @@ Build the package image with:
 bash vendor/build-glfw-package.sh
 ```
 
-The script uses `pkg-config glfw3` when available. If GLFW is not visible to
-`pkg-config`, set `GLFW_INCLUDE_DIR` and `GLFW_LIBRARY_DIR`:
+The script emits the package image under the active target triple. On macOS it
+uses the bundled static GLFW payload when present. If no bundled payload is
+available, the script uses `pkg-config glfw3`; otherwise set `GLFW_INCLUDE_DIR`
+and `GLFW_LIBRARY_DIR`:
 
 ```bash
 GLFW_INCLUDE_DIR=/usr/include GLFW_LIBRARY_DIR=/usr/lib bash vendor/build-glfw-package.sh
@@ -111,8 +128,10 @@ Build the package image with:
 bash vendor/build-sdl3-package.sh
 ```
 
-The script uses `pkg-config sdl3` when available. If SDL3 is not visible to
-`pkg-config`, set `SDL3_INCLUDE_DIR` and `SDL3_LIBRARY_DIR`:
+The script emits the package image under the active target triple. On macOS it
+uses the bundled static SDL3 payload and framework link metadata when present.
+If no bundled payload is available, the script uses `pkg-config sdl3`; otherwise
+set `SDL3_INCLUDE_DIR` and `SDL3_LIBRARY_DIR`:
 
 ```bash
 SDL3_INCLUDE_DIR=/usr/include SDL3_LIBRARY_DIR=/usr/lib bash vendor/build-sdl3-package.sh
@@ -183,8 +202,10 @@ active target triple, for example
 can still import through `-I vendor/dist`; the compiler filters target-named
 package directories to the active target.
 
-The script uses `pkg-config raylib` when available. If raylib is not visible to
-`pkg-config`, set `RAYLIB_SRC_DIR` to a local Raylib `src` directory:
+On macOS the script uses the bundled static Raylib payload and framework link
+metadata when present. If no bundled payload is available, the script uses
+`pkg-config raylib`; otherwise set `RAYLIB_SRC_DIR` to a local Raylib `src`
+directory:
 
 ```bash
 RAYLIB_SRC_DIR=/path/to/raylib/src bash vendor/build-raylib-package.sh
@@ -212,8 +233,12 @@ Build the package image with:
 bash vendor/build-sqlite-package.sh
 ```
 
-The script uses `pkg-config sqlite3` when available. If sqlite3 is not visible
-to `pkg-config`, set `SQLITE_INCLUDE_DIR` and `SQLITE_LIBRARY_DIR`:
+The script emits the package image under the active target triple. On macOS it
+uses the bundled SQLite amalgamation static payload when present; this payload
+contains SQLite APIs newer than Apple's system SQLite, including
+`sqlite3_set_errmsg`. If no bundled payload is available, the script uses
+`pkg-config sqlite3`; otherwise set `SQLITE_INCLUDE_DIR` and
+`SQLITE_LIBRARY_DIR`:
 
 ```bash
 SQLITE_INCLUDE_DIR=/usr/include SQLITE_LIBRARY_DIR=/usr/lib bash vendor/build-sqlite-package.sh

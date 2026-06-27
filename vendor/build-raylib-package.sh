@@ -7,6 +7,17 @@ vendor_dist="${script_dir}/dist"
 compiler_path="${STARK_COMPILER:-${repo_root}/stark}"
 
 detect_default_target_triple() {
+  local doctor_output
+  local doctor_triple
+
+  if doctor_output="$("${compiler_cmd[@]}" doctor 2>/dev/null)"; then
+    doctor_triple="$(printf '%s\n' "${doctor_output}" | sed -n 's/^  triple: //p' | head -n 1)"
+    if [[ -n "${doctor_triple}" ]]; then
+      printf '%s\n' "${doctor_triple}"
+      return
+    fi
+  fi
+
   if command -v clang >/dev/null 2>&1; then
     clang -dumpmachine
     return
@@ -43,18 +54,40 @@ else
   compiler_cmd=(dotnet run --project "${repo_root}/src/compiler.csproj" --)
 fi
 
+is_macos_target() {
+  case "${target_triple}" in
+    *apple-macos*|*apple-darwin*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 cd "${repo_root}"
 target_triple="${STARK_TARGET:-$(detect_default_target_triple)}"
 target_dist="${vendor_dist}/${target_triple}"
-compiler_target_args=()
-
-if [[ -n "${STARK_TARGET:-}" ]]; then
-  compiler_target_args=(--target "${target_triple}")
-fi
+compiler_target_args=(--target "${target_triple}")
 
 mkdir -p "${target_dist}"
 
-if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
+bundled_raylib_dir="${target_dist}/native/raylib"
+
+if is_macos_target \
+  && [[ -f "${bundled_raylib_dir}/raylib.h" ]] \
+  && [[ -f "${bundled_raylib_dir}/libraylib.a" ]]; then
+  native_args=(
+    --native-include-dir "${bundled_raylib_dir}"
+    --native-library-dir "${bundled_raylib_dir}"
+    --native-library raylib
+    --native-link-arg -framework --native-link-arg CoreVideo
+    --native-link-arg -framework --native-link-arg IOKit
+    --native-link-arg -framework --native-link-arg Cocoa
+    --native-link-arg -framework --native-link-arg GLUT
+    --native-link-arg -framework --native-link-arg OpenGL
+  )
+elif [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
   if [[ ! -d "${RAYLIB_SRC_DIR}" ]]; then
     echo "RAYLIB_SRC_DIR must point to Raylib's src directory." >&2
     echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash vendor/build-raylib-package.sh" >&2
@@ -96,25 +129,38 @@ if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
     cp -f "${raylib_src_dir}/rlgl.h" "${packaged_raylib_dir}/rlgl.h"
   fi
 
-  native_args=(
-    --native-include-dir "${packaged_raylib_dir}"
-    --native-library-dir "${packaged_raylib_dir}"
-    --native-library raylib
-    --native-library GL
-    --native-library m
-    --native-library pthread
-    --native-library dl
-    --native-library rt
-    --native-library X11
-    --native-library Xrandr
-    --native-library Xi
-    --native-library Xcursor
-    --native-library Xinerama
-  )
+  if is_macos_target; then
+    native_args=(
+      --native-include-dir "${packaged_raylib_dir}"
+      --native-library-dir "${packaged_raylib_dir}"
+      --native-library raylib
+      --native-link-arg -framework --native-link-arg CoreVideo
+      --native-link-arg -framework --native-link-arg IOKit
+      --native-link-arg -framework --native-link-arg Cocoa
+      --native-link-arg -framework --native-link-arg GLUT
+      --native-link-arg -framework --native-link-arg OpenGL
+    )
+  else
+    native_args=(
+      --native-include-dir "${packaged_raylib_dir}"
+      --native-library-dir "${packaged_raylib_dir}"
+      --native-library raylib
+      --native-library GL
+      --native-library m
+      --native-library pthread
+      --native-library dl
+      --native-library rt
+      --native-library X11
+      --native-library Xrandr
+      --native-library Xi
+      --native-library Xcursor
+      --native-library Xinerama
+    )
+  fi
 else
   if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists raylib; then
     echo "Raylib is not visible to pkg-config on this machine." >&2
-    echo "Either install raylib.pc and set PKG_CONFIG_PATH, or point RAYLIB_SRC_DIR at a local Raylib src directory." >&2
+    echo "Either use the bundled native payload under ${bundled_raylib_dir}, set PKG_CONFIG_PATH, or point RAYLIB_SRC_DIR at a local Raylib src directory." >&2
     echo "Example: RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash vendor/build-raylib-package.sh" >&2
     exit 1
   fi

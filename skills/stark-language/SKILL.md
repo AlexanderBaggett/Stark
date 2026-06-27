@@ -1361,6 +1361,9 @@ library-dirs = ["${native.paths.raylib-src}"]
 libraries = ["raylib", "GL", "m"]
 ```
 
+Fallback tables also accept `link-args` for package-owned linker arguments
+such as macOS framework pairs; keep each linker token as its own array entry.
+
 Machine-local paths belong in user config, such as `~/.config/stark/config.toml` or ignored `Stark.user.toml`:
 
 ```toml

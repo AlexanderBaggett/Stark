@@ -354,6 +354,7 @@ A package manifest declares its own:
 * native shim sources when a real C adapter is required
 * discovery names such as `pkg-config`
 * fallback metadata for systems where discovery fails
+* package-owned linker arguments such as macOS frameworks
 
 ```toml
 [project]
@@ -373,6 +374,9 @@ include-dirs = ["${native.paths.raylib-src}"]
 library-dirs = ["${native.paths.raylib-src}"]
 libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"]
 ```
+
+Fallback `link-args` use the same array form; write each linker token as its
+own entry so ordered pairs such as `"-framework", "Cocoa"` survive lowering.
 
 User config supplies the machine path:
 
