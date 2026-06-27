@@ -428,6 +428,48 @@ fn bool BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi()
 }
 
 [Fact]
+fn bool BuildMirValueRangeFactsPreservesCompactIntegerWidths()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId i8Min = MirConstIntTyped(instrs, MirType.I8, -128);
+    stack MirValueId i8One = MirConstIntTyped(instrs, MirType.I8, 1);
+    stack MirValueId i8Wrapped = MirWrappingSubTyped(instrs, MirType.I8, i8Min, i8One);
+    stack MirValueId i16Min = MirConstIntTyped(instrs, MirType.I16, -32768);
+    stack MirValueId i16One = MirConstIntTyped(instrs, MirType.I16, 1);
+    stack MirValueId i16Saturated = MirSaturatingSubTyped(instrs, MirType.I16, i16Min, i16One);
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    if (!RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i8Min)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i8One)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i8Wrapped)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i16Min)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i16One)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i16Saturated))
+    {
+        return false;
+    }
+
+    stack ValueFacts i8MinFacts = ValueFactsForMirValue(valueFacts, i8Min);
+    stack ValueFacts i8WrappedFacts = ValueFactsForMirValue(valueFacts, i8Wrapped);
+    stack ValueFacts i16MinFacts = ValueFactsForMirValue(valueFacts, i16Min);
+    stack ValueFacts i16SaturatedFacts = ValueFactsForMirValue(valueFacts, i16Saturated);
+    return MirValueType(instrs, i8Min.Index()) == MirType.I8
+        && MirValueType(instrs, i16Min.Index()) == MirType.I16
+        && i8MinFacts.HasIntegerRange()
+        && i8MinFacts.IntegerRangeLower() == -128
+        && i8MinFacts.IntegerRangeUpperExclusive() == -127
+        && i8WrappedFacts.HasIntegerRange()
+        && i8WrappedFacts.IntegerRangeLower() == 127
+        && i8WrappedFacts.IntegerRangeUpperExclusive() == 128
+        && i16MinFacts.HasIntegerRange()
+        && i16MinFacts.IntegerRangeLower() == -32768
+        && i16MinFacts.IntegerRangeUpperExclusive() == -32767
+        && i16SaturatedFacts.HasIntegerRange()
+        && i16SaturatedFacts.IntegerRangeLower() == -32768
+        && i16SaturatedFacts.IntegerRangeUpperExclusive() == -32767;
+}
+
+[Fact]
 fn bool BuildMirValueRangeFactsDerivesExactExtendedIntegerOps()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -2433,17 +2475,23 @@ fn bool BinaryRoundTripsGlobals()
     stack u32[0 max] g1 = MirDefineGlobal(globals, 100);
     stack u32[0 max] g2 = MirDefineGlobal(globals, -7);
     stack u32[0 max] g3 = MirDefineGlobalTyped(globals, MirType.I32, 55);
+    stack u32[0 max] g4 = MirDefineGlobalTyped(globals, MirType.I8, -12);
+    stack u32[0 max] g5 = MirDefineGlobalTyped(globals, MirType.I16, 32000);
     stack mut IrTable<u8[0 max]> buf = new();
     SerializeGlobals(globals, buf);
     stack mut IrTable<MirGlobal> back = new();
     DeserializeGlobals(buf, back);
-    return back.Count() == 3
-        && buf.Count() == 31
+    return back.Count() == 5
+        && buf.Count() == 49
         && MirGlobalType(back, 1) == MirType.I64
         && MirGlobalType(back, 3) == MirType.I32
+        && MirGlobalType(back, 4) == MirType.I8
+        && MirGlobalType(back, 5) == MirType.I16
         && MirGlobalInitialValue(back, 1) == 100
         && MirGlobalInitialValue(back, 2) == -7
-        && MirGlobalInitialValue(back, 3) == 55;
+        && MirGlobalInitialValue(back, 3) == 55
+        && MirGlobalInitialValue(back, 4) == -12
+        && MirGlobalInitialValue(back, 5) == 32000;
 }
 
 [Fact]
@@ -4151,6 +4199,64 @@ fn bool MirExplicitWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm()
 }
 
 [Fact]
+fn bool MirCompactWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId i8Min = MirConstIntTyped(instrs, MirType.I8, -128);
+    stack MirValueId i8One = MirConstIntTyped(instrs, MirType.I8, 1);
+    stack MirValueId i8Wrapped = MirWrappingSubTyped(instrs, MirType.I8, i8Min, i8One);
+    stack MirValueId i16Min = MirConstIntTyped(instrs, MirType.I16, -32768);
+    stack MirValueId i16One = MirConstIntTyped(instrs, MirType.I16, 1);
+    stack MirValueId i16Saturated = MirSaturatingSubTyped(instrs, MirType.I16, i16Min, i16One);
+    stack MirValueId unusedRet = MirReturn(instrs, i16Saturated);
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    if (!RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i8Min)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i8One)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i8Wrapped)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i16Min)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i16One)
+        || !RecomputeMirGeneratedValueFactsForMirValue(instrs, valueFacts, i16Saturated))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 7, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+
+    stack mut OwnedAscii llvm = new();
+    switch (EmitLlvmTypedFunction(instrs, "compact_wrapsat", 1, 7, llvm))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack ValueFacts i8WrappedFacts = ValueFactsForMirValue(valueFacts, i8Wrapped);
+    stack ValueFacts i16SaturatedFacts = ValueFactsForMirValue(valueFacts, i16Saturated);
+    return back.Count() == 7
+        && MirOpcodeOf(back, MirValueIdOf(3)) == MirOp.WrappingSub
+        && MirOpcodeOf(back, MirValueIdOf(6)) == MirOp.SaturatingSub
+        && MirValueType(back, 1) == MirType.I8
+        && MirValueType(back, 3) == MirType.I8
+        && MirValueType(back, 4) == MirType.I16
+        && MirValueType(back, 6) == MirType.I16
+        && i8WrappedFacts.HasIntegerRange()
+        && i8WrappedFacts.IntegerRangeLower() == 127
+        && i8WrappedFacts.IntegerRangeUpperExclusive() == 128
+        && i16SaturatedFacts.HasIntegerRange()
+        && i16SaturatedFacts.IntegerRangeLower() == -32768
+        && i16SaturatedFacts.IntegerRangeUpperExclusive() == -32767
+        && System.Text.Contains(llvm.View(), "%v3 = sub i8 %v1, %v2")
+        && System.Text.Contains(llvm.View(), "%v6.wide = sub i32 %v6.wleft, %v6.wright")
+        && System.Text.Contains(llvm.View(), "%v6 = trunc i32 %v6.clamp to i16")
+        && !System.Text.Contains(llvm.View(), "nuw")
+        && !System.Text.Contains(llvm.View(), "nsw");
+}
+
+[Fact]
 fn bool EmitsMirTextForArithmetic()
 {
     // The MIR disassembler dumps the instruction stream in MIR syntax (vN operands).
@@ -4578,6 +4684,24 @@ fn bool EmitsLlvmTypedGlobalLoadStore()
 }
 
 [Fact]
+fn bool EmitsLlvmCompactTypedParamComparison()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId p0 = MirParamTyped(instrs, MirType.I8, 0);
+    stack MirValueId tag = MirConstIntTyped(instrs, MirType.I8, 2);
+    stack MirValueId eq = MirCmpEq(instrs, p0, tag);
+    stack MirValueId ret = MirReturn(instrs, eq);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunctionWithParams(instrs, "tag_eq", 1, 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i1 @tag_eq(i8 %p0) {\nentry:\n  %v2 = add i8 0, 2\n  %v3 = icmp eq i8 %p0, %v2\n  ret i1 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool MirGlobalRecordsInitialValue()
 {
     // A global records its 1-based id and integer initializer.
@@ -4585,17 +4709,29 @@ fn bool MirGlobalRecordsInitialValue()
     stack u32[0 max] g1 = MirDefineGlobal(globals, 7);
     stack u32[0 max] g2 = MirDefineGlobal(globals, -3);
     stack u32[0 max] g3 = MirDefineGlobalTyped(globals, MirType.I32, 17);
+    stack u32[0 max] g4 = MirDefineGlobalTyped(globals, MirType.I8, -7);
+    stack u32[0 max] g5 = MirDefineGlobalTyped(globals, MirType.I16, 30000);
     stack u32[0 max] rejected = MirDefineGlobalTyped(globals, MirType.I1, 2);
+    stack u32[0 max] rejectedI8 = MirDefineGlobalTyped(globals, MirType.I8, 128);
+    stack u32[0 max] rejectedI16 = MirDefineGlobalTyped(globals, MirType.I16, -32769);
     return g1 == 1
         && g2 == 2
         && g3 == 3
+        && g4 == 4
+        && g5 == 5
         && rejected == 0
-        && globals.Count() == 3
+        && rejectedI8 == 0
+        && rejectedI16 == 0
+        && globals.Count() == 5
         && MirGlobalType(globals, g1) == MirType.I64
         && MirGlobalType(globals, g3) == MirType.I32
+        && MirGlobalType(globals, g4) == MirType.I8
+        && MirGlobalType(globals, g5) == MirType.I16
         && MirGlobalInitialValue(globals, g1) == 7
         && MirGlobalInitialValue(globals, g2) == -3
         && MirGlobalInitialValue(globals, g3) == 17
+        && MirGlobalInitialValue(globals, g4) == -7
+        && MirGlobalInitialValue(globals, g5) == 30000
         && MirGlobalInitialValue(globals, 99) == 0;
 }
 
@@ -4608,11 +4744,13 @@ fn bool EmitsLlvmGlobals()
     stack u32[0 max] unused2 = MirDefineGlobal(globals, -3);
     stack u32[0 max] unused3 = MirDefineGlobalTyped(globals, MirType.I32, 12);
     stack u32[0 max] unused4 = MirDefineGlobalTyped(globals, MirType.Ptr, 0);
+    stack u32[0 max] unused5 = MirDefineGlobalTyped(globals, MirType.I8, -8);
+    stack u32[0 max] unused6 = MirDefineGlobalTyped(globals, MirType.I16, 1024);
     stack mut OwnedAscii sink = new();
     switch (EmitLlvmGlobals(globals, sink))
     {
         case MemoryStatus.Ok:
-            return LlvmTextEquals(sink, "@g1 = global i64 7\n@g2 = global i64 -3\n@g3 = global i32 12\n@g4 = global ptr null\n");
+            return LlvmTextEquals(sink, "@g1 = global i64 7\n@g2 = global i64 -3\n@g3 = global i32 12\n@g4 = global ptr null\n@g5 = global i8 -8\n@g6 = global i16 1024\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -6056,6 +6194,58 @@ fn bool CompilesBooleanTerminalIntegerSwitchFromAst()
 }
 
 [Fact]
+fn bool CompilesTerminalBooleanSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 20] classify(bool flag) { switch (flag) { case true: return 10; case false: return 20; default: return 30; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 21) i64 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "br i1 %p0, label %b2, label %b3")
+        && !System.Text.Contains(s.View(), "icmp eq i1")
+        && !System.Text.Contains(s.View(), "ret i64 30")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesSingleCaseTerminalBooleanSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 30] classify(bool flag) { switch (flag) { case false: return 10; default: return 30; } } fn main() { return 0 }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 31) i64 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "br i1 %p0, label %b3, label %b2")
+        && !System.Text.Contains(s.View(), "icmp eq i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[10 20] classify(bool flag) { switch (flag) { case false: return 10; default: return 30; } } fn main() { return 0 }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesTerminalBooleanSwitchBoolArmsFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(bool flag) { switch (flag) { case true: return flag == true; case false: return flag == false; default: return false; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "br i1 %p0, label %b2, label %b3")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool TerminalBooleanSwitchRejectsUnsupportedShapes()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAst("fn classify(bool flag) { switch (flag) { case true: return 10; case true: return 20; default: return 30; } } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(bool flag) { switch (flag) { case 0: return 10; default: return 20; } } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(i64[min max] x) { switch (x) { case true: return 10; default: return 20; } } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(bool flag) { switch (flag) { case true: return 10; } } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(bool flag) { switch (flag) { case true: return flag == true; default: return 20; } } fn main() { return 0 }", s)
+        && CompileModuleFromAst("fn classify(bool flag) { switch (flag) { case true: return 10; case false: return 20; default: return 30; } } fn main() { return 0 }", s);
+}
+
+[Fact]
 fn bool CompilesLocalSwitchStatementAssignmentThenReturnFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -6083,6 +6273,49 @@ fn bool CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst
         && System.Text.Contains(s.View(), "zext i1")
         && ClangVerifiesLlvmText(s)
         && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } return y == (x == 0) } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanLiteralLocalSwitchStatementAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[11 21] classify(bool flag) { var y = 0; switch (flag) { case true: y = 10; case false: y = 20; default: y = 30; } return y + 1 } fn main() { return 0 }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 11, 22) i64 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "br i1 %p0, label %b2, label %b3")
+        && System.Text.Contains(s.View(), " phi ")
+        && !System.Text.Contains(s.View(), "icmp eq i1")
+        && !System.Text.Contains(s.View(), "ret i64 31")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[11 20] classify(bool flag) { var y = 0; switch (flag) { case true: y = 10; case false: y = 20; default: y = 30; } return y + 1 } fn main() { return 0 }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesSingleCaseBooleanLiteralLocalSwitchStatementAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 30] classify(bool flag) { var y = 0; switch (flag) { case false: y = 10; default: y = 30; } return y } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 31) i64 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "br i1 %p0, label %b3, label %b2")
+        && System.Text.Contains(s.View(), " phi ")
+        && !System.Text.Contains(s.View(), "icmp eq i1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesBooleanLiteralLocalSwitchStatementBoolAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(bool flag) { var y = false; switch (flag) { case true: y = flag; case false: y = false; default: y = true; } return y } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "br i1 %p0, label %b2, label %b3")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "zext i1")
+        && !System.Text.Contains(s.View(), "icmp eq i1")
+        && ClangVerifiesLlvmText(s);
 }
 
 [Fact]
@@ -6275,6 +6508,10 @@ fn bool LocalSwitchStatementAssignmentRejectsUnsupportedShapes()
 {
     stack mut OwnedAscii s = new();
     return !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; case 0: y = 10; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(bool flag) { var y = 0; switch (flag) { case true: y = 4; case true: y = 10; default: y = 20; } return y + 1 } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(bool flag) { var y = 0; switch (flag) { case 0: y = 4; default: y = 20; } return y + 1 } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(i64[min max] x) { var y = 0; switch (x) { case true: y = 4; default: y = 20; } return y + 1 } fn main() { return 0 }", s)
+        && !CompileModuleFromAst("fn classify(bool flag) { var y = 0; switch (flag) { case true: y = flag; default: y = 20; } return y + 1 } fn main() { return 0 }", s)
         && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; } return y + 1 } fn main() { return classify(1) }", s)
         && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: z = 4; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
         && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = x == 0; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
@@ -7339,6 +7576,77 @@ fn bool PackageTablesPreserveBooleanTerminalIntegerSwitch()
         && MirValueType(instrs, case0Return.Index()) == MirType.I64
         && MirValueType(instrs, case1Return.Index()) == MirType.I64
         && MirValueType(instrs, defaultReturn.Index()) == MirType.I64;
+}
+
+[Fact]
+fn bool PackageTablesPreserveTerminalBooleanSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(bool flag) { switch (flag) { case true: return 10; case false: return 20; default: return 30; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId condition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId trueReturn = MirBlockReturnValue(blocks, MirBlockIdOf(2));
+    stack MirValueId falseReturn = MirBlockReturnValue(blocks, MirBlockIdOf(3));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 3
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(3)
+        && MirOpcodeOf(instrs, condition) == MirOp.Param
+        && MirValueType(instrs, condition.Index()) == MirType.I1
+        && MirOpcodeOf(instrs, trueReturn) == MirOp.ConstInt
+        && MirOpcodeOf(instrs, falseReturn) == MirOp.ConstInt
+        && MirImmediateOf(instrs, trueReturn) == 10
+        && MirImmediateOf(instrs, falseReturn) == 20;
+}
+
+[Fact]
+fn bool PackageTablesPreserveBooleanLocalSwitchStatementAssignment()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(bool flag) { var y = 0; switch (flag) { case true: y = 10; case false: y = 20; default: y = 30; } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId condition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(4));
+    stack MirValueId finalPhi = MirOperandAOf(instrs, returned);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 4
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 5
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(3)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(2)) == MirBlockIdOf(4)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(3)) == MirBlockIdOf(4)
+        && MirOpcodeOf(instrs, condition) == MirOp.Param
+        && MirValueType(instrs, condition.Index()) == MirType.I1
+        && MirOpcodeOf(instrs, returned) == MirOp.Add
+        && MirOpcodeOf(instrs, finalPhi) == MirOp.Phi
+        && MirPhiIncomingBlock0(instrs, finalPhi) == MirBlockIdOf(2)
+        && MirPhiIncomingBlock1(instrs, finalPhi) == MirBlockIdOf(3);
 }
 
 [Fact]

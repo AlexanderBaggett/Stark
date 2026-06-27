@@ -11,6 +11,58 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-27 Selfhost Compact MIR Integer Widths
+
+- MIR now carries `i8` and `i16` scalar widths through typed values, globals,
+  package-image byte codecs, textual MIR rendering, and LLVM type emission.
+- Compact typed constants are validated against their storage width before
+  range facts are recorded.
+- Wrapping and saturating arithmetic facts now preserve compact signed bounds
+  for `i8` and `i16` values.
+- LLVM lowering emits compact arithmetic directly and widens compact saturating
+  operations only for the clamp calculation.
+- High-level IR lowering validators now accept `i8` and `i16` where scalar MIR
+  values are lowerable and reject out-of-range compact initializers.
+- Package-image type byte compatibility is preserved by keeping existing
+  `i1`/`i32`/`i64`/`ptr` encodings and assigning new bytes for `i8` and `i16`.
+- Focused verification:
+  `../../stark test --filter BuildMirValueRangeFactsPreservesCompactIntegerWidths --filter MirCompactWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm --filter BinaryRoundTripsGlobals --filter EmitsLlvmCompactTypedParamComparison --filter EmitsLlvmTypedGlobalLoadStore --filter EmitsLlvmGlobals --filter MirGlobalRecordsInitialValue --filter MirExplicitWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Boolean Switch Lowering
+
+- Terminal switches over `bool` scrutinees now parse `case true` and
+  `case false` labels and lower them through typed MIR branch blocks.
+- Exhaustive true/false switches emit one direct `i1` conditional branch and
+  do not lower an unreachable default return block.
+- Boolean parameters and boolean literals now survive expression lowering as
+  typed `i1` MIR values, including boolean return arms that zext to `i64`.
+- Non-terminal switches over `bool` scrutinees now parse `case true` and
+  `case false` assignment arms and lower them through direct `i1` branches.
+- Exhaustive true/false assignment switches lower only reachable arms plus the
+  merge block, while still validating the source `default` arm shape and calls.
+- Type-aware expression lowering is threaded through terminal switch, terminal
+  `if`, local-prefixed, tail-call, and switch-assignment lowering contexts that
+  already carry local type facts.
+- Typed constant range facts now validate against the MIR result type before
+  recording integer facts.
+- Narrow verification:
+  `../../stark test --filter CompilesTerminalBooleanSwitchFromAst --filter CompilesSingleCaseTerminalBooleanSwitchFromAst --filter CompilesTerminalBooleanSwitchBoolArmsFromAst --filter TerminalBooleanSwitchRejectsUnsupportedShapes --filter PackageTablesPreserveTerminalBooleanSwitch --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveBooleanTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent terminal-switch verification:
+  `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesMultiCaseTerminalIntegerSwitchFromAst --filter CompilesSingleCaseTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter CompilesLocalPrefixedTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveSingleCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesLocalSwitchStatementArbitraryOrderMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementArbitraryOrderMixedScalarAssignmentsThenTerminalIfFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter PackageTablesPreserveLocalSwitchStatementAssignmentArmLocals --filter PackageTablesPreserveLocalSwitchStatementArbitraryOrderMultipleScalarAssignments --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+- Boolean switch-assignment verification:
+  `../../stark test --filter CompilesBooleanLiteralLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesSingleCaseBooleanLiteralLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLiteralLocalSwitchStatementBoolAssignmentThenReturnFromAst --filter PackageTablesPreserveBooleanLocalSwitchStatementAssignment --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
 ## 2026-06-27 Selfhost Switch Arbitrary-Order Scalar Assignment Targets
 
 - Non-terminal switch assignment arms now accept braced scalar target

@@ -279,9 +279,29 @@ internal finite law i64[min max] LoweringI32MinValue()
     return (i64[min max])(-(2 ** 31));
 }
 
+internal finite law i64[min max] LoweringI16MinValue()
+{
+    return -32768;
+}
+
+internal finite law i64[min max] LoweringI8MinValue()
+{
+    return -128;
+}
+
 internal finite law i64[min max] LoweringI32MaxValue()
 {
     return 2147483647;
+}
+
+internal finite law i64[min max] LoweringI16MaxValue()
+{
+    return 32767;
+}
+
+internal finite law i64[min max] LoweringI8MaxValue()
+{
+    return 127;
 }
 
 internal fn ValueFacts HighLevelIrExactIntegerFacts(i64[min max] value)
@@ -507,6 +527,10 @@ internal finite law bool HighLevelIrParameterTypeIsLowerable(HighLevelIrParamete
     {
         case MirType.I1:
             return true;
+        case MirType.I8:
+            return true;
+        case MirType.I16:
+            return true;
         case MirType.I32:
             return true;
         case MirType.I64:
@@ -522,6 +546,10 @@ internal finite law bool HighLevelIrMirTypeIsLowerable(MirType type)
     {
         case MirType.I1:
             return true;
+        case MirType.I8:
+            return true;
+        case MirType.I16:
+            return true;
         case MirType.I32:
             return true;
         case MirType.I64:
@@ -536,6 +564,10 @@ internal finite law bool HighLevelIrTypeAllowsNullabilityFacts(MirType type)
     switch (type)
     {
         case MirType.I1:
+            return false;
+        case MirType.I8:
+            return false;
+        case MirType.I16:
             return false;
         case MirType.I32:
             return false;
@@ -564,6 +596,16 @@ internal finite law bool HighLevelIrValueFactsFitType(MirType type, ValueFacts f
     {
         case MirType.I1:
             return lower >= 0 && upperExclusive > lower && upperExclusive <= 2;
+        case MirType.I8:
+            return upperExclusive != LoweringI64MinValue()
+                && lower >= LoweringI8MinValue()
+                && upperExclusive > lower
+                && upperExclusive <= 128;
+        case MirType.I16:
+            return upperExclusive != LoweringI64MinValue()
+                && lower >= LoweringI16MinValue()
+                && upperExclusive > lower
+                && upperExclusive <= 32768;
         case MirType.I32:
             return upperExclusive != LoweringI64MinValue()
                 && lower >= LoweringI32MinValue()
@@ -656,6 +698,12 @@ internal finite law bool HighLevelIrGlobalInitializerFitsType(MirType type, i64[
     {
         case MirType.I1:
             return value == 0 || value == 1;
+        case MirType.I8:
+            return value >= LoweringI8MinValue()
+                && value <= LoweringI8MaxValue();
+        case MirType.I16:
+            return value >= LoweringI16MinValue()
+                && value <= LoweringI16MaxValue();
         case MirType.I32:
             return value >= LoweringI32MinValue()
                 && value <= LoweringI32MaxValue();
@@ -2015,6 +2063,10 @@ internal finite law bool HighLevelIrShiftAmountIsValid(MirType type, i64[min max
 
     switch (type)
     {
+        case MirType.I8:
+            return value < 8;
+        case MirType.I16:
+            return value < 16;
         case MirType.I32:
             return value < 32;
         case MirType.I64:
