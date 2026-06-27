@@ -322,7 +322,32 @@ Execution constraints:
     - [x] Lower canonical counted source `for willexit` loops over existing locals into MIR entry, header, body, and exit blocks.
     - [x] Lower canonical counted source `for willexit` loops with header locals into MIR entry, header, body, and exit blocks.
     - [x] Preserve canonical counted source `for willexit independent` facts through MIR block flags and LLVM loop metadata.
-  - [ ] Lower switch.
+  - [~] Lower switch.
+    - [x] Lower terminal integer switches with two literal cases and a default return into MIR conditional blocks.
+    - [x] Lower boolean-valued terminal integer switch arms through typed MIR returns and LLVM range facts.
+    - [x] Lower signed literal labels in terminal integer switches.
+    - [x] Lower braced return arms in terminal integer switches.
+    - [x] Lower scalar local-prefixed terminal integer switches through SSA local overrides.
+    - [x] Lower scalar local-prefixed boolean terminal switch arms through explicit `zext` returns.
+    - [x] Lower terminal integer switches with one or more literal cases through a shared comparison-chain path.
+    - [x] Lower scalar local-prefixed multi-case terminal integer switches through SSA local overrides.
+    - [x] Reject duplicate literal labels across all terminal integer switch cases.
+    - [x] Lower non-terminal source switch statements into MIR control-flow with merge blocks.
+      - [x] Lower integer switch assignment statements that continue to a return expression through nested MIR merge blocks.
+      - [x] Lower switch arms with multiple statements before merging.
+      - [x] Lower switch statements that continue to non-return successor statements.
+        - [x] Lower one post-switch scalar local initializer before the final return.
+        - [x] Lower multiple post-switch successor statements before the final return.
+        - [x] Lower post-switch successor statements that branch again before returning.
+    - [~] Lower switch arms that assign locals and continue after the switch.
+      - [x] Lower compact and braced integer switch arms assigning one scalar local before a post-switch return.
+      - [x] Lower boolean switch assignment arms into typed `i1` phi merges and zext returns.
+      - [~] Lower switch assignments to multiple locals or storage-backed places.
+        - [x] Lower declaration-order braced switch arms assigning multiple scalar locals.
+        - [x] Lower arbitrary-order multiple scalar switch assignments without reordering side effects.
+        - [ ] Lower switch assignments to storage-backed places.
+    - [ ] Lower non-integer and pattern switch cases into MIR branch tests.
+    - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
   - [ ] Lower `try`.
   - [x] Lower `become`.
     - [x] Lower direct i64 `become` calls to MIR tail-call payloads and terminator blocks with facts.

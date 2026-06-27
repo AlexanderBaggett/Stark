@@ -5564,6 +5564,304 @@ internal fn MemoryStatus EmitLlvmArenaRuntimePreambleForRanges(borrow IrTable<Mi
     return MemoryStatus.Ok;
 }
 
+internal fn bool DirectSwitchCaseValueExists(borrow IrTable<i64[min max]> values, i64[min max] value)
+{
+    stack u64[0 2 ** 63 - 1] total = values.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= total)
+    {
+        stack i64[min max] current = values.Get(index);
+        if (current == value)
+        {
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryBuildDirectSwitchEmissionPlan(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<BlockEmit> ranges,
+    u32[0 max] rangeIndex,
+    out u32[0 max] caseCount,
+    out u32[0 max] scrutineeValue,
+    out u32[0 max] defaultBlock,
+    out u32[0 max] setupFirst,
+    out u32[0 max] setupCount,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<u32[0 max]> caseBlocks)
+{
+    caseCount = 0;
+    scrutineeValue = 0;
+    defaultBlock = 0;
+    setupFirst = 0;
+    setupCount = 0;
+    if (!ranges.Contains(rangeIndex))
+    {
+        return false;
+    }
+
+    stack BlockEmit entryRange = ranges.Get(rangeIndex);
+    if (!blocks.Contains(entryRange.BlockIndex))
+    {
+        return false;
+    }
+
+    stack MirBlock entryBlock = blocks.Get(entryRange.BlockIndex);
+    if (entryBlock.Terminator() != MirTermKind.CondBranch)
+    {
+        return false;
+    }
+
+    if (!instrs.Contains(entryBlock.Slot0Index()))
+    {
+        return false;
+    }
+
+    stack MirInstruction firstCondition = instrs.Get(entryBlock.Slot0Index());
+    if (firstCondition.Opcode() != MirOp.CmpEq || firstCondition.ResultType() != MirType.I1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstCaseConstant = firstCondition.OperandBIndex();
+    if (!instrs.Contains(firstCaseConstant))
+    {
+        return false;
+    }
+
+    stack MirInstruction firstCaseConstantInstr = instrs.Get(firstCaseConstant);
+    stack u32[0 max] firstScrutineeValue = firstCondition.OperandAIndex();
+    if (firstCaseConstantInstr.Opcode() != MirOp.ConstInt
+        || MirValueType(instrs, firstScrutineeValue) != MirType.I64
+        || firstCaseConstant < entryRange.First
+        || firstCaseConstant >= entryRange.First + entryRange.Count
+        || entryBlock.Slot0Index() < entryRange.First
+        || entryBlock.Slot0Index() >= entryRange.First + entryRange.Count)
+    {
+        return false;
+    }
+
+    scrutineeValue = firstScrutineeValue;
+    setupFirst = entryRange.First;
+    setupCount = firstCaseConstant - entryRange.First;
+    stack u32[0 max] firstTestBlock = entryRange.BlockIndex;
+    stack mut u32[0 max] currentBlockIndex = firstTestBlock;
+    stack mut u32[0 max] currentRangeIndex = rangeIndex;
+    stack mut bool done = false;
+    while willexit (!done)
+    {
+        if (!blocks.Contains(currentBlockIndex) || !ranges.Contains(currentRangeIndex))
+        {
+            return false;
+        }
+
+        stack BlockEmit currentRange = ranges.Get(currentRangeIndex);
+        if (currentRange.BlockIndex != currentBlockIndex)
+        {
+            return false;
+        }
+
+        stack MirBlock currentBlock = blocks.Get(currentBlockIndex);
+        if (currentBlock.Terminator() != MirTermKind.CondBranch || !instrs.Contains(currentBlock.Slot0Index()))
+        {
+            return false;
+        }
+
+        stack MirInstruction condition = instrs.Get(currentBlock.Slot0Index());
+        if (condition.Opcode() != MirOp.CmpEq
+            || condition.ResultType() != MirType.I1
+            || condition.OperandAIndex() != scrutineeValue
+            || !instrs.Contains(condition.OperandBIndex()))
+        {
+            return false;
+        }
+
+        stack MirInstruction caseConstant = instrs.Get(condition.OperandBIndex());
+        if (caseConstant.Opcode() != MirOp.ConstInt
+            || DirectSwitchCaseValueExists(caseValues, caseConstant.Immediate()))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseConstant.Immediate()) == 0
+            || caseBlocks.Add(currentBlock.Slot1Index()) == 0)
+        {
+            return false;
+        }
+
+        caseCount = caseCount + 1;
+        if (!blocks.Contains(currentBlock.Slot1Index()) || !blocks.Contains(currentBlock.Slot2Index()))
+        {
+            return false;
+        }
+
+        stack MirBlock elseBlock = blocks.Get(currentBlock.Slot2Index());
+        if (elseBlock.Terminator() == MirTermKind.CondBranch)
+        {
+            if (currentBlock.Slot2Index() != currentBlockIndex + 1)
+            {
+                return false;
+            }
+
+            currentBlockIndex = currentBlock.Slot2Index();
+            currentRangeIndex = currentRangeIndex + 1;
+        }
+        else
+        {
+            defaultBlock = currentBlock.Slot2Index();
+            done = true;
+        }
+    }
+
+    if (caseCount < 3)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] checkIndex = 1;
+    while willexit (checkIndex <= caseCount)
+    {
+        stack u32[0 max] caseBlock = caseBlocks.Get(checkIndex);
+        if ((caseBlock >= firstTestBlock && caseBlock < firstTestBlock + caseCount)
+            || defaultBlock == caseBlock)
+        {
+            return false;
+        }
+
+        checkIndex = checkIndex + 1;
+    }
+
+    if (defaultBlock >= firstTestBlock && defaultBlock < firstTestBlock + caseCount)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchTerminator(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    stack MirType switchType = MirValueType(instrs, scrutineeValue);
+    try sink.AppendConstAscii("  switch ");
+    try EmitLlvmTypeName(switchType, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, scrutineeValue);
+    try sink.AppendConstAscii(", label ");
+    try EmitLlvmBlockRef(sink, defaultBlock);
+    try sink.AppendConstAscii(" [\n");
+
+    stack u64[0 2 ** 63 - 1] total = caseValues.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= total)
+    {
+        stack i64[min max] caseValue = caseValues.Get(index);
+        stack u32[0 max] caseBlock = caseBlocks.Get(index);
+        try sink.AppendConstAscii("    ");
+        try EmitLlvmTypeName(switchType, sink);
+        try sink.AppendConstAscii(" ");
+        try sink.AppendI64(caseValue);
+        try sink.AppendConstAscii(", label ");
+        try EmitLlvmBlockRef(sink, caseBlock);
+        try sink.AppendConstAscii("\n");
+        index = index + 1;
+    }
+
+    try sink.AppendConstAscii("  ]\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    u32[0 max] blockIndex,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = setupFirst;
+    stack mut u32[0 max] remaining = setupCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithTailCallees(instrs, funcTailFlags, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    bool emitSeparateStorageFacts,
+    u32[0 max] blockIndex,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    if (emitSeparateStorageFacts)
+    {
+        try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
+    }
+
+    stack mut u32[0 max] index = setupFirst;
+    stack mut u32[0 max] remaining = setupCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithRangeFacts(
+            instrs,
+            funcTailFlags,
+            functionEffectFacts,
+            functionCallContractFacts,
+            functionCallingConventionFacts,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            rangeMetadata,
+            sink,
+            index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
+}
+
 internal fn bool MirInstructionRangeHasCall(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
 {
     stack mut u32[0 max] index = firstInstr;
@@ -6225,6 +6523,63 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     return false;
                 }
             }
+            else if (FunctionBodyStartsWithTerminalSwitch(stream, f))
+            {
+                stack mut IrTable<BlockEmit> noRanges = new();
+                if (!LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+                    stream,
+                    source,
+                    funcNames,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    f,
+                    instrs,
+                    blocks,
+                    noRanges,
+                    false,
+                    body))
+                {
+                    return false;
+                }
+            }
+            else if (FunctionBodyStartsWithLocalSwitchStatementAssignment(stream, source, funcNames, f))
+            {
+                stack mut IrTable<BlockEmit> noRanges = new();
+                if (!LowerModuleLocalSwitchStatementFunctionToBlocks(
+                    stream,
+                    source,
+                    funcNames,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    f,
+                    instrs,
+                    blocks,
+                    noRanges,
+                    false,
+                    body))
+                {
+                    return false;
+                }
+            }
+            else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, f))
+            {
+                stack mut IrTable<BlockEmit> noRanges = new();
+                if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
+                    stream,
+                    source,
+                    funcNames,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    f,
+                    instrs,
+                    blocks,
+                    noRanges,
+                    false,
+                    body))
+                {
+                    return false;
+                }
+            }
             else if (FunctionBodyHasLocalPrefixedTerminalIf(stream, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
@@ -6664,8 +7019,46 @@ public fn MemoryStatus EmitLlvmBlocksWithTailCallees(borrow IrTable<MirInstructi
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, ranges.Get(i).BlockIndex, ranges.Get(i).First, ranges.Get(i).Count, sink);
-        i = i + 1;
+        stack mut u32[0 max] switchCaseCount = 0;
+        stack mut u32[0 max] switchScrutinee = 0;
+        stack mut u32[0 max] switchDefaultBlock = 0;
+        stack mut u32[0 max] switchSetupFirst = 0;
+        stack mut u32[0 max] switchSetupCount = 0;
+        stack mut IrTable<i64[min max]> switchCaseValues = new();
+        stack mut IrTable<u32[0 max]> switchCaseBlocks = new();
+        if (TryBuildDirectSwitchEmissionPlan(
+            instrs,
+            blocks,
+            ranges,
+            i,
+            switchCaseCount,
+            switchScrutinee,
+            switchDefaultBlock,
+            switchSetupFirst,
+            switchSetupCount,
+            switchCaseValues,
+            switchCaseBlocks))
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
+                instrs,
+                funcTailFlags,
+                range.BlockIndex,
+                switchSetupFirst,
+                switchSetupCount,
+                switchScrutinee,
+                switchDefaultBlock,
+                switchCaseValues,
+                switchCaseBlocks,
+                sink);
+            i = i + switchCaseCount;
+        }
+        else
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, range.BlockIndex, range.First, range.Count, sink);
+            i = i + 1;
+        }
     }
 
     try sink.AppendConstAscii("}\n");
@@ -6715,26 +7108,74 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCore(
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+        stack mut u32[0 max] switchCaseCount = 0;
+        stack mut u32[0 max] switchScrutinee = 0;
+        stack mut u32[0 max] switchDefaultBlock = 0;
+        stack mut u32[0 max] switchSetupFirst = 0;
+        stack mut u32[0 max] switchSetupCount = 0;
+        stack mut IrTable<i64[min max]> switchCaseValues = new();
+        stack mut IrTable<u32[0 max]> switchCaseBlocks = new();
+        if (TryBuildDirectSwitchEmissionPlan(
             instrs,
-            funcTailFlags,
-            functionEffectFacts,
-            functionCallContractFacts,
-            functionCallingConventionFacts,
-            paramFacts,
-            valueFacts,
-            globalFacts,
-            functionReturnFacts,
-            rangeMetadata,
-            separateStorageFacts,
-            i == 1,
             blocks,
-            ranges.Get(i).BlockIndex,
-            ranges.Get(i).First,
-            ranges.Get(i).Count,
-            LlvmLoopMetadataBase(),
-            sink);
-        i = i + 1;
+            ranges,
+            i,
+            switchCaseCount,
+            switchScrutinee,
+            switchDefaultBlock,
+            switchSetupFirst,
+            switchSetupCount,
+            switchCaseValues,
+            switchCaseBlocks))
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
+                instrs,
+                funcTailFlags,
+                functionEffectFacts,
+                functionCallContractFacts,
+                functionCallingConventionFacts,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                separateStorageFacts,
+                i == 1,
+                range.BlockIndex,
+                switchSetupFirst,
+                switchSetupCount,
+                switchScrutinee,
+                switchDefaultBlock,
+                switchCaseValues,
+                switchCaseBlocks,
+                sink);
+            i = i + switchCaseCount;
+        }
+        else
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+                instrs,
+                funcTailFlags,
+                functionEffectFacts,
+                functionCallContractFacts,
+                functionCallingConventionFacts,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                separateStorageFacts,
+                i == 1,
+                blocks,
+                range.BlockIndex,
+                range.First,
+                range.Count,
+                LlvmLoopMetadataBase(),
+                sink);
+            i = i + 1;
+        }
     }
 
     try sink.AppendConstAscii("}\n");
@@ -6820,8 +7261,46 @@ public fn MemoryStatus EmitLlvmBlocksNumberedWithTailCallees(borrow IrTable<MirI
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, ranges.Get(i).BlockIndex, ranges.Get(i).First, ranges.Get(i).Count, sink);
-        i = i + 1;
+        stack mut u32[0 max] switchCaseCount = 0;
+        stack mut u32[0 max] switchScrutinee = 0;
+        stack mut u32[0 max] switchDefaultBlock = 0;
+        stack mut u32[0 max] switchSetupFirst = 0;
+        stack mut u32[0 max] switchSetupCount = 0;
+        stack mut IrTable<i64[min max]> switchCaseValues = new();
+        stack mut IrTable<u32[0 max]> switchCaseBlocks = new();
+        if (TryBuildDirectSwitchEmissionPlan(
+            instrs,
+            blocks,
+            ranges,
+            i,
+            switchCaseCount,
+            switchScrutinee,
+            switchDefaultBlock,
+            switchSetupFirst,
+            switchSetupCount,
+            switchCaseValues,
+            switchCaseBlocks))
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
+                instrs,
+                funcTailFlags,
+                range.BlockIndex,
+                switchSetupFirst,
+                switchSetupCount,
+                switchScrutinee,
+                switchDefaultBlock,
+                switchCaseValues,
+                switchCaseBlocks,
+                sink);
+            i = i + switchCaseCount;
+        }
+        else
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, range.BlockIndex, range.First, range.Count, sink);
+            i = i + 1;
+        }
     }
 
     try sink.AppendConstAscii("}\n");
@@ -6871,26 +7350,74 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCore(
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+        stack mut u32[0 max] switchCaseCount = 0;
+        stack mut u32[0 max] switchScrutinee = 0;
+        stack mut u32[0 max] switchDefaultBlock = 0;
+        stack mut u32[0 max] switchSetupFirst = 0;
+        stack mut u32[0 max] switchSetupCount = 0;
+        stack mut IrTable<i64[min max]> switchCaseValues = new();
+        stack mut IrTable<u32[0 max]> switchCaseBlocks = new();
+        if (TryBuildDirectSwitchEmissionPlan(
             instrs,
-            funcTailFlags,
-            functionEffectFacts,
-            functionCallContractFacts,
-            functionCallingConventionFacts,
-            paramFacts,
-            valueFacts,
-            globalFacts,
-            functionReturnFacts,
-            rangeMetadata,
-            separateStorageFacts,
-            i == 1,
             blocks,
-            ranges.Get(i).BlockIndex,
-            ranges.Get(i).First,
-            ranges.Get(i).Count,
-            LlvmLoopMetadataBase() + number * 1000,
-            sink);
-        i = i + 1;
+            ranges,
+            i,
+            switchCaseCount,
+            switchScrutinee,
+            switchDefaultBlock,
+            switchSetupFirst,
+            switchSetupCount,
+            switchCaseValues,
+            switchCaseBlocks))
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
+                instrs,
+                funcTailFlags,
+                functionEffectFacts,
+                functionCallContractFacts,
+                functionCallingConventionFacts,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                separateStorageFacts,
+                i == 1,
+                range.BlockIndex,
+                switchSetupFirst,
+                switchSetupCount,
+                switchScrutinee,
+                switchDefaultBlock,
+                switchCaseValues,
+                switchCaseBlocks,
+                sink);
+            i = i + switchCaseCount;
+        }
+        else
+        {
+            stack BlockEmit range = ranges.Get(i);
+            try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+                instrs,
+                funcTailFlags,
+                functionEffectFacts,
+                functionCallContractFacts,
+                functionCallingConventionFacts,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                separateStorageFacts,
+                i == 1,
+                blocks,
+                range.BlockIndex,
+                range.First,
+                range.Count,
+                LlvmLoopMetadataBase() + number * 1000,
+                sink);
+            i = i + 1;
+        }
     }
 
     try sink.AppendConstAscii("}\n");
@@ -9559,7 +10086,7 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithE
             }
 
             stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
-            stack PackageImageValidationStatus payloadStatus = ValidateFixedRecordSectionHasLength(buf, payloadOffset, length, 13);
+            stack PackageImageValidationStatus payloadStatus = ValidateFixedRecordSectionHasLength(buf, payloadOffset, length, MirBlockRecordSize());
             if (payloadStatus != PackageImageValidationStatus.Ok)
             {
                 return payloadStatus;
@@ -17227,6 +17754,24 @@ internal fn ExprParseResult MakeParseResult(u32[0 max] nodeId, u64[0 2 ** 63 - 1
     return result;
 }
 
+internal struct ParsedSwitchAssignmentArm
+{
+    ExprParseResult Assigned;
+    u32[0 max] AssignedRootStart;
+    u32[0 max] AssignedRootCount;
+    u32[0 max] LocalRootStart;
+    u32[0 max] LocalRootCount;
+
+    ParsedSwitchAssignmentArm()
+    {
+        self.Assigned = new();
+        self.AssignedRootStart = 0;
+        self.AssignedRootCount = 0;
+        self.LocalRootStart = 0;
+        self.LocalRootCount = 0;
+    }
+}
+
 // Resolves an identifier span to a 0-based parameter index in first-appearance order,
 // appending it to `params` the first time it is seen (so `a + b` makes `a`->0, `b`->1,
 // and a reused name maps to the same index).
@@ -17243,6 +17788,95 @@ internal fn u32[0 max] ResolveParam(mut borrow IrTable<ParamName> params, borrow
     name.Length = length;
     stack u32[0 max] added = params.Add(name);
     return added - 1;
+}
+
+internal fn bool CopyParamNamePrefix(borrow IrTable<ParamName> sourceParams, u64[0 2 ** 63 - 1] count, mut borrow IrTable<ParamName> destination)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamName name = sourceParams.Get((u32[0 max])(i + 1));
+        if (destination.Add(name) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TokenTextExistsInTokenTable(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<u32[0 max]> tokens,
+    u32[0 max] token)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokens.Count())
+    {
+        stack u32[0 max] current = tokens.Get((u32[0 max])(i + 1));
+        if (TokenTextEqualsAsciiSpan(stream, source, current, token))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryFindSwitchTargetOffsetForToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u32[0 max] token,
+    out u32[0 max] targetOffset)
+{
+    targetOffset = 0;
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < targetNameTokens.Count())
+    {
+        stack u32[0 max] current = targetNameTokens.Get((u32[0 max])(i + 1));
+        if (TokenTextEqualsAsciiSpan(stream, source, current, token))
+        {
+            targetOffset = (u32[0 max])i;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SwitchAssignmentArmTargetOffsetExists(
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] assignedRootStart,
+    u32[0 max] assignedRootCount,
+    u32[0 max] targetOffset)
+{
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])assignedRootCount)
+    {
+        stack u32[0 max] slot = assignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedTargetOffsets.Contains(slot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] currentOffset = assignedTargetOffsets.Get(slot);
+        if (currentOffset == targetOffset)
+        {
+            return true;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return false;
 }
 
 internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
@@ -19128,6 +19762,114 @@ internal fn bool ValidateModuleCalls(
     return true;
 }
 
+internal fn bool ValidateModuleCallNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
+    ExprNode node)
+{
+    if (node.Kind != ExprKind.CallExpr)
+    {
+        return true;
+    }
+
+    if (node.Left == 0)
+    {
+        return false;
+    }
+
+    if (node.Imm > 4)
+    {
+        return false;
+    }
+
+    if (node.Imm != (i64[min max])funcParamCounts.Get(node.Left))
+    {
+        return false;
+    }
+
+    stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
+    if (node.Right != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Right, FunctionCallContractParamAbi(calleeFacts, 0)))
+    {
+        return false;
+    }
+
+    if (node.Arg2 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg2, FunctionCallContractParamAbi(calleeFacts, 1)))
+    {
+        return false;
+    }
+
+    if (node.Arg3 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg3, FunctionCallContractParamAbi(calleeFacts, 2)))
+    {
+        return false;
+    }
+
+    if (node.Arg4 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg4, FunctionCallContractParamAbi(calleeFacts, 3)))
+    {
+        return false;
+    }
+
+    return ValidateCallDistinctStorageArguments(nodes, localTypes, callerDistinctStorageFacts, node, calleeFacts);
+}
+
+internal fn bool ValidateModuleCallsForRoot(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] root,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!nodes.Contains(root))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(root);
+    if (!ValidateModuleCallNode(nodes, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts, node))
+    {
+        return false;
+    }
+
+    switch (node.Kind)
+    {
+        case ExprKind.IntLitExpr:
+            return true;
+        case ExprKind.NameExpr:
+            return true;
+        case ExprKind.BinaryExpr:
+            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+        case ExprKind.CompareExpr:
+            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+        case ExprKind.CallExpr:
+            if (node.Right != 0 && !ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (node.Arg2 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg2, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (node.Arg3 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg3, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (node.Arg4 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg4, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            return true;
+    }
+}
+
 internal fn bool TailCallTargetIsTailCallable(borrow IrTable<ExprNode> nodes, u32[0 max] root, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<u32[0 max]> funcParamCounts, u32[0 max] callerParamCount)
 {
     if (!nodes.Contains(root))
@@ -19294,7 +20036,6 @@ internal fn bool FindSelfHostedStatementEnd(borrow TokenStream stream, u64[0 2 *
     stack mut u64[0 2 ** 63 - 1] scan = start;
     stack mut u32[0 max] parenDepth = 0;
     stack mut u32[0 max] bracketDepth = 0;
-    stack mut u32[0 max] angleDepth = 0;
     while willexit (scan < limit && stream.KindAt(scan) != TokenKind.EndOfFile)
     {
         stack TokenKind kind = stream.KindAt(scan);
@@ -19320,18 +20061,7 @@ internal fn bool FindSelfHostedStatementEnd(borrow TokenStream stream, u64[0 2 *
                 bracketDepth = bracketDepth - 1;
             }
         }
-        else if (kind == TokenKind.Lt)
-        {
-            angleDepth = angleDepth + 1;
-        }
-        else if (kind == TokenKind.Gt)
-        {
-            if (angleDepth > 0)
-            {
-                angleDepth = angleDepth - 1;
-            }
-        }
-        else if (kind == TokenKind.Semi && parenDepth == 0 && bracketDepth == 0 && angleDepth == 0)
+        else if (kind == TokenKind.Semi && parenDepth == 0 && bracketDepth == 0)
         {
             end = scan;
             return true;
@@ -20223,6 +20953,604 @@ internal fn bool TryParseTerminalIfArm(
     return true;
 }
 
+internal fn bool FunctionBodyStartsWithTerminalSwitch(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0 && braceIndex >= nextFnIndex)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] bodyStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    return stream.KindAt(bodyStart) == TokenKind.Switch;
+}
+
+internal fn bool FunctionBodyHasLocalPrefixedTerminalSwitch(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (cursor >= limit || stream.KindAt(cursor) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    while willexit (cursor < limit && stream.KindAt(cursor) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, statementEnd))
+        {
+            return false;
+        }
+
+        cursor = statementEnd + 1;
+    }
+
+    return cursor < limit && stream.KindAt(cursor) == TokenKind.Switch;
+}
+
+internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut IrTable<u32[0 max]> targetNameTokens = new();
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (cursor >= limit || stream.KindAt(cursor) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    while willexit (cursor < limit && stream.KindAt(cursor) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, localEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+        if (localNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+        if (ParamIndexOf(params, source, nameStart, nameLength) >= 0
+            || TokenTextExistsInTokenTable(stream, source, targetNameTokens, localNameToken))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] assignToken = localEnd;
+        if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, assignToken))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+        stack ExprParseResult initResult = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
+        if (initResult.Next != localEnd
+            || params.Count() != beforeInit
+            || !ExprNodeCanBeDiscardedIfOverwritten(nodes, initResult.NodeId))
+        {
+            return false;
+        }
+
+        if (targetNameTokens.Add(localNameToken) == 0)
+        {
+            return false;
+        }
+
+        cursor = localEnd + 1;
+    }
+
+    if (targetNameTokens.Count() == 0 || cursor >= limit || stream.KindAt(cursor) != TokenKind.Switch)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<ParsedSwitchAssignmentArm> caseArms = new();
+    stack mut IrTable<u32[0 max]> armLocalRoots = new();
+    stack mut IrTable<u32[0 max]> assignedRoots = new();
+    stack mut IrTable<u32[0 max]> assignedTargetOffsets = new();
+    stack mut ParsedSwitchAssignmentArm defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseIntegerSwitchAssignmentCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        cursor,
+        targetNameTokens,
+        signatureParamCount,
+        scrutinee,
+        caseValues,
+        caseArms,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < targetNameTokens.Count())
+    {
+        stack u32[0 max] targetNameToken = targetNameTokens.Get((u32[0 max])(targetIndex + 1));
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])targetNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])targetNameToken);
+        if (ResolveParam(params, source, nameStart, nameLength) != (u32[0 max])(signatureParamCount + targetIndex))
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] returnIndex = nextToken;
+    stack mut u64[0 2 ** 63 - 1] expectedParamCount = signatureParamCount + targetNameTokens.Count();
+    while willexit (returnIndex < limit && stream.KindAt(returnIndex) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] postLocalEnd = returnIndex;
+        if (!FindSelfHostedStatementEnd(stream, returnIndex, limit, postLocalEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] postLocalNameToken = FindSelfHostedLocalNameToken(stream, returnIndex, postLocalEnd);
+        if (postLocalNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] postNameStart = stream.StartAt((u64[0 2 ** 63 - 1])postLocalNameToken);
+        stack u64[0 2 ** 63 - 1] postNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])postLocalNameToken);
+        if (ParamIndexOf(params, source, postNameStart, postNameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] postAssignToken = postLocalEnd;
+        if (!FindSelfHostedStatementAssign(stream, returnIndex, postLocalEnd, postAssignToken))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforePostLocal = params.Count();
+        stack ExprParseResult postLocalRoot = ParseExprIn(stream, source, nodes, params, funcNames, postAssignToken + 1);
+        if (postLocalRoot.Next != postLocalEnd || params.Count() != beforePostLocal)
+        {
+            return false;
+        }
+
+        if (ResolveParam(params, source, postNameStart, postNameLength) != (u32[0 max])expectedParamCount)
+        {
+            return false;
+        }
+
+        returnIndex = postLocalEnd + 1;
+        expectedParamCount = expectedParamCount + 1;
+    }
+
+    if (returnIndex >= limit)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(returnIndex) == TokenKind.Return)
+    {
+        stack ExprParseResult returnRoot = ParseExprIn(stream, source, nodes, params, funcNames, returnIndex + 1);
+        stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
+        if (stream.KindAt(afterReturn) == TokenKind.Semi)
+        {
+            afterReturn = afterReturn + 1;
+        }
+
+        return stream.KindAt(afterReturn) == TokenKind.RBrace
+            && params.Count() == expectedParamCount;
+    }
+
+    if (stream.KindAt(returnIndex) == TokenKind.If)
+    {
+        stack mut ParsedIfReturnArms tailArms = new();
+        if (!TryParseTerminalIfReturnArms(stream, source, nodes, params, funcNames, returnIndex, tailArms)
+            || tailArms.ThenBecome
+            || tailArms.ElseBecome)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] afterIf = tailArms.ElseArm.Next;
+        return stream.KindAt(afterIf) == TokenKind.RBrace
+            && params.Count() == expectedParamCount;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseTerminalSwitchReturnArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    nextToken = armStart;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart || stream.KindAt(armStart + 1) != TokenKind.Return)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, params, funcNames, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, params, funcNames, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchIntegerCaseLabel(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] valueStart,
+    out i64[min max] value,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    nextToken = valueStart;
+    stack TokenKind kind = stream.KindAt(valueStart);
+    if (kind == TokenKind.IntegerLiteral)
+    {
+        value = ParseDigitSpan(source, stream.StartAt(valueStart), stream.LengthAt(valueStart));
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.Minus && stream.KindAt(valueStart + 1) == TokenKind.IntegerLiteral)
+    {
+        value = 0 - ParseDigitSpan(source, stream.StartAt(valueStart + 1), stream.LengthAt(valueStart + 1));
+        nextToken = valueStart + 2;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseIntegerSwitchAssignmentCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ParsedSwitchAssignmentArm caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseSwitchAssignmentArm(
+            stream,
+            source,
+            nodes,
+            params,
+            signatureParamCount,
+            funcNames,
+            targetNameTokens,
+            afterCaseLabel + 1,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ParsedSwitchAssignmentArm parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseSwitchAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        cursor + 2,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TerminalSwitchCaseValueExists(borrow IrTable<i64[min max]> caseValues, i64[min max] value)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    while willexit (i < count)
+    {
+        stack i64[min max] current = caseValues.Get((u32[0 max])(i + 1));
+        if (current == value)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseTerminalIntegerSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, afterCaseLabel + 1, caseArm, afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
 internal fn bool TryParseTerminalIfReturnArms(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -20317,6 +21645,209 @@ internal fn bool ExprNodeCanBeDiscardedIfOverwritten(borrow IrTable<ExprNode> no
         case ExprKind.CallExpr:
             return false;
     }
+}
+
+internal fn bool TryParseSwitchAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack u64[0 2 ** 63 - 1] targetCountWide = targetNameTokens.Count();
+    if (targetCountWide == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyParamNamePrefix(baseParams, signatureParamCount, armParams))
+    {
+        return false;
+    }
+
+    stack u32[0 max] localRootStart = (u32[0 max])(armLocalRoots.Count() + 1);
+    stack u32[0 max] assignedRootStart = (u32[0 max])(assignedRoots.Count() + 1);
+    stack mut u32[0 max] localRootCount = 0;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] cursor = armStart + 1;
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(cursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+            if (localNameToken == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] localNameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+            stack u64[0 2 ** 63 - 1] localNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+            if (ParamIndexOf(armParams, source, localNameStart, localNameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] localAssignToken = localEnd;
+            if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, localAssignToken))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
+            stack ExprParseResult localRoot = ParseExprIn(stream, source, nodes, armParams, funcNames, localAssignToken + 1);
+            if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
+            {
+                return false;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(armParams, source, localNameStart, localNameLength);
+            if (armLocalRoots.Add(localRoot.NodeId) == 0)
+            {
+                return false;
+            }
+
+            localRootCount = localRootCount + 1;
+            cursor = localEnd + 1;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+        while willexit (assignmentIndex < targetCountWide)
+        {
+            stack mut u32[0 max] targetOffset = 0;
+            if (cursor >= (u64[0 2 ** 63 - 1])closeBrace
+                || stream.KindAt(cursor) != TokenKind.Identifier
+                || stream.KindAt(cursor + 1) != TokenKind.Assign
+                || !TryFindSwitchTargetOffsetForToken(stream, source, targetNameTokens, (u32[0 max])cursor, targetOffset)
+                || SwitchAssignmentArmTargetOffsetExists(assignedTargetOffsets, assignedRootStart, (u32[0 max])assignmentIndex, targetOffset))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeAssign = armParams.Count();
+            stack ExprParseResult parsedAssigned = ParseExprIn(stream, source, nodes, armParams, funcNames, cursor + 2);
+            if (armParams.Count() != beforeAssign)
+            {
+                return false;
+            }
+
+            if (assignmentIndex == 0)
+            {
+                arm.Assigned = parsedAssigned;
+            }
+
+            if (assignedRoots.Add(parsedAssigned.NodeId) == 0 || assignedTargetOffsets.Add(targetOffset) == 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] afterExpr = parsedAssigned.Next;
+            stack mut bool hasSemicolon = false;
+            if (stream.KindAt(afterExpr) == TokenKind.Semi)
+            {
+                hasSemicolon = true;
+                afterExpr = afterExpr + 1;
+            }
+
+            assignmentIndex = assignmentIndex + 1;
+            if (assignmentIndex < targetCountWide)
+            {
+                if (!hasSemicolon)
+                {
+                    return false;
+                }
+
+                cursor = afterExpr;
+            }
+            else
+            {
+                if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+                {
+                    return false;
+                }
+
+                cursor = afterExpr;
+            }
+        }
+
+        if (cursor != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm.AssignedRootStart = assignedRootStart;
+        arm.AssignedRootCount = (u32[0 max])targetCountWide;
+        arm.LocalRootStart = localRootStart;
+        arm.LocalRootCount = localRootCount;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (targetCountWide != 1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] compactTargetNameToken = targetNameTokens.Get(1);
+    if (stream.KindAt(armStart) != TokenKind.Identifier
+        || stream.KindAt(armStart + 1) != TokenKind.Assign
+        || !TokenTextEqualsAsciiSpan(stream, source, compactTargetNameToken, (u32[0 max])armStart))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCompact = armParams.Count();
+    stack ExprParseResult parsedCompactArm = ParseExprIn(stream, source, nodes, armParams, funcNames, armStart + 2);
+    stack mut u64[0 2 ** 63 - 1] afterCompactExpr = parsedCompactArm.Next;
+    if (stream.KindAt(afterCompactExpr) == TokenKind.Semi)
+    {
+        afterCompactExpr = afterCompactExpr + 1;
+    }
+
+    if (armParams.Count() != beforeCompact)
+    {
+        return false;
+    }
+
+    arm.Assigned = parsedCompactArm;
+    arm.AssignedRootStart = assignedRootStart;
+    arm.AssignedRootCount = 1;
+    arm.LocalRootStart = localRootStart;
+    arm.LocalRootCount = 0;
+    if (assignedRoots.Add(parsedCompactArm.NodeId) == 0)
+    {
+        return false;
+    }
+
+    if (assignedTargetOffsets.Add(0) == 0)
+    {
+        return false;
+    }
+
+    nextToken = afterCompactExpr;
+    return true;
 }
 
 internal fn bool TryParseIfAssignmentArm(
@@ -21832,6 +23363,1647 @@ internal fn bool LowerModuleReturnIfExpressionFunctionToBlocks(
     body.ThenValue = thenValue.Index();
     body.ElseValue = elseValue.Index();
     return true;
+}
+
+internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<ExprParseResult> caseArms,
+    ExprParseResult defaultArm,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseArms.Count() != caseCountWide)
+    {
+        return false;
+    }
+
+    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.IntType)
+    {
+        return false;
+    }
+
+    stack ExprType defaultType = TypeOfNodeWithLocals(nodes, defaultArm.NodeId, localTypes);
+    if (defaultType != ExprType.IntType && defaultType != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
+    while willexit (typeIndex < caseCountWide)
+    {
+        stack ExprParseResult caseArm = caseArms.Get((u32[0 max])(typeIndex + 1));
+        if (TypeOfNodeWithLocals(nodes, caseArm.NodeId, localTypes) != defaultType)
+        {
+            return false;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    stack bool allBool = defaultType == ExprType.BoolType;
+    stack u32[0 max] caseCount = (u32[0 max])caseCountWide;
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] caseReturnBase = firstBlock + caseCount;
+    stack u32[0 max] defaultBlockIndex = firstBlock + caseCount + caseCount;
+
+    stack mut IrTable<u32[0 max]> testFirsts = new();
+    stack mut IrTable<u32[0 max]> testCounts = new();
+    stack mut IrTable<u32[0 max]> conditionValues = new();
+    stack mut IrTable<u32[0 max]> caseFirsts = new();
+    stack mut IrTable<u32[0 max]> caseCounts = new();
+    stack mut IrTable<u32[0 max]> returnValues = new();
+
+    stack MirValueId scrutineeValue = LowerExprNodeWithLocals(nodes, scrutineeNode, instrs, localOverrides);
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack mut u32[0 max] testFirst = (u32[0 max])instrs.Count() + 1;
+        if (caseIndex == 0)
+        {
+            testFirst = entryFirst;
+        }
+
+        stack i64[min max] caseImmediate = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirValueId caseConstant = MirConstInt(instrs, caseImmediate);
+        stack MirValueId condition = LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+        stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
+        if (testFirsts.Add(testFirst) == 0
+            || testCounts.Add(testCount) == 0
+            || conditionValues.Add(condition.Index()) == 0)
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack ExprParseResult caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirValueId caseValue = LowerExprNodeWithLocals(nodes, caseArm.NodeId, instrs, localOverrides);
+        if (allBool)
+        {
+            caseValue = MirZExt(instrs, caseValue);
+        }
+
+        stack u32[0 max] caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        if (caseFirsts.Add(caseFirst) == 0
+            || caseCounts.Add(caseInstrCount) == 0
+            || returnValues.Add(caseValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId defaultValue = LowerExprNodeWithLocals(nodes, defaultArm.NodeId, instrs, localOverrides);
+    if (allBool)
+    {
+        defaultValue = MirZExt(instrs, defaultValue);
+    }
+
+    stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] currentBlock = firstBlock + (u32[0 max])caseIndex;
+        stack u32[0 max] thenBlock = caseReturnBase + (u32[0 max])caseIndex;
+        stack mut u32[0 max] elseBlock = defaultBlockIndex;
+        if (caseIndex + 1 < caseCountWide)
+        {
+            elseBlock = currentBlock + 1;
+        }
+
+        stack u32[0 max] conditionValue = conditionValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirBlockId testBlock = MirCondBlock(
+            blocks,
+            MirValueIdOf(conditionValue),
+            MirBlockIdOf(thenBlock),
+            MirBlockIdOf(elseBlock));
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] returnValue = returnValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirBlockId caseBlock = MirReturnBlock(blocks, MirValueIdOf(returnValue));
+        caseIndex = caseIndex + 1;
+    }
+
+    stack MirBlockId defaultBlock = MirReturnBlock(blocks, defaultValue);
+
+    if (recordRanges)
+    {
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] testFirst = testFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testCount = testCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testRange = ranges.Add(MakeBlockEmit(
+                firstBlock + (u32[0 max])caseIndex,
+                testFirst,
+                testCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] caseFirst = caseFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRangeCount = caseCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(
+                caseReturnBase + (u32[0 max])caseIndex,
+                caseFirst,
+                caseRangeCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(defaultBlock.Index(), defaultFirst, defaultCount));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    stack u32[0 max] firstConditionValue = conditionValues.Get(1);
+    stack u32[0 max] firstReturnValue = returnValues.Get(1);
+    body.CondValue = firstConditionValue;
+    body.ThenValue = firstReturnValue;
+    body.ElseValue = defaultValue.Index();
+    return true;
+}
+
+internal fn bool BuildSwitchAssignmentArmLocalTypes(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+{
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < paramCount)
+    {
+        stack mut u32[0 max] typeCode = 0;
+        stack u32[0 max] typeSlot = (u32[0 max])(paramIndex + 1);
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack ExprType localType = TypeOfNodeWithLocals(nodes, localRoot, armLocalTypes);
+        if (localType == ExprType.ErrorType || localType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] localTypeCode = 0;
+        if (localType == ExprType.BoolType)
+        {
+            localTypeCode = 1;
+        }
+
+        if (armLocalTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn ExprType TypeOfSwitchAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildSwitchAssignmentArmLocalTypes(nodes, arm, armLocalRoots, baseLocalTypes, paramCount, armLocalTypes))
+    {
+        return ExprType.ErrorType;
+    }
+
+    if (targetOffset >= arm.AssignedRootCount)
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return ExprType.ErrorType;
+        }
+
+        stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+        if (currentTargetOffset == targetOffset)
+        {
+            stack u32[0 max] rootNode = assignedRoots.Get(rootSlot);
+            return TypeOfNodeWithLocals(nodes, rootNode, armLocalTypes);
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return ExprType.ErrorType;
+}
+
+internal fn bool ValidateSwitchAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildSwitchAssignmentArmLocalTypes(nodes, arm, armLocalRoots, baseLocalTypes, paramCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, assignedRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerSwitchAssignmentArmValues(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < paramCount)
+    {
+        if (localOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> sourceOrderValues = new();
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        stack MirValueId value = LowerExprNodeWithLocals(nodes, assignedRoot, instrs, localOverrides);
+        if (sourceOrderValues.Add(value.Index()) == 0)
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack mut bool foundTarget = false;
+        assignedIndex = 0;
+        while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+        {
+            stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+            stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+            if (currentTargetOffset == (u32[0 max])targetIndex)
+            {
+                if (foundTarget)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] sourceOrderValue = sourceOrderValues.Get((u32[0 max])(assignedIndex + 1));
+                if (values.Add(sourceOrderValue) == 0)
+                {
+                    return false;
+                }
+
+                foundTarget = true;
+            }
+
+            assignedIndex = assignedIndex + 1;
+        }
+
+        if (!foundTarget)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    ParsedSwitchAssignmentArm defaultArm,
+    u32[0 max] targetCount,
+    borrow IrTable<u32[0 max]> postLocalRoots,
+    bool hasTerminalIf,
+    ParsedIfReturnArms terminalIfArms,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseArms.Count() != caseCountWide || targetCount == 0)
+    {
+        return false;
+    }
+
+    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.IntType)
+    {
+        return false;
+    }
+
+    if (localTypes.Count() < (u64[0 2 ** 63 - 1])(paramCount + targetCount))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> phiTypeCodes = new();
+    stack mut u64[0 2 ** 63 - 1] targetTypeIndex = 0;
+    while willexit (targetTypeIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] targetTypeCode = localTypes.Get(paramCount + (u32[0 max])targetTypeIndex + 1);
+        stack mut ExprType expectedTargetType = ExprType.IntType;
+        if (targetTypeCode == 1)
+        {
+            expectedTargetType = ExprType.BoolType;
+        }
+
+        if (TypeOfSwitchAssignmentArm(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
+        while willexit (typeIndex < caseCountWide)
+        {
+            stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(typeIndex + 1));
+            if (TypeOfSwitchAssignmentArm(nodes, caseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+            {
+                return false;
+            }
+
+            typeIndex = typeIndex + 1;
+        }
+
+        if (phiTypeCodes.Add(targetTypeCode) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    stack mut ExprType rootType = ExprType.IntType;
+    stack mut bool terminalBothBool = false;
+    if (hasTerminalIf)
+    {
+        if (TypeOfNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, localTypes) != ExprType.BoolType)
+        {
+            return false;
+        }
+
+        stack ExprType thenType = TypeOfNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, localTypes);
+        stack ExprType elseType = TypeOfNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, localTypes);
+        stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+        terminalBothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+        if (!bothInt && !terminalBothBool)
+        {
+            return false;
+        }
+
+        rootType = thenType;
+    }
+    else
+    {
+        rootType = TypeOfNodeWithLocals(nodes, returnRootNode, localTypes);
+        if (rootType == ExprType.ErrorType || rootType == ExprType.PtrType)
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] caseCount = (u32[0 max])caseCountWide;
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] caseBlockBase = firstBlock + caseCount;
+    stack u32[0 max] defaultBlockIndex = caseBlockBase + caseCount;
+    stack u32[0 max] mergeBlockBase = defaultBlockIndex + 1;
+    stack u32[0 max] terminalThenBlockIndex = mergeBlockBase + caseCount;
+    stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
+
+    stack mut IrTable<u32[0 max]> testFirsts = new();
+    stack mut IrTable<u32[0 max]> testCounts = new();
+    stack mut IrTable<u32[0 max]> conditionValues = new();
+    stack mut IrTable<u32[0 max]> caseFirsts = new();
+    stack mut IrTable<u32[0 max]> caseCounts = new();
+    stack mut IrTable<u32[0 max]> assignedValues = new();
+    stack mut IrTable<u32[0 max]> defaultValues = new();
+    stack mut IrTable<u32[0 max]> mergeFirsts = new();
+    stack mut IrTable<u32[0 max]> mergeCounts = new();
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId scrutineeValue = LowerExprNodeWithLocals(nodes, scrutineeNode, instrs, noOverrides);
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack mut u32[0 max] testFirst = (u32[0 max])instrs.Count() + 1;
+        if (caseIndex == 0)
+        {
+            testFirst = entryFirst;
+        }
+
+        stack i64[min max] caseImmediate = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirValueId caseConstant = MirConstInt(instrs, caseImmediate);
+        stack MirValueId condition = LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+        stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
+        if (testFirsts.Add(testFirst) == 0
+            || testCounts.Add(testCount) == 0
+            || conditionValues.Add(condition.Index()) == 0)
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut IrTable<u32[0 max]> caseArmValues = new();
+        if (!LowerSwitchAssignmentArmValues(nodes, caseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, paramCount, instrs, caseArmValues)
+            || caseArmValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        stack u32[0 max] caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        if (caseFirsts.Add(caseFirst) == 0
+            || caseCounts.Add(caseInstrCount) == 0)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] targetValueIndex = 0;
+        while willexit (targetValueIndex < (u64[0 2 ** 63 - 1])targetCount)
+        {
+            stack u32[0 max] caseArmValue = caseArmValues.Get((u32[0 max])(targetValueIndex + 1));
+            if (assignedValues.Add(caseArmValue) == 0)
+            {
+                return false;
+            }
+
+            targetValueIndex = targetValueIndex + 1;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
+    if (!LowerSwitchAssignmentArmValues(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, paramCount, instrs, defaultValues)
+        || defaultValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+    {
+        return false;
+    }
+
+    stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+
+    stack mut IrTable<u32[0 max]> tailValues = new();
+    stack mut u64[0 2 ** 63 - 1] initialTailIndex = 0;
+    while willexit (initialTailIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] defaultValue = defaultValues.Get((u32[0 max])(initialTailIndex + 1));
+        if (tailValues.Add(defaultValue) == 0)
+        {
+            return false;
+        }
+
+        initialTailIndex = initialTailIndex + 1;
+    }
+
+    stack mut u32[0 max] tailBlock = defaultBlockIndex;
+    stack mut IrTable<u32[0 max]> finalPhis = new();
+    stack u32[0 max] firstDefaultValue = defaultValues.Get(1);
+    stack mut MirValueId finalReturnValue = MirValueIdOf(firstDefaultValue);
+    stack mut MirValueId terminalIfCondValue = MirValueIdOf(firstDefaultValue);
+    stack mut MirValueId terminalIfThenValue = MirValueIdOf(firstDefaultValue);
+    stack mut MirValueId terminalIfElseValue = MirValueIdOf(firstDefaultValue);
+    stack mut u32[0 max] terminalIfMergeCount = 0;
+    stack mut u32[0 max] terminalIfThenFirst = 0;
+    stack mut u32[0 max] terminalIfThenCount = 0;
+    stack mut u32[0 max] terminalIfElseFirst = 0;
+    stack mut u32[0 max] terminalIfElseCount = 0;
+    caseIndex = caseCountWide;
+    while willexit (caseIndex > 0)
+    {
+        caseIndex = caseIndex - 1;
+        stack u32[0 max] caseBlockIndex = caseBlockBase + (u32[0 max])caseIndex;
+        stack u32[0 max] mergeBlockIndex = mergeBlockBase + (u32[0 max])caseIndex;
+        stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut IrTable<u32[0 max]> newTailValues = new();
+        stack mut u64[0 2 ** 63 - 1] targetPhiIndex = 0;
+        while willexit (targetPhiIndex < (u64[0 2 ** 63 - 1])targetCount)
+        {
+            stack u32[0 max] caseAssignedValue = assignedValues.Get((u32[0 max])(caseIndex * (u64[0 2 ** 63 - 1])targetCount + targetPhiIndex + 1));
+            stack u32[0 max] incomingTailValue = tailValues.Get((u32[0 max])(targetPhiIndex + 1));
+            stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetPhiIndex + 1));
+            stack mut MirType phiType = MirType.I64;
+            if (targetTypeCode == 1)
+            {
+                phiType = MirType.I1;
+            }
+
+            stack MirValueId phi = MirPhi2Typed(
+                instrs,
+                phiType,
+                MirValueIdOf(caseAssignedValue),
+                MirBlockIdOf(caseBlockIndex),
+                MirValueIdOf(incomingTailValue),
+                MirBlockIdOf(tailBlock));
+            if (newTailValues.Add(phi.Index()) == 0)
+            {
+                return false;
+            }
+
+            targetPhiIndex = targetPhiIndex + 1;
+        }
+
+        if (caseIndex == 0)
+        {
+            stack mut IrTable<u32[0 max]> returnOverrides = new();
+            stack mut u64[0 2 ** 63 - 1] p = 0;
+            while willexit (p < paramCount)
+            {
+                if (returnOverrides.Add(0) == 0)
+                {
+                    return false;
+                }
+
+                p = p + 1;
+            }
+
+            targetPhiIndex = 0;
+            while willexit (targetPhiIndex < (u64[0 2 ** 63 - 1])targetCount)
+            {
+                stack u32[0 max] finalPhiIndex = newTailValues.Get((u32[0 max])(targetPhiIndex + 1));
+                if (finalPhis.Add(finalPhiIndex) == 0 || returnOverrides.Add(finalPhiIndex) == 0)
+                {
+                    return false;
+                }
+
+                targetPhiIndex = targetPhiIndex + 1;
+            }
+
+            postLocalIndex = 0;
+            while willexit (postLocalIndex < postLocalRoots.Count())
+            {
+                stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+                stack MirValueId postLocalValue = LowerExprNodeWithLocals(nodes, postLocalRootNode, instrs, returnOverrides);
+                if (returnOverrides.Add(postLocalValue.Index()) == 0)
+                {
+                    return false;
+                }
+
+                postLocalIndex = postLocalIndex + 1;
+            }
+
+            if (hasTerminalIf)
+            {
+                terminalIfCondValue = LowerExprNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, instrs, returnOverrides);
+                terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+                terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
+                terminalIfThenValue = LowerExprNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, returnOverrides);
+                if (terminalBothBool)
+                {
+                    terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
+                }
+
+                terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
+
+                terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
+                terminalIfElseValue = LowerExprNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, returnOverrides);
+                if (terminalBothBool)
+                {
+                    terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
+                }
+
+                terminalIfElseCount = (u32[0 max])instrs.Count() - (terminalIfElseFirst - 1);
+            }
+            else
+            {
+                stack mut MirValueId returnValue = LowerExprNodeWithLocals(nodes, returnRootNode, instrs, returnOverrides);
+                if (rootType == ExprType.BoolType)
+                {
+                    returnValue = MirZExt(instrs, returnValue);
+                }
+
+                finalReturnValue = returnValue;
+            }
+        }
+
+        stack mut u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+        if (hasTerminalIf && caseIndex == 0)
+        {
+            mergeCount = terminalIfMergeCount;
+        }
+
+        if (mergeFirsts.Add(mergeFirst) == 0 || mergeCounts.Add(mergeCount) == 0)
+        {
+            return false;
+        }
+
+        tailValues = newTailValues;
+        tailBlock = mergeBlockIndex;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] currentBlock = firstBlock + (u32[0 max])caseIndex;
+        stack u32[0 max] thenBlock = caseBlockBase + (u32[0 max])caseIndex;
+        stack mut u32[0 max] elseBlock = defaultBlockIndex;
+        if (caseIndex + 1 < caseCountWide)
+        {
+            elseBlock = currentBlock + 1;
+        }
+
+        stack u32[0 max] conditionValue = conditionValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirBlockId testBlock = MirCondBlock(
+            blocks,
+            MirValueIdOf(conditionValue),
+            MirBlockIdOf(thenBlock),
+            MirBlockIdOf(elseBlock));
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] mergeBlockIndex = mergeBlockBase + (u32[0 max])caseIndex;
+        stack MirBlockId caseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        caseIndex = caseIndex + 1;
+    }
+
+    stack MirBlockId defaultBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockBase + caseCount - 1));
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        if (caseIndex == 0)
+        {
+            if (hasTerminalIf)
+            {
+                stack MirBlockId mergeBlock = MirCondBlock(
+                    blocks,
+                    terminalIfCondValue,
+                    MirBlockIdOf(terminalThenBlockIndex),
+                    MirBlockIdOf(terminalElseBlockIndex));
+            }
+            else
+            {
+                stack MirBlockId mergeBlock = MirReturnBlock(blocks, finalReturnValue);
+            }
+        }
+        else
+        {
+            stack MirBlockId mergeBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockBase + (u32[0 max])caseIndex - 1));
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    if (hasTerminalIf)
+    {
+        stack MirBlockId terminalThenBlock = MirReturnBlock(blocks, terminalIfThenValue);
+        stack MirBlockId terminalElseBlock = MirReturnBlock(blocks, terminalIfElseValue);
+    }
+
+    if (recordRanges)
+    {
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] testFirst = testFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testCount = testCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testRange = ranges.Add(MakeBlockEmit(
+                firstBlock + (u32[0 max])caseIndex,
+                testFirst,
+                testCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] caseFirst = caseFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRangeCount = caseCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(
+                caseBlockBase + (u32[0 max])caseIndex,
+                caseFirst,
+                caseRangeCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(defaultBlock.Index(), defaultFirst, defaultCount));
+
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] storedIndex = (u32[0 max])(caseCountWide - caseIndex);
+            stack u32[0 max] mergeFirst = mergeFirsts.Get(storedIndex);
+            stack u32[0 max] mergeCount = mergeCounts.Get(storedIndex);
+            stack u32[0 max] mergeRange = ranges.Add(MakeBlockEmit(
+                mergeBlockBase + (u32[0 max])caseIndex,
+                mergeFirst,
+                mergeCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        if (hasTerminalIf)
+        {
+            stack u32[0 max] terminalThenRange = ranges.Add(MakeBlockEmit(
+                terminalThenBlockIndex,
+                terminalIfThenFirst,
+                terminalIfThenCount));
+            stack u32[0 max] terminalElseRange = ranges.Add(MakeBlockEmit(
+                terminalElseBlockIndex,
+                terminalIfElseFirst,
+                terminalIfElseCount));
+        }
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    stack u32[0 max] firstConditionValue = conditionValues.Get(1);
+    body.CondValue = firstConditionValue;
+    body.ThenValue = finalPhis.Get(1);
+    if (hasTerminalIf)
+    {
+        body.ElseValue = terminalIfCondValue.Index();
+    }
+    else
+    {
+        body.ElseValue = finalReturnValue.Index();
+    }
+
+    return true;
+}
+
+internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalIntegerSwitchReturnCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        caseValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    return LowerTerminalIntegerSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body);
+}
+
+internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithLocalSwitchStatementAssignment(stream, source, funcNames, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut IrTable<u32[0 max]> targetNameTokens = new();
+    stack mut IrTable<u32[0 max]> targetInitRoots = new();
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (cursor >= limit || stream.KindAt(cursor) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    while willexit (cursor < limit && stream.KindAt(cursor) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, localEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+        if (localNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+        if (ParamIndexOf(params, source, nameStart, nameLength) >= 0
+            || TokenTextExistsInTokenTable(stream, source, targetNameTokens, localNameToken))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] assignToken = localEnd;
+        if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, assignToken))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+        stack ExprParseResult initResult = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
+        if (initResult.Next != localEnd
+            || params.Count() != beforeInit
+            || !ExprNodeCanBeDiscardedIfOverwritten(nodes, initResult.NodeId))
+        {
+            return false;
+        }
+
+        if (targetNameTokens.Add(localNameToken) == 0 || targetInitRoots.Add(initResult.NodeId) == 0)
+        {
+            return false;
+        }
+
+        cursor = localEnd + 1;
+    }
+
+    if (targetNameTokens.Count() == 0 || cursor >= limit || stream.KindAt(cursor) != TokenKind.Switch)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<ParsedSwitchAssignmentArm> caseArms = new();
+    stack mut IrTable<u32[0 max]> armLocalRoots = new();
+    stack mut IrTable<u32[0 max]> assignedRoots = new();
+    stack mut IrTable<u32[0 max]> assignedTargetOffsets = new();
+    stack mut ParsedSwitchAssignmentArm defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseIntegerSwitchAssignmentCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        cursor,
+        targetNameTokens,
+        signatureParamCount,
+        scrutinee,
+        caseValues,
+        caseArms,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < targetNameTokens.Count())
+    {
+        stack u32[0 max] targetNameToken = targetNameTokens.Get((u32[0 max])(targetIndex + 1));
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])targetNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])targetNameToken);
+        if (ResolveParam(params, source, nameStart, nameLength) != (u32[0 max])(signatureParamCount + targetIndex))
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> postLocalRoots = new();
+    stack mut u64[0 2 ** 63 - 1] returnIndex = nextToken;
+    stack mut u64[0 2 ** 63 - 1] expectedParamCount = signatureParamCount + targetNameTokens.Count();
+    while willexit (returnIndex < limit && stream.KindAt(returnIndex) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] postLocalEnd = returnIndex;
+        if (!FindSelfHostedStatementEnd(stream, returnIndex, limit, postLocalEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] postLocalNameToken = FindSelfHostedLocalNameToken(stream, returnIndex, postLocalEnd);
+        if (postLocalNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] postNameStart = stream.StartAt((u64[0 2 ** 63 - 1])postLocalNameToken);
+        stack u64[0 2 ** 63 - 1] postNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])postLocalNameToken);
+        if (ParamIndexOf(params, source, postNameStart, postNameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] postAssignToken = postLocalEnd;
+        if (!FindSelfHostedStatementAssign(stream, returnIndex, postLocalEnd, postAssignToken))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforePostLocal = params.Count();
+        stack ExprParseResult postLocalRoot = ParseExprIn(stream, source, nodes, params, funcNames, postAssignToken + 1);
+        if (postLocalRoot.Next != postLocalEnd || params.Count() != beforePostLocal)
+        {
+            return false;
+        }
+
+        if (ResolveParam(params, source, postNameStart, postNameLength) != (u32[0 max])expectedParamCount)
+        {
+            return false;
+        }
+
+        if (postLocalRoots.Add(postLocalRoot.NodeId) == 0)
+        {
+            return false;
+        }
+
+        returnIndex = postLocalEnd + 1;
+        expectedParamCount = expectedParamCount + 1;
+    }
+
+    stack mut bool hasTerminalIf = false;
+    stack mut ParsedIfReturnArms terminalIfArms = new();
+    stack mut ExprParseResult returnRoot = new();
+    if (returnIndex >= limit)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(returnIndex) == TokenKind.Return)
+    {
+        returnRoot = ParseExprIn(stream, source, nodes, params, funcNames, returnIndex + 1);
+        stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
+        if (stream.KindAt(afterReturn) == TokenKind.Semi)
+        {
+            afterReturn = afterReturn + 1;
+        }
+
+        if (stream.KindAt(afterReturn) != TokenKind.RBrace || params.Count() != expectedParamCount)
+        {
+            return false;
+        }
+    }
+    else if (stream.KindAt(returnIndex) == TokenKind.If)
+    {
+        hasTerminalIf = true;
+        if (!TryParseTerminalIfReturnArms(stream, source, nodes, params, funcNames, returnIndex, terminalIfArms)
+            || terminalIfArms.ThenBecome
+            || terminalIfArms.ElseBecome)
+        {
+            return false;
+        }
+
+        if (stream.KindAt(terminalIfArms.ElseArm.Next) != TokenKind.RBrace || params.Count() != expectedParamCount)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetTypeIndex = 0;
+    while willexit (targetTypeIndex < targetNameTokens.Count())
+    {
+        stack u32[0 max] initRootNode = targetInitRoots.Get((u32[0 max])(targetTypeIndex + 1));
+        stack ExprType initType = TypeOfNodeWithLocals(nodes, initRootNode, localTypes);
+        stack ExprType defaultType = TypeOfSwitchAssignmentArm(
+            nodes,
+            defaultArm,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            (u32[0 max])signatureParamCount,
+            (u32[0 max])targetTypeIndex);
+        stack mut bool allInt = initType == ExprType.IntType && defaultType == ExprType.IntType;
+        stack mut bool allBool = initType == ExprType.BoolType && defaultType == ExprType.BoolType;
+        stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
+        while willexit (typeIndex < caseValues.Count())
+        {
+            stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(typeIndex + 1));
+            stack ExprType caseType = TypeOfSwitchAssignmentArm(
+                nodes,
+                caseArm,
+                armLocalRoots,
+                assignedRoots,
+                assignedTargetOffsets,
+                localTypes,
+                (u32[0 max])signatureParamCount,
+                (u32[0 max])targetTypeIndex);
+            allInt = allInt && caseType == ExprType.IntType;
+            allBool = allBool && caseType == ExprType.BoolType;
+            typeIndex = typeIndex + 1;
+        }
+
+        if (!allInt && !allBool)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] localTypeCode = 0;
+        if (allBool)
+        {
+            localTypeCode = 1;
+        }
+
+        if (localTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalTypeIndex = 0;
+    while willexit (postLocalTypeIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalTypeIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] postLocalTypeCode = 0;
+        if (postLocalType == ExprType.BoolType)
+        {
+            postLocalTypeCode = 1;
+        }
+
+        if (localTypes.Add(postLocalTypeCode) == 0)
+        {
+            return false;
+        }
+
+        postLocalTypeIndex = postLocalTypeIndex + 1;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] initCallIndex = 0;
+    while willexit (initCallIndex < targetInitRoots.Count())
+    {
+        stack u32[0 max] initCallRoot = targetInitRoots.Get((u32[0 max])(initCallIndex + 1));
+        if (!ValidateModuleCallsForRoot(nodes, initCallRoot, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+        {
+            return false;
+        }
+
+        initCallIndex = initCallIndex + 1;
+    }
+
+    if (!ValidateModuleCallsForRoot(nodes, scrutinee.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts)
+        || !ValidateSwitchAssignmentArmModuleCalls(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, (u32[0 max])signatureParamCount, funcParamCounts, functionCallContractFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] callArmIndex = 0;
+    while willexit (callArmIndex < caseValues.Count())
+    {
+        stack ParsedSwitchAssignmentArm caseArmForCalls = caseArms.Get((u32[0 max])(callArmIndex + 1));
+        if (!ValidateSwitchAssignmentArmModuleCalls(nodes, caseArmForCalls, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, (u32[0 max])signatureParamCount, funcParamCounts, functionCallContractFacts, distinctStorageFacts))
+        {
+            return false;
+        }
+
+        callArmIndex = callArmIndex + 1;
+    }
+
+    postLocalTypeIndex = 0;
+    while willexit (postLocalTypeIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalCallRootNode = postLocalRoots.Get((u32[0 max])(postLocalTypeIndex + 1));
+        if (!ValidateModuleCallsForRoot(nodes, postLocalCallRootNode, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+        {
+            return false;
+        }
+
+        postLocalTypeIndex = postLocalTypeIndex + 1;
+    }
+
+    if (hasTerminalIf)
+    {
+        if (!ValidateModuleCallsForRoot(nodes, terminalIfArms.Condition.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts)
+            || !ValidateModuleCallsForRoot(nodes, terminalIfArms.ThenArm.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts)
+            || !ValidateModuleCallsForRoot(nodes, terminalIfArms.ElseArm.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+        {
+            return false;
+        }
+    }
+    else if (!ValidateModuleCallsForRoot(nodes, returnRoot.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    return LowerAssignedIntegerSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseArms,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        defaultArm,
+        (u32[0 max])targetNameTokens.Count(),
+        postLocalRoots,
+        hasTerminalIf,
+        terminalIfArms,
+        returnRoot.NodeId,
+        localTypes,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body);
+}
+
+internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyHasLocalPrefixedTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut IrTable<u32[0 max]> localRoots = new();
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    while willexit (cursor < limit && stream.KindAt(cursor) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, statementEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, statementEnd);
+        if (localNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+        if (ParamIndexOf(params, source, nameStart, nameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] assignToken = statementEnd;
+        if (!FindSelfHostedStatementAssign(stream, cursor, statementEnd, assignToken))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+        stack ExprParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
+        if (varExpr.Next != statementEnd || params.Count() != beforeInit)
+        {
+            return false;
+        }
+
+        stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
+        if (varType == ExprType.ErrorType || varType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+        stack u32[0 max] addedRoot = localRoots.Add(varExpr.NodeId);
+        if (varType == ExprType.BoolType)
+        {
+            stack u32[0 max] boolSlot = localTypes.Add(1);
+        }
+        else
+        {
+            stack u32[0 max] intSlot = localTypes.Add(0);
+        }
+
+        cursor = statementEnd + 1;
+    }
+
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalIntegerSwitchReturnCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        cursor,
+        scrutinee,
+        caseValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount + localRoots.Count())
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] p = 0;
+    while willexit (p < signatureParamCount)
+    {
+        stack u32[0 max] zero = localOverrides.Add(0);
+        p = p + 1;
+    }
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack u64[0 2 ** 63 - 1] localCount = localRoots.Count();
+    stack mut u64[0 2 ** 63 - 1] v = 0;
+    while willexit (v < localCount)
+    {
+        stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(v + 1));
+        stack MirValueId varValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+        stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
+        v = v + 1;
+    }
+
+    return LowerTerminalIntegerSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        localOverrides,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body);
 }
 
 internal fn bool LowerModuleReturnedLocalIfExpressionFunctionToBlocks(
@@ -23819,6 +26991,327 @@ internal fn bool EmitModuleReturnIfExpressionFunction(
     }
 }
 
+internal fn bool EmitModuleTerminalIntegerSwitchFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+        stream,
+        source,
+        funcNames,
+        funcParamCounts,
+        functionCallContractFacts,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+internal fn bool EmitModuleLocalSwitchStatementFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleLocalSwitchStatementFunctionToBlocks(
+        stream,
+        source,
+        funcNames,
+        funcParamCounts,
+        functionCallContractFacts,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+internal fn bool EmitModuleLocalTerminalIntegerSwitchFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionLinkageFacts> functionLinkageFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack mut LoweredBody body = new();
+    if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
+        stream,
+        source,
+        funcNames,
+        funcParamCounts,
+        functionCallContractFacts,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        true,
+        body))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateBlockReturnRangeFacts(returnFacts, blocks, valueFacts))
+    {
+        return false;
+    }
+
+    stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
+
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        functionLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        functionEffects,
+        body.ParamCount,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
 internal fn bool EmitModuleReturnedLocalIfExpressionFunction(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -25141,6 +28634,66 @@ internal fn bool EmitModuleFunctionAst(
             sink);
     }
 
+    if (FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return EmitModuleTerminalIntegerSwitchFunction(
+            stream,
+            source,
+            funcNames,
+            funcParamCounts,
+            functionCallContractFacts,
+            functionLinkageFacts,
+            functionCallingConventionFacts,
+            funcTailFlags,
+            functionReturnFacts,
+            rangeMetadata,
+            functionEffectFacts,
+            isTailCallable,
+            fnIndex,
+            functionNumber,
+            sink);
+    }
+
+    if (FunctionBodyStartsWithLocalSwitchStatementAssignment(stream, source, funcNames, fnIndex))
+    {
+        return EmitModuleLocalSwitchStatementFunction(
+            stream,
+            source,
+            funcNames,
+            funcParamCounts,
+            functionCallContractFacts,
+            functionLinkageFacts,
+            functionCallingConventionFacts,
+            funcTailFlags,
+            functionReturnFacts,
+            rangeMetadata,
+            functionEffectFacts,
+            isTailCallable,
+            fnIndex,
+            functionNumber,
+            sink);
+    }
+
+    if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, fnIndex))
+    {
+        return EmitModuleLocalTerminalIntegerSwitchFunction(
+            stream,
+            source,
+            funcNames,
+            funcParamCounts,
+            functionCallContractFacts,
+            functionLinkageFacts,
+            functionCallingConventionFacts,
+            funcTailFlags,
+            functionReturnFacts,
+            rangeMetadata,
+            functionEffectFacts,
+            isTailCallable,
+            fnIndex,
+            functionNumber,
+            sink);
+    }
+
     if (FunctionBodyHasLocalPrefixedTerminalIf(stream, fnIndex))
     {
         return EmitModuleLocalIfReturnFunction(
@@ -25728,6 +29281,63 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                     if (!LowerModuleCountingForLoopFunctionToBlocks(
                         stream,
                         source,
+                        f,
+                        instrs,
+                        blocks,
+                        noRanges,
+                        false,
+                        body))
+                    {
+                        return false;
+                    }
+                }
+                else if (FunctionBodyStartsWithTerminalSwitch(stream, f))
+                {
+                    stack mut IrTable<BlockEmit> noRanges = new();
+                    if (!LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+                        stream,
+                        source,
+                        funcNames,
+                        funcParamCounts,
+                        functionCallContractFacts,
+                        f,
+                        instrs,
+                        blocks,
+                        noRanges,
+                        false,
+                        body))
+                    {
+                        return false;
+                    }
+                }
+                else if (FunctionBodyStartsWithLocalSwitchStatementAssignment(stream, source, funcNames, f))
+                {
+                    stack mut IrTable<BlockEmit> noRanges = new();
+                    if (!LowerModuleLocalSwitchStatementFunctionToBlocks(
+                        stream,
+                        source,
+                        funcNames,
+                        funcParamCounts,
+                        functionCallContractFacts,
+                        f,
+                        instrs,
+                        blocks,
+                        noRanges,
+                        false,
+                        body))
+                    {
+                        return false;
+                    }
+                }
+                else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, f))
+                {
+                    stack mut IrTable<BlockEmit> noRanges = new();
+                    if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
+                        stream,
+                        source,
+                        funcNames,
+                        funcParamCounts,
+                        functionCallContractFacts,
                         f,
                         instrs,
                         blocks,
