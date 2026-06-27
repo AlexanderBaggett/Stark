@@ -11,6 +11,70 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-27 Selfhost Switch Arbitrary-Order Scalar Assignment Targets
+
+- Non-terminal switch assignment arms now accept braced scalar target
+  assignments in any source order while still requiring every target exactly
+  once per arm.
+- Assigned RHS roots are stored and lowered in source order, and a parallel
+  target-offset table projects the already-lowered values back into declaration
+  order for MIR phi construction.
+- Integer and boolean target facts continue through typed phis, LLVM range
+  attributes, `i1` payloads, and final `zext` returns.
+- Narrow verification:
+  `../../stark test --filter CompilesLocalSwitchStatementArbitraryOrderMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementArbitraryOrderMixedScalarAssignmentsThenTerminalIfFromAst --filter PackageTablesPreserveLocalSwitchStatementArbitraryOrderMultipleScalarAssignments`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesLocalSwitchStatementMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementArbitraryOrderMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementMixedScalarAssignmentsThenTerminalIfFromAst --filter CompilesLocalSwitchStatementArbitraryOrderMixedScalarAssignmentsThenTerminalIfFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn --filter PackageTablesPreserveLocalSwitchStatementAssignmentArmLocals --filter PackageTablesPreserveLocalSwitchStatementMultipleScalarAssignments --filter PackageTablesPreserveLocalSwitchStatementArbitraryOrderMultipleScalarAssignments --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+- Terminal-switch dispatcher smoke:
+  `../../stark test --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Switch Multi-Statement Assignment Arms
+
+- Non-terminal switch assignment arms now accept braced arm-local scalar
+  declarations before the final assignment to the switch target.
+- Arm-local names are scoped per arm and lower through arm-specific type and
+  SSA override tables, preserving integer and boolean facts through MIR phis and
+  LLVM returns.
+- Statement-end scanning now allows comparison operators such as `<` in local
+  initializers while still respecting parentheses and brackets.
+- Narrow verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter PackageTablesPreserveLocalSwitchStatementAssignmentArmLocals`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn --filter PackageTablesPreserveLocalSwitchStatementAssignmentArmLocals --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+- Terminal-switch smoke verification:
+  `../../stark test --filter CompilesMultiCaseTerminalIntegerSwitchFromAst --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Switch Multiple Scalar Assignment Targets
+
+- Non-terminal switch assignment lowering now accepts multiple pre-switch scalar
+  target locals and braced arms that assign those targets in declaration order.
+- Each target lowers through its own nested phi chain, so integer and boolean
+  target facts remain independent through post-switch returns and terminal
+  `if` branches.
+- The dispatcher probe now recognizes multi-target switch-assignment bodies
+  without stealing local-prefixed terminal switch bodies.
+- Narrow verification:
+  `../../stark test --filter CompilesLocalSwitchStatementMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementMixedScalarAssignmentsThenTerminalIfFromAst --filter PackageTablesPreserveLocalSwitchStatementMultipleScalarAssignments`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst --filter CompilesLocalSwitchStatementMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementMixedScalarAssignmentsThenTerminalIfFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn --filter PackageTablesPreserveLocalSwitchStatementAssignmentArmLocals --filter PackageTablesPreserveLocalSwitchStatementMultipleScalarAssignments --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+- Terminal-switch dispatcher smoke verification:
+  `../../stark test --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
 ## Baseline Snapshot
 
 Porting is effectively done (2638/2638). The remaining test work is making the
@@ -77,6 +141,99 @@ selfhost.Ir, selfhost.Binding, selfhost.Parsing, selfhost.Lexing,
 selfhost.Typing, stdlib.Text, stdlib.Toml, stdlib.Testing, stdlib.IO.Path,
 stdlib.FileSystem, stdlib.Collections.Arena, stdlib.Collections.Slice,
 stdlib.Json.
+
+---
+
+## 2026-06-27 Selfhost Switch Post-Local Terminal-If Successor Lowering
+
+- Non-terminal integer switch assignment lowering now supports scalar
+  post-switch locals followed by a terminal `if` with returning arms.
+- The first switch merge block can now become a conditional branch to appended
+  tail return blocks while preserving the switch-assigned phi and successor
+  local override table.
+- Integer and boolean facts continue through the tail branch, including LLVM
+  range attributes, `i1` phi payloads, `br i1`, and final boolean `zext`
+  returns.
+- Narrow verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Switch Multiple Post-Local Successor Lowering
+
+- Non-terminal integer switch assignment lowering now supports multiple scalar
+  local initializers after the switch and before the final return.
+- Successor locals lower in declaration order through the explicit local
+  override table, so later successor locals can use earlier successor locals and
+  the final return can still use the switch-assigned phi.
+- Integer and boolean facts continue through the path, including LLVM range
+  attributes, `i1` switch phis, and final boolean `zext` returns.
+- Narrow verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Switch Post-Local Successor Lowering
+
+- Non-terminal integer switch assignment lowering now supports one scalar local
+  initializer after the switch and before the final return.
+- The post-switch local initializer lowers in the first merge block from the
+  switch-assigned phi, preserving integer and boolean facts through LLVM range
+  attributes and `i1` phi payloads.
+- Narrow verification:
+  `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal`
+  in `tests-stark/selfhost.Ir` passed.
+- Adjacent switch-assignment verification:
+  `../../stark test --filter CompilesMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Switch Assignment Merge Lowering
+
+- Integer switch assignment arms now lower to MIR comparison-chain control flow
+  with nested two-input merge phis, so one-or-more cases can continue to a
+  post-switch return expression without inventing an illegal N-way phi.
+- Boolean switch assignment arms keep `i1` phi payloads through MIR and only
+  `zext` at the scalar return boundary, preserving LLVM range facts.
+- Narrow verification:
+  `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesSignedCaseTerminalIntegerSwitchFromAst --filter CompilesBracedArmTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedBooleanTerminalIntegerSwitchFromAst --filter CompilesMultiCaseTerminalIntegerSwitchFromAst --filter CompilesSingleCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst --filter LocalSwitchStatementAssignmentRejectsUnsupportedShapes --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveSignedCaseTerminalIntegerSwitch --filter PackageTablesPreserveBracedArmTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedBooleanTerminalIntegerSwitch --filter PackageTablesPreserveMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveSingleCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseBooleanTerminalIntegerSwitch --filter PackageTablesPreserveBooleanTerminalIntegerSwitch --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Direct LLVM Switch Emission
+
+- Three-or-more terminal integer-switch comparison chains now emit LLVM `switch`
+  terminators for literal cases, skipping the old compare blocks in emitted
+  LLVM while keeping the existing MIR/package-table shape.
+- The direct switch path is shared by no-fact block emission and range-fact
+  module emission, so return ranges, parameter facts, ABI facts, and call/effect
+  attributes continue through the same lowering path.
+- Narrow verification:
+  `../../stark test --filter EmitsLlvmDirectSwitchForDenseComparisonChain --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesSignedCaseTerminalIntegerSwitchFromAst --filter CompilesBracedArmTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedBooleanTerminalIntegerSwitchFromAst --filter CompilesMultiCaseTerminalIntegerSwitchFromAst --filter CompilesSingleCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveSignedCaseTerminalIntegerSwitch --filter PackageTablesPreserveBracedArmTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedBooleanTerminalIntegerSwitch --filter PackageTablesPreserveMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveSingleCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseBooleanTerminalIntegerSwitch --filter PackageTablesPreserveBooleanTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-27 Selfhost Multi-Case Terminal Switch Lowering
+
+- Terminal integer switch parsing now accepts one or more literal cases plus a
+  default and rejects duplicate literal labels across the whole case list.
+- Terminal switch MIR lowering now uses one shared comparison-chain builder for
+  direct, local-prefixed, boolean-valued, single-case, and multi-case return
+  arms while preserving local SSA overrides and explicit boolean `zext` returns.
+- Narrow verification:
+  `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesSignedCaseTerminalIntegerSwitchFromAst --filter CompilesBracedArmTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedBooleanTerminalIntegerSwitchFromAst --filter CompilesMultiCaseTerminalIntegerSwitchFromAst --filter CompilesSingleCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveSignedCaseTerminalIntegerSwitch --filter PackageTablesPreserveBracedArmTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedBooleanTerminalIntegerSwitch --filter PackageTablesPreserveMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveSingleCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedMultiCaseBooleanTerminalIntegerSwitch --filter PackageTablesPreserveBooleanTerminalIntegerSwitch`
+  in `tests-stark/selfhost.Ir` passed.
 
 ---
 
@@ -1702,5 +1859,71 @@ comments explaining which platform is required.
   - `../../stark test --filter BinaryRoundTripsIndependentLoopBackedgeFlag --filter CompilesModuleIndependentCountingForLoopFromAst --filter CompilesModuleIndependentHeaderCountingForLoopFromAst --filter PackageTablesPreserveIndependentCountingForLoop --filter PackageTablesPreserveIndependentHeaderCountingForLoop`
     in `tests-stark/selfhost.Ir`: passed.
   - `../../stark test --filter BinaryRoundTripsBlocks --filter CompilesModuleCountingForLoopFromAst --filter ModuleCountingForLoopRejectsUnsupportedShapes --filter CompilesModuleHeaderCountingForLoopFromAst --filter ModuleHeaderCountingForLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingForLoop --filter PackageTablesPreserveHeaderCountingForLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BinaryRoundTripsPackageImage --filter PackageImageWithAsmRoundTripsMetadata --filter ModulePackageImageWithAsmBuilderRoundTrips --filter PackageImageRoundTripsThroughFile --filter PackageImageWithAsmRoundTripsThroughFile --filter SectionedPackageImageWithAsmRoundTripsMetadata`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Terminal Integer Switch Slice
+
+- Lowered terminal integer source `switch` bodies with two literal `case`
+  labels and a `default` into MIR conditional blocks.
+- Routed the switch shape through effect prepass, final LLVM emission, and
+  package-table construction.
+- Preserved single scrutinee evaluation, return range validation, branch target
+  wiring, and `icmp eq` comparison facts through emitted LLVM.
+- Narrow verification:
+  - `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter PackageTablesPreserveTerminalIntegerSwitch`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesModuleCountingForLoopFromAst --filter CompilesBracedTerminalIfFromAst --filter PackageTablesPreserveBracedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesRecursiveFunctionFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+- Observed `../../stark test --filter CompilesRecursiveFunctionFromAst --filter CompilesBracedTerminalIfFromAst`
+  pass the recursive test and then exit 139 before the next selected test; both
+  tests pass when run independently, so this was not counted as a switch
+  lowering failure.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Terminal Integer Switch Slice
+
+- Lowered boolean-valued terminal integer switch arms through typed MIR values
+  and explicit `zext` return values.
+- Preserved return range facts through the switch return blocks so LLVM emits
+  the declared `i64[0 1]` range correctly.
+- Kept mixed integer/boolean switch return arms rejected rather than widening
+  them silently.
+- Narrow verification:
+  - `../../stark test --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveBooleanTerminalIntegerSwitch --filter TerminalIntegerSwitchRejectsUnsupportedShapes`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter PackageTablesPreserveTerminalIntegerSwitch --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveBooleanTerminalIntegerSwitch`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Signed Terminal Switch Case Slice
+
+- Lowered signed integer `case` labels in terminal integer switches without
+  changing the one-scrutinee, direct `icmp eq`, or five-block MIR shape.
+- Preserved the signed case immediate through package-table construction so the
+  compare operand remains a `ConstInt(-1)` fact.
+- Narrow verification:
+  - `../../stark test --filter CompilesSignedCaseTerminalIntegerSwitchFromAst --filter PackageTablesPreserveSignedCaseTerminalIntegerSwitch --filter TerminalIntegerSwitchRejectsUnsupportedShapes`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-27 Selfhost Braced And Local Terminal Switch Slice
+
+- Lowered braced `return` arms in terminal integer switches through the existing
+  terminal switch MIR shape.
+- Lowered scalar `var`-prefixed terminal integer switches by evaluating local
+  initializers once and feeding the switch through SSA local overrides.
+- Preserved boolean-valued local-prefixed switch arms as explicit `zext` return
+  values so LLVM receives the declared `i64[0 1]` range.
+- Routed the local-prefixed switch shape through effect prepass, final LLVM
+  emission, and package-table construction.
+- Narrow verification:
+  - `../../stark test --filter CompilesBracedArmTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedTerminalIntegerSwitchFromAst --filter CompilesLocalPrefixedBooleanTerminalIntegerSwitchFromAst --filter PackageTablesPreserveBracedArmTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedTerminalIntegerSwitch --filter PackageTablesPreserveLocalPrefixedBooleanTerminalIntegerSwitch`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesSignedCaseTerminalIntegerSwitchFromAst --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveSignedCaseTerminalIntegerSwitch --filter PackageTablesPreserveBooleanTerminalIntegerSwitch`
     in `tests-stark/selfhost.Ir`: passed.
 - No broad test sweep was run.

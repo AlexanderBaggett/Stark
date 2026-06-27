@@ -4738,6 +4738,50 @@ fn bool EmitsLlvmNestedIfElseChain()
 }
 
 [Fact]
+fn bool EmitsLlvmDirectSwitchForDenseComparisonChain()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    stack MirValueId zero = MirConstInt(instrs, 0);
+    stack MirValueId cond0 = MirCmpEq(instrs, x, zero);
+    stack MirValueId one = MirConstInt(instrs, 1);
+    stack MirValueId cond1 = MirCmpEq(instrs, x, one);
+    stack MirValueId two = MirConstInt(instrs, 2);
+    stack MirValueId cond2 = MirCmpEq(instrs, x, two);
+    stack MirValueId v10 = MirConstInt(instrs, 10);
+    stack MirValueId v20 = MirConstInt(instrs, 20);
+    stack MirValueId v30 = MirConstInt(instrs, 30);
+    stack MirValueId v40 = MirConstInt(instrs, 40);
+
+    stack MirBlockId entry = MirCondBlock(blocks, cond0, MirBlockIdOf(4), MirBlockIdOf(2));
+    stack MirBlockId second = MirCondBlock(blocks, cond1, MirBlockIdOf(5), MirBlockIdOf(3));
+    stack MirBlockId third = MirCondBlock(blocks, cond2, MirBlockIdOf(6), MirBlockIdOf(7));
+    stack MirBlockId case0 = MirReturnBlock(blocks, v10);
+    stack MirBlockId case1 = MirReturnBlock(blocks, v20);
+    stack MirBlockId case2 = MirReturnBlock(blocks, v30);
+    stack MirBlockId fallback = MirReturnBlock(blocks, v40);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 3));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(second.Index(), 4, 2));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(third.Index(), 6, 2));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(case0.Index(), 8, 1));
+    stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(case1.Index(), 9, 1));
+    stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(case2.Index(), 10, 1));
+    stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(fallback.Index(), 11, 1));
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmBlocks(instrs, blocks, "classify", 1, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @classify(i64 %p0) {\nb1:\n  switch i64 %p0, label %b7 [\n    i64 0, label %b4\n    i64 1, label %b5\n    i64 2, label %b6\n  ]\nb4:\n  %v8 = add i64 0, 10\n  ret i64 %v8\nb5:\n  %v9 = add i64 0, 20\n  ret i64 %v9\nb6:\n  %v10 = add i64 0, 30\n  ret i64 %v10\nb7:\n  %v11 = add i64 0, 40\n  ret i64 %v11\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool LowersCountingLoopSourceToLlvm()
 {
     // Source -> loop CFG: `var i = 0; while i < 10 { i = i + 1 } return i` lexes and
@@ -5853,6 +5897,399 @@ fn bool CompilesBracedTerminalIfFromAst()
 }
 
 [Fact]
+fn bool CompilesTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 30] classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 31) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && System.Text.Contains(s.View(), "label %b3, label %b2")
+        && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && System.Text.Contains(s.View(), "ret i64")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[10 29] classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesSignedCaseTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 30] classify(i64[min max] x) { switch (x) { case -1: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(-1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 31) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i64 0, -1")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && System.Text.Contains(s.View(), "label %b3, label %b2")
+        && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesBracedArmTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 30] classify(i64[min max] x) { switch (x) { case 0: { return 10; } case 1: { return 20; } default: { return 30; } } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 31) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && System.Text.Contains(s.View(), "label %b3, label %b2")
+        && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 30] classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return 10; case 3: return 20; default: return 30; } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 31) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i64 %p0")
+        && System.Text.Contains(s.View(), "icmp eq i64 %v")
+        && System.Text.Contains(s.View(), "label %b3, label %b2")
+        && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedBooleanTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return y == 2; case 3: return x == 0; default: return y < 0; } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i64 %p0")
+        && System.Text.Contains(s.View(), "icmp eq i64 %v")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesMultiCaseTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 40] classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; case 2: return 30; default: return 40; } } fn main() { return classify(2) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0, label %b7 [")
+        && System.Text.Contains(s.View(), "i64 0, label %b4")
+        && System.Text.Contains(s.View(), "i64 1, label %b5")
+        && System.Text.Contains(s.View(), "i64 2, label %b6")
+        && !System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesSingleCaseTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 20] classify(i64[min max] x) { switch (x) { case 0: return 10; default: return 20; } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 21) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 40] classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return 10; case 3: return 20; case 4: return 30; default: return 40; } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i64 %p0")
+        && System.Text.Contains(s.View(), "switch i64 %v")
+        && System.Text.Contains(s.View(), "i64 2, label %b4")
+        && System.Text.Contains(s.View(), "i64 3, label %b5")
+        && System.Text.Contains(s.View(), "i64 4, label %b6")
+        && !System.Text.Contains(s.View(), "icmp eq i64 %v")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return y == 2; case 3: return x == 0; case 4: return y < 10; default: return y < 0; } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i64 %p0")
+        && System.Text.Contains(s.View(), "switch i64 %v")
+        && System.Text.Contains(s.View(), "i64 2, label %b4")
+        && System.Text.Contains(s.View(), "i64 3, label %b5")
+        && System.Text.Contains(s.View(), "i64 4, label %b6")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool TerminalIntegerSwitchRejectsUnsupportedShapes()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAst("fn classify(x) { switch (x < 1) { case 0: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { switch (x) { case 0: return 10; case 0: return 20; default: return 30; } } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { switch (x) { case -1: return 10; case -1: return 20; default: return 30; } } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { switch (x) { case 0: return 10; case 1: return 20; case 0: return 30; default: return 40; } } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { switch (x) { case 0: return 10; case 1: return 20; } } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { switch (x) { case x: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { switch (x) { case 0: return x < 1; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", s)
+        && CompileModuleFromAst("fn classify(x) { switch (x) { case 0: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", s);
+}
+
+[Fact]
+fn bool CompilesBooleanTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { switch (x) { case 0: return x == 0; case 1: return x < 0; default: return x == 2; } } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && System.Text.Contains(s.View(), "zext i1")
+        && System.Text.Contains(s.View(), "label %b3, label %b2")
+        && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { switch (x) { case 0: return x == 0; case 1: return x < 0; default: return x == 2; } } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[5 41] classify(i64[min max] x) { var y = 0; switch (x) { case 0: { y = 4; } case 1: { y = 10; } case 2: { y = 40; } default: { y = 20; } } return y + 1 } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 42) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "add")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[5 40] classify(i64[min max] x) { var y = 0; switch (x) { case 0: { y = 4; } case 1: { y = 10; } case 2: { y = 40; } default: { y = 20; } } return y + 1 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanLocalSwitchStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } return y == (x == 0) } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } return y == (x == 0) } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[9 23] classify(i64[min max] x) { var y = 0; switch (x) { case 0: { var a = 4; var b = a * 2; y = b; } case 1: { var c = 10; y = c + 1; } case 2: { var f = 12; var g = f + 3; y = g; } default: { var d = 20; var e = d + 2; y = e; } } return y + 1 } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 9, 24) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "mul")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[9 22] classify(i64[min max] x) { var y = 0; switch (x) { case 0: { var a = 4; var b = a * 2; y = b; } case 1: { var c = 10; y = c + 1; } case 2: { var f = 12; var g = f + 3; y = g; } default: { var d = 20; var e = d + 2; y = e; } } return y + 1 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanLocalSwitchStatementAssignmentArmLocalsThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: { var a = x == 0; var b = a == (x == 0); y = b; } case 1: { var c = x < 0; y = c == (x == 1); } default: { var d = x == 2; y = d; } } return y } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: { var a = x == 0; var b = a == (x == 0); y = b; } case 1: { var c = x < 0; y = c == (x == 1); } default: { var d = x == 2; y = d; } } return y } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementMultipleScalarAssignmentsThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[9 51] classify(i64[min max] x) { var y = 0; var z = 0; switch (x) { case 0: { y = 4; z = 5; } case 1: { y = 10; z = 11; } case 2: { y = 20; z = 21; } default: { y = 25; z = 26; } } return y + z } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 9, 52) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[9 50] classify(i64[min max] x) { var y = 0; var z = 0; switch (x) { case 0: { y = 4; z = 5; } case 1: { y = 10; z = 11; } case 2: { y = 20; z = 21; } default: { y = 25; z = 26; } } return y + z } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementArbitraryOrderMultipleScalarAssignmentsThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[9 51] classify(i64[min max] x) { var y = 0; var z = 0; switch (x) { case 0: { z = 5; y = 4; } case 1: { y = 10; z = 11; } case 2: { z = 21; y = 20; } default: { z = 26; y = 25; } } return y + z } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 9, 52) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[9 50] classify(i64[min max] x) { var y = 0; var z = 0; switch (x) { case 0: { z = 5; y = 4; } case 1: { y = 10; z = 11; } case 2: { z = 21; y = 20; } default: { z = 26; y = 25; } } return y + z } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementMixedScalarAssignmentsThenTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[5 42] classify(i64[min max] x) { var y = 0; var flag = 0 == 0; switch (x) { case 0: { y = 4; flag = x == 0; } case 1: { y = 10; flag = x < 0; } case 2: { y = 40; flag = x == 2; } default: { y = 20; flag = x == 3; } } if flag return y + 1 else return y + 2 } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 43) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[5 41] classify(i64[min max] x) { var y = 0; var flag = 0 == 0; switch (x) { case 0: { y = 4; flag = x == 0; } case 1: { y = 10; flag = x < 0; } case 2: { y = 40; flag = x == 2; } default: { y = 20; flag = x == 3; } } if flag return y + 1 else return y + 2 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementArbitraryOrderMixedScalarAssignmentsThenTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[5 42] classify(i64[min max] x) { var y = 0; var flag = 0 == 0; switch (x) { case 0: { flag = x == 0; y = 4; } case 1: { y = 10; flag = x < 0; } case 2: { flag = x == 2; y = 40; } default: { flag = x == 3; y = 20; } } if flag return y + 1 else return y + 2 } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 43) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[5 41] classify(i64[min max] x) { var y = 0; var flag = 0 == 0; switch (x) { case 0: { flag = x == 0; y = 4; } case 1: { y = 10; flag = x < 0; } case 2: { flag = x == 2; y = 40; } default: { flag = x == 3; y = 20; } } if flag return y + 1 else return y + 2 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementAssignmentThenPostLocalFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 82] classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; return z * 2 } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 83) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "mul")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[10 81] classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; return z * 2 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } var z = y == (x == 0); return z } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } var z = y == (x == 0); return z } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[14 122] classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; var w = z * 2; return w + y } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 14, 123) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "mul")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[14 121] classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; var w = z * 2; return w + y } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanLocalSwitchStatementAssignmentThenMultiplePostLocalsFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } var z = y == (x == 0); var w = z == y; return w } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } var z = y == (x == 0); var w = z == y; return w } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[5 81] classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; if z < 15 return z else return z + y } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 82) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "switch i64 %p0")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "icmp slt i64")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[5 80] classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; if z < 15 return z else return z + y } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanLocalSwitchStatementAssignmentThenPostLocalTerminalIfFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } var z = y == (x == 0); if z return y else return x == 2 } fn main() { return classify(1) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] classify(i64[min max] x) { var y = 0 == 0; switch (x) { case 0: y = x == 0; case 1: y = x < 0; default: y = x == 2; } var z = y == (x == 0); if z return y else return x == 2 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool LocalSwitchStatementAssignmentRejectsUnsupportedShapes()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; case 0: y = 10; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: z = 4; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = x == 0; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = y + 1; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; default: y = 20; } var z = y + 1; } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; default: y = 20; } var z = y + 1; var z = y + 2; return z } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; default: y = 20; } var z = w + 1; var w = y + 2; return z } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: { var a = b + 1; y = a; } default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: { var a = 1; } default: y = 20; } return y + 1 } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; var z = 0; switch (x) { case 0: { y = 4; } default: { y = 20; z = 21; } } return y + z } fn main() { return classify(1) }", s)
+        && !CompileModuleFromAst("fn classify(x) { var y = 0; var z = 0; switch (x) { case 0: { y = 4; y = 5; } default: { y = 20; z = 21; } } return y + z } fn main() { return classify(1) }", s)
+        && CompileModuleFromAst("fn classify(x) { var y = 0; switch (x) { case 0: y = 4; default: y = 20; } return y + 1 } fn main() { return classify(1) }", s);
+}
+
+[Fact]
 fn bool CompilesLocalPrefixedBracedBooleanTerminalIfFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -6585,6 +7022,637 @@ fn bool PackageTablesPreserveBracedTerminalIf()
         && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
         && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
         && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; default: return 30; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId secondCondition = MirBlockCondValue(blocks, MirBlockIdOf(2));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 5
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 5
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 8
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Return
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(3)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondThen(blocks, MirBlockIdOf(2)) == MirBlockIdOf(4)
+        && MirBlockCondElse(blocks, MirBlockIdOf(2)) == MirBlockIdOf(5)
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, secondCondition) == MirOp.CmpEq;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSignedCaseTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { switch (x) { case -1: return 10; case 1: return 20; default: return 30; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId firstCaseConstant = MirOperandBOf(instrs, firstCondition);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 5
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 5
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, firstCaseConstant) == MirOp.ConstInt
+        && MirImmediateOf(instrs, firstCaseConstant) == -1;
+}
+
+[Fact]
+fn bool PackageTablesPreserveBracedArmTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { switch (x) { case 0: { return 10; } case 1: { return 20; } default: { return 30; } } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 5
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 5
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalPrefixedTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return 10; case 3: return 20; default: return 30; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId scrutinee = MirOperandAOf(instrs, firstCondition);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 5
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 5
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 10
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, scrutinee) == MirOp.Add;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalPrefixedBooleanTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return y == 2; case 3: return x == 0; default: return y < 0; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId case0Return = MirBlockReturnValue(blocks, MirBlockIdOf(3));
+    stack MirValueId case1Return = MirBlockReturnValue(blocks, MirBlockIdOf(4));
+    stack MirValueId defaultReturn = MirBlockReturnValue(blocks, MirBlockIdOf(5));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 5
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 5
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirOpcodeOf(instrs, case0Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, case1Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, defaultReturn) == MirOp.ZExt
+        && MirValueType(instrs, case0Return.Index()) == MirType.I64
+        && MirValueType(instrs, case1Return.Index()) == MirType.I64
+        && MirValueType(instrs, defaultReturn.Index()) == MirType.I64;
+}
+
+[Fact]
+fn bool PackageTablesPreserveMultiCaseTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; case 2: return 30; default: return 40; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId secondCondition = MirBlockCondValue(blocks, MirBlockIdOf(2));
+    stack MirValueId thirdCondition = MirBlockCondValue(blocks, MirBlockIdOf(3));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 7
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 7
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 11
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Return
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(4)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondThen(blocks, MirBlockIdOf(2)) == MirBlockIdOf(5)
+        && MirBlockCondElse(blocks, MirBlockIdOf(2)) == MirBlockIdOf(3)
+        && MirBlockCondThen(blocks, MirBlockIdOf(3)) == MirBlockIdOf(6)
+        && MirBlockCondElse(blocks, MirBlockIdOf(3)) == MirBlockIdOf(7)
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, secondCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, thirdCondition) == MirOp.CmpEq;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSingleCaseTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { switch (x) { case 0: return 10; default: return 20; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 5
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(3)
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalPrefixedMultiCaseTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return 10; case 3: return 20; case 4: return 30; default: return 40; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId scrutinee = MirOperandAOf(instrs, firstCondition);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 7
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 7
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 13
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(4)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondThen(blocks, MirBlockIdOf(2)) == MirBlockIdOf(5)
+        && MirBlockCondElse(blocks, MirBlockIdOf(2)) == MirBlockIdOf(3)
+        && MirBlockCondThen(blocks, MirBlockIdOf(3)) == MirBlockIdOf(6)
+        && MirBlockCondElse(blocks, MirBlockIdOf(3)) == MirBlockIdOf(7)
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, scrutinee) == MirOp.Add;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalPrefixedMultiCaseBooleanTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return y == 2; case 3: return x == 0; case 4: return y < 10; default: return y < 0; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId firstCondition = MirBlockCondValue(blocks, MirBlockIdOf(1));
+    stack MirValueId scrutinee = MirOperandAOf(instrs, firstCondition);
+    stack MirValueId case0Return = MirBlockReturnValue(blocks, MirBlockIdOf(4));
+    stack MirValueId case1Return = MirBlockReturnValue(blocks, MirBlockIdOf(5));
+    stack MirValueId case2Return = MirBlockReturnValue(blocks, MirBlockIdOf(6));
+    stack MirValueId defaultReturn = MirBlockReturnValue(blocks, MirBlockIdOf(7));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 7
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 7
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 18
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(4)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondThen(blocks, MirBlockIdOf(2)) == MirBlockIdOf(5)
+        && MirBlockCondElse(blocks, MirBlockIdOf(2)) == MirBlockIdOf(3)
+        && MirBlockCondThen(blocks, MirBlockIdOf(3)) == MirBlockIdOf(6)
+        && MirBlockCondElse(blocks, MirBlockIdOf(3)) == MirBlockIdOf(7)
+        && MirOpcodeOf(instrs, firstCondition) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, scrutinee) == MirOp.Add
+        && MirOpcodeOf(instrs, case0Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, case1Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, case2Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, defaultReturn) == MirOp.ZExt
+        && MirValueType(instrs, case0Return.Index()) == MirType.I64
+        && MirValueType(instrs, case1Return.Index()) == MirType.I64
+        && MirValueType(instrs, case2Return.Index()) == MirType.I64
+        && MirValueType(instrs, defaultReturn.Index()) == MirType.I64;
+}
+
+[Fact]
+fn bool PackageTablesPreserveBooleanTerminalIntegerSwitch()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { switch (x) { case 0: return x == 0; case 1: return x < 0; default: return x == 2; } }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId case0Return = MirBlockReturnValue(blocks, MirBlockIdOf(3));
+    stack MirValueId case1Return = MirBlockReturnValue(blocks, MirBlockIdOf(4));
+    stack MirValueId defaultReturn = MirBlockReturnValue(blocks, MirBlockIdOf(5));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 5
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 5
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 14
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Return
+        && MirOpcodeOf(instrs, case0Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, case1Return) == MirOp.ZExt
+        && MirOpcodeOf(instrs, defaultReturn) == MirOp.ZExt
+        && MirValueType(instrs, case0Return.Index()) == MirType.I64
+        && MirValueType(instrs, case1Return.Index()) == MirType.I64
+        && MirValueType(instrs, defaultReturn.Index()) == MirType.I64;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(8));
+    stack MirValueId finalPhi = MirOperandAOf(instrs, returned);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 15
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockCondThen(blocks, MirBlockIdOf(1)) == MirBlockIdOf(4)
+        && MirBlockCondElse(blocks, MirBlockIdOf(1)) == MirBlockIdOf(2)
+        && MirBlockCondThen(blocks, MirBlockIdOf(2)) == MirBlockIdOf(5)
+        && MirBlockCondElse(blocks, MirBlockIdOf(2)) == MirBlockIdOf(3)
+        && MirBlockCondThen(blocks, MirBlockIdOf(3)) == MirBlockIdOf(6)
+        && MirBlockCondElse(blocks, MirBlockIdOf(3)) == MirBlockIdOf(7)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(4)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(5)) == MirBlockIdOf(9)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(6)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(7)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(9)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(10)) == MirBlockIdOf(9)
+        && MirOpcodeOf(instrs, finalPhi) == MirOp.Phi
+        && MirPhiIncomingBlock0(instrs, finalPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, finalPhi) == MirBlockIdOf(9);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementAssignmentArmLocals()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; switch (x) { case 0: { var a = 4; var b = a * 2; y = b; } case 1: { var c = 10; y = c + 1; } case 2: { var f = 12; var g = f + 3; y = g; } default: { var d = 20; var e = d + 2; y = e; } } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(8));
+    stack MirValueId finalPhi = MirOperandAOf(instrs, returned);
+    stack MirValueId case0Assigned = MirOperandAOf(instrs, finalPhi);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 23
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirOpcodeOf(instrs, returned) == MirOp.Add
+        && MirOpcodeOf(instrs, finalPhi) == MirOp.Phi
+        && MirOpcodeOf(instrs, case0Assigned) == MirOp.Mul
+        && MirPhiIncomingBlock0(instrs, finalPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, finalPhi) == MirBlockIdOf(9);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementMultipleScalarAssignments()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; var z = 0; switch (x) { case 0: { y = 4; z = 5; } case 1: { y = 10; z = 11; } case 2: { y = 20; z = 21; } default: { y = 25; z = 26; } } return y + z }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(8));
+    stack MirValueId yPhi = MirOperandAOf(instrs, returned);
+    stack MirValueId zPhi = MirOperandBOf(instrs, returned);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 21
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirOpcodeOf(instrs, returned) == MirOp.Add
+        && MirOpcodeOf(instrs, yPhi) == MirOp.Phi
+        && MirOpcodeOf(instrs, zPhi) == MirOp.Phi
+        && MirPhiIncomingBlock0(instrs, yPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, yPhi) == MirBlockIdOf(9)
+        && MirPhiIncomingBlock0(instrs, zPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, zPhi) == MirBlockIdOf(9);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementArbitraryOrderMultipleScalarAssignments()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; var z = 0; switch (x) { case 0: { z = 5; y = 4; } case 1: { y = 10; z = 11; } case 2: { z = 21; y = 20; } default: { z = 26; y = 25; } } return y + z }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(8));
+    stack MirValueId yPhi = MirOperandAOf(instrs, returned);
+    stack MirValueId zPhi = MirOperandBOf(instrs, returned);
+    stack MirValueId yCase0 = MirOperandAOf(instrs, yPhi);
+    stack MirValueId zCase0 = MirOperandAOf(instrs, zPhi);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 21
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirOpcodeOf(instrs, returned) == MirOp.Add
+        && MirOpcodeOf(instrs, yPhi) == MirOp.Phi
+        && MirOpcodeOf(instrs, zPhi) == MirOp.Phi
+        && MirOpcodeOf(instrs, yCase0) == MirOp.ConstInt
+        && MirOpcodeOf(instrs, zCase0) == MirOp.ConstInt
+        && MirImmediateOf(instrs, yCase0) == 4
+        && MirImmediateOf(instrs, zCase0) == 5
+        && zCase0.Index() < yCase0.Index()
+        && MirPhiIncomingBlock0(instrs, yPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, yPhi) == MirBlockIdOf(9)
+        && MirPhiIncomingBlock0(instrs, zPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, zPhi) == MirBlockIdOf(9);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocal()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; return z * 2 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(8));
+    stack MirValueId postLocal = MirOperandAOf(instrs, returned);
+    stack MirValueId finalPhi = MirOperandAOf(instrs, postLocal);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 16
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(4)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(5)) == MirBlockIdOf(9)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(6)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(7)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(9)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(10)) == MirBlockIdOf(9)
+        && MirOpcodeOf(instrs, returned) == MirOp.Mul
+        && MirOpcodeOf(instrs, postLocal) == MirOp.Add
+        && MirOpcodeOf(instrs, finalPhi) == MirOp.Phi
+        && MirPhiIncomingBlock0(instrs, finalPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, finalPhi) == MirBlockIdOf(9);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementAssignmentThenMultiplePostLocals()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; var w = z * 2; return w + y }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId returned = MirBlockReturnValue(blocks, MirBlockIdOf(8));
+    stack MirValueId postLocalW = MirOperandAOf(instrs, returned);
+    stack MirValueId postLocalZ = MirOperandAOf(instrs, postLocalW);
+    stack MirValueId finalPhi = MirOperandAOf(instrs, postLocalZ);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 17
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(4)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(5)) == MirBlockIdOf(9)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(6)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(7)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(9)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(10)) == MirBlockIdOf(9)
+        && MirOpcodeOf(instrs, returned) == MirOp.Add
+        && MirOpcodeOf(instrs, postLocalW) == MirOp.Mul
+        && MirOpcodeOf(instrs, postLocalZ) == MirOp.Add
+        && MirOpcodeOf(instrs, finalPhi) == MirOp.Phi
+        && MirPhiIncomingBlock0(instrs, finalPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, finalPhi) == MirBlockIdOf(9);
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSwitchStatementAssignmentThenPostLocalTerminalIf()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Classify(i64[min max] x) { var y = 0; switch (x) { case 0: y = 4; case 1: y = 10; case 2: y = 40; default: y = 20; } var z = y + 1; if z < 15 return z else return z + y }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    stack MirValueId tailCondition = MirBlockCondValue(blocks, MirBlockIdOf(8));
+    stack MirValueId postLocal = MirOperandAOf(instrs, tailCondition);
+    stack MirValueId finalPhi = MirOperandAOf(instrs, postLocal);
+    stack MirValueId thenReturn = MirBlockReturnValue(blocks, MirBlockIdOf(11));
+    stack MirValueId elseReturn = MirBlockReturnValue(blocks, MirBlockIdOf(12));
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 12
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 12
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 18
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(11)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(12)) == MirTermKind.Return
+        && MirBlockCondThen(blocks, MirBlockIdOf(8)) == MirBlockIdOf(11)
+        && MirBlockCondElse(blocks, MirBlockIdOf(8)) == MirBlockIdOf(12)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(4)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(5)) == MirBlockIdOf(9)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(6)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(7)) == MirBlockIdOf(10)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(9)) == MirBlockIdOf(8)
+        && MirBlockBranchTarget(blocks, MirBlockIdOf(10)) == MirBlockIdOf(9)
+        && MirOpcodeOf(instrs, tailCondition) == MirOp.CmpLt
+        && MirOpcodeOf(instrs, postLocal) == MirOp.Add
+        && MirOpcodeOf(instrs, finalPhi) == MirOp.Phi
+        && MirOpcodeOf(instrs, elseReturn) == MirOp.Add
+        && thenReturn.Index() == postLocal.Index()
+        && MirPhiIncomingBlock0(instrs, finalPhi) == MirBlockIdOf(4)
+        && MirPhiIncomingBlock1(instrs, finalPhi) == MirBlockIdOf(9);
 }
 
 [Fact]
