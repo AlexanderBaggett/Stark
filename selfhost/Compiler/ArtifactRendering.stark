@@ -487,6 +487,10 @@ public finite law ascii MirTypeName(MirType type)
     {
         case MirType.I1:
             return "i1";
+        case MirType.I8:
+            return "i8";
+        case MirType.I16:
+            return "i16";
         case MirType.I32:
             return "i32";
         case MirType.I64:

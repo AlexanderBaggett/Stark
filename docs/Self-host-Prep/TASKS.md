@@ -225,6 +225,25 @@ Execution constraints:
   - [x] Add phase-boundary validation for layout facts.
   - [x] Add phase-boundary validation for durable package facts.
 
+- [ ] Decompose the oversized self-host MIR implementation into focused modules.
+  - [ ] Keep `Compiler.Mir` as an API-compatible facade that re-exports the new MIR submodules.
+  - [ ] Move MIR op, type, instruction, block, function, and global models into a core MIR model module.
+  - [ ] Move MIR instruction, block, function, global, call, and phi builders into a core MIR builder module.
+  - [ ] Move MIR enum layout, enum ABI, and enum LLVM storage helpers into an enum-layout module.
+  - [ ] Move LLVM module, function, block, terminator, instruction, global, and typed-value emission into LLVM emission modules.
+  - [ ] Move direct-switch and control-flow LLVM emission helpers into a control-flow emission module.
+  - [ ] Move function effect, call-contract, ABI, range-metadata, and separate-storage emission helpers into LLVM fact modules.
+  - [ ] Move MIR text rendering helpers into a MIR text-rendering module.
+  - [ ] Move MIR byte codecs and fixed-record section serializers into a package-image codec module.
+  - [ ] Move package-image validation, inspection, summary, and file IO helpers into package-image modules.
+  - [ ] Move value-range transfer, branch refinement, and returned-value validation helpers into a MIR facts module.
+  - [ ] Move source-expression parsing, name checks, arity checks, and semantic probes out of MIR into source-lowering modules.
+  - [ ] Move structured source lowering for `if`, loops, switches, locals, calls, and function bodies into lowering-builder modules.
+  - [ ] Move assembly metadata collection and assembly package-image serialization into an assembly metadata module.
+  - [ ] Move clang verification and temporary-file helpers into a test-support or compiler harness module.
+  - [ ] Add dependency-direction checks so MIR core does not import parsing, LLVM emission, package images, or test helpers.
+  - [ ] Run focused behavior-preserving tests after each module split.
+
 - [ ] Implement HIR/MIR lowering.
   - [x] Define the self-host HIR model or explicit direct-to-MIR boundary.
   - [x] Port the MIR lowering pass shell.
@@ -346,7 +365,16 @@ Execution constraints:
         - [x] Lower declaration-order braced switch arms assigning multiple scalar locals.
         - [x] Lower arbitrary-order multiple scalar switch assignments without reordering side effects.
         - [ ] Lower switch assignments to storage-backed places.
-    - [ ] Lower non-integer and pattern switch cases into MIR branch tests.
+    - [~] Lower non-integer and pattern switch cases into MIR branch tests.
+      - [x] Lower boolean literal terminal switch cases through typed MIR branch tests.
+      - [x] Lower boolean literal non-terminal switch assignments through typed MIR branch tests.
+      - [~] Lower enum unit switch cases through MIR branch tests.
+        - [x] Add compact MIR scalar widths needed for enum tag branch tests.
+        - [ ] Carry enum owner identity from source signatures into expression typing.
+        - [ ] Resolve unit enum case labels to layout-backed variant tags.
+        - [ ] Lower terminal enum unit switches to compact tag comparisons.
+        - [ ] Lower non-terminal enum unit switch assignments to compact tag comparisons.
+      - [ ] Lower aggregate and list pattern switch cases through MIR branch tests.
     - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
   - [ ] Lower `try`.
   - [x] Lower `become`.

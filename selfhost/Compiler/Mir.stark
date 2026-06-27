@@ -117,6 +117,8 @@ public enum MirOp
 public enum MirType
 {
     I1,
+    I8,
+    I16,
     I32,
     I64,
     Ptr,
@@ -1431,6 +1433,10 @@ internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
     {
         case MirType.I1:
             try sink.AppendConstAscii("i1");
+        case MirType.I8:
+            try sink.AppendConstAscii("i8");
+        case MirType.I16:
+            try sink.AppendConstAscii("i16");
         case MirType.I32:
             try sink.AppendConstAscii("i32");
         case MirType.I64:
@@ -6526,7 +6532,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             else if (FunctionBodyStartsWithTerminalSwitch(stream, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
-                if (!LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+                if (!LowerModuleTerminalSwitchFunctionToBlocks(
                     stream,
                     source,
                     funcNames,
@@ -7547,6 +7553,10 @@ internal finite law bool MirGlobalInitialValueFitsType(MirType type, i64[min max
     {
         case MirType.I1:
             return value == 0 || value == 1;
+        case MirType.I8:
+            return value >= -128 && value <= 127;
+        case MirType.I16:
+            return value >= -32768 && value <= 32767;
         case MirType.I32:
             return value >= (i64[min max])(-(2 ** 31))
                 && value <= 2147483647;
@@ -7710,13 +7720,31 @@ internal fn MemoryStatus EmitLlvmSaturatingBinary(
     stack mut ascii wideType = "i64";
     stack mut i64[min max] lower = (i64[min max])(-(2 ** 31));
     stack mut i64[min max] upper = 2147483647;
-    if (type == MirType.I64)
+    if (type == MirType.I8)
+    {
+        wideType = "i32";
+        lower = -128;
+        upper = 127;
+    }
+    else if (type == MirType.I16)
+    {
+        wideType = "i32";
+        lower = -32768;
+        upper = 32767;
+    }
+    else if (type == MirType.I32)
+    {
+        wideType = "i64";
+        lower = (i64[min max])(-(2 ** 31));
+        upper = 2147483647;
+    }
+    else if (type == MirType.I64)
     {
         wideType = "i128";
         lower = I64MinValue();
         upper = I64MaxValue();
     }
-    else if (type != MirType.I32)
+    else
     {
         return MemoryStatus.Ok;
     }
@@ -8626,6 +8654,8 @@ internal fn u8[0 max] MirTypeToByte(MirType t)
         case MirType.I32: return 1;
         case MirType.I64: return 2;
         case MirType.Ptr: return 3;
+        case MirType.I8: return 4;
+        case MirType.I16: return 5;
     }
 }
 
@@ -8636,6 +8666,8 @@ internal fn MirType MirTypeFromByte(u8[0 max] b)
         case 0: return MirType.I1;
         case 1: return MirType.I32;
         case 3: return MirType.Ptr;
+        case 4: return MirType.I8;
+        case 5: return MirType.I16;
         default: return MirType.I64;
     }
 }
@@ -13562,6 +13594,10 @@ internal finite law bool IntegerValueFitsMirType(MirType type, i64[min max] valu
     {
         case MirType.I1:
             return value == 0 || value == 1;
+        case MirType.I8:
+            return value >= -128 && value <= 127;
+        case MirType.I16:
+            return value >= -32768 && value <= 32767;
         case MirType.I32:
             return value >= (i64[min max])(-(2 ** 31)) && value <= 2147483647;
         case MirType.I64:
@@ -13593,6 +13629,16 @@ internal finite bool TryCheckedShiftAmount(MirType type, i64[min max] value, out
     {
         case MirType.I1:
             if (value >= 1)
+            {
+                return false;
+            }
+        case MirType.I8:
+            if (value >= 8)
+            {
+                return false;
+            }
+        case MirType.I16:
+            if (value >= 16)
             {
                 return false;
             }
@@ -13821,6 +13867,14 @@ internal finite bool TryMirTypeSignedBounds(MirType type, out i64[min max] lower
     upper = 0;
     switch (type)
     {
+        case MirType.I8:
+            lower = -128;
+            upper = 127;
+            return true;
+        case MirType.I16:
+            lower = -32768;
+            upper = 32767;
+            return true;
         case MirType.I32:
             lower = (i64[min max])(-(2 ** 31));
             upper = 2147483647;
@@ -13853,6 +13907,18 @@ internal finite law i64[min max] ClampI64(i64[min max] value, i64[min max] lower
 
 internal fn bool TrySetFullIntegerRangeForMirType(mut borrow ValueFacts facts, MirType type)
 {
+    if (type == MirType.I8)
+    {
+        facts.SetIntegerRange(-128, 128);
+        return true;
+    }
+
+    if (type == MirType.I16)
+    {
+        facts.SetIntegerRange(-32768, 32768);
+        return true;
+    }
+
     if (type == MirType.I32)
     {
         facts.SetIntegerRange((i64[min max])(-(2 ** 31)), (i64[min max])(2 ** 31));
@@ -13873,6 +13939,44 @@ internal finite bool TryWrapI32(i64[min max] value, out i64[min max] wrapped)
     }
 
     if (normalized > 2147483647)
+    {
+        normalized = normalized - modulus;
+    }
+
+    wrapped = normalized;
+    return true;
+}
+
+internal finite bool TryWrapI16(i64[min max] value, out i64[min max] wrapped)
+{
+    wrapped = 0;
+    stack i64[min max] modulus = 65536;
+    stack mut i64[min max] normalized = value % modulus;
+    if (normalized < 0)
+    {
+        normalized = normalized + modulus;
+    }
+
+    if (normalized > 32767)
+    {
+        normalized = normalized - modulus;
+    }
+
+    wrapped = normalized;
+    return true;
+}
+
+internal finite bool TryWrapI8(i64[min max] value, out i64[min max] wrapped)
+{
+    wrapped = 0;
+    stack i64[min max] modulus = 256;
+    stack mut i64[min max] normalized = value % modulus;
+    if (normalized < 0)
+    {
+        normalized = normalized + modulus;
+    }
+
+    if (normalized > 127)
     {
         normalized = normalized - modulus;
     }
@@ -13909,6 +14013,16 @@ internal finite bool TryBuildExactWrappingIntegerResult(
             }
         default:
             return false;
+    }
+
+    if (type == MirType.I8)
+    {
+        return TryWrapI8(raw, result);
+    }
+
+    if (type == MirType.I16)
+    {
+        return TryWrapI16(raw, result);
     }
 
     if (type == MirType.I32)
@@ -14199,7 +14313,7 @@ internal fn bool TryBuildGeneratedValueFactsForInstruction(
                 return false;
             }
 
-            if (!TrySetSingleValueIntegerRange(built, instr.Immediate()))
+            if (!TrySetSingleValueIntegerRangeForMirType(built, instr.ResultType(), instr.Immediate()))
             {
                 return false;
             }
@@ -15515,7 +15629,10 @@ internal fn i64[min max] FirstIntLiteralIndex(borrow TokenStream stream)
 // A "primary" expression token: an integer literal or an identifier (a parameter).
 internal fn bool IsPrimaryToken(TokenKind k)
 {
-    return k == TokenKind.IntegerLiteral || k == TokenKind.Identifier;
+    return k == TokenKind.IntegerLiteral
+        || k == TokenKind.Identifier
+        || k == TokenKind.True
+        || k == TokenKind.False;
 }
 
 // The token index of the first primary (literal or identifier), or -1 if none. The
@@ -17559,6 +17676,7 @@ public fn bool CompileModuleChecked(ascii source, mut borrow OwnedAscii sink)
 public enum ExprKind
 {
     IntLitExpr,
+    BoolLitExpr,
     NameExpr,
     BinaryExpr,
     CompareExpr,
@@ -17597,6 +17715,22 @@ public fn u32[0 max] MakeIntLit(mut borrow IrTable<ExprNode> nodes, i64[min max]
     stack mut ExprNode node = new();
     node.Kind = ExprKind.IntLitExpr;
     node.Imm = value;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeBoolLit(mut borrow IrTable<ExprNode> nodes, bool value)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.BoolLitExpr;
+    if (value)
+    {
+        node.Imm = 1;
+    }
+    else
+    {
+        node.Imm = 0;
+    }
+
     return nodes.Add(node);
 }
 
@@ -17669,6 +17803,8 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
     {
         case ExprKind.IntLitExpr:
             return ExprType.IntType;
+        case ExprKind.BoolLitExpr:
+            return ExprType.BoolType;
         case ExprKind.NameExpr:
             if (localTypes.Contains(node.Left + 1))
             {
@@ -17888,6 +18024,16 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
         return MakeParseResult(MakeIntLit(nodes, value), cursor + 1);
     }
 
+    if (k == TokenKind.True)
+    {
+        return MakeParseResult(MakeBoolLit(nodes, true), cursor + 1);
+    }
+
+    if (k == TokenKind.False)
+    {
+        return MakeParseResult(MakeBoolLit(nodes, false), cursor + 1);
+    }
+
     if (k == TokenKind.Minus)
     {
         // Unary minus: `-<primary>` lowers as `0 - <primary>`. It binds at the PRIMARY level
@@ -18046,14 +18192,20 @@ public fn ExprType InferSourceExpressionType(ascii source)
 // override table is positional: entry at index `paramIndex + 1` holds the local's MIR
 // value id (0 = a real parameter, no override). A `call` lowers to a placeholder callee
 // (callee resolution is later #33 work).
-internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, ExprNode node, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides, bool isTailCall)
+internal fn MirValueId LowerCallExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    bool isTailCall)
 {
     if (node.Arg4 != 0)
     {
-        stack MirValueId a0 = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
-        stack MirValueId a1 = LowerExprNodeWithLocals(nodes, node.Arg2, instrs, localOverrides);
-        stack MirValueId a2 = LowerExprNodeWithLocals(nodes, node.Arg3, instrs, localOverrides);
-        stack MirValueId a3 = LowerExprNodeWithLocals(nodes, node.Arg4, instrs, localOverrides);
+        stack MirValueId a0 = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        stack MirValueId a1 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
+        stack MirValueId a2 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg3, instrs, localTypes, localOverrides);
+        stack MirValueId a3 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg4, instrs, localTypes, localOverrides);
         if (isTailCall)
         {
             return MirTailCall4(instrs, MirFuncIdOf(node.Left), a0, a1, a2, a3);
@@ -18064,9 +18216,9 @@ internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> node
 
     if (node.Arg3 != 0)
     {
-        stack MirValueId b0 = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
-        stack MirValueId b1 = LowerExprNodeWithLocals(nodes, node.Arg2, instrs, localOverrides);
-        stack MirValueId b2 = LowerExprNodeWithLocals(nodes, node.Arg3, instrs, localOverrides);
+        stack MirValueId b0 = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        stack MirValueId b1 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
+        stack MirValueId b2 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg3, instrs, localTypes, localOverrides);
         if (isTailCall)
         {
             return MirTailCall3(instrs, MirFuncIdOf(node.Left), b0, b1, b2);
@@ -18077,8 +18229,8 @@ internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> node
 
     if (node.Arg2 != 0)
     {
-        stack MirValueId firstCallArg = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
-        stack MirValueId secondCallArg = LowerExprNodeWithLocals(nodes, node.Arg2, instrs, localOverrides);
+        stack MirValueId firstCallArg = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        stack MirValueId secondCallArg = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
         if (isTailCall)
         {
             return MirTailCall2(instrs, MirFuncIdOf(node.Left), firstCallArg, secondCallArg);
@@ -18089,7 +18241,7 @@ internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> node
 
     if (node.Right != 0)
     {
-        stack MirValueId callArgument = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+        stack MirValueId callArgument = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
         if (isTailCall)
         {
             return MirTailCall1(instrs, MirFuncIdOf(node.Left), callArgument);
@@ -18106,7 +18258,18 @@ internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> node
     return MirCall(instrs, MirFuncIdOf(node.Left));
 }
 
-internal fn MirValueId LowerTailCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, ExprNode node, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides, bool isTailCall)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, noLocalTypes, localOverrides, isTailCall);
+}
+
+internal fn MirValueId LowerTailCallExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
 {
     if (!nodes.Contains(id))
     {
@@ -18119,10 +18282,21 @@ internal fn MirValueId LowerTailCallExprNodeWithLocals(borrow IrTable<ExprNode> 
         return MirConstInt(instrs, 0);
     }
 
-    return LowerCallExprNodeWithLocals(nodes, node, instrs, localOverrides, true);
+    return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides, true);
 }
 
-public fn MirValueId LowerExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+internal fn MirValueId LowerTailCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return LowerTailCallExprNodeWithTypesAndLocals(nodes, id, instrs, noLocalTypes, localOverrides);
+}
+
+public fn MirValueId LowerExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
 {
     if (!nodes.Contains(id))
     {
@@ -18134,6 +18308,8 @@ public fn MirValueId LowerExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32
     {
         case ExprKind.IntLitExpr:
             return MirConstInt(instrs, node.Imm);
+        case ExprKind.BoolLitExpr:
+            return MirConstIntTyped(instrs, MirType.I1, node.Imm);
         case ExprKind.NameExpr:
             stack u32[0 max] paramIndex = node.Left;
             if (localOverrides.Contains(paramIndex + 1))
@@ -18145,18 +18321,38 @@ public fn MirValueId LowerExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32
                 }
             }
 
+            if (localTypes.Contains(paramIndex + 1))
+            {
+                stack u32[0 max] typeCode = localTypes.Get(paramIndex + 1);
+                if (typeCode == 1)
+                {
+                    return MirParamTyped(instrs, MirType.I1, paramIndex);
+                }
+
+                if (typeCode == 3)
+                {
+                    return MirParamTyped(instrs, MirType.Ptr, paramIndex);
+                }
+            }
+
             return MirParam(instrs, paramIndex);
         case ExprKind.CallExpr:
-            return LowerCallExprNodeWithLocals(nodes, node, instrs, localOverrides, false);
+            return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides, false);
         case ExprKind.BinaryExpr:
-            stack MirValueId binLeft = LowerExprNodeWithLocals(nodes, node.Left, instrs, localOverrides);
-            stack MirValueId binRight = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+            stack MirValueId binLeft = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
+            stack MirValueId binRight = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
             return LowerBinOp(instrs, node.Op, binLeft, binRight);
         case ExprKind.CompareExpr:
-            stack MirValueId cmpLeft = LowerExprNodeWithLocals(nodes, node.Left, instrs, localOverrides);
-            stack MirValueId cmpRight = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+            stack MirValueId cmpLeft = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
+            stack MirValueId cmpRight = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
             return LowerComparison(instrs, node.Op, cmpLeft, cmpRight);
     }
+}
+
+public fn MirValueId LowerExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return LowerExprNodeWithTypesAndLocals(nodes, id, instrs, noLocalTypes, localOverrides);
 }
 
 // Lowers an expression with NO locals (every name is a parameter) — the common case.
@@ -19396,6 +19592,8 @@ internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow
     stack ExprNode node = nodes.Get(id);
     switch (node.Kind)
     {
+        case ExprKind.BoolLitExpr:
+            return false;
         case ExprKind.NameExpr:
             return AbiFactAt(paramAbiFacts, node.Left + 1).IsPointer;
         case ExprKind.BinaryExpr:
@@ -19431,22 +19629,37 @@ internal fn bool ExpressionTableUsesPointerParams(borrow IrTable<ExprNode> nodes
     return false;
 }
 
-internal finite law u32[0 max] LocalTypeCodeForParamAbi(ParamAbiFacts facts)
+internal fn u32[0 max] LocalTypeCodeForSignatureParam(
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] paramIndex)
 {
+    stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(paramIndex + 1));
     if (facts.IsPointer)
     {
         return 3;
     }
 
+    if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Bool)
+    {
+        return 1;
+    }
+
     return 0;
 }
 
-internal fn bool SeedParamLocalTypesFromAbi(borrow IrTable<ParamAbiFacts> paramAbiFacts, u64[0 2 ** 63 - 1] paramCount, mut borrow IrTable<u32[0 max]> localTypes)
+internal fn bool SeedParamLocalTypesFromSignature(
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] paramCount,
+    mut borrow IrTable<u32[0 max]> localTypes)
 {
     stack mut u64[0 2 ** 63 - 1] i = 0;
     while willexit (i < paramCount)
     {
-        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForParamAbi(AbiFactAt(paramAbiFacts, (u32[0 max])(i + 1))));
+        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParam(stream, signature, paramAbiFacts, i));
         if (added == 0)
         {
             return false;
@@ -19836,6 +20049,8 @@ internal fn bool ValidateModuleCallsForRoot(
     switch (node.Kind)
     {
         case ExprKind.IntLitExpr:
+            return true;
+        case ExprKind.BoolLitExpr:
             return true;
         case ExprKind.NameExpr:
             return true;
@@ -21105,13 +21320,37 @@ internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
 
     stack mut ExprParseResult scrutinee = new();
     stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<u32[0 max]> booleanCaseValues = new();
     stack mut IrTable<ParsedSwitchAssignmentArm> caseArms = new();
     stack mut IrTable<u32[0 max]> armLocalRoots = new();
     stack mut IrTable<u32[0 max]> assignedRoots = new();
     stack mut IrTable<u32[0 max]> assignedTargetOffsets = new();
     stack mut ParsedSwitchAssignmentArm defaultArm = new();
     stack mut u64[0 2 ** 63 - 1] nextToken = 0;
-    if (!TryParseIntegerSwitchAssignmentCases(
+    if (SwitchFirstCaseLabelIsBoolean(stream, cursor))
+    {
+        if (!TryParseBooleanSwitchAssignmentCases(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            cursor,
+            targetNameTokens,
+            signatureParamCount,
+            scrutinee,
+            booleanCaseValues,
+            caseArms,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            defaultArm,
+            nextToken))
+        {
+            return false;
+        }
+    }
+    else if (!TryParseIntegerSwitchAssignmentCases(
         stream,
         source,
         nodes,
@@ -21318,6 +21557,57 @@ internal fn bool TryParseTerminalSwitchIntegerCaseLabel(
     return false;
 }
 
+internal fn bool TryParseTerminalSwitchBooleanCaseLabel(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] valueStart,
+    out u32[0 max] value,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    nextToken = valueStart;
+    stack TokenKind kind = stream.KindAt(valueStart);
+    if (kind == TokenKind.True)
+    {
+        value = 1;
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    if (kind == TokenKind.False)
+    {
+        value = 0;
+        nextToken = valueStart + 1;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool SwitchFirstCaseLabelIsBoolean(borrow TokenStream stream, u64[0 2 ** 63 - 1] switchIndex)
+{
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingBracketForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstCase = (u64[0 2 ** 63 - 1])closeParen + 2;
+    if (stream.KindAt(firstCase) != TokenKind.Case)
+    {
+        return false;
+    }
+
+    stack TokenKind labelKind = stream.KindAt(firstCase + 1);
+    return labelKind == TokenKind.True || labelKind == TokenKind.False;
+}
+
 internal fn bool TryParseIntegerSwitchAssignmentCases(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -21441,6 +21731,129 @@ internal fn bool TryParseIntegerSwitchAssignmentCases(
     return true;
 }
 
+internal fn bool TryParseBooleanSwitchAssignmentCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<u32[0 max]> caseValues,
+    mut borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut u32[0 max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchBooleanCaseLabel(stream, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalBooleanSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ParsedSwitchAssignmentArm caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseSwitchAssignmentArm(
+            stream,
+            source,
+            nodes,
+            params,
+            signatureParamCount,
+            funcNames,
+            targetNameTokens,
+            afterCaseLabel + 1,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0 || caseValues.Count() > 2)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ParsedSwitchAssignmentArm parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseSwitchAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        cursor + 2,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
 internal fn bool TerminalSwitchCaseValueExists(borrow IrTable<i64[min max]> caseValues, i64[min max] value)
 {
     stack mut u64[0 2 ** 63 - 1] i = 0;
@@ -21448,6 +21861,24 @@ internal fn bool TerminalSwitchCaseValueExists(borrow IrTable<i64[min max]> case
     while willexit (i < count)
     {
         stack i64[min max] current = caseValues.Get((u32[0 max])(i + 1));
+        if (current == value)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TerminalBooleanSwitchCaseValueExists(borrow IrTable<u32[0 max]> caseValues, u32[0 max] value)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    while willexit (i < count)
+    {
+        stack u32[0 max] current = caseValues.Get((u32[0 max])(i + 1));
         if (current == value)
         {
             return true;
@@ -21503,6 +21934,98 @@ internal fn bool TryParseTerminalIntegerSwitchReturnCases(
         if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, cursor + 1, caseValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
             || TerminalSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, afterCaseLabel + 1, caseArm, afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalBooleanSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<u32[0 max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut u32[0 max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchBooleanCaseLabel(stream, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalBooleanSwitchCaseValueExists(caseValues, caseValue))
         {
             return false;
         }
@@ -21634,6 +22157,8 @@ internal fn bool ExprNodeCanBeDiscardedIfOverwritten(borrow IrTable<ExprNode> no
     switch (node.Kind)
     {
         case ExprKind.IntLitExpr:
+            return true;
+        case ExprKind.BoolLitExpr:
             return true;
         case ExprKind.NameExpr:
             return true;
@@ -23292,7 +23817,7 @@ internal fn bool LowerModuleReturnIfExpressionFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -23324,11 +23849,12 @@ internal fn bool LowerModuleReturnIfExpressionFunctionToBlocks(
 
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId condValue = LowerExprNode(nodes, arms.Condition.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, arms.Condition.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId thenValue = LowerExprNode(nodes, arms.ThenArm.NodeId, instrs);
+    stack mut MirValueId thenValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ThenArm.NodeId, instrs, localTypes, noOverrides);
     if (bothBool)
     {
         thenValue = MirZExt(instrs, thenValue);
@@ -23337,7 +23863,7 @@ internal fn bool LowerModuleReturnIfExpressionFunctionToBlocks(
     stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
 
     stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId elseValue = LowerExprNode(nodes, arms.ElseArm.NodeId, instrs);
+    stack mut MirValueId elseValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ElseArm.NodeId, instrs, localTypes, noOverrides);
     if (bothBool)
     {
         elseValue = MirZExt(instrs, elseValue);
@@ -23424,7 +23950,7 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     stack mut IrTable<u32[0 max]> caseCounts = new();
     stack mut IrTable<u32[0 max]> returnValues = new();
 
-    stack MirValueId scrutineeValue = LowerExprNodeWithLocals(nodes, scrutineeNode, instrs, localOverrides);
+    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, localOverrides);
     stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
     while willexit (caseIndex < caseCountWide)
     {
@@ -23453,7 +23979,7 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     {
         stack ExprParseResult caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
         stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
-        stack mut MirValueId caseValue = LowerExprNodeWithLocals(nodes, caseArm.NodeId, instrs, localOverrides);
+        stack mut MirValueId caseValue = LowerExprNodeWithTypesAndLocals(nodes, caseArm.NodeId, instrs, localTypes, localOverrides);
         if (allBool)
         {
             caseValue = MirZExt(instrs, caseValue);
@@ -23471,7 +23997,7 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     }
 
     stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId defaultValue = LowerExprNodeWithLocals(nodes, defaultArm.NodeId, instrs, localOverrides);
+    stack mut MirValueId defaultValue = LowerExprNodeWithTypesAndLocals(nodes, defaultArm.NodeId, instrs, localTypes, localOverrides);
     if (allBool)
     {
         defaultValue = MirZExt(instrs, defaultValue);
@@ -23545,6 +24071,170 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     stack u32[0 max] firstReturnValue = returnValues.Get(1);
     body.CondValue = firstConditionValue;
     body.ThenValue = firstReturnValue;
+    body.ElseValue = defaultValue.Index();
+    return true;
+}
+
+internal fn bool LowerTerminalBooleanSwitchCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<u32[0 max]> caseValues,
+    borrow IrTable<ExprParseResult> caseArms,
+    ExprParseResult defaultArm,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseCountWide > 2 || caseArms.Count() != caseCountWide)
+    {
+        return false;
+    }
+
+    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    stack ExprType defaultType = TypeOfNodeWithLocals(nodes, defaultArm.NodeId, localTypes);
+    if (defaultType != ExprType.IntType && defaultType != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    stack mut bool hasTrue = false;
+    stack mut bool hasFalse = false;
+    stack mut ExprParseResult trueArm = new();
+    stack mut ExprParseResult falseArm = new();
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] caseValue = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack ExprParseResult caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        if (TypeOfNodeWithLocals(nodes, caseArm.NodeId, localTypes) != defaultType)
+        {
+            return false;
+        }
+
+        if (caseValue == 1)
+        {
+            hasTrue = true;
+            trueArm = caseArm;
+        }
+        else if (caseValue == 0)
+        {
+            hasFalse = true;
+            falseArm = caseArm;
+        }
+        else
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack bool allBool = defaultType == ExprType.BoolType;
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, localOverrides);
+    if (MirValueType(instrs, scrutineeValue.Index()) != MirType.I1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    if (hasTrue && hasFalse)
+    {
+        stack u32[0 max] trueFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirValueId trueValue = LowerExprNodeWithTypesAndLocals(nodes, trueArm.NodeId, instrs, localTypes, localOverrides);
+        if (allBool)
+        {
+            trueValue = MirZExt(instrs, trueValue);
+        }
+
+        stack u32[0 max] trueCount = (u32[0 max])instrs.Count() - (trueFirst - 1);
+        stack u32[0 max] falseFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirValueId falseValue = LowerExprNodeWithTypesAndLocals(nodes, falseArm.NodeId, instrs, localTypes, localOverrides);
+        if (allBool)
+        {
+            falseValue = MirZExt(instrs, falseValue);
+        }
+
+        stack u32[0 max] falseCount = (u32[0 max])instrs.Count() - (falseFirst - 1);
+
+        stack MirBlockId entry = MirCondBlock(blocks, scrutineeValue, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 2));
+        stack MirBlockId trueBlock = MirReturnBlock(blocks, trueValue);
+        stack MirBlockId falseBlock = MirReturnBlock(blocks, falseValue);
+
+        if (recordRanges)
+        {
+            stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+            stack u32[0 max] trueRange = ranges.Add(MakeBlockEmit(trueBlock.Index(), trueFirst, trueCount));
+            stack u32[0 max] falseRange = ranges.Add(MakeBlockEmit(falseBlock.Index(), falseFirst, falseCount));
+        }
+
+        body.Ok = true;
+        body.EntryBlock = entry.Index();
+        body.ParamCount = paramCount;
+        body.CondValue = scrutineeValue.Index();
+        body.ThenValue = trueValue.Index();
+        body.ElseValue = falseValue.Index();
+        return true;
+    }
+
+    stack mut ExprParseResult selectedArm = falseArm;
+    if (hasTrue)
+    {
+        selectedArm = trueArm;
+    }
+
+    stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId caseValue = LowerExprNodeWithTypesAndLocals(nodes, selectedArm.NodeId, instrs, localTypes, localOverrides);
+    if (allBool)
+    {
+        caseValue = MirZExt(instrs, caseValue);
+    }
+
+    stack u32[0 max] caseCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+    stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId defaultValue = LowerExprNodeWithTypesAndLocals(nodes, defaultArm.NodeId, instrs, localTypes, localOverrides);
+    if (allBool)
+    {
+        defaultValue = MirZExt(instrs, defaultValue);
+    }
+
+    stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+    stack mut MirBlockId thenBlock = MirBlockIdOf(firstBlock + 1);
+    stack mut MirBlockId elseBlock = MirBlockIdOf(firstBlock + 2);
+    if (hasFalse)
+    {
+        thenBlock = MirBlockIdOf(firstBlock + 2);
+        elseBlock = MirBlockIdOf(firstBlock + 1);
+    }
+
+    stack MirBlockId entry = MirCondBlock(blocks, scrutineeValue, thenBlock, elseBlock);
+    stack MirBlockId selectedBlock = MirReturnBlock(blocks, caseValue);
+    stack MirBlockId defaultBlock = MirReturnBlock(blocks, defaultValue);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(selectedBlock.Index(), caseFirst, caseCount));
+        stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(defaultBlock.Index(), defaultFirst, defaultCount));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = paramCount;
+    body.CondValue = scrutineeValue.Index();
+    body.ThenValue = caseValue.Index();
     body.ElseValue = defaultValue.Index();
     return true;
 }
@@ -23709,6 +24399,7 @@ internal fn bool LowerSwitchAssignmentArmValues(
     borrow IrTable<u32[0 max]> armLocalRoots,
     borrow IrTable<u32[0 max]> assignedRoots,
     borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
     u32[0 max] paramCount,
     mut borrow IrTable<MirInstruction> instrs,
     mut borrow IrTable<u32[0 max]> values)
@@ -23735,7 +24426,7 @@ internal fn bool LowerSwitchAssignmentArmValues(
         }
 
         stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
-        stack MirValueId localValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
         if (localOverrides.Add(localValue.Index()) == 0)
         {
             return false;
@@ -23755,7 +24446,7 @@ internal fn bool LowerSwitchAssignmentArmValues(
         }
 
         stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
-        stack MirValueId value = LowerExprNodeWithLocals(nodes, assignedRoot, instrs, localOverrides);
+        stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, assignedRoot, instrs, localTypes, localOverrides);
         if (sourceOrderValues.Add(value.Index()) == 0)
         {
             return false;
@@ -23940,7 +24631,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
     stack mut IrTable<u32[0 max]> mergeCounts = new();
 
     stack mut IrTable<u32[0 max]> noOverrides = new();
-    stack MirValueId scrutineeValue = LowerExprNodeWithLocals(nodes, scrutineeNode, instrs, noOverrides);
+    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, noOverrides);
     stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
     while willexit (caseIndex < caseCountWide)
     {
@@ -23970,7 +24661,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
         stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
         stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
         stack mut IrTable<u32[0 max]> caseArmValues = new();
-        if (!LowerSwitchAssignmentArmValues(nodes, caseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, paramCount, instrs, caseArmValues)
+        if (!LowerSwitchAssignmentArmValues(nodes, caseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, caseArmValues)
             || caseArmValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
         {
             return false;
@@ -23999,7 +24690,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
     }
 
     stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
-    if (!LowerSwitchAssignmentArmValues(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, paramCount, instrs, defaultValues)
+    if (!LowerSwitchAssignmentArmValues(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, defaultValues)
         || defaultValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
     {
         return false;
@@ -24097,7 +24788,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
             while willexit (postLocalIndex < postLocalRoots.Count())
             {
                 stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
-                stack MirValueId postLocalValue = LowerExprNodeWithLocals(nodes, postLocalRootNode, instrs, returnOverrides);
+                stack MirValueId postLocalValue = LowerExprNodeWithTypesAndLocals(nodes, postLocalRootNode, instrs, localTypes, returnOverrides);
                 if (returnOverrides.Add(postLocalValue.Index()) == 0)
                 {
                     return false;
@@ -24108,11 +24799,11 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
 
             if (hasTerminalIf)
             {
-                terminalIfCondValue = LowerExprNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, instrs, returnOverrides);
+                terminalIfCondValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides);
                 terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
 
                 terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
-                terminalIfThenValue = LowerExprNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, returnOverrides);
+                terminalIfThenValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides);
                 if (terminalBothBool)
                 {
                     terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
@@ -24121,7 +24812,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
                 terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
 
                 terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
-                terminalIfElseValue = LowerExprNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, returnOverrides);
+                terminalIfElseValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides);
                 if (terminalBothBool)
                 {
                     terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
@@ -24131,7 +24822,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
             }
             else
             {
-                stack mut MirValueId returnValue = LowerExprNodeWithLocals(nodes, returnRootNode, instrs, returnOverrides);
+                stack mut MirValueId returnValue = LowerExprNodeWithTypesAndLocals(nodes, returnRootNode, instrs, localTypes, returnOverrides);
                 if (rootType == ExprType.BoolType)
                 {
                     returnValue = MirZExt(instrs, returnValue);
@@ -24290,6 +24981,430 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
     return true;
 }
 
+internal fn bool LowerAssignedBooleanSwitchCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<u32[0 max]> caseValues,
+    borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    ParsedSwitchAssignmentArm defaultArm,
+    u32[0 max] targetCount,
+    borrow IrTable<u32[0 max]> postLocalRoots,
+    bool hasTerminalIf,
+    ParsedIfReturnArms terminalIfArms,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseCountWide > 2 || caseArms.Count() != caseCountWide || targetCount == 0)
+    {
+        return false;
+    }
+
+    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    if (localTypes.Count() < (u64[0 2 ** 63 - 1])(paramCount + targetCount))
+    {
+        return false;
+    }
+
+    stack mut bool hasTrue = false;
+    stack mut bool hasFalse = false;
+    stack mut ParsedSwitchAssignmentArm trueArm = new();
+    stack mut ParsedSwitchAssignmentArm falseArm = new();
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] caseValue = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        if (caseValue == 1)
+        {
+            hasTrue = true;
+            trueArm = caseArm;
+        }
+        else if (caseValue == 0)
+        {
+            hasFalse = true;
+            falseArm = caseArm;
+        }
+        else
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack bool hasBoth = hasTrue && hasFalse;
+    stack mut IrTable<u32[0 max]> phiTypeCodes = new();
+    stack mut u64[0 2 ** 63 - 1] targetTypeIndex = 0;
+    while willexit (targetTypeIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] targetTypeCode = localTypes.Get(paramCount + (u32[0 max])targetTypeIndex + 1);
+        stack mut ExprType expectedTargetType = ExprType.IntType;
+        if (targetTypeCode == 1)
+        {
+            expectedTargetType = ExprType.BoolType;
+        }
+
+        if (TypeOfSwitchAssignmentArm(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        if (hasTrue
+            && TypeOfSwitchAssignmentArm(nodes, trueArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        if (hasFalse
+            && TypeOfSwitchAssignmentArm(nodes, falseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        if (phiTypeCodes.Add(targetTypeCode) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    stack mut ExprType rootType = ExprType.IntType;
+    stack mut bool terminalBothBool = false;
+    if (hasTerminalIf)
+    {
+        if (TypeOfNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, localTypes) != ExprType.BoolType)
+        {
+            return false;
+        }
+
+        stack ExprType thenType = TypeOfNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, localTypes);
+        stack ExprType elseType = TypeOfNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, localTypes);
+        stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+        terminalBothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+        if (!bothInt && !terminalBothBool)
+        {
+            return false;
+        }
+
+        rootType = thenType;
+    }
+    else
+    {
+        rootType = TypeOfNodeWithLocals(nodes, returnRootNode, localTypes);
+        if (rootType == ExprType.ErrorType || rootType == ExprType.PtrType)
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] firstArmBlockIndex = firstBlock + 1;
+    stack u32[0 max] secondArmBlockIndex = firstBlock + 2;
+    stack u32[0 max] mergeBlockIndex = firstBlock + 3;
+    stack u32[0 max] terminalThenBlockIndex = mergeBlockIndex + 1;
+    stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, noOverrides);
+    if (MirValueType(instrs, scrutineeValue.Index()) != MirType.I1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack mut IrTable<u32[0 max]> trueValues = new();
+    stack mut IrTable<u32[0 max]> falseValues = new();
+    stack mut IrTable<u32[0 max]> caseValuesForMerge = new();
+    stack mut IrTable<u32[0 max]> defaultValues = new();
+    stack mut u32[0 max] trueFirst = 0;
+    stack mut u32[0 max] trueCount = 0;
+    stack mut u32[0 max] falseFirst = 0;
+    stack mut u32[0 max] falseCount = 0;
+    stack mut u32[0 max] caseFirst = 0;
+    stack mut u32[0 max] caseInstrCount = 0;
+    stack mut u32[0 max] defaultFirst = 0;
+    stack mut u32[0 max] defaultCount = 0;
+    if (hasBoth)
+    {
+        trueFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, trueArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, trueValues)
+            || trueValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        trueCount = (u32[0 max])instrs.Count() - (trueFirst - 1);
+        falseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, falseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, falseValues)
+            || falseValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        falseCount = (u32[0 max])instrs.Count() - (falseFirst - 1);
+    }
+    else
+    {
+        stack mut ParsedSwitchAssignmentArm selectedArm = trueArm;
+        if (hasFalse)
+        {
+            selectedArm = falseArm;
+        }
+
+        caseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, selectedArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, caseValuesForMerge)
+            || caseValuesForMerge.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        defaultFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, defaultValues)
+            || defaultValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> returnOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] p = 0;
+    while willexit (p < paramCount)
+    {
+        if (returnOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        p = p + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> finalPhis = new();
+    targetTypeIndex = 0;
+    while willexit (targetTypeIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetTypeIndex + 1));
+        stack mut MirType phiType = MirType.I64;
+        if (targetTypeCode == 1)
+        {
+            phiType = MirType.I1;
+        }
+
+        stack mut MirValueId phi = MirValueIdOf(0);
+        if (hasBoth)
+        {
+            stack u32[0 max] trueValueIndex = trueValues.Get((u32[0 max])(targetTypeIndex + 1));
+            stack u32[0 max] falseValueIndex = falseValues.Get((u32[0 max])(targetTypeIndex + 1));
+            phi = MirPhi2Typed(
+                instrs,
+                phiType,
+                MirValueIdOf(trueValueIndex),
+                MirBlockIdOf(firstArmBlockIndex),
+                MirValueIdOf(falseValueIndex),
+                MirBlockIdOf(secondArmBlockIndex));
+        }
+        else
+        {
+            stack u32[0 max] caseValueIndex = caseValuesForMerge.Get((u32[0 max])(targetTypeIndex + 1));
+            stack u32[0 max] defaultValueIndex = defaultValues.Get((u32[0 max])(targetTypeIndex + 1));
+            phi = MirPhi2Typed(
+                instrs,
+                phiType,
+                MirValueIdOf(caseValueIndex),
+                MirBlockIdOf(firstArmBlockIndex),
+                MirValueIdOf(defaultValueIndex),
+                MirBlockIdOf(secondArmBlockIndex));
+        }
+
+        if (finalPhis.Add(phi.Index()) == 0 || returnOverrides.Add(phi.Index()) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack MirValueId postLocalValue = LowerExprNodeWithTypesAndLocals(nodes, postLocalRootNode, instrs, localTypes, returnOverrides);
+        if (returnOverrides.Add(postLocalValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] firstFinalPhi = finalPhis.Get(1);
+    stack mut MirValueId finalReturnValue = MirValueIdOf(firstFinalPhi);
+    stack mut MirValueId terminalIfCondValue = MirValueIdOf(firstFinalPhi);
+    stack mut MirValueId terminalIfThenValue = MirValueIdOf(firstFinalPhi);
+    stack mut MirValueId terminalIfElseValue = MirValueIdOf(firstFinalPhi);
+    stack mut u32[0 max] terminalIfMergeCount = 0;
+    stack mut u32[0 max] terminalIfThenFirst = 0;
+    stack mut u32[0 max] terminalIfThenCount = 0;
+    stack mut u32[0 max] terminalIfElseFirst = 0;
+    stack mut u32[0 max] terminalIfElseCount = 0;
+    if (hasTerminalIf)
+    {
+        terminalIfCondValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfThenValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides);
+        if (terminalBothBool)
+        {
+            terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
+        }
+
+        terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
+
+        terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfElseValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides);
+        if (terminalBothBool)
+        {
+            terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
+        }
+
+        terminalIfElseCount = (u32[0 max])instrs.Count() - (terminalIfElseFirst - 1);
+    }
+    else
+    {
+        stack mut MirValueId returnValue = LowerExprNodeWithTypesAndLocals(nodes, returnRootNode, instrs, localTypes, returnOverrides);
+        if (rootType == ExprType.BoolType)
+        {
+            returnValue = MirZExt(instrs, returnValue);
+        }
+
+        finalReturnValue = returnValue;
+    }
+
+    stack mut u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    if (hasTerminalIf)
+    {
+        mergeCount = terminalIfMergeCount;
+    }
+
+    if (hasBoth)
+    {
+        stack MirBlockId entry = MirCondBlock(
+            blocks,
+            scrutineeValue,
+            MirBlockIdOf(firstArmBlockIndex),
+            MirBlockIdOf(secondArmBlockIndex));
+        stack MirBlockId trueBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        stack MirBlockId falseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    }
+    else
+    {
+        stack mut MirBlockId thenTarget = MirBlockIdOf(firstArmBlockIndex);
+        stack mut MirBlockId elseTarget = MirBlockIdOf(secondArmBlockIndex);
+        if (hasFalse)
+        {
+            thenTarget = MirBlockIdOf(secondArmBlockIndex);
+            elseTarget = MirBlockIdOf(firstArmBlockIndex);
+        }
+
+        stack MirBlockId entry = MirCondBlock(blocks, scrutineeValue, thenTarget, elseTarget);
+        stack MirBlockId caseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        stack MirBlockId defaultBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    }
+
+    if (hasTerminalIf)
+    {
+        stack MirBlockId mergeBlock = MirCondBlock(
+            blocks,
+            terminalIfCondValue,
+            MirBlockIdOf(terminalThenBlockIndex),
+            MirBlockIdOf(terminalElseBlockIndex));
+        stack MirBlockId terminalThenBlock = MirReturnBlock(blocks, terminalIfThenValue);
+        stack MirBlockId terminalElseBlock = MirReturnBlock(blocks, terminalIfElseValue);
+    }
+    else
+    {
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, finalReturnValue);
+    }
+
+    if (recordRanges)
+    {
+        stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(firstBlock, entryFirst, entryCount));
+        if (hasBoth)
+        {
+            stack u32[0 max] trueRange = ranges.Add(MakeBlockEmit(firstArmBlockIndex, trueFirst, trueCount));
+            stack u32[0 max] falseRange = ranges.Add(MakeBlockEmit(secondArmBlockIndex, falseFirst, falseCount));
+        }
+        else
+        {
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(firstArmBlockIndex, caseFirst, caseInstrCount));
+            stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(secondArmBlockIndex, defaultFirst, defaultCount));
+        }
+
+        stack u32[0 max] mergeRange = ranges.Add(MakeBlockEmit(mergeBlockIndex, mergeFirst, mergeCount));
+        if (hasTerminalIf)
+        {
+            stack u32[0 max] terminalThenRange = ranges.Add(MakeBlockEmit(
+                terminalThenBlockIndex,
+                terminalIfThenFirst,
+                terminalIfThenCount));
+            stack u32[0 max] terminalElseRange = ranges.Add(MakeBlockEmit(
+                terminalElseBlockIndex,
+                terminalIfElseFirst,
+                terminalIfElseCount));
+        }
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    body.CondValue = scrutineeValue.Index();
+    body.ThenValue = finalPhis.Get(1);
+    if (hasTerminalIf)
+    {
+        body.ElseValue = terminalIfCondValue.Index();
+    }
+    else
+    {
+        body.ElseValue = finalReturnValue.Index();
+    }
+
+    return true;
+}
+
 internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -24364,7 +25479,7 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -24392,6 +25507,158 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
         noOverrides,
         (u32[0 max])signatureParamCount,
         entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body);
+}
+
+internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<u32[0 max]> caseValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalBooleanSwitchReturnCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        caseValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    return LowerTerminalBooleanSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body);
+}
+
+internal fn bool LowerModuleTerminalSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    if (LowerModuleTerminalBooleanSwitchFunctionToBlocks(
+        stream,
+        source,
+        funcNames,
+        funcParamCounts,
+        functionCallContractFacts,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body))
+    {
+        return true;
+    }
+
+    return LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+        stream,
+        source,
+        funcNames,
+        funcParamCounts,
+        functionCallContractFacts,
+        fnIndex,
         instrs,
         blocks,
         ranges,
@@ -24513,13 +25780,38 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
 
     stack mut ExprParseResult scrutinee = new();
     stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<u32[0 max]> booleanCaseValues = new();
+    stack bool switchCasesAreBoolean = SwitchFirstCaseLabelIsBoolean(stream, cursor);
     stack mut IrTable<ParsedSwitchAssignmentArm> caseArms = new();
     stack mut IrTable<u32[0 max]> armLocalRoots = new();
     stack mut IrTable<u32[0 max]> assignedRoots = new();
     stack mut IrTable<u32[0 max]> assignedTargetOffsets = new();
     stack mut ParsedSwitchAssignmentArm defaultArm = new();
     stack mut u64[0 2 ** 63 - 1] nextToken = 0;
-    if (!TryParseIntegerSwitchAssignmentCases(
+    if (switchCasesAreBoolean)
+    {
+        if (!TryParseBooleanSwitchAssignmentCases(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            cursor,
+            targetNameTokens,
+            signatureParamCount,
+            scrutinee,
+            booleanCaseValues,
+            caseArms,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            defaultArm,
+            nextToken))
+        {
+            return false;
+        }
+    }
+    else if (!TryParseIntegerSwitchAssignmentCases(
         stream,
         source,
         nodes,
@@ -24538,6 +25830,12 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
         nextToken))
     {
         return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] switchCaseCount = caseValues.Count();
+    if (switchCasesAreBoolean)
+    {
+        switchCaseCount = booleanCaseValues.Count();
     }
 
     stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
@@ -24648,7 +25946,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -24670,7 +25968,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
         stack mut bool allInt = initType == ExprType.IntType && defaultType == ExprType.IntType;
         stack mut bool allBool = initType == ExprType.BoolType && defaultType == ExprType.BoolType;
         stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
-        while willexit (typeIndex < caseValues.Count())
+        while willexit (typeIndex < switchCaseCount)
         {
             stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(typeIndex + 1));
             stack ExprType caseType = TypeOfSwitchAssignmentArm(
@@ -24755,7 +26053,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     }
 
     stack mut u64[0 2 ** 63 - 1] callArmIndex = 0;
-    while willexit (callArmIndex < caseValues.Count())
+    while willexit (callArmIndex < switchCaseCount)
     {
         stack ParsedSwitchAssignmentArm caseArmForCalls = caseArms.Get((u32[0 max])(callArmIndex + 1));
         if (!ValidateSwitchAssignmentArmModuleCalls(nodes, caseArmForCalls, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, (u32[0 max])signatureParamCount, funcParamCounts, functionCallContractFacts, distinctStorageFacts))
@@ -24793,6 +26091,32 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     }
 
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    if (switchCasesAreBoolean)
+    {
+        return LowerAssignedBooleanSwitchCasesToBlocks(
+            nodes,
+            scrutinee.NodeId,
+            booleanCaseValues,
+            caseArms,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            defaultArm,
+            (u32[0 max])targetNameTokens.Count(),
+            postLocalRoots,
+            hasTerminalIf,
+            terminalIfArms,
+            returnRoot.NodeId,
+            localTypes,
+            (u32[0 max])signatureParamCount,
+            entryFirst,
+            instrs,
+            blocks,
+            ranges,
+            recordRanges,
+            body);
+    }
+
     return LowerAssignedIntegerSwitchCasesToBlocks(
         nodes,
         scrutinee.NodeId,
@@ -24868,7 +26192,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localRoots = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -24984,7 +26308,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     while willexit (v < localCount)
     {
         stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(v + 1));
-        stack MirValueId varValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+        stack MirValueId varValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
         stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
         v = v + 1;
     }
@@ -25120,7 +26444,7 @@ internal fn bool LowerModuleReturnedLocalIfExpressionFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -25152,11 +26476,12 @@ internal fn bool LowerModuleReturnedLocalIfExpressionFunctionToBlocks(
 
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId condValue = LowerExprNode(nodes, arms.Condition.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, arms.Condition.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId thenValue = LowerExprNode(nodes, arms.ThenArm.NodeId, instrs);
+    stack mut MirValueId thenValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ThenArm.NodeId, instrs, localTypes, noOverrides);
     if (bothBool)
     {
         thenValue = MirZExt(instrs, thenValue);
@@ -25165,7 +26490,7 @@ internal fn bool LowerModuleReturnedLocalIfExpressionFunctionToBlocks(
     stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
 
     stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId elseValue = LowerExprNode(nodes, arms.ElseArm.NodeId, instrs);
+    stack mut MirValueId elseValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ElseArm.NodeId, instrs, localTypes, noOverrides);
     if (bothBool)
     {
         elseValue = MirZExt(instrs, elseValue);
@@ -25308,7 +26633,7 @@ internal fn bool LowerModuleLocalIfExpressionFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -25357,15 +26682,16 @@ internal fn bool LowerModuleLocalIfExpressionFunctionToBlocks(
 
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId condValue = LowerExprNode(nodes, arms.Condition.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, arms.Condition.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId thenValue = LowerExprNode(nodes, arms.ThenArm.NodeId, instrs);
+    stack MirValueId thenValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ThenArm.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
 
     stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId elseValue = LowerExprNode(nodes, arms.ElseArm.NodeId, instrs);
+    stack MirValueId elseValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ElseArm.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
 
     stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
@@ -25394,7 +26720,7 @@ internal fn bool LowerModuleLocalIfExpressionFunctionToBlocks(
         return false;
     }
 
-    stack MirValueId value = LowerExprNodeWithLocals(nodes, returnRoot.NodeId, instrs, localOverrides);
+    stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, returnRoot.NodeId, instrs, localTypes, localOverrides);
     stack mut MirValueId returnValue = value;
     if (rootType == ExprType.BoolType)
     {
@@ -25546,7 +26872,7 @@ internal fn bool LowerModuleReturnedLocalIfStatementFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -25579,11 +26905,12 @@ internal fn bool LowerModuleReturnedLocalIfStatementFunctionToBlocks(
 
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId condValue = LowerExprNode(nodes, arms.Condition.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, arms.Condition.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId thenValue = LowerExprNode(nodes, arms.ThenArm.NodeId, instrs);
+    stack mut MirValueId thenValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ThenArm.NodeId, instrs, localTypes, noOverrides);
     if (allBool)
     {
         thenValue = MirZExt(instrs, thenValue);
@@ -25592,7 +26919,7 @@ internal fn bool LowerModuleReturnedLocalIfStatementFunctionToBlocks(
     stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
 
     stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId elseValue = LowerExprNode(nodes, arms.ElseArm.NodeId, instrs);
+    stack mut MirValueId elseValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ElseArm.NodeId, instrs, localTypes, noOverrides);
     if (allBool)
     {
         elseValue = MirZExt(instrs, elseValue);
@@ -25749,7 +27076,7 @@ internal fn bool LowerModuleLocalIfStatementFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -25799,15 +27126,16 @@ internal fn bool LowerModuleLocalIfStatementFunctionToBlocks(
 
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId condValue = LowerExprNode(nodes, arms.Condition.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, arms.Condition.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId thenValue = LowerExprNode(nodes, arms.ThenArm.NodeId, instrs);
+    stack MirValueId thenValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ThenArm.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
 
     stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId elseValue = LowerExprNode(nodes, arms.ElseArm.NodeId, instrs);
+    stack MirValueId elseValue = LowerExprNodeWithTypesAndLocals(nodes, arms.ElseArm.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
 
     stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
@@ -25836,7 +27164,7 @@ internal fn bool LowerModuleLocalIfStatementFunctionToBlocks(
         return false;
     }
 
-    stack MirValueId value = LowerExprNodeWithLocals(nodes, returnRoot.NodeId, instrs, localOverrides);
+    stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, returnRoot.NodeId, instrs, localTypes, localOverrides);
     stack mut MirValueId returnValue = value;
     if (rootType == ExprType.BoolType)
     {
@@ -25922,7 +27250,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     stack mut IrTable<u32[0 max]> localTypes = new();
     stack mut IrTable<ArenaDynamicLocal> arenaDynamicLocals = new();
     stack mut bool usesArenaFrame = false;
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -26180,25 +27508,25 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
         }
         else
         {
-            stack MirValueId varValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+            stack MirValueId varValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
             stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
         }
 
         v = v + 1;
     }
 
-    stack MirValueId condValue = LowerExprNodeWithLocals(nodes, condResult.NodeId, instrs, localOverrides);
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, condResult.NodeId, instrs, localTypes, localOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
     stack mut MirValueId thenValue = MirValueIdOf(0);
     if (thenBecome)
     {
-        thenValue = LowerTailCallExprNodeWithLocals(nodes, thenResult.NodeId, instrs, localOverrides);
+        thenValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, thenResult.NodeId, instrs, localTypes, localOverrides);
     }
     else
     {
-        thenValue = LowerExprNodeWithLocals(nodes, thenResult.NodeId, instrs, localOverrides);
+        thenValue = LowerExprNodeWithTypesAndLocals(nodes, thenResult.NodeId, instrs, localTypes, localOverrides);
         if (bothBool)
         {
             thenValue = MirZExt(instrs, thenValue);
@@ -26216,11 +27544,11 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     stack mut MirValueId elseValue = MirValueIdOf(0);
     if (elseBecome)
     {
-        elseValue = LowerTailCallExprNodeWithLocals(nodes, elseResult.NodeId, instrs, localOverrides);
+        elseValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, elseResult.NodeId, instrs, localTypes, localOverrides);
     }
     else
     {
-        elseValue = LowerExprNodeWithLocals(nodes, elseResult.NodeId, instrs, localOverrides);
+        elseValue = LowerExprNodeWithTypesAndLocals(nodes, elseResult.NodeId, instrs, localTypes, localOverrides);
         if (bothBool)
         {
             elseValue = MirZExt(instrs, elseValue);
@@ -26358,7 +27686,7 @@ internal fn LoweredBody LowerFunctionWithLocals(
     stack mut IrTable<u32[0 max]> localTypes = new();
     stack mut IrTable<ArenaDynamicLocal> arenaDynamicLocals = new();
     stack mut bool usesArenaFrame = false;
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return result;
     }
@@ -26594,7 +27922,7 @@ internal fn LoweredBody LowerFunctionWithLocals(
         }
         else
         {
-            stack MirValueId varValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+            stack MirValueId varValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
             stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
         }
 
@@ -26608,7 +27936,7 @@ internal fn LoweredBody LowerFunctionWithLocals(
             return result;
         }
 
-        stack MirValueId tailValue = LowerTailCallExprNodeWithLocals(nodes, returnRoot.NodeId, instrs, localOverrides);
+        stack MirValueId tailValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, returnRoot.NodeId, instrs, localTypes, localOverrides);
         stack MirBlockId entry = MirTailCallBlock(blocks, tailValue);
         result.Ok = true;
         result.EntryBlock = entry.Index();
@@ -26616,7 +27944,7 @@ internal fn LoweredBody LowerFunctionWithLocals(
         return result;
     }
 
-    stack MirValueId value = LowerExprNodeWithLocals(nodes, returnRoot.NodeId, instrs, localOverrides);
+    stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, returnRoot.NodeId, instrs, localTypes, localOverrides);
     stack mut MirValueId returnValue = value;
     if (rootType == ExprType.BoolType)
     {
@@ -26709,7 +28037,7 @@ internal fn bool EmitModuleIfReturnFunction(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -26754,7 +28082,8 @@ internal fn bool EmitModuleIfReturnFunction(
     stack mut IrTable<MirBlock> blocks = new();
 
     // Entry block: lower the condition (i1).
-    stack MirValueId condValue = LowerExprNode(nodes, condResult.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, condResult.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count();
     // Then block: lower + return/become the first arm.
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
@@ -26762,11 +28091,11 @@ internal fn bool EmitModuleIfReturnFunction(
     if (thenBecome)
     {
         stack mut IrTable<u32[0 max]> noOverridesThen = new();
-        thenValue = LowerTailCallExprNodeWithLocals(nodes, thenResult.NodeId, instrs, noOverridesThen);
+        thenValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, thenResult.NodeId, instrs, localTypes, noOverridesThen);
     }
     else
     {
-        thenValue = LowerExprNode(nodes, thenResult.NodeId, instrs);
+        thenValue = LowerExprNodeWithTypesAndLocals(nodes, thenResult.NodeId, instrs, localTypes, noOverrides);
         if (bothBool)
         {
             thenValue = MirZExt(instrs, thenValue);
@@ -26780,11 +28109,11 @@ internal fn bool EmitModuleIfReturnFunction(
     if (elseBecome)
     {
         stack mut IrTable<u32[0 max]> noOverridesElse = new();
-        elseValue = LowerTailCallExprNodeWithLocals(nodes, elseResult.NodeId, instrs, noOverridesElse);
+        elseValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, elseResult.NodeId, instrs, localTypes, noOverridesElse);
     }
     else
     {
-        elseValue = LowerExprNode(nodes, elseResult.NodeId, instrs);
+        elseValue = LowerExprNodeWithTypesAndLocals(nodes, elseResult.NodeId, instrs, localTypes, noOverrides);
         if (bothBool)
         {
             elseValue = MirZExt(instrs, elseValue);
@@ -27012,7 +28341,7 @@ internal fn bool EmitModuleTerminalIntegerSwitchFunction(
     stack mut IrTable<MirBlock> blocks = new();
     stack mut IrTable<BlockEmit> ranges = new();
     stack mut LoweredBody body = new();
-    if (!LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+    if (!LowerModuleTerminalSwitchFunctionToBlocks(
         stream,
         source,
         funcNames,
@@ -28318,7 +29647,7 @@ internal fn bool LowerModuleIfReturnFunctionToTables(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromAbi(paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -28359,17 +29688,18 @@ internal fn bool LowerModuleIfReturnFunctionToTables(
     }
 
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
-    stack MirValueId condValue = LowerExprNode(nodes, condResult.NodeId, instrs);
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, condResult.NodeId, instrs, localTypes, noOverrides);
     stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
     stack mut MirValueId thenValue = MirValueIdOf(0);
     if (thenBecome)
     {
         stack mut IrTable<u32[0 max]> noOverridesThen = new();
-        thenValue = LowerTailCallExprNodeWithLocals(nodes, thenResult.NodeId, instrs, noOverridesThen);
+        thenValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, thenResult.NodeId, instrs, localTypes, noOverridesThen);
     }
     else
     {
-        thenValue = LowerExprNode(nodes, thenResult.NodeId, instrs);
+        thenValue = LowerExprNodeWithTypesAndLocals(nodes, thenResult.NodeId, instrs, localTypes, noOverrides);
         if (bothBool)
         {
             thenValue = MirZExt(instrs, thenValue);
@@ -28381,11 +29711,11 @@ internal fn bool LowerModuleIfReturnFunctionToTables(
     if (elseBecome)
     {
         stack mut IrTable<u32[0 max]> noOverridesElse = new();
-        elseValue = LowerTailCallExprNodeWithLocals(nodes, elseResult.NodeId, instrs, noOverridesElse);
+        elseValue = LowerTailCallExprNodeWithTypesAndLocals(nodes, elseResult.NodeId, instrs, localTypes, noOverridesElse);
     }
     else
     {
-        elseValue = LowerExprNode(nodes, elseResult.NodeId, instrs);
+        elseValue = LowerExprNodeWithTypesAndLocals(nodes, elseResult.NodeId, instrs, localTypes, noOverrides);
         if (bothBool)
         {
             elseValue = MirZExt(instrs, elseValue);
@@ -29294,7 +30624,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                 else if (FunctionBodyStartsWithTerminalSwitch(stream, f))
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
-                    if (!LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+                    if (!LowerModuleTerminalSwitchFunctionToBlocks(
                         stream,
                         source,
                         funcNames,
