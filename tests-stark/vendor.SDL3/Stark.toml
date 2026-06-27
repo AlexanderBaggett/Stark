@@ -7,12 +7,32 @@ kind = "test"
 root = "Sdl3Tests.stark"
 output = "vendor-sdl3-tests"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [native]
 sources = ["../../vendor/Sdl3Binding.c"]
 pkg-config = ["sdl3"]
+
+[native.fallback.macos]
+include-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/sdl3"]
+library-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/sdl3"]
+libraries = ["SDL3", "m"]
+link-args = [
+  "-lpthread",
+  "-framework", "CoreMedia",
+  "-framework", "CoreVideo",
+  "-framework", "Cocoa",
+  "-weak_framework", "UniformTypeIdentifiers",
+  "-framework", "IOKit",
+  "-framework", "ForceFeedback",
+  "-framework", "Carbon",
+  "-framework", "CoreAudio",
+  "-framework", "AudioToolbox",
+  "-framework", "AVFoundation",
+  "-framework", "Foundation",
+  "-framework", "GameController",
+  "-framework", "Metal",
+  "-framework", "QuartzCore",
+  "-weak_framework", "CoreHaptics"
+]
 
 [profiles.dev]
 opt = 0

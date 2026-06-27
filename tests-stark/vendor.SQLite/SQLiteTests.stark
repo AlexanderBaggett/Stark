@@ -730,8 +730,8 @@ fn bool PublicCallbackAliasesHaveExpectedAbiShape()
         && comptime System.Compiler.FunctionPointerParameterTypeIs<SQLiteBusyCallback, System.C.c_int, 1>()
         && comptime System.Compiler.FunctionPointerParameterCount<SQLiteTraceV2Callback>() == 4
         && comptime System.Compiler.FunctionPointerReturnTypeIs<SQLiteTraceV2Callback, System.C.c_int>()
-        && comptime System.Compiler.FunctionPointerParameterTypeIsRawPointer<SQLiteTraceV2Callback, 0>()
-        && comptime System.Compiler.FunctionPointerParameterTypeIs<SQLiteTraceV2Callback, System.C.c_uint, 1>()
+        && comptime System.Compiler.FunctionPointerParameterTypeIs<SQLiteTraceV2Callback, System.C.c_uint, 0>()
+        && comptime System.Compiler.FunctionPointerParameterTypeIsRawPointer<SQLiteTraceV2Callback, 1>()
         && comptime System.Compiler.FunctionPointerParameterTypeIsRawPointer<SQLiteTraceV2Callback, 2>()
         && comptime System.Compiler.FunctionPointerParameterTypeIsRawPointer<SQLiteTraceV2Callback, 3>()
         && comptime System.Compiler.FunctionPointerParameterCount<SQLiteSqlLogCallback>() == 4

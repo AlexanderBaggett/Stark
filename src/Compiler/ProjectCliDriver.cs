@@ -1297,6 +1297,12 @@ internal static class ProjectCliDriver
             arguments.Add(library);
         }
 
+        foreach (var linkArgument in fallback.LinkArguments)
+        {
+            arguments.Add("--native-link-arg");
+            arguments.Add(linkArgument);
+        }
+
         return true;
     }
 
@@ -2459,7 +2465,8 @@ internal static class ProjectCliDriver
                     fallbackByPlatform[platformName] = new NativeFallbackManifest(
                         IncludeDirectories: SimpleToml.GetOptionalStringArray(platformTable, "include-dirs"),
                         LibraryDirectories: SimpleToml.GetOptionalStringArray(platformTable, "library-dirs"),
-                        Libraries: SimpleToml.GetOptionalStringArray(platformTable, "libraries"));
+                        Libraries: SimpleToml.GetOptionalStringArray(platformTable, "libraries"),
+                        LinkArguments: SimpleToml.GetOptionalStringArray(platformTable, "link-args"));
                 }
             }
 
@@ -2735,7 +2742,8 @@ internal static class ProjectCliDriver
     private sealed record NativeFallbackManifest(
         IReadOnlyList<string> IncludeDirectories,
         IReadOnlyList<string> LibraryDirectories,
-        IReadOnlyList<string> Libraries);
+        IReadOnlyList<string> Libraries,
+        IReadOnlyList<string> LinkArguments);
 
     private sealed record NativeArgumentResult(
         bool Success,
