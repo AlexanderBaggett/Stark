@@ -295,12 +295,33 @@ Execution constraints:
     - [x] Lower HIR if branch terminators from block symbols to validated MIR conditional blocks.
     - [x] Lower local-prefixed terminal source `if` returns into MIR conditional blocks.
     - [x] Lower braced terminal source `if` return branches into MIR conditional blocks.
+    - [x] Lower braced terminal source `if` return branches with boolean values into typed MIR conditional return blocks.
     - [x] Lower semicolon-terminated compact terminal source `if` returns into MIR conditional blocks.
+    - [x] Lower semicolon-terminated compact terminal source `if` return branches with boolean values into typed MIR conditional return blocks.
     - [x] Lower terminal source `return if ... else ...` expressions into MIR conditional return blocks.
+    - [x] Lower boolean-valued terminal source `return if ... else ...` expressions into typed MIR conditional return blocks.
     - [x] Lower immediately returned local source if-expression initializers into MIR conditional return blocks.
+    - [x] Lower boolean-valued immediately returned local source if-expression initializers into typed MIR conditional return blocks.
+    - [x] Lower immediately returned locals overwritten by source if statements into MIR conditional return blocks.
+    - [x] Lower braced source if assignment arms for immediately returned locals into MIR conditional return blocks.
+    - [x] Lower compact boolean-valued immediately returned locals overwritten by source if statements into typed MIR conditional return blocks.
+    - [x] Lower braced boolean-valued immediately returned locals overwritten by source if statements into typed MIR conditional return blocks.
+    - [x] Lower local source if-expression initializers used by later return expressions into MIR phi merge blocks.
+    - [x] Lower integer local source if-statement assignments used by later return expressions into MIR phi merge blocks.
+    - [x] Lower boolean local source if-expression initializers used by later equality returns into typed MIR phi merge blocks.
+    - [x] Lower compact boolean local source if-statement assignments used by later equality returns into typed MIR phi merge blocks.
+    - [x] Lower braced boolean local source if-statement assignments used by later equality returns into typed MIR phi merge blocks.
+    - [x] Preserve boolean local source if-expression phi return range facts through LLVM range attributes.
+    - [x] Preserve compact boolean local source if-statement phi return range facts through LLVM range attributes.
+    - [x] Preserve braced boolean local source if-statement phi return range facts through LLVM range attributes.
     - [ ] Lower source if statements and if expressions into MIR conditional blocks.
-  - [ ] Lower loops.
-  - [ ] Lower `for` and `foreach`.
+  - [~] Lower loops.
+    - [x] Lower canonical source while counting loops into MIR entry, header, body, and exit blocks.
+    - [x] Lower canonical source accumulator while loops into MIR dual-phi loop blocks.
+  - [~] Lower `for` and `foreach`.
+    - [x] Lower canonical counted source `for willexit` loops over existing locals into MIR entry, header, body, and exit blocks.
+    - [x] Lower canonical counted source `for willexit` loops with header locals into MIR entry, header, body, and exit blocks.
+    - [x] Preserve canonical counted source `for willexit independent` facts through MIR block flags and LLVM loop metadata.
   - [ ] Lower switch.
   - [ ] Lower `try`.
   - [x] Lower `become`.

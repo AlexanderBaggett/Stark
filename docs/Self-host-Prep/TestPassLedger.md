@@ -1437,3 +1437,270 @@ comments explaining which platform is required.
   - Two grouped adjacent runs exited 139 after printing partial success, so the
     same touched facts were verified with smaller stable filters.
 - No broad test sweep was run.
+
+## 2026-06-26 Selfhost Returned Local If Statement Slice
+
+- Lowered immediately returned locals overwritten by source `if` assignment
+  statements into MIR conditional return blocks.
+- Preserved branch-refined return range validation, boolean arm zero-extension,
+  effect prepass visibility, package-table shape, and LLVM range attributes.
+- Kept local-prefixed terminal return-if bodies on their existing lowerer by
+  narrowing the assignment-if detector.
+- Narrow verification:
+  - `../../stark test --filter CompilesReturnedLocalIfStatementFromAst --filter ReturnedLocalIfStatementPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfStatementFromAst --filter PackageTablesPreserveReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfExpressionFromAst --filter ReturnedLocalIfExpressionPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfExpressionFromAst --filter PackageTablesPreserveReturnedLocalIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedTerminalIfFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf --filter CompileModuleBranchReturnRangeUsesComparisonProof`
+    exited 139 after `CompileModuleBranchReturnRangeUsesComparisonProof`
+    passed, so the remaining touched facts were verified individually.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Braced Returned Local If Statement Slice
+
+- Lowered braced source `if` assignment arms for immediately returned locals
+  into MIR conditional return blocks.
+- Replaced the returned-local assignment-if route detector with a source-aware
+  shape check so unsupported branch bodies continue to fall through to the
+  correct lowerer instead of being claimed by a token sniff.
+- Preserved branch-refined return range validation, boolean arm zero-extension,
+  package-table shape, and no-phi LLVM emission for the braced assignment-arm
+  shape.
+- Narrow verification:
+  - `../../stark test --filter CompilesBracedReturnedLocalIfStatementFromAst --filter PackageTablesPreserveBracedReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfStatementFromAst --filter ReturnedLocalIfStatementPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfStatementFromAst --filter PackageTablesPreserveReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesBracedTerminalIfFromAst --filter CompilesLocalPrefixedBracedTerminalIfFromAst --filter PackageTablesPreserveBracedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Local If Expression Phi Slice
+
+- Lowered integer-valued local `if ... else ...` expression initializers used by
+  later return expressions into MIR diamond blocks with a merge phi.
+- Preserved phi-derived range facts into return validation and LLVM range
+  attributes through the existing MIR value-fact builder.
+- Kept immediately returned local if-expression initializers on the no-phi
+  conditional-return fast path by tightening the returned-local detector.
+- Narrow verification:
+  - `../../stark test --filter CompilesLocalIfExpressionInitializerThenReturnFromAst --filter PackageTablesPreserveLocalIfExpressionInitializerThenReturn`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfExpressionFromAst --filter ReturnedLocalIfExpressionPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfExpressionFromAst --filter PackageTablesPreserveReturnedLocalIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfStatementFromAst --filter ReturnedLocalIfStatementPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfStatementFromAst --filter PackageTablesPreserveReturnedLocalIfStatement --filter CompilesBracedReturnedLocalIfStatementFromAst --filter PackageTablesPreserveBracedReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Local If Statement Phi Slice
+
+- Lowered integer-valued source `if` assignment statements whose local is used
+  by a later return expression into MIR diamond blocks with a merge phi.
+- Preserved phi-derived range facts into return validation and LLVM range
+  attributes through the existing MIR value-fact builder.
+- Kept immediately returned local assignment-if bodies on the no-phi
+  conditional-return fast path.
+- Narrow verification:
+  - `../../stark test --filter CompilesLocalIfStatementAssignmentThenReturnFromAst --filter PackageTablesPreserveLocalIfStatementAssignmentThenReturn`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfStatementFromAst --filter ReturnedLocalIfStatementPreservesBranchRangeFacts --filter CompilesBooleanReturnedLocalIfStatementFromAst --filter PackageTablesPreserveReturnedLocalIfStatement --filter CompilesBracedReturnedLocalIfStatementFromAst --filter PackageTablesPreserveBracedReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Local If Phi Slice
+
+- Added typed MIR phi construction so boolean local `if` joins can stay `i1`
+  until a final return conversion requires `i64`.
+- Lowered boolean local if-expression initializers and compact boolean
+  if-statement assignments used by later equality returns into typed MIR phi
+  merge blocks.
+- Extended braced boolean if-statement assignment arms by matching source
+  blocks with brace depth only, so `<` comparisons inside arms do not hide the
+  arm's closing brace.
+- Emitted comparison LLVM with the left operand's MIR type so boolean equality
+  after a boolean phi emits `icmp eq i1` instead of widening the comparison.
+- Narrow verification:
+  - `../../stark test --filter CompilesBooleanLocalIfExpressionInitializerThenReturnExpressionFromAst --filter CompilesBooleanLocalIfStatementAssignmentThenReturnExpressionFromAst --filter PackageTablesPreserveBooleanLocalIfExpressionInitializerThenReturn --filter PackageTablesPreserveBooleanLocalIfStatementAssignmentThenReturn`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalIfExpressionInitializerThenReturnFromAst --filter PackageTablesPreserveLocalIfExpressionInitializerThenReturn --filter CompilesLocalIfStatementAssignmentThenReturnFromAst --filter PackageTablesPreserveLocalIfStatementAssignmentThenReturn --filter CompilesBooleanReturnedLocalIfExpressionFromAst --filter CompilesBooleanReturnedLocalIfStatementFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfExpressionFromAst --filter ReturnedLocalIfExpressionPreservesBranchRangeFacts --filter PackageTablesPreserveReturnedLocalIfExpression --filter CompilesReturnedLocalIfStatementFromAst --filter ReturnedLocalIfStatementPreservesBranchRangeFacts --filter PackageTablesPreserveReturnedLocalIfStatement --filter CompilesBracedReturnedLocalIfStatementFromAst --filter PackageTablesPreserveBracedReturnedLocalIfStatement --filter CompilesLocalPrefixedTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesBracedBooleanLocalIfStatementAssignmentThenReturnExpressionFromAst --filter PackageTablesPreserveBracedBooleanLocalIfStatementAssignmentThenReturn`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesBooleanLocalIfStatementAssignmentThenReturnExpressionFromAst --filter PackageTablesPreserveBooleanLocalIfStatementAssignmentThenReturn --filter CompilesBooleanLocalIfExpressionInitializerThenReturnExpressionFromAst --filter PackageTablesPreserveBooleanLocalIfExpressionInitializerThenReturn --filter CompilesBracedTerminalIfFromAst --filter CompilesLocalPrefixedBracedTerminalIfFromAst --filter PackageTablesPreserveBracedTerminalIf --filter CompilesBracedReturnedLocalIfStatementFromAst --filter PackageTablesPreserveBracedReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Terminal If Slice
+
+- Lowered terminal source `if` return branches with boolean values into
+  typed MIR conditional return blocks.
+- Kept boolean comparisons as `i1` values through arm lowering and widened only
+  the branch return values to the ABI `i64` shape.
+- Preserved the widened boolean return range facts so `i64[0 1]` declarations
+  pass and impossible narrower declarations fail.
+- Covered braced and semicolon-terminated compact arms for both direct terminal
+  `if` bodies and local-prefixed terminal `if` bodies.
+- Narrow verification:
+  - `../../stark test --filter CompilesBracedBooleanTerminalIfFromAst --filter PackageTablesPreserveBracedBooleanTerminalIf --filter CompilesLocalPrefixedBracedBooleanTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedBracedBooleanTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesSemicolonBooleanTerminalIfFromAst --filter PackageTablesPreserveSemicolonBooleanTerminalIf --filter CompilesLocalPrefixedSemicolonBooleanTerminalIfFromAst --filter PackageTablesPreserveLocalPrefixedSemicolonBooleanTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BooleanTerminalIfPreservesReturnRangeFacts`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesBracedTerminalIfFromAst --filter CompilesLocalPrefixedBracedTerminalIfFromAst --filter PackageTablesPreserveBracedTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesSemicolonTerminatedTerminalIfFromAst --filter CompilesLocalPrefixedSemicolonTerminalIfFromAst --filter PackageTablesPreserveSemicolonTerminalIf`
+    in `tests-stark/selfhost.Ir`: failed as a grouped run after
+    `CompilesSemicolonTerminatedTerminalIfFromAst` passed; the two reported
+    failures passed when rerun individually.
+  - `../../stark test --filter CompilesSemicolonTerminatedTerminalIfFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesLocalPrefixedSemicolonTerminalIfFromAst`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter PackageTablesPreserveSemicolonTerminalIf`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Return If Expression Slice
+
+- Covered boolean-valued terminal `return if ... else ...` expressions through
+  typed MIR conditional return blocks.
+- Kept boolean arm comparisons as `i1` and widened only branch return values to
+  the ABI `i64` shape.
+- Preserved widened boolean return range facts so `i64[0 1]` declarations pass
+  and impossible narrower declarations fail.
+- Narrow verification:
+  - `../../stark test --filter CompilesBooleanReturnIfExpressionFromAst --filter BooleanReturnIfExpressionPreservesBranchRangeFacts --filter PackageTablesPreserveBooleanReturnIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnIfExpressionFromAst --filter ReturnIfExpressionPreservesBranchRangeFacts --filter PackageTablesPreserveReturnIfExpression`
+    in `tests-stark/selfhost.Ir`: passed; the substring filter also selected
+    `BooleanReturnIfExpressionPreservesBranchRangeFacts`.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Returned Local If Statement Slice
+
+- Covered compact and braced boolean-valued source `if` assignment statements
+  whose overwritten local is immediately returned.
+- Kept branch boolean expressions as `i1` and widened only branch return values
+  to the ABI `i64` shape.
+- Preserved widened boolean return range facts so `i64[0 1]` declarations pass
+  and impossible narrower declarations fail.
+- Narrow verification:
+  - `../../stark test --filter CompilesBooleanReturnedLocalIfStatementFromAst --filter BooleanReturnedLocalIfStatementPreservesBranchRangeFacts --filter PackageTablesPreserveBooleanReturnedLocalIfStatement --filter CompilesBracedBooleanReturnedLocalIfStatementFromAst --filter BracedBooleanReturnedLocalIfStatementPreservesBranchRangeFacts --filter PackageTablesPreserveBracedBooleanReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfStatementFromAst --filter ReturnedLocalIfStatementPreservesBranchRangeFacts --filter PackageTablesPreserveReturnedLocalIfStatement --filter CompilesBracedReturnedLocalIfStatementFromAst --filter PackageTablesPreserveBracedReturnedLocalIfStatement`
+    in `tests-stark/selfhost.Ir`: passed; the substring filters also selected
+    the boolean returned-local range-fact tests.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Returned Local If Expression Slice
+
+- Covered boolean-valued immediately returned local source `if` expression
+  initializers through typed MIR conditional return blocks.
+- Kept branch boolean expressions as `i1` and widened only branch return values
+  to the ABI `i64` shape.
+- Preserved widened boolean return range facts so `i64[0 1]` declarations pass
+  and impossible narrower declarations fail.
+- Narrow verification:
+  - `../../stark test --filter CompilesBooleanReturnedLocalIfExpressionFromAst --filter BooleanReturnedLocalIfExpressionPreservesBranchRangeFacts --filter PackageTablesPreserveBooleanReturnedLocalIfExpression`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesReturnedLocalIfExpressionFromAst --filter ReturnedLocalIfExpressionPreservesBranchRangeFacts --filter PackageTablesPreserveReturnedLocalIfExpression`
+    in `tests-stark/selfhost.Ir`: passed; the substring filter also selected
+    `BooleanReturnedLocalIfExpressionPreservesBranchRangeFacts`.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Boolean Local If Phi Range Slice
+
+- Preserved boolean local `if` phi result facts for if-expression initializers,
+  compact if-statement assignments, and braced if-statement assignments.
+- Verified the lowered LLVM keeps `phi i1` and `icmp eq i1`, widens only at the
+  return edge with `zext i1`, and emits the declared `range(i64 0, 2)` return
+  attribute.
+- Narrow verification:
+  - `../../stark test --filter BooleanLocalIfExpressionInitializerThenReturnExpressionPreservesRangeFacts --filter BooleanLocalIfStatementAssignmentThenReturnExpressionPreservesRangeFacts --filter BracedBooleanLocalIfStatementAssignmentThenReturnExpressionPreservesRangeFacts`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Counting While Loop Slice
+
+- Lowered canonical source `while` counting loops into module MIR
+  entry/header/body/exit blocks with an induction phi and explicit backedge.
+- Routed the loop shape through effect prepass, final LLVM emission, and
+  package-table construction instead of the standalone loop text emitter.
+- Verified unsupported non-literal bounds, wrong assignment targets, and
+  non-additive updates still reject.
+- Narrow verification:
+  - `../../stark test --filter CompilesModuleCountingWhileLoopFromAst --filter ModuleCountingWhileLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingWhileLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter LowersCountingLoopSourceToLlvm --filter EmitsLlvmCountingLoopWithBackEdge --filter WhileLoopRejectsUnsupportedShapes`
+    in `tests-stark/selfhost.Ir`: passed; the substring filter also selected
+    `ModuleCountingWhileLoopRejectsUnsupportedShapes`.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Accumulator While Loop Slice
+
+- Lowered canonical source accumulator `while` loops into module MIR loop blocks
+  with counter and accumulator phis.
+- Routed the dual-phi loop shape through effect prepass, final LLVM emission,
+  and package-table construction.
+- Verified non-literal bounds, swapped body updates, non-additive counter
+  updates, and wrong return values still reject.
+- Narrow verification:
+  - `../../stark test --filter CompilesModuleAccumulatorWhileLoopFromAst --filter ModuleAccumulatorWhileLoopRejectsUnsupportedShapes --filter PackageTablesPreserveAccumulatorWhileLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesModuleCountingWhileLoopFromAst --filter ModuleCountingWhileLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingWhileLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Counted For Loop Slice
+
+- Lowered canonical counted `for willexit` loops over an existing local into
+  module MIR entry/header/body/exit blocks with an induction phi.
+- Routed the counted `for` shape through effect prepass, final LLVM emission,
+  and package-table construction.
+- Rejected `independent` in this route rather than dropping an unsupported
+  optimization fact before backend metadata exists.
+- Narrow verification:
+  - `../../stark test --filter CompilesModuleCountingForLoopFromAst --filter ModuleCountingForLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingForLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesModuleCountingWhileLoopFromAst --filter ModuleCountingWhileLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingWhileLoop --filter CompilesModuleAccumulatorWhileLoopFromAst --filter ModuleAccumulatorWhileLoopRejectsUnsupportedShapes --filter PackageTablesPreserveAccumulatorWhileLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Header Counted For Loop Slice
+
+- Lowered canonical counted `for willexit` loops with `stack mut` or
+  `register mut` header locals into module MIR loop blocks.
+- Preserved the induction phi, comparison, update, return range validation,
+  effect prepass visibility, final LLVM emission, and package-table shape.
+- Rejected `independent`, heap header locals, immutable header locals,
+  non-literal bounds, non-additive updates, nonempty bodies, and wrong returns.
+- Narrow verification:
+  - `../../stark test --filter CompilesModuleHeaderCountingForLoopFromAst --filter ModuleHeaderCountingForLoopRejectsUnsupportedShapes --filter PackageTablesPreserveHeaderCountingForLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter CompilesModuleCountingForLoopFromAst --filter ModuleCountingForLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingForLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-26 Selfhost Independent Counted For Loop Fact Slice
+
+- Preserved canonical counted source `for willexit independent` loop facts on
+  MIR backedge blocks and through MIR block serialization.
+- Emitted LLVM loop metadata for independent counted-loop backedges so the
+  source no-loop-carried-dependency fact reaches LLVM.
+- Narrow verification:
+  - `../../stark test --filter BinaryRoundTripsIndependentLoopBackedgeFlag --filter CompilesModuleIndependentCountingForLoopFromAst --filter CompilesModuleIndependentHeaderCountingForLoopFromAst --filter PackageTablesPreserveIndependentCountingForLoop --filter PackageTablesPreserveIndependentHeaderCountingForLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter BinaryRoundTripsBlocks --filter CompilesModuleCountingForLoopFromAst --filter ModuleCountingForLoopRejectsUnsupportedShapes --filter CompilesModuleHeaderCountingForLoopFromAst --filter ModuleHeaderCountingForLoopRejectsUnsupportedShapes --filter PackageTablesPreserveCountingForLoop --filter PackageTablesPreserveHeaderCountingForLoop`
+    in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
