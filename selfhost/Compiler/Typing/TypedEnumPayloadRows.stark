@@ -1,0 +1,373 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedEnumPayloadAttributes
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedEnumPayloadRows
+
+internal fn System.Memory.MemoryStatus AppendTypedEnumPayload(
+    mut borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] variantOrdinal,
+    u32[0 max] variantNameToken,
+    TypedEnumVariantRole variantRole,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] payloadNameToken,
+    TypedEnumPayloadKind payloadKind,
+    bool errorFunnel,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken)
+{
+    if (typeStartToken == 0 || typeStartToken >= typeEndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        arrayKind);
+
+    stack u32[0 max] typeHeadToken = TypedFieldLastIdentifierInSpan(stream, typeStartToken, typeEndToken);
+    stack u32[0 max] semanticPrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, typeHeadToken);
+    stack TypedSignatureTypeKind typeKind = TypedSignatureKindForType(source, stream, semanticPrimaryToken, typeHeadToken, 0, ownerGenericOpenToken, arrayKind);
+    stack mut u32[0 max] bitWidth = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])semanticPrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        bitWidth = TypedSignatureIntegerBitWidth(source, stream, semanticPrimaryToken);
+    }
+    else if (primaryKind == TokenKind.FloatType)
+    {
+        bitWidth = TypedSignatureFloatBitWidth(source, stream, semanticPrimaryToken);
+    }
+
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), typeArgumentCount, comptimeArgumentCount);
+    }
+
+    stack u32[0 max] flags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        semanticPrimaryToken,
+        typeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        0,
+        ownerGenericOpenToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        false,
+        0,
+        false);
+
+    return table.Append(
+        ownerDeclarationIndex,
+        owner.NameToken,
+        variantOrdinal,
+        variantNameToken,
+        payloadOrdinal,
+        payloadNameToken,
+        payloadKind,
+        variantRole,
+        errorFunnel,
+        typeStartToken,
+        typeEndToken,
+        typeKind,
+        typeHeadToken,
+        semanticPrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        flags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedEnumTuplePayloads(
+    mut borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] variantOrdinal,
+    u32[0 max] variantNameToken,
+    TypedEnumVariantRole variantRole,
+    u32[0 max] openToken)
+{
+    stack u32[0 max] closeToken = TypedSignatureMatchingCloseToken(stream, openToken);
+    if (closeToken <= openToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] payloadOrdinal = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(openToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = segmentStart;
+    while willexit (scan <= closeToken)
+    {
+        stack mut bool boundary = scan == closeToken;
+        if (!boundary)
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < scan)
+            {
+                switch (AppendTypedEnumPayload(
+                    table,
+                    source,
+                    stream,
+                    owner,
+                    ownerDeclarationIndex,
+                    ownerGenericOpenToken,
+                    variantOrdinal,
+                    variantNameToken,
+                    variantRole,
+                    payloadOrdinal,
+                    0,
+                    TypedEnumPayloadKind.Positional,
+                    false,
+                    segmentStart,
+                    scan))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                payloadOrdinal = (u32[0 max])(payloadOrdinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u32[0 max] TypedEnumNamedPayloadColonToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Colon)
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedEnumNamedPayloads(
+    mut borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] variantOrdinal,
+    u32[0 max] variantNameToken,
+    TypedEnumVariantRole variantRole,
+    u32[0 max] openToken)
+{
+    stack u32[0 max] closeToken = TypedSignatureMatchingCloseToken(stream, openToken);
+    if (closeToken <= openToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] payloadOrdinal = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(openToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = segmentStart;
+    while willexit (scan <= closeToken)
+    {
+        stack mut bool boundary = scan == closeToken;
+        if (!boundary)
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            stack u32[0 max] colonToken = TypedEnumNamedPayloadColonToken(stream, segmentStart, scan);
+            if (colonToken != 0 && (u32[0 max])(colonToken + 1) < scan)
+            {
+                stack u32[0 max] payloadName = TypedFieldLastIdentifierInSpan(stream, segmentStart, colonToken);
+                switch (AppendTypedEnumPayload(
+                    table,
+                    source,
+                    stream,
+                    owner,
+                    ownerDeclarationIndex,
+                    ownerGenericOpenToken,
+                    variantOrdinal,
+                    variantNameToken,
+                    variantRole,
+                    payloadOrdinal,
+                    payloadName,
+                    TypedEnumPayloadKind.Named,
+                    false,
+                    (u32[0 max])(colonToken + 1),
+                    scan))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                payloadOrdinal = (u32[0 max])(payloadOrdinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedEnumVariantPayloads(
+    mut borrow TypedEnumPayloadTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] variantOrdinal,
+    u32[0 max] variantStartToken,
+    u32[0 max] variantNameToken,
+    u32[0 max] variantEndExclusive)
+{
+    stack TypedEnumVariantRole role = TypedEnumPayloadVariantRole(source, stream, variantStartToken, variantNameToken);
+    stack mut u32[0 max] scan = (u32[0 max])(variantNameToken + 1);
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < variantEndExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.From)
+        {
+            return AppendTypedEnumPayload(
+                table,
+                source,
+                stream,
+                owner,
+                ownerDeclarationIndex,
+                ownerGenericOpenToken,
+                variantOrdinal,
+                variantNameToken,
+                role,
+                0,
+                0,
+                TypedEnumPayloadKind.From,
+                true,
+                (u32[0 max])(scan + 1),
+                variantEndExclusive);
+        }
+
+        if (depth == 0 && kind == TokenKind.LParen)
+        {
+            return AppendTypedEnumTuplePayloads(table, source, stream, owner, ownerDeclarationIndex, ownerGenericOpenToken, variantOrdinal, variantNameToken, role, scan);
+        }
+
+        if (depth == 0 && kind == TokenKind.LBrace)
+        {
+            return AppendTypedEnumNamedPayloads(table, source, stream, owner, ownerDeclarationIndex, ownerGenericOpenToken, variantOrdinal, variantNameToken, role, scan);
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

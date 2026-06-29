@@ -2,8 +2,8 @@ import Compiler.Ir
 import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Typing
-import Compiler.Typing.TypedEnumPayloads
-import Compiler.Typing.TypedEnumLayouts
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedEnumLayoutModel
 import Compiler.Typing.TypedPipeline
 import Compiler.Mir.Model
 import Compiler.Mir.LlvmText
@@ -29,8 +29,8 @@ public struct MirEnumLayoutFact
     u32[0 max] PayloadCountValue;
     u32[0 max] PayloadOrdinalValue;
     u32[0 max] PayloadNameTokenValue;
-    Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind PayloadKindValue;
-    Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole VariantRoleValue;
+    Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind PayloadKindValue;
+    Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole VariantRoleValue;
     bool ErrorFunnelValue;
     bool UsesNamedPayloadsValue;
     u32[0 max] StorageFieldOrdinalValue;
@@ -56,8 +56,8 @@ public struct MirEnumLayoutFact
         self.PayloadCountValue = 0;
         self.PayloadOrdinalValue = 0;
         self.PayloadNameTokenValue = 0;
-        self.PayloadKindValue = Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Unknown;
-        self.VariantRoleValue = Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.None;
+        self.PayloadKindValue = Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Unknown;
+        self.VariantRoleValue = Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.None;
         self.ErrorFunnelValue = false;
         self.UsesNamedPayloadsValue = false;
         self.StorageFieldOrdinalValue = 0;
@@ -118,12 +118,12 @@ public struct MirEnumLayoutFact
         return self.PayloadNameTokenValue;
     }
 
-    public inline finite law Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind PayloadKind(borrow MirEnumLayoutFact self)
+    public inline finite law Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind PayloadKind(borrow MirEnumLayoutFact self)
     {
         return self.PayloadKindValue;
     }
 
-    public inline finite law Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole VariantRole(borrow MirEnumLayoutFact self)
+    public inline finite law Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole VariantRole(borrow MirEnumLayoutFact self)
     {
         return self.VariantRoleValue;
     }
@@ -1248,13 +1248,13 @@ public fn MemoryStatus EmitLlvmEnumTagRead(
     return MemoryStatus.Ok;
 }
 
-internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromTyped(Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutRowKind kind)
+internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromTyped(Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutRowKind kind)
 {
     switch (kind)
     {
-        case Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutRowKind.Variant:
+        case Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutRowKind.Variant:
             return MirEnumLayoutFactRowKind.Variant;
-        case Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutRowKind.Payload:
+        case Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutRowKind.Payload:
             return MirEnumLayoutFactRowKind.Payload;
         default:
             return MirEnumLayoutFactRowKind.Unknown;
@@ -1262,7 +1262,7 @@ internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromTyped(C
 }
 
 internal fn MirEnumLayoutFact MirEnumLayoutFactFromTypedRow(
-    borrow Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable layouts,
+    borrow Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutTable layouts,
     u64[0 2 ** 63 - 1] index)
 {
     stack mut MirEnumLayoutFact fact = new();
@@ -1294,7 +1294,7 @@ internal fn MirEnumLayoutFact MirEnumLayoutFactFromTypedRow(
 }
 
 public fn bool BuildMirEnumLayoutFactsFromTypedLayouts(
-    borrow Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable layouts,
+    borrow Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutTable layouts,
     mut borrow IrTable<MirEnumLayoutFact> facts)
 {
     stack u64[0 2 ** 63 - 1] count = layouts.Count();
@@ -1332,12 +1332,12 @@ public fn bool BuildMirEnumLayoutFactsForSource(ascii source, out TokenStream st
             declarations = parsedDeclarations;
     }
 
-    stack mut Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable typedLayouts = new();
+    stack mut Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutTable typedLayouts = new();
     switch (Compiler.Typing.TypedPipeline.BuildTypedEnumLayouts(source, parsedStream, declarations))
     {
-        case ParseResult<Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable>.Err(var layoutError):
+        case ParseResult<Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutTable>.Err(var layoutError):
             return false;
-        case ParseResult<Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable>.Ok(var builtLayouts):
+        case ParseResult<Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutTable>.Ok(var builtLayouts):
             typedLayouts = builtLayouts;
     }
 

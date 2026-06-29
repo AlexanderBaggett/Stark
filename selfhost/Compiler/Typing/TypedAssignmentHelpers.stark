@@ -1,0 +1,221 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedConversionModel
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+module Compiler.Typing.TypedAssignmentHelpers
+
+internal finite law TypedIdentifierContext TypedAssignmentIdentifierContext(TypedAssignmentContext context)
+{
+    if (context == TypedAssignmentContext.GlobalInitializer)
+    {
+        return TypedIdentifierContext.GlobalInitializer;
+    }
+
+    if (context == TypedAssignmentContext.FunctionBody)
+    {
+        return TypedIdentifierContext.FunctionBody;
+    }
+
+    return TypedIdentifierContext.Unknown;
+}
+
+internal finite law TypedLiteralContext TypedAssignmentLiteralContext(TypedAssignmentContext context)
+{
+    if (context == TypedAssignmentContext.GlobalInitializer)
+    {
+        return TypedLiteralContext.GlobalInitializer;
+    }
+
+    if (context == TypedAssignmentContext.FunctionBody)
+    {
+        return TypedLiteralContext.FunctionBody;
+    }
+
+    return TypedLiteralContext.Unknown;
+}
+
+internal finite law TypedMemberContext TypedAssignmentMemberContext(TypedAssignmentContext context)
+{
+    if (context == TypedAssignmentContext.GlobalInitializer)
+    {
+        return TypedMemberContext.GlobalInitializer;
+    }
+
+    if (context == TypedAssignmentContext.FunctionBody)
+    {
+        return TypedMemberContext.FunctionBody;
+    }
+
+    return TypedMemberContext.Unknown;
+}
+
+internal finite law TypedIndexContext TypedAssignmentIndexContext(TypedAssignmentContext context)
+{
+    if (context == TypedAssignmentContext.GlobalInitializer)
+    {
+        return TypedIndexContext.GlobalInitializer;
+    }
+
+    if (context == TypedAssignmentContext.FunctionBody)
+    {
+        return TypedIndexContext.FunctionBody;
+    }
+
+    return TypedIndexContext.Unknown;
+}
+
+internal finite law TypedAssignmentOperatorKind TypedAssignmentOperatorKindForToken(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Assign:
+            return TypedAssignmentOperatorKind.Assign;
+        case TokenKind.AddAssign:
+            return TypedAssignmentOperatorKind.AddAssign;
+        case TokenKind.SubAssign:
+            return TypedAssignmentOperatorKind.SubAssign;
+        case TokenKind.MulAssign:
+            return TypedAssignmentOperatorKind.MulAssign;
+        case TokenKind.DivAssign:
+            return TypedAssignmentOperatorKind.DivAssign;
+        case TokenKind.ModAssign:
+            return TypedAssignmentOperatorKind.ModAssign;
+        case TokenKind.AndAssign:
+            return TypedAssignmentOperatorKind.AndAssign;
+        case TokenKind.OrAssign:
+            return TypedAssignmentOperatorKind.OrAssign;
+        case TokenKind.XorAssign:
+            return TypedAssignmentOperatorKind.XorAssign;
+        case TokenKind.WrapAddAssign:
+            return TypedAssignmentOperatorKind.WrapAddAssign;
+        case TokenKind.WrapSubAssign:
+            return TypedAssignmentOperatorKind.WrapSubAssign;
+        case TokenKind.WrapMulAssign:
+            return TypedAssignmentOperatorKind.WrapMulAssign;
+        case TokenKind.SatAddAssign:
+            return TypedAssignmentOperatorKind.SatAddAssign;
+        case TokenKind.SatSubAssign:
+            return TypedAssignmentOperatorKind.SatSubAssign;
+        case TokenKind.SatMulAssign:
+            return TypedAssignmentOperatorKind.SatMulAssign;
+        default:
+            return TypedAssignmentOperatorKind.Unknown;
+    }
+}
+
+internal finite law bool TypedAssignmentOperatorIsCompound(TypedAssignmentOperatorKind kind)
+{
+    return kind != TypedAssignmentOperatorKind.Assign && kind != TypedAssignmentOperatorKind.Unknown;
+}
+
+internal finite law bool TypedAssignmentIndexAccessKindIsSlice(TypedIndexAccessKind kind)
+{
+    return kind == TypedIndexAccessKind.Slice
+        || kind == TypedIndexAccessKind.TextSlice
+        || kind == TypedIndexAccessKind.DynamicSlice
+        || kind == TypedIndexAccessKind.RawPointerRegion;
+}
+
+internal fn u32[0 max] TypedAssignmentExpressionIndexForNode(
+    borrow TypedAssignmentExpressionTable table,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && table.ContextAt(index) == context
+            && table.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && table.OwnerNameTokenAt(index) == ownerNameToken
+            && table.FunctionNameTokenAt(index) == functionNameToken
+            && table.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && table.AssignmentNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedAssignmentLiteralIndexForNode(
+    borrow TypedLiteralExpressionTable literals,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedLiteralContext literalContext = TypedAssignmentLiteralContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && literals.ContextAt(index) == literalContext
+            && literals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && literals.OwnerNameTokenAt(index) == ownerNameToken
+            && literals.FunctionNameTokenAt(index) == functionNameToken
+            && literals.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && literals.ExprNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn void TypedAssignmentFactsFromAssignment(
+    borrow TypedAssignmentExpressionTable assignments,
+    u32[0 max] assignmentIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (assignmentIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(assignmentIndexPlusOne - 1);
+    facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    facts.DeclarationIndex = assignments.TargetDeclarationIndexAt(index);
+    facts.NameToken = assignments.TargetNameTokenAt(index);
+    facts.TypeKind = assignments.TargetTypeKindAt(index);
+    facts.TypeHeadToken = assignments.TargetTypeHeadTokenAt(index);
+    facts.TypePrimaryToken = assignments.TargetTypePrimaryTokenAt(index);
+    facts.TypeStartToken = assignments.TargetTypeStartTokenAt(index);
+    facts.TypeEndToken = assignments.TargetTypeEndTokenAt(index);
+    facts.RangeStartToken = assignments.TargetRangeStartTokenAt(index);
+    facts.RangeEndToken = assignments.TargetRangeEndTokenAt(index);
+    facts.ElementCountStartToken = assignments.TargetElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = assignments.TargetElementCountEndTokenAt(index);
+    facts.BitWidth = assignments.TargetBitWidthAt(index);
+    facts.TypeArgumentCount = assignments.TargetTypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = assignments.TargetComptimeArgumentCountAt(index);
+    facts.TypeFlags = assignments.TargetTypeFlagsAt(index);
+}
+
+internal finite law TypedConversionContext TypedAssignmentConversionContext(TypedAssignmentContext context)
+{
+    if (context == TypedAssignmentContext.GlobalInitializer)
+    {
+        return TypedConversionContext.GlobalInitializer;
+    }
+
+    if (context == TypedAssignmentContext.FunctionBody)
+    {
+        return TypedConversionContext.FunctionBody;
+    }
+
+    return TypedConversionContext.Unknown;
+}

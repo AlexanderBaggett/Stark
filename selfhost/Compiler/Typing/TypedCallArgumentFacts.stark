@@ -1,0 +1,608 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCallArgumentFacts
+
+internal finite law bool TypedCallOperatorYieldsBool(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.EqEq:
+            return true;
+        case TokenKind.Neq:
+            return true;
+        case TokenKind.Lt:
+            return true;
+        case TokenKind.Gt:
+            return true;
+        case TokenKind.Lte:
+            return true;
+        case TokenKind.Gte:
+            return true;
+        case TokenKind.AndAnd:
+            return true;
+        case TokenKind.OrOr:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal finite law TypedIdentifierContext TypedCallIdentifierContext(TypedCallContext context)
+{
+    if (context == TypedCallContext.GlobalInitializer)
+    {
+        return TypedIdentifierContext.GlobalInitializer;
+    }
+
+    if (context == TypedCallContext.FunctionBody)
+    {
+        return TypedIdentifierContext.FunctionBody;
+    }
+
+    return TypedIdentifierContext.Unknown;
+}
+
+internal fn u32[0 max] TypedCallIdentifierIndexForNode(
+    borrow TypedIdentifierExpressionTable identifiers,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] calleeNode)
+{
+    stack TypedIdentifierContext identifierContext = TypedCallIdentifierContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = identifiers.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && identifiers.ContextAt(index) == identifierContext
+            && identifiers.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && identifiers.OwnerNameTokenAt(index) == ownerNameToken
+            && identifiers.FunctionNameTokenAt(index) == functionNameToken
+            && identifiers.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && identifiers.ExprNodeAt(index) == calleeNode)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal finite law TypedLiteralContext TypedCallLiteralContext(TypedCallContext context)
+{
+    if (context == TypedCallContext.GlobalInitializer)
+    {
+        return TypedLiteralContext.GlobalInitializer;
+    }
+
+    if (context == TypedCallContext.FunctionBody)
+    {
+        return TypedLiteralContext.FunctionBody;
+    }
+
+    return TypedLiteralContext.Unknown;
+}
+
+internal fn u32[0 max] TypedCallLiteralIndexForNode(
+    borrow TypedLiteralExpressionTable literals,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedLiteralContext literalContext = TypedCallLiteralContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && literals.ContextAt(index) == literalContext
+            && literals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && literals.OwnerNameTokenAt(index) == ownerNameToken
+            && literals.FunctionNameTokenAt(index) == functionNameToken
+            && literals.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && literals.ExprNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedCallPriorCallIndexForNode(
+    borrow TypedCallExpressionTable calls,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = calls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && calls.ContextAt(index) == context
+            && calls.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && calls.OwnerNameTokenAt(index) == ownerNameToken
+            && calls.FunctionNameTokenAt(index) == functionNameToken
+            && calls.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && calls.CallNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal finite law TypedMemberContext TypedCallMemberContext(TypedCallContext context)
+{
+    if (context == TypedCallContext.GlobalInitializer)
+    {
+        return TypedMemberContext.GlobalInitializer;
+    }
+
+    if (context == TypedCallContext.FunctionBody)
+    {
+        return TypedMemberContext.FunctionBody;
+    }
+
+    return TypedMemberContext.Unknown;
+}
+
+internal fn u32[0 max] TypedCallMemberIndexForNode(
+    borrow TypedMemberExpressionTable members,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedMemberContext memberContext = TypedCallMemberContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && members.ContextAt(index) == memberContext
+            && members.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && members.OwnerNameTokenAt(index) == ownerNameToken
+            && members.FunctionNameTokenAt(index) == functionNameToken
+            && members.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && members.MemberNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn void TypedCallFactsFromSignatureSlot(
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] slotIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    stack mut TypedSignatureTypeKind typeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] typeStartToken = 0;
+    stack mut u32[0 max] typeEndToken = 0;
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    stack mut u32[0 max] typeFlags = 0;
+    TypedCallSignatureSlotFacts(
+        signatures,
+        slotIndexPlusOne,
+        typeKind,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        typeFlags);
+    facts.TypeKind = typeKind;
+    facts.TypeHeadToken = typeHeadToken;
+    facts.TypePrimaryToken = typePrimaryToken;
+    facts.TypeStartToken = typeStartToken;
+    facts.TypeEndToken = typeEndToken;
+    facts.RangeStartToken = rangeStartToken;
+    facts.RangeEndToken = rangeEndToken;
+    facts.ElementCountStartToken = elementCountStartToken;
+    facts.ElementCountEndToken = elementCountEndToken;
+    facts.BitWidth = bitWidth;
+    facts.TypeArgumentCount = typeArgumentCount;
+    facts.ComptimeArgumentCount = comptimeArgumentCount;
+    facts.TypeFlags = typeFlags;
+}
+
+internal fn void TypedCallFactsFromLiteral(
+    borrow TypedLiteralExpressionTable literals,
+    u32[0 max] literalIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (literalIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(literalIndexPlusOne - 1);
+    facts.TypeKind = literals.TypeKindAt(index);
+    facts.TypePrimaryToken = literals.LiteralTokenAt(index);
+    facts.TypeStartToken = literals.LiteralTokenAt(index);
+    facts.TypeEndToken = (u32[0 max])(literals.LiteralTokenAt(index) + 1);
+    facts.BitWidth = literals.BitWidthAt(index);
+    facts.TypeFlags = literals.TypeFlagsAt(index);
+    facts.IsCompileTimeInteger = literals.IsCompileTimeIntegerAt(index);
+    facts.IsNullLiteral = literals.LiteralKindAt(index) == TypedLiteralKind.Null;
+}
+
+internal fn void TypedCallFactsFromIdentifier(
+    borrow TypedIdentifierExpressionTable identifiers,
+    u32[0 max] identifierIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (identifierIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(identifierIndexPlusOne - 1);
+    facts.TypeKind = identifiers.TypeKindAt(index);
+    facts.TypeHeadToken = identifiers.TypeHeadTokenAt(index);
+    facts.TypePrimaryToken = identifiers.TypePrimaryTokenAt(index);
+    facts.TypeStartToken = identifiers.TypeStartTokenAt(index);
+    facts.TypeEndToken = identifiers.TypeEndTokenAt(index);
+    facts.RangeStartToken = identifiers.RangeStartTokenAt(index);
+    facts.RangeEndToken = identifiers.RangeEndTokenAt(index);
+    facts.ElementCountStartToken = identifiers.ElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = identifiers.ElementCountEndTokenAt(index);
+    facts.BitWidth = identifiers.BitWidthAt(index);
+    facts.TypeArgumentCount = identifiers.TypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = identifiers.ComptimeArgumentCountAt(index);
+    facts.TypeFlags = identifiers.TypeFlagsAt(index);
+}
+
+internal fn void TypedCallFactsFromCallReturn(
+    borrow TypedCallExpressionTable calls,
+    u32[0 max] callIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (callIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(callIndexPlusOne - 1);
+    facts.TypeKind = calls.ReturnTypeKindAt(index);
+    facts.TypeHeadToken = calls.ReturnTypeHeadTokenAt(index);
+    facts.TypePrimaryToken = calls.ReturnTypePrimaryTokenAt(index);
+    facts.TypeStartToken = calls.ReturnTypeStartTokenAt(index);
+    facts.TypeEndToken = calls.ReturnTypeEndTokenAt(index);
+    facts.RangeStartToken = calls.ReturnRangeStartTokenAt(index);
+    facts.RangeEndToken = calls.ReturnRangeEndTokenAt(index);
+    facts.ElementCountStartToken = calls.ReturnElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = calls.ReturnElementCountEndTokenAt(index);
+    facts.BitWidth = calls.ReturnBitWidthAt(index);
+    facts.TypeArgumentCount = calls.ReturnTypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = calls.ReturnComptimeArgumentCountAt(index);
+    facts.TypeFlags = calls.ReturnTypeFlagsAt(index);
+}
+
+internal fn void TypedCallFactsFromTypeSpan(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (typeStartToken == 0 || typeEndToken <= typeStartToken)
+    {
+        return;
+    }
+
+    TypedCallTypeSpanFacts(
+        source,
+        stream,
+        typeStartToken,
+        typeEndToken,
+        facts.TypeKind,
+        facts.TypeHeadToken,
+        facts.TypePrimaryToken,
+        facts.RangeStartToken,
+        facts.RangeEndToken,
+        facts.ElementCountStartToken,
+        facts.ElementCountEndToken,
+        facts.BitWidth,
+        facts.TypeArgumentCount,
+        facts.ComptimeArgumentCount,
+        facts.TypeFlags);
+    facts.TypeStartToken = typeStartToken;
+    facts.TypeEndToken = typeEndToken;
+}
+
+internal fn void TypedCallFactsFromNewTypeToken(u32[0 max] typeNameToken, mut borrow TypedCallTypeFacts facts)
+{
+    if (typeNameToken == 0)
+    {
+        return;
+    }
+
+    facts.TypeKind = TypedSignatureTypeKind.Named;
+    facts.TypeHeadToken = typeNameToken;
+    facts.TypePrimaryToken = typeNameToken;
+    facts.TypeStartToken = typeNameToken;
+    facts.TypeEndToken = (u32[0 max])(typeNameToken + 1);
+}
+
+internal fn void TypedCallBoolFacts(u32[0 max] token, mut borrow TypedCallTypeFacts facts)
+{
+    facts.TypeKind = TypedSignatureTypeKind.Bool;
+    facts.TypePrimaryToken = token;
+    facts.TypeStartToken = token;
+    facts.TypeEndToken = (u32[0 max])(token + 1);
+}
+
+internal fn void TypedCallArgumentFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow ExprTree tree,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node,
+    mut borrow TypedCallTypeFacts facts)
+{
+    stack mut u32[0 max] current = node;
+    stack mut u32[0 max] fallback = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(tree.Count() + 1);
+    while willexit (guard > 0 && current != 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack ExprKind kind = tree.NodeKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] identifierIndexPlusOne = TypedCallIdentifierIndexForNode(
+                identifiers,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromIdentifier(identifiers, identifierIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] callIndexPlusOne = TypedCallPriorCallIndexForNode(
+                calls,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromCallReturn(calls, callIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conversion)
+        {
+            TypedCallFactsFromTypeSpan(source, stream, (u32[0 max])(tree.TokenAt(current) + 1), tree.AuxAt(current), facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.New)
+        {
+            stack u32[0 max] typeNode = tree.LeftAt(current);
+            if (typeNode != 0 && tree.NodeKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                TypedCallFactsFromNewTypeToken(tree.TokenAt(typeNode), facts);
+            }
+
+            return;
+        }
+
+        if (TypedLiteralExprKindIsLiteral(kind))
+        {
+            stack u32[0 max] literalIndexPlusOne = TypedCallLiteralIndexForNode(
+                literals,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromLiteral(literals, literalIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Binary)
+        {
+            stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])tree.TokenAt(current));
+            if (TypedCallOperatorYieldsBool(op))
+            {
+                TypedCallBoolFacts(tree.TokenAt(current), facts);
+                return;
+            }
+
+            fallback = tree.RightAt(current);
+            current = tree.LeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])tree.TokenAt(current)) == TokenKind.Bang)
+            {
+                TypedCallBoolFacts(tree.TokenAt(current), facts);
+                return;
+            }
+
+            current = tree.LeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Conditional || kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            current = tree.RightAt(current);
+        }
+        else if (fallback != 0)
+        {
+            current = fallback;
+            fallback = 0;
+        }
+        else
+        {
+            current = 0;
+        }
+    }
+}
+
+internal fn void TypedCallArgumentFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow StatementList body,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node,
+    mut borrow TypedCallTypeFacts facts)
+{
+    stack mut u32[0 max] current = node;
+    stack mut u32[0 max] fallback = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ExprNodeCount() + 1);
+    while willexit (guard > 0 && current != 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack ExprKind kind = body.ExprKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] identifierIndexPlusOne = TypedCallIdentifierIndexForNode(
+                identifiers,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromIdentifier(identifiers, identifierIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] callIndexPlusOne = TypedCallPriorCallIndexForNode(
+                calls,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromCallReturn(calls, callIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conversion)
+        {
+            TypedCallFactsFromTypeSpan(source, stream, (u32[0 max])(body.ExprTokenAt(current) + 1), body.ExprAuxAt(current), facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.New)
+        {
+            stack u32[0 max] typeNode = body.ExprLeftAt(current);
+            if (typeNode != 0 && body.ExprKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                TypedCallFactsFromNewTypeToken(body.ExprTokenAt(typeNode), facts);
+            }
+
+            return;
+        }
+
+        if (TypedLiteralExprKindIsLiteral(kind))
+        {
+            stack u32[0 max] literalIndexPlusOne = TypedCallLiteralIndexForNode(
+                literals,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                current);
+            TypedCallFactsFromLiteral(literals, literalIndexPlusOne, facts);
+            return;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Binary)
+        {
+            stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current));
+            if (TypedCallOperatorYieldsBool(op))
+            {
+                TypedCallBoolFacts(body.ExprTokenAt(current), facts);
+                return;
+            }
+
+            fallback = body.ExprRightAt(current);
+            current = body.ExprLeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current)) == TokenKind.Bang)
+            {
+                TypedCallBoolFacts(body.ExprTokenAt(current), facts);
+                return;
+            }
+
+            current = body.ExprLeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Conditional || kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            current = body.ExprRightAt(current);
+        }
+        else if (fallback != 0)
+        {
+            current = fallback;
+            fallback = 0;
+        }
+        else
+        {
+            current = 0;
+        }
+    }
+}

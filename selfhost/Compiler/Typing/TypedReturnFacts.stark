@@ -1,0 +1,109 @@
+import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedReturnModel
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedReturnFacts
+
+internal finite law TypedReturnValueKind TypedReturnValueKindFromAssignmentValueKind(TypedAssignmentValueKind kind)
+{
+    if (kind == TypedAssignmentValueKind.Identifier)
+    {
+        return TypedReturnValueKind.Identifier;
+    }
+
+    if (kind == TypedAssignmentValueKind.Member)
+    {
+        return TypedReturnValueKind.Member;
+    }
+
+    if (kind == TypedAssignmentValueKind.Call)
+    {
+        return TypedReturnValueKind.Call;
+    }
+
+    if (kind == TypedAssignmentValueKind.Index)
+    {
+        return TypedReturnValueKind.Index;
+    }
+
+    if (kind == TypedAssignmentValueKind.Literal)
+    {
+        return TypedReturnValueKind.Literal;
+    }
+
+    if (kind == TypedAssignmentValueKind.New)
+    {
+        return TypedReturnValueKind.New;
+    }
+
+    if (kind == TypedAssignmentValueKind.Conversion)
+    {
+        return TypedReturnValueKind.Conversion;
+    }
+
+    if (kind == TypedAssignmentValueKind.Assignment)
+    {
+        return TypedReturnValueKind.Assignment;
+    }
+
+    return TypedReturnValueKind.Unknown;
+}
+
+internal fn void TypedReturnExpectedFactsFromSignature(
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] signatureIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (signatureIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] signatureIndex = (u64[0 2 ** 63 - 1])(signatureIndexPlusOne - 1);
+    stack u32[0 max] returnSlotIndexPlusOne = signatures.ReturnTypeSlotIndexPlusOneAt(signatureIndex);
+    stack mut TypedSignatureTypeKind typeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] typeStartToken = 0;
+    stack mut u32[0 max] typeEndToken = 0;
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    stack mut u32[0 max] typeFlags = 0;
+    TypedCallSignatureSlotFacts(
+        signatures,
+        returnSlotIndexPlusOne,
+        typeKind,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        typeFlags);
+
+    facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    facts.TypeKind = typeKind;
+    facts.TypeHeadToken = typeHeadToken;
+    facts.TypePrimaryToken = typePrimaryToken;
+    facts.TypeStartToken = typeStartToken;
+    facts.TypeEndToken = typeEndToken;
+    facts.RangeStartToken = rangeStartToken;
+    facts.RangeEndToken = rangeEndToken;
+    facts.ElementCountStartToken = elementCountStartToken;
+    facts.ElementCountEndToken = elementCountEndToken;
+    facts.BitWidth = bitWidth;
+    facts.TypeArgumentCount = typeArgumentCount;
+    facts.ComptimeArgumentCount = comptimeArgumentCount;
+    facts.TypeFlags = typeFlags;
+}

@@ -11,6 +11,106 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-29 Selfhost Typing Literal And Enum Payload Splits
+
+- `Compiler.Typing.TypedLiteralModel` now owns literal context/kind enums, literal flags, table storage, accessors, and row storage.
+- `Compiler.Typing.TypedLiteralFacts` now owns literal scalar width, text length, expression-kind, and literal type-kind helpers.
+- `Compiler.Typing.TypedLiteralRows` now owns literal row construction while `TypedLiterals` keeps source scanning and build orchestration.
+- `Compiler.Typing.TypedEnumPayloadModel` now owns enum-payload kind/role enums, table storage, accessors, and row storage.
+- `Compiler.Typing.TypedEnumPayloadAttributes` now owns `[Ok]` and `[Err]` role attribute scanning.
+- `Compiler.Typing.TypedEnumPayloadRows` now owns enum-payload row construction while `TypedEnumPayloads` keeps declaration scanning.
+- `Compiler.Mir.EnumLayout` and `Compiler.Mir.PackageCodec` now qualify payload kind and role types through `TypedEnumPayloadModel`.
+- Focused verification:
+  - Typed-literal split lower-MIR batch passed with 0 diagnostics for the new literal modules, affected typing consumers, `Compiler.Typing`, `SourceModuleLowering`, and `Compiler.Mir`.
+  - Typed-enum-payload split lower-MIR batch passed with 0 errors for the new payload modules, enum-layout consumers, artifact rendering, package codec, `SourceModuleLowering`, and `Compiler.Mir`; the existing 7 enum-layout recursion warnings remain.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Member Splits
+
+- `Compiler.Typing.TypedMemberModel` now owns member context/receiver/target enums, table storage, accessors, flags, member rows, and candidate rows.
+- `Compiler.Typing.TypedMemberFacts` now owns literal-to-member-type fact projection.
+- `Compiler.Typing.TypedMemberLookup` now owns member expression, call, identifier, and declaration lookup helpers.
+- `Compiler.Typing.TypedMemberReceiverFacts` now owns receiver/type fact derivation from identifiers, calls, members, type spans, fields, and source receiver nodes.
+- `Compiler.Typing.TypedMemberMethods` now owns member-method candidate matching and candidate-row collection.
+- `Compiler.Typing.TypedMemberRows` now owns resolved member-row appending while `TypedMembers` keeps source scanning and build orchestration.
+- Focused verification:
+  - Typed-member split lower-MIR batch passed with 0 diagnostics for the new member modules, affected typing consumers, `Compiler.Typing`, `SourceModuleLowering`, and `Compiler.Mir`.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Identifier And Return Splits
+
+- `Compiler.Typing.TypedIdentifierModel` now owns identifier context/target enums, table storage, accessors, flags, and row append storage.
+- `Compiler.Typing.TypedIdentifierLookup` now owns declaration, global, signature, parameter, and local visibility lookup helpers.
+- `Compiler.Typing.TypedIdentifierRows` now owns identifier row appenders and target fact propagation.
+- `Compiler.Typing.TypedIdentifiers` now keeps body/global scanning and build orchestration.
+- `Compiler.Typing.TypedReturnModel` now owns return context/value enums, table storage, accessors, flags, and row append storage.
+- `Compiler.Typing.TypedReturnFacts` now owns return value-kind mapping and expected-return fact extraction.
+- Focused verification:
+  - Identifier split lower-MIR batch passed with 0 diagnostics for the new identifier modules, affected typing consumers, `Compiler.Typing`, `SourceModuleLowering`, and `Compiler.Mir`.
+  - Return split lower-MIR batch passed with 0 diagnostics for the new return modules, `TypedPipeline`, `Compiler.Typing`, `SourceModuleLowering`, and `Compiler.Mir`.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Enum Layout Model And Variant Splits
+
+- `Compiler.Typing.TypedEnumLayoutModel` now owns enum-layout row/query types, table storage, accessors, and query-folding helpers.
+- `Compiler.Typing.TypedEnumLayoutVariants` now owns enum variant scanning, unit-variant detection, tag/source ordinal mapping, and payload lookup helpers.
+- `Compiler.Typing.TypedEnumLayouts` now keeps recursive type-layout calculation and row construction.
+- `Compiler.Typing` re-exports both new enum-layout modules to preserve facade access.
+- MIR enum-layout fact bridging now qualifies typed layout rows through `Compiler.Typing.TypedEnumLayoutModel`.
+- Focused verification:
+  - `TypedEnumLayoutModel` and `TypedEnumLayoutVariants` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `TypedEnumLayouts` host-test inspect through `lower-mir`: passed with 0 errors and the existing 7 bounded enum-layout recursion warnings.
+  - `TypedCtfeQueries`, `TypedPipeline`, `Compiler.Typing`, `Compiler.ArtifactRendering`, `Compiler.Mir.EnumLayout`, `SourceModuleLowering`, and `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Call Helper Splits
+
+- `Compiler.Typing.TypedCallSignatures` now owns callable type-span scans, signature-slot fact reads, callable return facts, and callable parameter facts.
+- `Compiler.Typing.TypedCallArgumentFacts` now owns argument type-fact derivation from literals, identifiers, prior calls, conversions, `new`, unary, binary, conditional, and assignment expressions.
+- `Compiler.Typing.TypedCallOverloads` now owns direct-function and method overload candidate scoring, viability checks, and best-candidate selection.
+- `Compiler.Typing.TypedCallArguments` now owns call argument row appending for expression trees and parsed function bodies.
+- `Compiler.Typing.TypedCallTargets` now owns call target resolution and call-row appending, while `TypedCalls` now keeps source scanning and build orchestration.
+- `TypedMembers`, `TypedIndexing`, and `TypedReturns` now import `TypedCallSignatures` directly for call signature facts instead of reaching through `TypedCalls`.
+- Focused typing verification:
+  - `Compiler.Typing.TypedCallSignatures` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedCallArgumentFacts` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedCallOverloads` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedCallArguments` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedCallTargets` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedCalls` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedMembers` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedIndexing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedReturns` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedCallMemberDependencies` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- Dependency guard verification:
+  `scripts/check-selfhost-typing-dependencies.sh` passed.
+- Whitespace verification:
+  `git diff --check` passed.
+- No broad test sweep was run.
+
+---
+
 ## 2026-06-29 Selfhost Typing Enum Layout Helper Splits
 
 - `Compiler.Typing.TypedEnumLayoutGenerics` now owns enum-layout generic context tables, generic argument segment scans, generic parameter ordinal scans, and comptime integer argument readers.
@@ -2643,4 +2743,42 @@ comments explaining which platform is required.
   - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 errors and pre-existing recursion warnings.
   - `../../stark test --target arm64-apple-macosx26.0.0 --filter AsmSignatureMetadataSurvivesParserBridge --filter AsmMetadataRejectsInvalidInputRegisterBeforeAppendingRows --filter AsmMetadataRejectsInvalidOutputRegisterBeforeAppendingRows --filter AsmMetadataRejectsInvalidClobberRegisterBeforeAppendingRows --filter AsmMetadataBinaryRoundTrips --filter PackageImageWithAsmRoundTripsMetadata --filter ModulePackageTablesWithAsmPreserveFunctionIdsAndCalls`
     in `tests-stark/selfhost.Ir`: stopped after about 4.5 minutes because the filtered project compile fanned out heavily.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Index Helper Split
+
+- Moved indexing enums, flags, storage, and accessors into `Compiler.Typing.TypedIndexModel`.
+- Moved index context, lookup, receiver, element, and result fact helpers into `Compiler.Typing.TypedIndexHelpers`.
+- Kept `Compiler.Typing.TypedIndexing` focused on index append, scan, and build orchestration.
+- Removed stale direct `TypedIndexing` imports from MIR facade modules that did not use index builder APIs.
+- Narrow verification:
+  - `TypedIndexModel`, `TypedIndexHelpers`, `TypedIndexing`, conversion consumers, assignment consumers, `TypedReturns`, `TypedPipeline`, and `Compiler.Typing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `SourceModuleLowering` and `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Assignment Helper Split
+
+- Moved assignment enums, flags, storage, and accessors into `Compiler.Typing.TypedAssignmentModel`.
+- Moved assignment context conversions, operator classification, node lookup, and assignment fact-copy helpers into `Compiler.Typing.TypedAssignmentHelpers`.
+- Moved assignment target and value fact derivation into `Compiler.Typing.TypedAssignmentNodeFacts`.
+- Kept `Compiler.Typing.TypedAssignments` focused on assignment append, scan, and build orchestration.
+- Narrow verification:
+  - `TypedAssignmentModel`, `TypedAssignmentHelpers`, `TypedAssignmentNodeFacts`, `TypedAssignments`, `TypedReturns`, `TypedPipeline`, and `Compiler.Typing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `SourceModuleLowering` and `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Conversion Helper Split
+
+- Moved conversion enums, flags, storage, and accessors into `Compiler.Typing.TypedConversionModel`.
+- Moved conversion context conversions, node lookup, target fact-copy, and conversion flag helpers into `Compiler.Typing.TypedConversionHelpers`.
+- Moved conversion operand fact derivation into `Compiler.Typing.TypedConversionOperandFacts`.
+- Kept `Compiler.Typing.TypedConversions` focused on conversion append, scan, and build orchestration.
+- Narrow verification:
+  - `TypedConversionModel`, `TypedConversionHelpers`, `TypedConversionOperandFacts`, `TypedConversions`, `TypedAssignmentHelpers`, `TypedAssignmentNodeFacts`, `TypedAssignments`, `TypedReturns`, `TypedPipeline`, and `Compiler.Typing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `SourceModuleLowering` and `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
 - No broad test sweep was run.
