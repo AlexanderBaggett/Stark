@@ -1,0 +1,70 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedEnumPayloadAttributes
+
+internal finite law bool TypedEnumPayloadAttributeListContainsName(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd, ascii name)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TypedSignatureTokenTextEquals(source, stream, scan, name))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool TypedEnumPayloadLeadingAttributesContain(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    ascii name)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = TypedSignatureMatchingCloseToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return false;
+        }
+
+        if (TypedEnumPayloadAttributeListContainsName(source, stream, scan, attrEnd, name))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return false;
+}
+
+internal finite law TypedEnumVariantRole TypedEnumPayloadVariantRole(ascii source, borrow TokenStream stream, u32[0 max] variantStart, u32[0 max] variantNameToken)
+{
+    stack bool okRole = TypedEnumPayloadLeadingAttributesContain(source, stream, variantStart, variantNameToken, "Ok");
+    stack bool errRole = TypedEnumPayloadLeadingAttributesContain(source, stream, variantStart, variantNameToken, "Err");
+    if (okRole && errRole)
+    {
+        return TypedEnumVariantRole.OkErr;
+    }
+
+    if (okRole)
+    {
+        return TypedEnumVariantRole.Ok;
+    }
+
+    if (errRole)
+    {
+        return TypedEnumVariantRole.Err;
+    }
+
+    return TypedEnumVariantRole.None;
+}

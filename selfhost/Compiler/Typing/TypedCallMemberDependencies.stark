@@ -3,7 +3,7 @@ import Compiler.Parsing
 import Compiler.Typing.TypedCallFacts
 import Compiler.Typing.TypedCalls
 import Compiler.Typing.TypedFields
-import Compiler.Typing.TypedIdentifiers
+import Compiler.Typing.TypedIdentifierModel
 import Compiler.Typing.TypedLiterals
 import Compiler.Typing.TypedMemberFacts
 import Compiler.Typing.TypedMembers

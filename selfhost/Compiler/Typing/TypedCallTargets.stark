@@ -1,0 +1,334 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallArgumentFacts
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallOverloads
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedCallTargets
+
+internal fn System.Memory.MemoryStatus AppendTypedCallExpression(
+    mut borrow TypedCallExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedMemberExpressionTable members,
+    borrow ExprTree tree,
+    borrow StatementList body,
+    bool useBody,
+    TypedCallContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] callNode,
+    u32[0 max] calleeNode,
+    u32[0 max] callToken,
+    u32[0 max] calleeNameToken,
+    u32[0 max] argumentCount,
+    bool calleeIsIdentifier,
+    out u32[0 max] callIndexPlusOne,
+    out u32[0 max] signatureIndexPlusOne,
+    out u32[0 max] parameterOffset,
+    out u32[0 max] callableTypeStartToken,
+    out u32[0 max] callableTypeEndToken)
+{
+    callIndexPlusOne = 0;
+    signatureIndexPlusOne = 0;
+    parameterOffset = 0;
+    callableTypeStartToken = 0;
+    callableTypeEndToken = 0;
+    stack mut u32[0 max] resolvedSignatureIndexPlusOne = 0;
+    stack mut u32[0 max] resolvedCallableTypeStartToken = 0;
+    stack mut u32[0 max] resolvedCallableTypeEndToken = 0;
+    stack mut TypedCallTargetKind targetKind = TypedCallTargetKind.NonIdentifier;
+    stack mut u32[0 max] targetDeclarationIndex = 0;
+    stack mut u32[0 max] targetSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] targetNameToken = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u32[0 max] overloadCandidateCount = 0;
+    stack mut u32[0 max] overloadViableCandidateCount = 0;
+    stack mut u32[0 max] overloadBestCandidateCount = 0;
+    stack mut u32[0 max] flags = 0;
+    if (calleeIsIdentifier)
+    {
+        targetKind = TypedCallTargetKind.Unknown;
+        stack u32[0 max] identifierIndexPlusOne = TypedCallIdentifierIndexForNode(
+            identifiers,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            calleeNode);
+        if (identifierIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] identifierIndex = (u64[0 2 ** 63 - 1])(identifierIndexPlusOne - 1);
+            targetDeclarationIndex = identifiers.TargetDeclarationIndexAt(identifierIndex);
+            targetSymbolIndexPlusOne = identifiers.TargetSymbolIndexPlusOneAt(identifierIndex);
+            targetNameToken = identifiers.TargetNameTokenAt(identifierIndex);
+            if (identifiers.TargetKindAt(identifierIndex) == TypedIdentifierTargetKind.Function)
+            {
+                targetKind = TypedCallTargetKind.DirectFunction;
+                resolvedSignatureIndexPlusOne = TypedCallResolveDirectOverload(
+                    source,
+                    stream,
+                    signatures,
+                    literals,
+                    identifiers,
+                    table,
+                    tree,
+                    body,
+                    useBody,
+                    context,
+                    ownerDeclarationIndex,
+                    ownerNameToken,
+                    functionNameToken,
+                    statementIndexPlusOne,
+                    callNode,
+                    targetSymbolIndexPlusOne,
+                    overloadCandidateCount,
+                    overloadViableCandidateCount,
+                    overloadBestCandidateCount);
+                flags = flags | TypedCallFlagDirect();
+                if (resolvedSignatureIndexPlusOne != 0)
+                {
+                    targetSymbolIndexPlusOne = resolvedSignatureIndexPlusOne;
+                    flags = flags | TypedCallFlagResolved() | TypedCallFlagOverloadResolved();
+                }
+                else if (overloadViableCandidateCount == 0)
+                {
+                    flags = flags | TypedCallFlagOverloadNoMatch();
+                }
+                else
+                {
+                    flags = flags | TypedCallFlagOverloadAmbiguous();
+                }
+            }
+            else if (identifiers.TypeKindAt(identifierIndex) == TypedSignatureTypeKind.FunctionPointer)
+            {
+                targetKind = TypedCallTargetKind.FunctionPointerValue;
+                resolvedCallableTypeStartToken = identifiers.TypeStartTokenAt(identifierIndex);
+                resolvedCallableTypeEndToken = identifiers.TypeEndTokenAt(identifierIndex);
+                flags = flags | TypedCallFlagResolved() | TypedCallFlagCallableValue();
+            }
+            else if (identifiers.TypeKindAt(identifierIndex) == TypedSignatureTypeKind.Closure)
+            {
+                targetKind = TypedCallTargetKind.ClosureValue;
+                resolvedCallableTypeStartToken = identifiers.TypeStartTokenAt(identifierIndex);
+                resolvedCallableTypeEndToken = identifiers.TypeEndTokenAt(identifierIndex);
+                flags = flags | TypedCallFlagResolved() | TypedCallFlagCallableValue();
+            }
+            else if (identifiers.TargetKindAt(identifierIndex) != TypedIdentifierTargetKind.Unknown)
+            {
+                targetKind = TypedCallTargetKind.NonCallableValue;
+                flags = flags | TypedCallFlagResolved();
+            }
+        }
+    }
+    else
+    {
+        stack mut bool calleeIsMember = false;
+        if (useBody)
+        {
+            calleeIsMember = body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Member;
+        }
+        else
+        {
+            calleeIsMember = tree.NodeKindAt(calleeNode) == Compiler.Parsing.ExprKind.Member;
+        }
+
+        if (calleeIsMember)
+        {
+            targetKind = TypedCallTargetKind.Unknown;
+            stack u32[0 max] memberIndexPlusOne = TypedCallMemberIndexForNode(
+                members,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                calleeNode);
+            if (memberIndexPlusOne != 0)
+            {
+                stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(memberIndexPlusOne - 1);
+                stack TypedMemberTargetKind memberTargetKind = members.TargetKindAt(memberIndex);
+                targetDeclarationIndex = members.TargetDeclarationIndexAt(memberIndex);
+                targetSymbolIndexPlusOne = members.TargetSymbolIndexPlusOneAt(memberIndex);
+                targetNameToken = members.TargetNameTokenAt(memberIndex);
+                if (memberTargetKind == TypedMemberTargetKind.Field)
+                {
+                    targetKind = TypedCallTargetKind.NonCallableValue;
+                    flags = flags | TypedCallFlagResolved();
+                }
+                else if (memberTargetKind == TypedMemberTargetKind.InstanceMethod || memberTargetKind == TypedMemberTargetKind.StaticMethod)
+                {
+                    if (memberTargetKind == TypedMemberTargetKind.InstanceMethod)
+                    {
+                        targetKind = TypedCallTargetKind.InstanceMethod;
+                    }
+                    else
+                    {
+                        targetKind = TypedCallTargetKind.StaticMethod;
+                    }
+
+                    resolvedSignatureIndexPlusOne = TypedCallResolveMethodOverload(
+                        source,
+                        stream,
+                        signatures,
+                        literals,
+                        identifiers,
+                        table,
+                        members,
+                        tree,
+                        body,
+                        useBody,
+                        context,
+                        ownerDeclarationIndex,
+                        ownerNameToken,
+                        functionNameToken,
+                        statementIndexPlusOne,
+                        callNode,
+                        memberIndexPlusOne,
+                        parameterOffset,
+                        overloadCandidateCount,
+                        overloadViableCandidateCount,
+                        overloadBestCandidateCount);
+                    flags = flags | TypedCallFlagDirect();
+                    if (resolvedSignatureIndexPlusOne != 0)
+                    {
+                        targetSymbolIndexPlusOne = resolvedSignatureIndexPlusOne;
+                        flags = flags | TypedCallFlagResolved() | TypedCallFlagOverloadResolved();
+                    }
+                    else if (overloadViableCandidateCount == 0)
+                    {
+                        flags = flags | TypedCallFlagOverloadNoMatch();
+                    }
+                    else
+                    {
+                        flags = flags | TypedCallFlagOverloadAmbiguous();
+                    }
+                }
+            }
+        }
+    }
+
+    stack mut TypedSignatureTypeKind returnTypeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] returnTypeHeadToken = 0;
+    stack mut u32[0 max] returnTypePrimaryToken = 0;
+    stack mut u32[0 max] returnTypeStartToken = 0;
+    stack mut u32[0 max] returnTypeEndToken = 0;
+    stack mut u32[0 max] returnRangeStartToken = 0;
+    stack mut u32[0 max] returnRangeEndToken = 0;
+    stack mut u32[0 max] returnElementCountStartToken = 0;
+    stack mut u32[0 max] returnElementCountEndToken = 0;
+    stack mut u32[0 max] returnBitWidth = 0;
+    stack mut u32[0 max] returnTypeArgumentCount = 0;
+    stack mut u32[0 max] returnComptimeArgumentCount = 0;
+    stack mut u32[0 max] returnTypeFlags = 0;
+    if (resolvedSignatureIndexPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] signatureIndex = (u64[0 2 ** 63 - 1])(resolvedSignatureIndexPlusOne - 1);
+        parameterCount = signatures.ParamCountAt(signatureIndex);
+        if (parameterCount == (u32[0 max])(argumentCount + parameterOffset))
+        {
+            flags = flags | TypedCallFlagArityMatches();
+        }
+
+        stack u32[0 max] returnSlotIndexPlusOne = signatures.ReturnTypeSlotIndexPlusOneAt(signatureIndex);
+        TypedCallSignatureSlotFacts(
+            signatures,
+            returnSlotIndexPlusOne,
+            returnTypeKind,
+            returnTypeHeadToken,
+            returnTypePrimaryToken,
+            returnTypeStartToken,
+            returnTypeEndToken,
+            returnRangeStartToken,
+            returnRangeEndToken,
+            returnElementCountStartToken,
+            returnElementCountEndToken,
+            returnBitWidth,
+            returnTypeArgumentCount,
+            returnComptimeArgumentCount,
+            returnTypeFlags);
+    }
+    else if (resolvedCallableTypeStartToken != 0)
+    {
+        TypedCallCallableReturnFacts(
+            source,
+            stream,
+            resolvedCallableTypeStartToken,
+            resolvedCallableTypeEndToken,
+            parameterCount,
+            returnTypeKind,
+            returnTypeHeadToken,
+            returnTypePrimaryToken,
+            returnTypeStartToken,
+            returnTypeEndToken,
+            returnRangeStartToken,
+            returnRangeEndToken,
+            returnElementCountStartToken,
+            returnElementCountEndToken,
+            returnBitWidth,
+            returnTypeArgumentCount,
+            returnComptimeArgumentCount,
+            returnTypeFlags);
+        if (parameterCount == argumentCount)
+        {
+            flags = flags | TypedCallFlagArityMatches();
+        }
+    }
+
+    stack mut u32[0 max] argumentStartIndexPlusOne = 0;
+    if (argumentCount > 0)
+    {
+        argumentStartIndexPlusOne = (u32[0 max])(table.ArgumentCount() + 1);
+    }
+
+    signatureIndexPlusOne = resolvedSignatureIndexPlusOne;
+    callableTypeStartToken = resolvedCallableTypeStartToken;
+    callableTypeEndToken = resolvedCallableTypeEndToken;
+    return table.AppendCall(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        callNode,
+        calleeNode,
+        callToken,
+        calleeNameToken,
+        targetKind,
+        targetDeclarationIndex,
+        targetSymbolIndexPlusOne,
+        targetNameToken,
+        resolvedSignatureIndexPlusOne,
+        argumentStartIndexPlusOne,
+        argumentCount,
+        parameterCount,
+        overloadCandidateCount,
+        overloadViableCandidateCount,
+        overloadBestCandidateCount,
+        flags,
+        returnTypeKind,
+        returnTypeHeadToken,
+        returnTypePrimaryToken,
+        returnTypeStartToken,
+        returnTypeEndToken,
+        returnRangeStartToken,
+        returnRangeEndToken,
+        returnElementCountStartToken,
+        returnElementCountEndToken,
+        returnBitWidth,
+        returnTypeArgumentCount,
+        returnComptimeArgumentCount,
+        returnTypeFlags,
+        callIndexPlusOne);
+}

@@ -1,6 +1,7 @@
 import Compiler.AsmFacts
 import Compiler.Ir
 import Compiler.Typing
+import Compiler.Typing.TypedEnumPayloadModel
 import Compiler.Typing.TypedEnumPayloads
 import Compiler.Mir.Model
 import Compiler.Mir.Builder
@@ -624,63 +625,63 @@ internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromU32(u32
     }
 }
 
-internal finite law u32[0 max] TypedEnumPayloadKindToU32(Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind kind)
+internal finite law u32[0 max] TypedEnumPayloadKindToU32(Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind kind)
 {
     switch (kind)
     {
-        case Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Positional:
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Positional:
             return 1;
-        case Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Named:
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Named:
             return 2;
-        case Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.From:
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.From:
             return 3;
         default:
             return 0;
     }
 }
 
-internal finite law Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind TypedEnumPayloadKindFromU32(u32[0 max] value)
+internal finite law Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind TypedEnumPayloadKindFromU32(u32[0 max] value)
 {
     switch (value)
     {
         case 1:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Positional;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Positional;
         case 2:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Named;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Named;
         case 3:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.From;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.From;
         default:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Unknown;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumPayloadKind.Unknown;
     }
 }
 
-internal finite law u32[0 max] TypedEnumVariantRoleToU32(Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole role)
+internal finite law u32[0 max] TypedEnumVariantRoleToU32(Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole role)
 {
     switch (role)
     {
-        case Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.Ok:
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Ok:
             return 1;
-        case Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.Err:
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Err:
             return 2;
-        case Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.OkErr:
+        case Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.OkErr:
             return 3;
         default:
             return 0;
     }
 }
 
-internal finite law Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole TypedEnumVariantRoleFromU32(u32[0 max] value)
+internal finite law Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole TypedEnumVariantRoleFromU32(u32[0 max] value)
 {
     switch (value)
     {
         case 1:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.Ok;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Ok;
         case 2:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.Err;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.Err;
         case 3:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.OkErr;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.OkErr;
         default:
-            return Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.None;
+            return Compiler.Typing.TypedEnumPayloadModel.TypedEnumVariantRole.None;
     }
 }
 

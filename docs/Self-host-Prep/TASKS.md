@@ -226,19 +226,50 @@ Execution constraints:
   - [x] Move explicit storage selector collection into a storage-selectors module.
   - [x] Move struct, record, and record-header field typing into a typed-fields module.
   - [x] Move enum payload typing and enum variant role facts into a typed-enum-payloads module.
+    - [x] Move enum-payload table storage and accessors into a typed-enum-payload-model module.
+    - [x] Move enum-payload role and attribute readers into a typed-enum-payload-attributes module.
+    - [x] Move enum-payload row construction into a typed-enum-payload-rows module.
   - [x] Move enum layout construction and layout-table query helpers into a typed-enum-layouts module.
+    - [x] Move enum-layout table storage, accessors, and query folding into a typed-enum-layout-model module.
+    - [x] Move enum-layout variant scanning, tag mapping, and payload lookup into a typed-enum-layout-variants module.
   - [x] Move enum-layout attribute and field-offset readers into a typed-enum-layout-attributes module.
   - [x] Move enum-layout scalar sizing and alignment arithmetic into a typed-enum-layout-arithmetic module.
   - [x] Move enum-layout generic contexts and comptime-value readers into a typed-enum-layout-generics module.
   - [x] Move local declaration typing and local storage facts into a typed-locals module.
   - [x] Move literal expression typing and literal scalar/text fact derivation into a typed-literals module.
+    - [x] Move literal table storage and accessors into a typed-literal-model module.
+    - [x] Move literal scalar, text, and expression-kind facts into a typed-literal-facts module.
+    - [x] Move literal row construction into a typed-literal-rows module.
   - [x] Move identifier expression typing and visible-symbol lookup into a typed-identifiers module.
+    - [x] Move identifier table storage and accessors into a typed-identifier-model module.
+    - [x] Move identifier symbol, signature, parameter, and local lookup helpers into a typed-identifier-lookup module.
+    - [x] Move identifier row appenders and target-fact propagation into a typed-identifier-rows module.
   - [x] Move direct call typing, call argument facts, and overload resolution into a typed-calls module.
+  - [x] Move callable signature extraction and callable return or parameter facts into a typed-call-signatures module.
+  - [x] Move call argument type-fact derivation into a typed-call-argument-facts module.
+  - [x] Move direct and method overload scoring into a typed-call-overloads module.
+  - [x] Move call argument row appenders into a typed-call-arguments module.
+  - [x] Move call target resolution and call-row appending into a typed-call-targets module.
   - [x] Move member expression typing and method-candidate logic into a typed-members module.
+    - [x] Move member table storage and accessors into a typed-member-model module.
+    - [x] Move member node and declaration lookup helpers into a typed-member-lookup module.
+    - [x] Move member receiver and type-fact derivation into a typed-member-receiver-facts module.
+    - [x] Move member method-candidate collection into a typed-member-methods module.
+    - [x] Move member row appending into a typed-member-rows module.
   - [x] Move indexing and slicing expression typing into a typed-indexing module.
+    - [x] Move indexing table storage and accessors into a typed-index-model module.
+    - [x] Move indexing context, lookup, receiver, element, and result fact helpers into a typed-index-helpers module.
   - [x] Move explicit conversion typing and target/operand fact propagation into a typed-conversions module.
+    - [x] Move conversion table storage and accessors into a typed-conversion-model module.
+    - [x] Move conversion context, lookup, target fact-copy, and flag helpers into a typed-conversion-helpers module.
+    - [x] Move conversion operand fact derivation into a typed-conversion-operand-facts module.
   - [x] Move assignment target typing, assignment value facts, and compound-operator typing into a typed-assignments module.
+    - [x] Move assignment table storage and accessors into a typed-assignment-model module.
+    - [x] Move assignment context, operator, and node-lookup helpers into a typed-assignment-helpers module.
+    - [x] Move assignment target and value fact derivation into a typed-assignment-node-facts module.
   - [x] Move return expression typing and expected-return fact derivation into a typed-returns module.
+    - [x] Move return table storage and accessors into a typed-return-model module.
+    - [x] Move return value-kind and expected-return fact helpers into a typed-return-facts module.
   - [x] Move generic argument syntax helpers and function generic parameter helpers into generic-typing modules.
   - [~] Move associated-type and dyn-trait facts consumed by typing into focused fact modules.
     - [x] Move dyn-trait token, layout, and call-cost facts into a typed-dynamic-facts module.
@@ -256,6 +287,16 @@ Execution constraints:
     - [x] Run focused tests for the type-resolution and CTFE query module splits.
     - [x] Run focused lower-MIR checks for the enum-layout attribute and arithmetic splits.
     - [x] Run focused lower-MIR checks for the enum-layout generic helper split.
+    - [x] Run focused lower-MIR checks for the enum-layout model and variant helper splits.
+    - [x] Run focused lower-MIR checks for the typed-call helper splits.
+    - [x] Run focused lower-MIR checks for the typed-conversion helper splits.
+    - [x] Run focused lower-MIR checks for the typed-assignment helper splits.
+    - [x] Run focused lower-MIR checks for the typed-index helper split.
+    - [x] Run focused lower-MIR checks for the typed-identifier helper splits.
+    - [x] Run focused lower-MIR checks for the typed-return helper splits.
+    - [x] Run focused lower-MIR checks for the typed-member helper splits.
+    - [x] Run focused lower-MIR checks for the typed-literal helper splits.
+    - [x] Run focused lower-MIR checks for the typed-enum-payload helper splits.
     - [ ] Run focused tests for future typing module splits.
 
 - [x] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.

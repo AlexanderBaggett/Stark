@@ -2,7 +2,7 @@ import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Typing.TypedDeclarationLookup
 import Compiler.Typing.TypedEnumLayoutGenerics
-import Compiler.Typing.TypedEnumLayouts
+import Compiler.Typing.TypedEnumLayoutModel
 import Compiler.Typing.TypedSignatures
 module Compiler.Typing.TypedCtfeQueries
 

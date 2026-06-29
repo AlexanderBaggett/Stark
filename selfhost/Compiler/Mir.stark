@@ -12,13 +12,11 @@ import Compiler.Typing.TypedConversions
 import Compiler.Typing.TypedCtfeQueries
 import Compiler.Typing.TypedDeclarationLookup
 import Compiler.Typing.TypedDynamicFacts
-import Compiler.Typing.TypedEnumLayouts
 import Compiler.Typing.TypedEnumPayloads
 import Compiler.Typing.TypedFields
 import Compiler.Typing.TypedGenerics
 import Compiler.Typing.TypedGlobals
-import Compiler.Typing.TypedIdentifiers
-import Compiler.Typing.TypedIndexing
+import Compiler.Typing.TypedIdentifierModel
 import Compiler.Typing.TypedLiterals
 import Compiler.Typing.TypedLocals
 import Compiler.Typing.TypedMemberFacts

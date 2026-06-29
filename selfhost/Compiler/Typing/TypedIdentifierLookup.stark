@@ -1,0 +1,179 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedLocals
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedIdentifierLookup
+
+internal finite law bool TypedIdentifierDeclarationKindIsType(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct
+        || kind == DeclarationKind.Enum
+        || kind == DeclarationKind.Record
+        || kind == DeclarationKind.Trait
+        || kind == DeclarationKind.Doctrine
+        || kind == DeclarationKind.Alias;
+}
+
+internal fn u32[0 max] TypedIdentifierGlobalIndexByDeclarationIndex(borrow TypedGlobalDeclarationTable globals, u32[0 max] declarationIndex)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = globals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && globals.DeclarationIndexAt(index) == declarationIndex)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedIdentifierSignatureIndexForFunction(
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] keywordToken)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = signatures.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && signatures.OwnerNameTokenAt(index) == ownerNameToken
+            && signatures.NameTokenAt(index) == functionNameToken
+            && (keywordToken == 0 || signatures.KeywordTokenAt(index) == keywordToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedIdentifierParameterTypeSlotByName(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] signatureIndexPlusOne,
+    u32[0 max] nameToken,
+    out u32[0 max] parameterOrdinalPlusOne)
+{
+    parameterOrdinalPlusOne = 0;
+    if (signatureIndexPlusOne == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] signatureIndex = (u64[0 2 ** 63 - 1])(signatureIndexPlusOne - 1);
+    stack u32[0 max] count = signatures.ParamCountAt(signatureIndex);
+    for willexit (stack mut u32[0 max] param = 0; param < count; param = (u32[0 max])(param + 1))
+    {
+        stack u32[0 max] slotPlusOne = signatures.ParameterTypeSlotIndexPlusOneAt(signatureIndex, param);
+        if (slotPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(slotPlusOne - 1);
+            stack u32[0 max] paramName = signatures.TypeSlotParamNameTokenAt(slot);
+            if (paramName != 0 && TypedSignatureTokenTextEqualsToken(source, stream, paramName, nameToken))
+            {
+                parameterOrdinalPlusOne = (u32[0 max])(param + 1);
+                return slotPlusOne;
+            }
+        }
+    }
+
+    return 0;
+}
+
+internal fn bool TypedIdentifierLocalVisibleAt(
+    borrow StatementList body,
+    u32[0 max] declarationScope,
+    u32[0 max] declarationStatementIndexPlusOne,
+    u64[0 2 ** 63 - 1] referenceStatementIndex)
+{
+    if (declarationStatementIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] referenceStatementIndexPlusOne = (u32[0 max])(referenceStatementIndex + 1);
+    if (declarationStatementIndexPlusOne >= referenceStatementIndexPlusOne)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] currentScope = body.ScopeIdAt(referenceStatementIndex);
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ScopeCount() + 1);
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        if (currentScope == declarationScope)
+        {
+            return true;
+        }
+
+        stack u32[0 max] parent = body.ScopeParentAt(currentScope);
+        if (parent == currentScope)
+        {
+            return false;
+        }
+
+        currentScope = parent;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] TypedIdentifierLocalIndexForName(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedLocalDeclarationTable locals,
+    borrow StatementList body,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u64[0 2 ** 63 - 1] referenceStatementIndex,
+    u32[0 max] nameToken)
+{
+    stack mut bool found = false;
+    stack mut u32[0 max] best = 0;
+    stack mut u32[0 max] bestDepth = 0;
+    stack mut u32[0 max] bestStatement = 0;
+    stack u64[0 2 ** 63 - 1] count = locals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (locals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && locals.OwnerNameTokenAt(index) == ownerNameToken
+            && locals.FunctionNameTokenAt(index) == functionNameToken
+            && TypedSignatureTokenTextEqualsToken(source, stream, locals.NameTokenAt(index), nameToken)
+            && TypedIdentifierLocalVisibleAt(
+                body,
+                locals.ScopeIdAt(index),
+                locals.StatementIndexPlusOneAt(index),
+                referenceStatementIndex))
+        {
+            stack u32[0 max] depth = locals.DepthAt(index);
+            stack u32[0 max] statement = locals.StatementIndexPlusOneAt(index);
+            stack mut bool better = !found;
+            if (found && depth > bestDepth)
+            {
+                better = true;
+            }
+            else if (found && depth == bestDepth && statement > bestStatement)
+            {
+                better = true;
+            }
+
+            if (better)
+            {
+                found = true;
+                best = (u32[0 max])(index + 1);
+                bestDepth = depth;
+                bestStatement = statement;
+            }
+        }
+    }
+
+    return best;
+}
