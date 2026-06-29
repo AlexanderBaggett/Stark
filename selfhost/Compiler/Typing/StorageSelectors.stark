@@ -1,0 +1,582 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.StorageSelectors
+
+public enum TypedStorageSelectorContext
+{
+    GlobalDeclaration,
+    LocalDeclaration,
+    NewExpression,
+    Unknown,
+}
+
+public struct TypedStorageSelectorTable
+{
+    internal dynamic TypedStorageSelectorContext Contexts;
+    internal dynamic TypedGlobalStorageKind StorageKinds;
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] StatementIndices;
+    internal dynamic u32[0 max] ExprNodes;
+    internal dynamic u32[0 max] SubjectTokens;
+    internal dynamic u32[0 max] SelectorTokens;
+    internal dynamic u32[0 max] NewArgumentCounts;
+    internal dynamic u32[0 max] CapacityExprNodes;
+    internal dynamic u32[0 max] AlignmentExprNodes;
+
+    TypedStorageSelectorTable()
+    {
+        self.Contexts = new();
+        self.StorageKinds = new();
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.FunctionNameTokens = new();
+        self.StatementIndices = new();
+        self.ExprNodes = new();
+        self.SubjectTokens = new();
+        self.SelectorTokens = new();
+        self.NewArgumentCounts = new();
+        self.CapacityExprNodes = new();
+        self.AlignmentExprNodes = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedStorageSelectorTable self)
+    {
+        return self.SelectorTokens.Length;
+    }
+
+    public law TypedStorageSelectorContext ContextAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedStorageSelectorContext context = TypedStorageSelectorContext.Unknown;
+        if (index < self.Contexts.Length)
+        {
+            context = self.Contexts[index];
+        }
+
+        return context;
+    }
+
+    public law TypedGlobalStorageKind StorageKindAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedGlobalStorageKind kind = TypedGlobalStorageKind.Unknown;
+        if (index < self.StorageKinds.Length)
+        {
+            kind = self.StorageKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StatementIndexPlusOneAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.StatementIndices.Length)
+        {
+            value = self.StatementIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ExprNodeAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ExprNodes.Length)
+        {
+            node = self.ExprNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] SubjectTokenAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.SubjectTokens.Length)
+        {
+            token = self.SubjectTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] SelectorTokenAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.SelectorTokens.Length)
+        {
+            token = self.SelectorTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] NewArgumentCountAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.NewArgumentCounts.Length)
+        {
+            count = self.NewArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] CapacityExprNodeAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.CapacityExprNodes.Length)
+        {
+            node = self.CapacityExprNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] AlignmentExprNodeAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.AlignmentExprNodes.Length)
+        {
+            node = self.AlignmentExprNodes[index];
+        }
+
+        return node;
+    }
+
+    public law bool IsDeclarationAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack TypedStorageSelectorContext context = self.ContextAt(index);
+        return context == TypedStorageSelectorContext.GlobalDeclaration
+            || context == TypedStorageSelectorContext.LocalDeclaration;
+    }
+
+    public law bool IsNewExpressionAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.ContextAt(index) == TypedStorageSelectorContext.NewExpression;
+    }
+
+    public law bool HasCapacityExpressionAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.CapacityExprNodeAt(index) != 0;
+    }
+
+    public law bool HasAlignmentExpressionAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.AlignmentExprNodeAt(index) != 0;
+    }
+
+    public law bool UsesArenaFrameAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.StorageKindAt(index) == TypedGlobalStorageKind.Arena;
+    }
+
+    public law bool UsesHeapAllocatorAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.StorageKindAt(index) == TypedGlobalStorageKind.Heap;
+    }
+
+    public law bool RequestsRegisterStorageAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.StorageKindAt(index) == TypedGlobalStorageKind.Register;
+    }
+
+    public law bool HasStableAddressAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack TypedGlobalStorageKind kind = self.StorageKindAt(index);
+        return kind != TypedGlobalStorageKind.Unknown
+            && kind != TypedGlobalStorageKind.Register;
+    }
+
+    public law bool HasGlobalLifetimeAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.ContextAt(index) == TypedStorageSelectorContext.GlobalDeclaration
+            || self.StorageKindAt(index) == TypedGlobalStorageKind.Static
+            || self.StorageKindAt(index) == TypedGlobalStorageKind.Const;
+    }
+
+    public law bool IsConstSelectorAt(borrow TypedStorageSelectorTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.StorageKindAt(index) == TypedGlobalStorageKind.Const;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedStorageSelectorTable self,
+        TypedStorageSelectorContext context,
+        TypedGlobalStorageKind storageKind,
+        u32[0 max] ownerDeclarationIndex,
+        u32[0 max] ownerNameToken,
+        u32[0 max] functionNameToken,
+        u32[0 max] statementIndexPlusOne,
+        u32[0 max] exprNode,
+        u32[0 max] subjectToken,
+        u32[0 max] selectorToken,
+        u32[0 max] newArgumentCount,
+        u32[0 max] capacityExprNode,
+        u32[0 max] alignmentExprNode)
+    {
+        if (!self.Contexts.TryReserve(1)
+            || !self.StorageKinds.TryReserve(1)
+            || !self.OwnerDeclarationIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.FunctionNameTokens.TryReserve(1)
+            || !self.StatementIndices.TryReserve(1)
+            || !self.ExprNodes.TryReserve(1)
+            || !self.SubjectTokens.TryReserve(1)
+            || !self.SelectorTokens.TryReserve(1)
+            || !self.NewArgumentCounts.TryReserve(1)
+            || !self.CapacityExprNodes.TryReserve(1)
+            || !self.AlignmentExprNodes.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Contexts[self.Contexts.Length] = context;
+        init self.StorageKinds[self.StorageKinds.Length] = storageKind;
+        init self.OwnerDeclarationIndices[self.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.FunctionNameTokens[self.FunctionNameTokens.Length] = functionNameToken;
+        init self.StatementIndices[self.StatementIndices.Length] = statementIndexPlusOne;
+        init self.ExprNodes[self.ExprNodes.Length] = exprNode;
+        init self.SubjectTokens[self.SubjectTokens.Length] = subjectToken;
+        init self.SelectorTokens[self.SelectorTokens.Length] = selectorToken;
+        init self.NewArgumentCounts[self.NewArgumentCounts.Length] = newArgumentCount;
+        init self.CapacityExprNodes[self.CapacityExprNodes.Length] = capacityExprNode;
+        init self.AlignmentExprNodes[self.AlignmentExprNodes.Length] = alignmentExprNode;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+
+internal finite law bool TypedStorageSelectorKindIsExplicit(TypedGlobalStorageKind kind)
+{
+    return kind != TypedGlobalStorageKind.Unknown;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorFromGlobalDeclaration(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    if (!TypedGlobalDeclarationKindIsGlobal(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack TypedGlobalStorageKind storageKind = TypedGlobalStorageKindForItem(stream, item);
+    if (!TypedStorageSelectorKindIsExplicit(storageKind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return table.Append(
+        TypedStorageSelectorContext.GlobalDeclaration,
+        storageKind,
+        declarationIndex,
+        0,
+        0,
+        0,
+        0,
+        TypedGlobalFindNameToken(stream, item),
+        item.KeywordToken,
+        0,
+        0,
+        0);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorFromLocalStatement(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex,
+    StatementItem item)
+{
+    if (item.Kind != StatementKind.Local || item.NameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack TypedGlobalStorageKind storageKind = TypedLocalDeclarationStorageKind(stream, item.StartToken);
+    if (!TypedStorageSelectorKindIsExplicit(storageKind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return table.Append(
+        TypedStorageSelectorContext.LocalDeclaration,
+        storageKind,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        (u32[0 max])(statementIndex + 1),
+        body.ExprRootAt(statementIndex),
+        item.NameToken,
+        item.StartToken,
+        0,
+        0,
+        0);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorsFromBodyDeclarations(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedStorageSelectorFromLocalStatement(
+            table,
+            stream,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            body,
+            index,
+            body.ItemAt(index)))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorFromNewExpression(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body,
+    u32[0 max] node)
+{
+    if (body.ExprKindAt(node) != Compiler.Parsing.ExprKind.New)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] argCount = body.ExprCallArgCountAt(node);
+    if (argCount == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] selectorNode = body.ExprCallArgAt(node, 0);
+    if (body.ExprKindAt(selectorNode) != Compiler.Parsing.ExprKind.StorageSelector)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] selectorToken = body.ExprTokenAt(selectorNode);
+    stack TypedGlobalStorageKind storageKind = TypedLocalDeclarationStorageKind(stream, selectorToken);
+    if (!TypedStorageSelectorKindIsExplicit(storageKind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] subjectToken = 0;
+    stack u32[0 max] typeNode = body.ExprLeftAt(node);
+    if (typeNode != 0)
+    {
+        subjectToken = body.ExprTokenAt(typeNode);
+    }
+
+    stack mut u32[0 max] capacityExprNode = 0;
+    if (argCount > 1)
+    {
+        capacityExprNode = body.ExprCallArgAt(node, 1);
+    }
+
+    stack mut u32[0 max] alignmentExprNode = 0;
+    if (argCount > 2)
+    {
+        alignmentExprNode = body.ExprCallArgAt(node, 2);
+    }
+
+    return table.Append(
+        TypedStorageSelectorContext.NewExpression,
+        storageKind,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        0,
+        node,
+        subjectToken,
+        selectorToken,
+        argCount,
+        capacityExprNode,
+        alignmentExprNode);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorsFromBodyNewExpressions(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index <= count; index += 1)
+    {
+        switch (AppendTypedStorageSelectorFromNewExpression(
+            table,
+            stream,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            body,
+            (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorsForFunction(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    switch (AppendTypedStorageSelectorsFromBodyDeclarations(
+        table,
+        stream,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body))
+    {
+        case System.Memory.MemoryStatus.Err(var declarationError):
+            return System.Memory.MemoryStatus.Err(declarationError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return AppendTypedStorageSelectorsFromBodyNewExpressions(
+        table,
+        stream,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedStorageSelectorsForMemberFunctions(
+    mut borrow TypedStorageSelectorTable table,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedStorageSelectorsForFunction(table, stream, ownerDeclarationIndex, item.NameToken, scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

@@ -1,0 +1,233 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedDynamicFacts
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedTypeCompatibility
+
+internal finite law bool TypedCallTypeFlagEqual(u32[0 max] leftFlags, u32[0 max] rightFlags, u32[0 max] flag)
+{
+    return TypedSignatureFlagPresent(leftFlags, flag) == TypedSignatureFlagPresent(rightFlags, flag);
+}
+
+internal fn bool TypedCallTypeFactsExact(ascii source, borrow TokenStream stream, borrow TypedCallTypeFacts parameter, borrow TypedCallTypeFacts argument)
+{
+    if (parameter.TypeKind == TypedSignatureTypeKind.Unknown || argument.TypeKind == TypedSignatureTypeKind.Unknown)
+    {
+        return false;
+    }
+
+    if (parameter.TypeKind != argument.TypeKind)
+    {
+        return false;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Integer)
+    {
+        return parameter.BitWidth == argument.BitWidth
+            && TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagIntegerSigned())
+            && TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Float)
+    {
+        return parameter.BitWidth == argument.BitWidth;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Bool || parameter.TypeKind == TypedSignatureTypeKind.Void)
+    {
+        return true;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Text)
+    {
+        return TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagOwnedText())
+            && TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagUnicodeText());
+    }
+
+    if (parameter.TypePrimaryToken != 0 && argument.TypePrimaryToken != 0
+        && stream.KindAt((u64[0 2 ** 63 - 1])parameter.TypePrimaryToken) != stream.KindAt((u64[0 2 ** 63 - 1])argument.TypePrimaryToken))
+    {
+        return false;
+    }
+
+    if (parameter.TypeHeadToken != 0 || argument.TypeHeadToken != 0)
+    {
+        if (parameter.TypeHeadToken == 0 || argument.TypeHeadToken == 0)
+        {
+            return false;
+        }
+
+        if (!TypedSignatureTokenTextEqualsToken(source, stream, parameter.TypeHeadToken, argument.TypeHeadToken))
+        {
+            return false;
+        }
+    }
+
+    return parameter.TypeArgumentCount == argument.TypeArgumentCount
+        && parameter.ComptimeArgumentCount == argument.ComptimeArgumentCount
+        && TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagRawMutablePointer());
+}
+
+internal finite law bool TypedCallTypeFactsIsUnsigned(borrow TypedCallTypeFacts facts)
+{
+    return TypedSignatureFlagPresent(facts.TypeFlags, TypedSignatureTypeFlagIntegerUnsigned());
+}
+
+internal finite law bool TypedCallTypeFactsIsSigned(borrow TypedCallTypeFacts facts)
+{
+    return TypedSignatureFlagPresent(facts.TypeFlags, TypedSignatureTypeFlagIntegerSigned());
+}
+
+internal fn bool TypedCallCanBindArgument(ascii source, borrow TokenStream stream, borrow TypedCallTypeFacts parameter, borrow TypedCallTypeFacts argument)
+{
+    if (TypedCallTypeFactsExact(source, stream, parameter, argument))
+    {
+        return true;
+    }
+
+    if (argument.IsNullLiteral)
+    {
+        return parameter.TypeKind == TypedSignatureTypeKind.RawPointer
+            || parameter.TypeKind == TypedSignatureTypeKind.Dynamic
+            || parameter.TypeKind == TypedSignatureTypeKind.FunctionPointer
+            || parameter.TypeKind == TypedSignatureTypeKind.Closure
+            || parameter.TypeKind == TypedSignatureTypeKind.Slice
+            || parameter.TypeKind == TypedSignatureTypeKind.Named;
+    }
+
+    if (argument.TypeKind == TypedSignatureTypeKind.Unknown)
+    {
+        return true;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.GenericParameter)
+    {
+        return true;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Dynamic)
+    {
+        return argument.TypeKind != TypedSignatureTypeKind.Void;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Integer && argument.TypeKind == TypedSignatureTypeKind.Integer)
+    {
+        if (argument.IsCompileTimeInteger)
+        {
+            return parameter.BitWidth == 0 || argument.BitWidth == 0 || argument.BitWidth <= parameter.BitWidth;
+        }
+
+        if (parameter.BitWidth == 0 || argument.BitWidth == 0)
+        {
+            return true;
+        }
+
+        if (argument.BitWidth > parameter.BitWidth)
+        {
+            return false;
+        }
+
+        if (TypedCallTypeFactsIsSigned(argument) && TypedCallTypeFactsIsUnsigned(parameter))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Float && argument.TypeKind == TypedSignatureTypeKind.Float)
+    {
+        return parameter.BitWidth == 0 || argument.BitWidth == 0 || argument.BitWidth <= parameter.BitWidth;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Float && argument.TypeKind == TypedSignatureTypeKind.Integer)
+    {
+        return true;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Text && argument.TypeKind == TypedSignatureTypeKind.Text)
+    {
+        return true;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.RawPointer && argument.TypeKind == TypedSignatureTypeKind.RawPointer)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] TypedCallArgumentBindingCost(ascii source, borrow TokenStream stream, borrow TypedCallTypeFacts parameter, borrow TypedCallTypeFacts argument)
+{
+    if (TypedCallTypeFactsExact(source, stream, parameter, argument))
+    {
+        return 0;
+    }
+
+    if (argument.TypeKind == TypedSignatureTypeKind.Unknown)
+    {
+        return 100000;
+    }
+
+    if (argument.IsNullLiteral)
+    {
+        return 1000;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.GenericParameter)
+    {
+        return 5000;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Dynamic)
+    {
+        return TypedDynamicCallBindingCost();
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Integer && argument.TypeKind == TypedSignatureTypeKind.Integer)
+    {
+        stack mut u32[0 max] widthCost = 128;
+        if (parameter.BitWidth >= argument.BitWidth)
+        {
+            widthCost = (u32[0 max])(parameter.BitWidth - argument.BitWidth);
+        }
+
+        stack mut u32[0 max] signednessCost = 0;
+        if (!TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagIntegerSigned())
+            || !TypedCallTypeFlagEqual(parameter.TypeFlags, argument.TypeFlags, TypedSignatureTypeFlagIntegerUnsigned()))
+        {
+            signednessCost = 64;
+        }
+
+        return (u32[0 max])(10 + widthCost + signednessCost);
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Float && argument.TypeKind == TypedSignatureTypeKind.Float)
+    {
+        stack mut u32[0 max] widthCost = 128;
+        if (parameter.BitWidth >= argument.BitWidth)
+        {
+            widthCost = (u32[0 max])(parameter.BitWidth - argument.BitWidth);
+        }
+
+        return (u32[0 max])(100 + widthCost);
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Float && argument.TypeKind == TypedSignatureTypeKind.Integer)
+    {
+        return (u32[0 max])(1000 + argument.BitWidth);
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.Text && argument.TypeKind == TypedSignatureTypeKind.Text)
+    {
+        return 100;
+    }
+
+    if (parameter.TypeKind == TypedSignatureTypeKind.RawPointer && argument.TypeKind == TypedSignatureTypeKind.RawPointer)
+    {
+        return 100;
+    }
+
+    return 10000;
+}

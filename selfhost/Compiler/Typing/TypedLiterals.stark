@@ -1,0 +1,1021 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedSignatures
+import System.Memory
+import System.Text
+module Compiler.Typing.TypedLiterals
+
+public enum TypedLiteralContext
+{
+    GlobalInitializer,
+    FunctionBody,
+    Unknown,
+}
+
+public enum TypedLiteralKind
+{
+    Integer,
+    Float,
+    Bool,
+    Text,
+    Null,
+    Unknown,
+}
+
+public enum TypedTextLiteralKind
+{
+    None,
+    String,
+    Character,
+}
+
+internal inline finite law u32[0 max] TypedLiteralFlagParsed()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedLiteralFlagCompileTimeInteger()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedLiteralFlagUtf8TextStorage()
+{
+    return 4;
+}
+
+internal inline finite law bool TypedLiteralFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+public struct TypedLiteralExpressionTable
+{
+    internal dynamic TypedLiteralContext Contexts;
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] StatementIndices;
+    internal dynamic u32[0 max] ExprNodes;
+    internal dynamic u32[0 max] LiteralTokens;
+    internal dynamic TypedLiteralKind LiteralKinds;
+    internal dynamic TypedTextLiteralKind TextLiteralKinds;
+    internal dynamic TypedSignatureTypeKind TypeKinds;
+    internal dynamic u32[0 max] BitWidths;
+    internal dynamic u32[0 max] TypeFlags;
+    internal dynamic u1024[0 max] IntegerMagnitudes;
+    internal dynamic f64 FloatValues;
+    internal dynamic u32[0 max] LiteralFlags;
+    internal dynamic u32[0 max] BoolValues;
+    internal dynamic u64[0 2 ** 63 - 1] TextByteLengths;
+    internal dynamic u64[0 2 ** 63 - 1] TextCodePointLengths;
+    internal dynamic i32[min max] CharacterCodePoints;
+
+    TypedLiteralExpressionTable()
+    {
+        self.Contexts = new();
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.FunctionNameTokens = new();
+        self.StatementIndices = new();
+        self.ExprNodes = new();
+        self.LiteralTokens = new();
+        self.LiteralKinds = new();
+        self.TextLiteralKinds = new();
+        self.TypeKinds = new();
+        self.BitWidths = new();
+        self.TypeFlags = new();
+        self.IntegerMagnitudes = new();
+        self.FloatValues = new();
+        self.LiteralFlags = new();
+        self.BoolValues = new();
+        self.TextByteLengths = new();
+        self.TextCodePointLengths = new();
+        self.CharacterCodePoints = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedLiteralExpressionTable self)
+    {
+        return self.LiteralTokens.Length;
+    }
+
+    public law TypedLiteralContext ContextAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedLiteralContext context = TypedLiteralContext.Unknown;
+        if (index < self.Contexts.Length)
+        {
+            context = self.Contexts[index];
+        }
+
+        return context;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StatementIndexPlusOneAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.StatementIndices.Length)
+        {
+            value = self.StatementIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ExprNodeAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ExprNodes.Length)
+        {
+            node = self.ExprNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] LiteralTokenAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.LiteralTokens.Length)
+        {
+            token = self.LiteralTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedLiteralKind LiteralKindAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedLiteralKind kind = TypedLiteralKind.Unknown;
+        if (index < self.LiteralKinds.Length)
+        {
+            kind = self.LiteralKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedTextLiteralKind TextLiteralKindAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedTextLiteralKind kind = TypedTextLiteralKind.None;
+        if (index < self.TextLiteralKinds.Length)
+        {
+            kind = self.TextLiteralKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedSignatureTypeKind TypeKindAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.TypeKinds.Length)
+        {
+            kind = self.TypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] BitWidthAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.BitWidths.Length)
+        {
+            width = self.BitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] TypeFlagsAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.TypeFlags.Length)
+        {
+            flags = self.TypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u1024[0 max] IntegerMagnitudeAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u1024[0 max] value = 0;
+        if (index < self.IntegerMagnitudes.Length)
+        {
+            value = self.IntegerMagnitudes[index];
+        }
+
+        return value;
+    }
+
+    public law f64 FloatValueAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut f64 value = 0.0;
+        if (index < self.FloatValues.Length)
+        {
+            value = self.FloatValues[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] LiteralFlagsAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.LiteralFlags.Length)
+        {
+            flags = self.LiteralFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u32[0 max] BoolValueAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.BoolValues.Length)
+        {
+            value = self.BoolValues[index];
+        }
+
+        return value;
+    }
+
+    public law u64[0 2 ** 63 - 1] TextByteLengthAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u64[0 2 ** 63 - 1] length = 0;
+        if (index < self.TextByteLengths.Length)
+        {
+            length = self.TextByteLengths[index];
+        }
+
+        return length;
+    }
+
+    public law u64[0 2 ** 63 - 1] TextCodePointLengthAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u64[0 2 ** 63 - 1] length = 0;
+        if (index < self.TextCodePointLengths.Length)
+        {
+            length = self.TextCodePointLengths[index];
+        }
+
+        return length;
+    }
+
+    public law i32[min max] CharacterCodePointAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut i32[min max] codePoint = 0;
+        if (index < self.CharacterCodePoints.Length)
+        {
+            codePoint = self.CharacterCodePoints[index];
+        }
+
+        return codePoint;
+    }
+
+    public law bool ParsedOkAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedLiteralFlagPresent(self.LiteralFlagsAt(index), TypedLiteralFlagParsed());
+    }
+
+    public law bool IsCompileTimeIntegerAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedLiteralFlagPresent(self.LiteralFlagsAt(index), TypedLiteralFlagCompileTimeInteger());
+    }
+
+    public law bool UsesUtf8TextStorageAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedLiteralFlagPresent(self.LiteralFlagsAt(index), TypedLiteralFlagUtf8TextStorage());
+    }
+
+    public law bool IsIntegerSignedAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool HasIntegerRangeAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool IsUnicodeTextAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagUnicodeText());
+    }
+
+    public law bool IsTextLiteralAt(borrow TypedLiteralExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.LiteralKindAt(index) == TypedLiteralKind.Text;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedLiteralExpressionTable self,
+        TypedLiteralContext context,
+        u32[0 max] ownerDeclarationIndex,
+        u32[0 max] ownerNameToken,
+        u32[0 max] functionNameToken,
+        u32[0 max] statementIndexPlusOne,
+        u32[0 max] exprNode,
+        u32[0 max] literalToken,
+        TypedLiteralKind literalKind,
+        TypedTextLiteralKind textLiteralKind,
+        TypedSignatureTypeKind typeKind,
+        u32[0 max] bitWidth,
+        u32[0 max] typeFlags,
+        u1024[0 max] integerMagnitude,
+        f64 floatValue,
+        u32[0 max] literalFlags,
+        u32[0 max] boolValue,
+        u64[0 2 ** 63 - 1] textByteLength,
+        u64[0 2 ** 63 - 1] textCodePointLength,
+        i32[min max] characterCodePoint)
+    {
+        if (!self.Contexts.TryReserve(1)
+            || !self.OwnerDeclarationIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.FunctionNameTokens.TryReserve(1)
+            || !self.StatementIndices.TryReserve(1)
+            || !self.ExprNodes.TryReserve(1)
+            || !self.LiteralTokens.TryReserve(1)
+            || !self.LiteralKinds.TryReserve(1)
+            || !self.TextLiteralKinds.TryReserve(1)
+            || !self.TypeKinds.TryReserve(1)
+            || !self.BitWidths.TryReserve(1)
+            || !self.TypeFlags.TryReserve(1)
+            || !self.IntegerMagnitudes.TryReserve(1)
+            || !self.FloatValues.TryReserve(1)
+            || !self.LiteralFlags.TryReserve(1)
+            || !self.BoolValues.TryReserve(1)
+            || !self.TextByteLengths.TryReserve(1)
+            || !self.TextCodePointLengths.TryReserve(1)
+            || !self.CharacterCodePoints.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Contexts[self.Contexts.Length] = context;
+        init self.OwnerDeclarationIndices[self.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.FunctionNameTokens[self.FunctionNameTokens.Length] = functionNameToken;
+        init self.StatementIndices[self.StatementIndices.Length] = statementIndexPlusOne;
+        init self.ExprNodes[self.ExprNodes.Length] = exprNode;
+        init self.LiteralTokens[self.LiteralTokens.Length] = literalToken;
+        init self.LiteralKinds[self.LiteralKinds.Length] = literalKind;
+        init self.TextLiteralKinds[self.TextLiteralKinds.Length] = textLiteralKind;
+        init self.TypeKinds[self.TypeKinds.Length] = typeKind;
+        init self.BitWidths[self.BitWidths.Length] = bitWidth;
+        init self.TypeFlags[self.TypeFlags.Length] = typeFlags;
+        init self.IntegerMagnitudes[self.IntegerMagnitudes.Length] = integerMagnitude;
+        init self.FloatValues[self.FloatValues.Length] = floatValue;
+        init self.LiteralFlags[self.LiteralFlags.Length] = literalFlags;
+        init self.BoolValues[self.BoolValues.Length] = boolValue;
+        init self.TextByteLengths[self.TextByteLengths.Length] = textByteLength;
+        init self.TextCodePointLengths[self.TextCodePointLengths.Length] = textCodePointLength;
+        init self.CharacterCodePoints[self.CharacterCodePoints.Length] = characterCodePoint;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal inline finite law bool TypedLiteralIntegerFitsSignedBitWidth(u1024[0 max] value, u64[0 max] bitWidth)
+{
+    return value <= (((u1024[0 max])1 << (bitWidth - 1)) - (u1024[0 max])1);
+}
+
+internal finite law u32[0 max] TypedLiteralIntegerSignedBitWidth(u1024[0 max] value)
+{
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 8))
+    {
+        return 8;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 16))
+    {
+        return 16;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 24))
+    {
+        return 24;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 32))
+    {
+        return 32;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 48))
+    {
+        return 48;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 64))
+    {
+        return 64;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 96))
+    {
+        return 96;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 128))
+    {
+        return 128;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 192))
+    {
+        return 192;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 256))
+    {
+        return 256;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 384))
+    {
+        return 384;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 512))
+    {
+        return 512;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 768))
+    {
+        return 768;
+    }
+
+    if (TypedLiteralIntegerFitsSignedBitWidth(value, 1024))
+    {
+        return 1024;
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] TypedLiteralFloatBitWidth(ascii literal)
+{
+    if (System.Text.EndsWith(literal, "f") || System.Text.EndsWith(literal, "F"))
+    {
+        return 32;
+    }
+
+    return 64;
+}
+
+internal finite law ascii TypedLiteralFloatParseText(ascii literal)
+{
+    if (System.Text.EndsWith(literal, "f") || System.Text.EndsWith(literal, "F"))
+    {
+        stack i64[min max] length = System.Text.AsciiLength(literal);
+        if (length > 0)
+        {
+            return literal[0, length - 1];
+        }
+    }
+
+    return literal;
+}
+
+internal finite law u64[0 2 ** 63 - 1] TypedLiteralCodePointUtf8ByteLength(i32[min max] codePoint)
+{
+    if (codePoint < 0)
+    {
+        return 0;
+    }
+
+    if (codePoint <= 127)
+    {
+        return 1;
+    }
+
+    if (codePoint <= 2047)
+    {
+        return 2;
+    }
+
+    if (codePoint <= 65535)
+    {
+        return 3;
+    }
+
+    if (codePoint <= 1114111)
+    {
+        return 4;
+    }
+
+    return 0;
+}
+
+internal finite law bool TypedLiteralExprKindIsLiteral(ExprKind kind)
+{
+    return kind == Compiler.Parsing.ExprKind.IntLiteral
+        || kind == Compiler.Parsing.ExprKind.FloatLiteral
+        || kind == Compiler.Parsing.ExprKind.StringLiteral
+        || kind == Compiler.Parsing.ExprKind.CharacterLiteral
+        || kind == Compiler.Parsing.ExprKind.BoolLiteral
+        || kind == Compiler.Parsing.ExprKind.NullLiteral;
+}
+
+internal finite law TypedLiteralKind TypedLiteralKindForExprKind(ExprKind kind)
+{
+    if (kind == Compiler.Parsing.ExprKind.IntLiteral)
+    {
+        return TypedLiteralKind.Integer;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.FloatLiteral)
+    {
+        return TypedLiteralKind.Float;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.StringLiteral || kind == Compiler.Parsing.ExprKind.CharacterLiteral)
+    {
+        return TypedLiteralKind.Text;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.BoolLiteral)
+    {
+        return TypedLiteralKind.Bool;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.NullLiteral)
+    {
+        return TypedLiteralKind.Null;
+    }
+
+    return TypedLiteralKind.Unknown;
+}
+
+internal finite law TypedSignatureTypeKind TypedLiteralTypeKindForLiteralKind(TypedLiteralKind kind)
+{
+    if (kind == TypedLiteralKind.Integer)
+    {
+        return TypedSignatureTypeKind.Integer;
+    }
+
+    if (kind == TypedLiteralKind.Float)
+    {
+        return TypedSignatureTypeKind.Float;
+    }
+
+    if (kind == TypedLiteralKind.Bool)
+    {
+        return TypedSignatureTypeKind.Bool;
+    }
+
+    if (kind == TypedLiteralKind.Text)
+    {
+        return TypedSignatureTypeKind.Text;
+    }
+
+    return TypedSignatureTypeKind.Unknown;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpression(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    TypedLiteralContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] exprNode,
+    u32[0 max] literalToken,
+    ExprKind exprKind)
+{
+    stack TypedLiteralKind literalKind = TypedLiteralKindForExprKind(exprKind);
+    stack mut TypedTextLiteralKind textLiteralKind = TypedTextLiteralKind.None;
+    stack TypedSignatureTypeKind typeKind = TypedLiteralTypeKindForLiteralKind(literalKind);
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] typeFlags = 0;
+    stack mut u1024[0 max] integerMagnitude = 0;
+    stack mut f64 floatValue = 0.0;
+    stack mut u32[0 max] literalFlags = 0;
+    stack mut u32[0 max] boolValue = 0;
+    stack mut u64[0 2 ** 63 - 1] textByteLength = 0;
+    stack mut u64[0 2 ** 63 - 1] textCodePointLength = 0;
+    stack mut i32[min max] characterCodePoint = 0;
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])literalToken);
+
+    if (exprKind == Compiler.Parsing.ExprKind.IntLiteral)
+    {
+        switch (System.Text.ParseU1024Ascii(literal))
+        {
+            case System.Text.TextResult<u1024[0 max]>.Ok(var value):
+                integerMagnitude = value;
+                bitWidth = TypedLiteralIntegerSignedBitWidth(value);
+                literalFlags = literalFlags | TypedLiteralFlagParsed();
+                if (bitWidth == 0)
+                {
+                    literalFlags = literalFlags | TypedLiteralFlagCompileTimeInteger();
+                }
+                else
+                {
+                    typeFlags = typeFlags
+                        | TypedSignatureTypeFlagIntegerSigned()
+                        | TypedSignatureTypeFlagHasIntegerRange();
+                }
+            case System.Text.TextResult<u1024[0 max]>.Err(var parseError):
+                literalFlags = literalFlags;
+        }
+    }
+    else if (exprKind == Compiler.Parsing.ExprKind.FloatLiteral)
+    {
+        bitWidth = TypedLiteralFloatBitWidth(literal);
+        stack ascii parseText = TypedLiteralFloatParseText(literal);
+        if (bitWidth == 32)
+        {
+            switch (System.Text.ParseF32Ascii(parseText))
+            {
+                case System.Text.TextResult<f32>.Ok(var value):
+                    floatValue = (f64)value;
+                    literalFlags = literalFlags | TypedLiteralFlagParsed();
+                case System.Text.TextResult<f32>.Err(var parseError):
+                    literalFlags = literalFlags;
+            }
+        }
+        else
+        {
+            switch (System.Text.ParseF64Ascii(parseText))
+            {
+                case System.Text.TextResult<f64>.Ok(var value):
+                    floatValue = value;
+                    literalFlags = literalFlags | TypedLiteralFlagParsed();
+                case System.Text.TextResult<f64>.Err(var parseError):
+                    literalFlags = literalFlags;
+            }
+        }
+    }
+    else if (exprKind == Compiler.Parsing.ExprKind.StringLiteral)
+    {
+        textLiteralKind = TypedTextLiteralKind.String;
+        switch (System.Text.DecodeStringLiteralToUnicode(literal))
+        {
+            case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Ok(var unicodeValue):
+                textCodePointLength = unicodeValue.Length();
+                literalFlags = literalFlags | TypedLiteralFlagParsed();
+            case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Err(var error):
+                switch (error)
+                {
+                    case System.Text.TextBuildError.Text(var textError):
+                        literalFlags = literalFlags;
+                    case System.Text.TextBuildError.Memory(var memoryError):
+                        return System.Memory.MemoryStatus.Err(memoryError);
+                }
+        }
+
+        switch (System.Text.DecodeStringLiteralToUtf8(literal))
+        {
+            case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var utf8Value):
+                textByteLength = utf8Value.Length();
+                literalFlags = literalFlags | TypedLiteralFlagUtf8TextStorage();
+            case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+                switch (error)
+                {
+                    case System.Text.TextBuildError.Text(var textError):
+                        typeFlags = typeFlags | TypedSignatureTypeFlagUnicodeText();
+                    case System.Text.TextBuildError.Memory(var memoryError):
+                        return System.Memory.MemoryStatus.Err(memoryError);
+                }
+        }
+    }
+    else if (exprKind == Compiler.Parsing.ExprKind.CharacterLiteral)
+    {
+        textLiteralKind = TypedTextLiteralKind.Character;
+        switch (System.Text.DecodeCharacterLiteralCodePoint(literal))
+        {
+            case System.Text.TextBuildResult<i32[min max]>.Ok(var codePoint):
+                characterCodePoint = codePoint;
+                textCodePointLength = 1;
+                textByteLength = TypedLiteralCodePointUtf8ByteLength(codePoint);
+                literalFlags = literalFlags
+                    | TypedLiteralFlagParsed()
+                    | TypedLiteralFlagUtf8TextStorage();
+            case System.Text.TextBuildResult<i32[min max]>.Err(var error):
+                switch (error)
+                {
+                    case System.Text.TextBuildError.Text(var textError):
+                        literalFlags = literalFlags;
+                    case System.Text.TextBuildError.Memory(var memoryError):
+                        return System.Memory.MemoryStatus.Err(memoryError);
+                }
+        }
+    }
+    else if (exprKind == Compiler.Parsing.ExprKind.BoolLiteral)
+    {
+        literalFlags = literalFlags | TypedLiteralFlagParsed();
+        if (stream.KindAt((u64[0 2 ** 63 - 1])literalToken) == TokenKind.True)
+        {
+            boolValue = 1;
+        }
+    }
+    else if (exprKind == Compiler.Parsing.ExprKind.NullLiteral)
+    {
+        literalFlags = literalFlags | TypedLiteralFlagParsed();
+    }
+
+    return table.Append(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        exprNode,
+        literalToken,
+        literalKind,
+        textLiteralKind,
+        typeKind,
+        bitWidth,
+        typeFlags,
+        integerMagnitude,
+        floatValue,
+        literalFlags,
+        boolValue,
+        textByteLength,
+        textCodePointLength,
+        characterCodePoint);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpressionsFromExprTree(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    TypedLiteralContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    borrow ExprTree tree)
+{
+    stack u64[0 2 ** 63 - 1] count = tree.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index <= count; index += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])index;
+        stack ExprKind kind = tree.NodeKindAt(node);
+        if (TypedLiteralExprKindIsLiteral(kind))
+        {
+            switch (AppendTypedLiteralExpression(
+                table,
+                source,
+                stream,
+                context,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                node,
+                tree.TokenAt(node),
+                kind))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpressionsFromGlobalDeclaration(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    if (!TypedGlobalDeclarationKindIsGlobal(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] assignToken = TypedGlobalFindAssignToken(stream, item);
+    if (assignToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack ExprTree tree = ParseExpression(stream, (u32[0 max])(assignToken + 1));
+    return AppendTypedLiteralExpressionsFromExprTree(
+        table,
+        source,
+        stream,
+        TypedLiteralContext.GlobalInitializer,
+        declarationIndex,
+        TypedGlobalFindNameToken(stream, item),
+        0,
+        0,
+        tree);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpressionsFromBodyStatement(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    stack u32[0 max] start = (u32[0 max])(body.ExprStartAt(statementIndex) + 1);
+    stack mut u32[0 max] end = (u32[0 max])body.ExprNodeCount();
+    if (statementIndex + 1 < statementCount)
+    {
+        end = body.ExprStartAt((u64[0 2 ** 63 - 1])(statementIndex + 1));
+    }
+
+    if (start > end)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] endIndex = (u64[0 2 ** 63 - 1])end;
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])start; nodeIndex <= endIndex; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (TypedLiteralExprKindIsLiteral(kind))
+        {
+            switch (AppendTypedLiteralExpression(
+                table,
+                source,
+                stream,
+                TypedLiteralContext.FunctionBody,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                (u32[0 max])(statementIndex + 1),
+                node,
+                body.ExprTokenAt(node),
+                kind))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpressionsFromBody(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedLiteralExpressionsFromBodyStatement(
+            table,
+            source,
+            stream,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            body,
+            index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpressionsForFunction(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    return AppendTypedLiteralExpressionsFromBody(
+        table,
+        source,
+        stream,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedLiteralExpressionsForMemberFunctions(
+    mut borrow TypedLiteralExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedLiteralExpressionsForFunction(table, source, stream, ownerDeclarationIndex, item.NameToken, scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

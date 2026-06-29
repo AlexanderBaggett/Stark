@@ -1,0 +1,420 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Text
+module Compiler.Typing.TypedEnumLayoutGenerics
+
+internal struct TypedEnumLayoutGenericContextTable
+{
+    internal dynamic u32[0 max] GenericOpenTokens;
+    internal dynamic u32[0 max] ActualOpenTokens;
+    internal dynamic u32[0 max] ParentContextIndicesPlusOne;
+
+    TypedEnumLayoutGenericContextTable()
+    {
+        self.GenericOpenTokens = new();
+        self.ActualOpenTokens = new();
+        self.ParentContextIndicesPlusOne = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedEnumLayoutGenericContextTable self)
+    {
+        return self.GenericOpenTokens.Length;
+    }
+
+    internal law u32[0 max] GenericOpenTokenAt(borrow TypedEnumLayoutGenericContextTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.GenericOpenTokens.Length)
+        {
+            token = self.GenericOpenTokens[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] ActualOpenTokenAt(borrow TypedEnumLayoutGenericContextTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ActualOpenTokens.Length)
+        {
+            token = self.ActualOpenTokens[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] ParentContextIndexPlusOneAt(borrow TypedEnumLayoutGenericContextTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] contextIndexPlusOne = 0;
+        if (index < self.ParentContextIndicesPlusOne.Length)
+        {
+            contextIndexPlusOne = self.ParentContextIndicesPlusOne[index];
+        }
+
+        return contextIndexPlusOne;
+    }
+
+    internal fn bool TryAppend(
+        mut borrow TypedEnumLayoutGenericContextTable self,
+        u32[0 max] genericOpenToken,
+        u32[0 max] actualOpenToken,
+        u32[0 max] parentContextIndexPlusOne,
+        out u32[0 max] contextIndexPlusOne)
+    {
+        contextIndexPlusOne = 0;
+        if (!self.GenericOpenTokens.TryReserve(1)
+            || !self.ActualOpenTokens.TryReserve(1)
+            || !self.ParentContextIndicesPlusOne.TryReserve(1))
+        {
+            return false;
+        }
+
+        stack u32[0 max] appendedIndexPlusOne = (u32[0 max])(self.GenericOpenTokens.Length + 1);
+        init self.GenericOpenTokens[self.GenericOpenTokens.Length] = genericOpenToken;
+        init self.ActualOpenTokens[self.ActualOpenTokens.Length] = actualOpenToken;
+        init self.ParentContextIndicesPlusOne[self.ParentContextIndicesPlusOne.Length] = parentContextIndexPlusOne;
+        contextIndexPlusOne = appendedIndexPlusOne;
+        return true;
+    }
+}
+
+internal fn bool TypedEnumLayoutTryReadU64Token(ascii source, borrow TokenStream stream, u32[0 max] token, out u64[0 max] value)
+{
+    value = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])token) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack ascii text = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (System.Text.ParseU64Ascii(text))
+    {
+        case System.Text.TextResult<u64[0 max]>.Err(var parseError):
+            return false;
+        case System.Text.TextResult<u64[0 max]>.Ok(var parsed):
+            value = parsed;
+            return true;
+    }
+}
+
+internal inline finite law u32[0 max] TypedEnumLayoutTypeRecursionLimit()
+{
+    return 64;
+}
+
+internal inline finite law bool TypedEnumLayoutTypeHasOpenGenericFacts(
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeArgumentCount,
+    u32[0 max] typeFlags)
+{
+    return typeArgumentCount != 0
+        || comptimeArgumentCount != 0
+        || TypedSignatureFlagPresent(typeFlags, TypedSignatureTypeFlagHeadIsGenericParameter());
+}
+
+internal fn bool TypedEnumLayoutGenericArgumentSegment(
+    borrow TokenStream stream,
+    u32[0 max] genericOpenToken,
+    bool wantComptime,
+    u32[0 max] requestedOrdinal,
+    out u32[0 max] startToken,
+    out u32[0 max] endToken)
+{
+    startToken = 0;
+    endToken = 0;
+    if (genericOpenToken == 0 || stream.KindAt((u64[0 2 ** 63 - 1])genericOpenToken) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeToken = TypedSignatureMatchingCloseToken(stream, genericOpenToken);
+    if (closeToken <= genericOpenToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] ordinal = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(genericOpenToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(genericOpenToken + 1);
+    while willexit (scan <= closeToken)
+    {
+        stack mut bool boundary = false;
+        if (scan == closeToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < scan && TypedSignatureGenericArgumentSegmentIsValue(stream, segmentStart, scan) == wantComptime)
+            {
+                if (ordinal == requestedOrdinal)
+                {
+                    startToken = segmentStart;
+                    endToken = scan;
+                    return true;
+                }
+
+                ordinal = (u32[0 max])(ordinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool TypedEnumLayoutGenericParameterOrdinal(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] genericOpenToken,
+    u32[0 max] nameToken,
+    bool wantComptime,
+    out u32[0 max] ordinal)
+{
+    ordinal = 0;
+    if (genericOpenToken == 0 || nameToken == 0 || stream.KindAt((u64[0 2 ** 63 - 1])genericOpenToken) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeToken = TypedSignatureMatchingCloseToken(stream, genericOpenToken);
+    if (closeToken <= genericOpenToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] segmentStart = (u32[0 max])(genericOpenToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(genericOpenToken + 1);
+    while willexit (scan <= closeToken)
+    {
+        stack mut bool boundary = false;
+        if (scan == closeToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < scan)
+            {
+                stack bool isComptime = stream.KindAt((u64[0 2 ** 63 - 1])segmentStart) == TokenKind.Comptime;
+                if (isComptime == wantComptime)
+                {
+                    stack u32[0 max] paramNameToken = TypedFieldLastIdentifierInSpan(stream, segmentStart, scan);
+                    if (paramNameToken != 0 && TypedSignatureTokenTextEqualsToken(source, stream, paramNameToken, nameToken))
+                    {
+                        return true;
+                    }
+
+                    ordinal = (u32[0 max])(ordinal + 1);
+                }
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool TypedEnumLayoutTryReadComptimeSegmentU64(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] startToken,
+    u32[0 max] endToken,
+    out u64[0 max] value)
+{
+    value = 0;
+    stack mut u32[0 max] currentContextIndexPlusOne = contextIndexPlusOne;
+    stack mut u32[0 max] currentStartToken = startToken;
+    stack mut u32[0 max] currentEndToken = endToken;
+    stack mut u64[0 max] remainingHops = contexts.Count() + 1;
+    while willexit (remainingHops != 0)
+    {
+        remainingHops = (u64[0 max])(remainingHops - 1);
+        if (currentStartToken >= currentEndToken)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] valueToken = currentStartToken;
+        if (stream.KindAt((u64[0 2 ** 63 - 1])valueToken) == TokenKind.Comptime)
+        {
+            valueToken = (u32[0 max])(valueToken + 1);
+        }
+
+        if ((u32[0 max])(valueToken + 1) != currentEndToken)
+        {
+            return false;
+        }
+
+        if (TypedEnumLayoutTryReadU64Token(source, stream, valueToken, value))
+        {
+            return true;
+        }
+
+        if (stream.KindAt((u64[0 2 ** 63 - 1])valueToken) != TokenKind.Identifier
+            || currentContextIndexPlusOne == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] contextIndex = (u64[0 2 ** 63 - 1])(currentContextIndexPlusOne - 1);
+        stack mut u32[0 max] ordinal = 0;
+        if (!TypedEnumLayoutGenericParameterOrdinal(
+            source,
+            stream,
+            contexts.GenericOpenTokenAt(contextIndex),
+            valueToken,
+            true,
+            ordinal))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] resolvedStartToken = 0;
+        stack mut u32[0 max] resolvedEndToken = 0;
+        if (!TypedEnumLayoutGenericArgumentSegment(
+            stream,
+            contexts.ActualOpenTokenAt(contextIndex),
+            true,
+            ordinal,
+            resolvedStartToken,
+            resolvedEndToken))
+        {
+            return false;
+        }
+
+        currentContextIndexPlusOne = contexts.ParentContextIndexPlusOneAt(contextIndex);
+        currentStartToken = resolvedStartToken;
+        currentEndToken = resolvedEndToken;
+    }
+
+    return false;
+}
+
+internal fn bool TypedEnumLayoutTryReadGenericComptimeU64(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] parameterNameToken,
+    out u64[0 max] value)
+{
+    value = 0;
+    if (contextIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] contextIndex = (u64[0 2 ** 63 - 1])(contextIndexPlusOne - 1);
+    stack mut u32[0 max] ordinal = 0;
+    if (!TypedEnumLayoutGenericParameterOrdinal(
+        source,
+        stream,
+        contexts.GenericOpenTokenAt(contextIndex),
+        parameterNameToken,
+        true,
+        ordinal))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] startToken = 0;
+    stack mut u32[0 max] endToken = 0;
+    if (!TypedEnumLayoutGenericArgumentSegment(
+        stream,
+        contexts.ActualOpenTokenAt(contextIndex),
+        true,
+        ordinal,
+        startToken,
+        endToken))
+    {
+        return false;
+    }
+
+    return TypedEnumLayoutTryReadComptimeSegmentU64(
+        source,
+        stream,
+        contexts,
+        contexts.ParentContextIndexPlusOneAt(contextIndex),
+        startToken,
+        endToken,
+        value);
+}
+
+internal fn bool TypedEnumLayoutTryReadElementCount(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedEnumLayoutGenericContextTable contexts,
+    u32[0 max] contextIndexPlusOne,
+    u32[0 max] elementCountStartToken,
+    u32[0 max] elementCountEndToken,
+    out u64[0 max] elementCount)
+{
+    elementCount = 0;
+    if (elementCountStartToken == 0 || elementCountEndToken <= (u32[0 max])(elementCountStartToken + 1))
+    {
+        return false;
+    }
+
+    return TypedEnumLayoutTryReadComptimeSegmentU64(
+        source,
+        stream,
+        contexts,
+        contextIndexPlusOne,
+        (u32[0 max])(elementCountStartToken + 1),
+        elementCountEndToken,
+        elementCount);
+}

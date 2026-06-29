@@ -1,0 +1,214 @@
+import System.Memory
+module Compiler.Binding.Diagnostics
+
+public enum BindError
+{
+    OutOfMemory,
+}
+
+public enum BindResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(BindError),
+}
+
+// A binder diagnostic kind. Each is anchored at a source token by the list.
+public enum BindDiagnosticCode
+{
+    DuplicateDeclaration,
+    DuplicateParameter,
+    DuplicateLocalInBlock,
+    MissingModuleDeclaration,
+    DuplicateModule,
+    UnresolvedImport,
+    AmbiguousImport,
+    UnresolvedReference,
+    UnresolvedType,
+    NonBooleanCondition,
+    NonBooleanOperand,
+    ValueReturnedFromVoid,
+    MissingReturnValue,
+    DuplicateEnumVariant,
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
+    BecomeOutsideTailFunction,
+    BecomeRequiresDirectCall,
+    BecomeTargetNotTailCallable,
+    BecomeEffectMismatch,
+    BecomeAbiMismatch,
+    DeadOnReturnUnknownParameter,
+    DeadOnReturnNonMemoryBackedParameter,
+    DeadOnReturnDuplicateParameter,
+    DeadOnReturnForwardingMismatch,
+    ArenaAllocationInLaw,
+    ArenaValueEscapes,
+    ArenaValueRetainedByCallee,
+    RuntimeRecursionWithoutTailBecome,
+    LawCallRequiresLaw,
+    FiniteCallRequiresFinite,
+    LawReturnOutputType,
+    LawParameterOutputType,
+    LawLocalStorageInLaw,
+    LawGlobalStateRead,
+    LawExternallyVisibleWrite,
+    LawDynamicStorageAllocation,
+    LawDynamicStorageMutation,
+    FiniteRecursiveCycle,
+    LayoutControlInvalid,
+    FfiLayoutUnsafeField,
+    RecursiveInlineLayout,
+    PackedFieldSafeBorrow,
+    LayoutQueryInvalid,
+    ExportedSurfaceInvalid,
+    AbiBoundaryEnumType,
+    CopyableAssertionInvalid,
+    CopyableConstraintInvalid,
+    BorrowLiveConflict,
+    MoveAfterMove,
+    DuplicateDestructorBlock,
+    ReadOnlyDropMutatesSelf,
+    MutDropWithoutSelfMutation,
+    DestructorReturn,
+    DestructorAllocation,
+    DestructorDynamicStorageMutation,
+    ConstructorFieldReadBeforeAssignment,
+    ReadBeforeInitialization,
+    OutputNotInitializedOnReturn,
+    AsmUnknownArchitecture,
+    AsmInvalidRegister,
+    AsmInvalidOperandBinding,
+    AsmInvalidClobber,
+    InvalidLinkName,
+    DuplicateLinkName,
+}
+
+public enum BindDiagnosticSeverity
+{
+    Error,
+    Warning,
+}
+
+// The diagnostics produced by binding a compilation unit, in discovery order:
+// each carries a code and the source token it is anchored at.
+public struct BindDiagnosticList
+{
+    internal dynamic BindDiagnosticCode Codes;
+    internal dynamic BindDiagnosticSeverity Severities;
+    internal dynamic u32[0 max] Tokens;
+
+    BindDiagnosticList()
+    {
+        self.Codes = new();
+        self.Severities = new();
+        self.Tokens = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow BindDiagnosticList self)
+    {
+        return self.Codes.Length;
+    }
+
+    public finite law BindDiagnosticCode CodeAt(borrow BindDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut BindDiagnosticCode code = BindDiagnosticCode.DuplicateDeclaration;
+        if (index < self.Codes.Length)
+        {
+            code = self.Codes[index];
+        }
+
+        return code;
+    }
+
+    public finite law BindDiagnosticSeverity SeverityAt(borrow BindDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut BindDiagnosticSeverity severity = BindDiagnosticSeverity.Error;
+        if (index < self.Severities.Length)
+        {
+            severity = self.Severities[index];
+        }
+
+        return severity;
+    }
+
+    public finite law u32[0 max] TokenAt(borrow BindDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.Tokens.Length)
+        {
+            token = self.Tokens[index];
+        }
+
+        return token;
+    }
+
+    // The number of diagnostics with code `code`.
+    public finite law u32[0 max] CountOf(borrow BindDiagnosticList self, BindDiagnosticCode code)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Codes.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.CodeAt(index) == code)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public finite law u32[0 max] ErrorCount(borrow BindDiagnosticList self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Codes.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.SeverityAt(index) == BindDiagnosticSeverity.Error)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public finite law u32[0 max] WarningCount(borrow BindDiagnosticList self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Codes.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.SeverityAt(index) == BindDiagnosticSeverity.Warning)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow BindDiagnosticList self, BindDiagnosticCode code, u32[0 max] token)
+    {
+        return self.AppendWithSeverity(code, BindDiagnosticSeverity.Error, token);
+    }
+
+    internal fn System.Memory.MemoryStatus AppendWarning(mut borrow BindDiagnosticList self, BindDiagnosticCode code, u32[0 max] token)
+    {
+        return self.AppendWithSeverity(code, BindDiagnosticSeverity.Warning, token);
+    }
+
+    internal fn System.Memory.MemoryStatus AppendWithSeverity(mut borrow BindDiagnosticList self, BindDiagnosticCode code, BindDiagnosticSeverity severity, u32[0 max] token)
+    {
+        if (!self.Codes.TryReserve(1)
+            || !self.Severities.TryReserve(1)
+            || !self.Tokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Codes[self.Codes.Length] = code;
+        init self.Severities[self.Severities.Length] = severity;
+        init self.Tokens[self.Tokens.Length] = token;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}

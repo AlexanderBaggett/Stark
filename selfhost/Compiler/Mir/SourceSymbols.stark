@@ -1,0 +1,189 @@
+import Compiler.Ir
+import Compiler.Lexing
+module Compiler.Mir.SourceSymbols
+
+// A parameter name as a source span, stored in a symbol table whose row order is the
+// parameter index (so the Kth distinct identifier is parameter K = `%pK`).
+public struct ParamName
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+
+    ParamName()
+    {
+        self.Start = 0;
+        self.Length = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StartIndex(borrow ParamName self)
+    {
+        return self.Start;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LengthValue(borrow ParamName self)
+    {
+        return self.Length;
+    }
+}
+
+// True when the two source spans contain the same bytes.
+internal fn bool SpanEquals(borrow i8[min max][] source, u64[0 2 ** 63 - 1] aStart, u64[0 2 ** 63 - 1] aLength, u64[0 2 ** 63 - 1] bStart, u64[0 2 ** 63 - 1] bLength)
+{
+    if (aLength != bLength)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] k = 0;
+    while willexit (k < aLength)
+    {
+        if (source[aStart + k] != source[bStart + k])
+        {
+            return false;
+        }
+
+        k = k + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TokenTextEqualsAsciiSpan(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] left, u32[0 max] right)
+{
+    return SpanEquals(
+        source,
+        stream.StartAt((u64[0 2 ** 63 - 1])left),
+        stream.LengthAt((u64[0 2 ** 63 - 1])left),
+        stream.StartAt((u64[0 2 ** 63 - 1])right),
+        stream.LengthAt((u64[0 2 ** 63 - 1])right));
+}
+
+// The 0-based parameter index for the name span [start, start+length), or -1 if the
+// name is not yet in the table.
+internal fn i64[min max] ParamIndexOf(borrow IrTable<ParamName> params, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = params.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamName existing = params.Get((u32[0 max])(i + 1));
+        if (SpanEquals(source, existing.StartIndex(), existing.LengthValue(), start, length))
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Builds the parameter symbol table from the distinct identifiers in `stream`, in
+// first-appearance order.
+internal fn void BuildParamTable(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ParamName> params)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier)
+        {
+            stack u64[0 2 ** 63 - 1] start = stream.StartAt(i);
+            stack u64[0 2 ** 63 - 1] length = stream.LengthAt(i);
+            if (ParamIndexOf(params, source, start, length) < 0)
+            {
+                stack mut ParamName name = new();
+                name.Start = start;
+                name.Length = length;
+                stack u32[0 max] added = params.Add(name);
+            }
+        }
+
+        i = i + 1;
+    }
+}
+
+// A local variable binding: a name span and the MIR value it is bound to.
+public struct LocalBinding
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] ValueIndex;
+
+    LocalBinding()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.ValueIndex = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StartIndex(borrow LocalBinding self)
+    {
+        return self.Start;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LengthValue(borrow LocalBinding self)
+    {
+        return self.Length;
+    }
+
+    public inline finite law u32[0 max] BoundValueIndex(borrow LocalBinding self)
+    {
+        return self.ValueIndex;
+    }
+}
+
+// The 1-based MIR value index a local name span is bound to, or -1 if not a local.
+internal fn i64[min max] LocalValueOf(borrow IrTable<LocalBinding> locals, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = locals.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack LocalBinding binding = locals.Get((u32[0 max])(i + 1));
+        if (SpanEquals(source, binding.StartIndex(), binding.LengthValue(), start, length))
+        {
+            return (i64[min max])binding.BoundValueIndex();
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// The token index of the first token of kind `kind`, or -1 if absent.
+internal fn i64[min max] FirstTokenOfKind(borrow TokenStream stream, TokenKind kind)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == kind)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// The token index of the first token of kind `kind` strictly after `after`, or -1.
+internal fn i64[min max] FirstTokenOfKindAfter(borrow TokenStream stream, TokenKind kind, u64[0 2 ** 63 - 1] after)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = after + 1;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == kind)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}

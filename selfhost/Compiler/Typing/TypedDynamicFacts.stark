@@ -1,0 +1,23 @@
+import Compiler.Lexing
+module Compiler.Typing.TypedDynamicFacts
+
+internal finite law bool TypedDynamicTokenKind(TokenKind kind)
+{
+    return kind == TokenKind.Dyn
+        || kind == TokenKind.Dynamic;
+}
+
+internal finite law u64[0 max] TypedDynamicLayoutSizeBytes()
+{
+    return 24;
+}
+
+internal finite law u64[0 max] TypedDynamicLayoutAlignmentBytes()
+{
+    return 8;
+}
+
+internal finite law u32[0 max] TypedDynamicCallBindingCost()
+{
+    return 8000;
+}

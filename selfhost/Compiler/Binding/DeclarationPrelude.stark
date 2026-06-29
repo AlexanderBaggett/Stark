@@ -1,0 +1,19 @@
+import Compiler.Lexing
+import Compiler.Parsing
+module Compiler.Binding.DeclarationPrelude
+
+internal finite law bool DeclarationPreludeHasToken(borrow TokenStream stream, DeclItem item, TokenKind tokenKind)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == tokenKind)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}

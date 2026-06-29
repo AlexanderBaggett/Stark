@@ -1,0 +1,945 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.TypeResolution
+import Compiler.Binding.GenericUseSites
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.TypedGenerics
+import System.Memory
+module Compiler.Binding.TraitConformance
+
+public enum TypedTraitConformanceKind
+{
+    DeclarationBase,
+    GenericConstraint,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedTraitConformanceFlagTraitResolved()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedTraitConformanceFlagTraitGeneric()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedTraitConformanceFlagSubjectGenericParameter()
+{
+    return 4;
+}
+
+public struct TypedTraitConformanceTable
+{
+    internal dynamic u32[0 max] OwnerDeclarationSymbolIndices;
+    internal dynamic u32[0 max] OwnerMemberSymbolIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic TypedTraitConformanceKind Kinds;
+    internal dynamic u32[0 max] SubjectDeclarationSymbolIndices;
+    internal dynamic u32[0 max] SubjectGenericParameterSymbolIndices;
+    internal dynamic u32[0 max] SubjectNameTokens;
+    internal dynamic u32[0 max] TraitDeclarationSymbolIndices;
+    internal dynamic u32[0 max] TraitNameTokens;
+    internal dynamic u32[0 max] TraitHeadTokens;
+    internal dynamic u32[0 max] TraitPrimaryTokens;
+    internal dynamic u32[0 max] TraitStartTokens;
+    internal dynamic u32[0 max] TraitEndTokens;
+    internal dynamic u32[0 max] TraitGenericOpenTokens;
+    internal dynamic u32[0 max] TraitGenericCloseTokens;
+    internal dynamic u32[0 max] TraitTypeArgumentCounts;
+    internal dynamic u32[0 max] TraitComptimeArgumentCounts;
+    internal dynamic u32[0 max] Flags;
+
+    TypedTraitConformanceTable()
+    {
+        self.OwnerDeclarationSymbolIndices = new();
+        self.OwnerMemberSymbolIndices = new();
+        self.OwnerNameTokens = new();
+        self.Kinds = new();
+        self.SubjectDeclarationSymbolIndices = new();
+        self.SubjectGenericParameterSymbolIndices = new();
+        self.SubjectNameTokens = new();
+        self.TraitDeclarationSymbolIndices = new();
+        self.TraitNameTokens = new();
+        self.TraitHeadTokens = new();
+        self.TraitPrimaryTokens = new();
+        self.TraitStartTokens = new();
+        self.TraitEndTokens = new();
+        self.TraitGenericOpenTokens = new();
+        self.TraitGenericCloseTokens = new();
+        self.TraitTypeArgumentCounts = new();
+        self.TraitComptimeArgumentCounts = new();
+        self.Flags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedTraitConformanceTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law u32[0 max] OwnerDeclarationSymbolIndexPlusOneAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationSymbolIndices.Length)
+        {
+            value = self.OwnerDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerMemberSymbolIndexPlusOneAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerMemberSymbolIndices.Length)
+        {
+            value = self.OwnerMemberSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedTraitConformanceKind KindAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedTraitConformanceKind kind = TypedTraitConformanceKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] SubjectDeclarationSymbolIndexPlusOneAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.SubjectDeclarationSymbolIndices.Length)
+        {
+            value = self.SubjectDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] SubjectGenericParameterSymbolIndexPlusOneAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.SubjectGenericParameterSymbolIndices.Length)
+        {
+            value = self.SubjectGenericParameterSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] SubjectNameTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.SubjectNameTokens.Length)
+        {
+            token = self.SubjectNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitDeclarationSymbolIndexPlusOneAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TraitDeclarationSymbolIndices.Length)
+        {
+            value = self.TraitDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TraitNameTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitNameTokens.Length)
+        {
+            token = self.TraitNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitHeadTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitHeadTokens.Length)
+        {
+            token = self.TraitHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitPrimaryTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitPrimaryTokens.Length)
+        {
+            token = self.TraitPrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitStartTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitStartTokens.Length)
+        {
+            token = self.TraitStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitEndTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitEndTokens.Length)
+        {
+            token = self.TraitEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitGenericOpenTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitGenericOpenTokens.Length)
+        {
+            token = self.TraitGenericOpenTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitGenericCloseTokenAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TraitGenericCloseTokens.Length)
+        {
+            token = self.TraitGenericCloseTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TraitTypeArgumentCountAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TraitTypeArgumentCounts.Length)
+        {
+            count = self.TraitTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TraitComptimeArgumentCountAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TraitComptimeArgumentCounts.Length)
+        {
+            count = self.TraitComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] FlagsAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.Flags.Length)
+        {
+            flags = self.Flags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool TraitResolvedAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedTraitConformanceFlagTraitResolved());
+    }
+
+    public law bool TraitHasGenericArgumentsAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedTraitConformanceFlagTraitGeneric());
+    }
+
+    public law bool SubjectIsGenericParameterAt(borrow TypedTraitConformanceTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedTraitConformanceFlagSubjectGenericParameter());
+    }
+
+    public law u32[0 max] DeclarationBaseCount(borrow TypedTraitConformanceTable self)
+    {
+        return self.CountOfKind(TypedTraitConformanceKind.DeclarationBase);
+    }
+
+    public law u32[0 max] GenericConstraintCount(borrow TypedTraitConformanceTable self)
+    {
+        return self.CountOfKind(TypedTraitConformanceKind.GenericConstraint);
+    }
+
+    public law u32[0 max] CountOfKind(borrow TypedTraitConformanceTable self, TypedTraitConformanceKind kind)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.KindAt(index) == kind)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public law bool HasDeclarationTraitConformance(borrow TypedTraitConformanceTable self, u32[0 max] subjectDeclarationSymbolIndexPlusOne, u32[0 max] traitDeclarationSymbolIndexPlusOne)
+    {
+        if (subjectDeclarationSymbolIndexPlusOne == 0 || traitDeclarationSymbolIndexPlusOne == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.KindAt(index) == TypedTraitConformanceKind.DeclarationBase
+                && self.SubjectDeclarationSymbolIndexPlusOneAt(index) == subjectDeclarationSymbolIndexPlusOne
+                && self.TraitDeclarationSymbolIndexPlusOneAt(index) == traitDeclarationSymbolIndexPlusOne)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public law bool HasGenericTraitConstraint(borrow TypedTraitConformanceTable self, u32[0 max] genericParameterSymbolIndexPlusOne, u32[0 max] traitDeclarationSymbolIndexPlusOne)
+    {
+        if (genericParameterSymbolIndexPlusOne == 0 || traitDeclarationSymbolIndexPlusOne == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.KindAt(index) == TypedTraitConformanceKind.GenericConstraint
+                && self.SubjectGenericParameterSymbolIndexPlusOneAt(index) == genericParameterSymbolIndexPlusOne
+                && self.TraitDeclarationSymbolIndexPlusOneAt(index) == traitDeclarationSymbolIndexPlusOne)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedTraitConformanceTable self,
+        u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+        u32[0 max] ownerMemberSymbolIndexPlusOne,
+        u32[0 max] ownerNameToken,
+        TypedTraitConformanceKind kind,
+        u32[0 max] subjectDeclarationSymbolIndexPlusOne,
+        u32[0 max] subjectGenericParameterSymbolIndexPlusOne,
+        u32[0 max] subjectNameToken,
+        u32[0 max] traitDeclarationSymbolIndexPlusOne,
+        u32[0 max] traitNameToken,
+        u32[0 max] traitHeadToken,
+        u32[0 max] traitPrimaryToken,
+        u32[0 max] traitStartToken,
+        u32[0 max] traitEndToken,
+        u32[0 max] traitGenericOpenToken,
+        u32[0 max] traitGenericCloseToken,
+        u32[0 max] traitTypeArgumentCount,
+        u32[0 max] traitComptimeArgumentCount,
+        u32[0 max] flags)
+    {
+        if (!self.OwnerDeclarationSymbolIndices.TryReserve(1)
+            || !self.OwnerMemberSymbolIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.SubjectDeclarationSymbolIndices.TryReserve(1)
+            || !self.SubjectGenericParameterSymbolIndices.TryReserve(1)
+            || !self.SubjectNameTokens.TryReserve(1)
+            || !self.TraitDeclarationSymbolIndices.TryReserve(1)
+            || !self.TraitNameTokens.TryReserve(1)
+            || !self.TraitHeadTokens.TryReserve(1)
+            || !self.TraitPrimaryTokens.TryReserve(1)
+            || !self.TraitStartTokens.TryReserve(1)
+            || !self.TraitEndTokens.TryReserve(1)
+            || !self.TraitGenericOpenTokens.TryReserve(1)
+            || !self.TraitGenericCloseTokens.TryReserve(1)
+            || !self.TraitTypeArgumentCounts.TryReserve(1)
+            || !self.TraitComptimeArgumentCounts.TryReserve(1)
+            || !self.Flags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.OwnerDeclarationSymbolIndices[self.OwnerDeclarationSymbolIndices.Length] = ownerDeclarationSymbolIndexPlusOne;
+        init self.OwnerMemberSymbolIndices[self.OwnerMemberSymbolIndices.Length] = ownerMemberSymbolIndexPlusOne;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.SubjectDeclarationSymbolIndices[self.SubjectDeclarationSymbolIndices.Length] = subjectDeclarationSymbolIndexPlusOne;
+        init self.SubjectGenericParameterSymbolIndices[self.SubjectGenericParameterSymbolIndices.Length] = subjectGenericParameterSymbolIndexPlusOne;
+        init self.SubjectNameTokens[self.SubjectNameTokens.Length] = subjectNameToken;
+        init self.TraitDeclarationSymbolIndices[self.TraitDeclarationSymbolIndices.Length] = traitDeclarationSymbolIndexPlusOne;
+        init self.TraitNameTokens[self.TraitNameTokens.Length] = traitNameToken;
+        init self.TraitHeadTokens[self.TraitHeadTokens.Length] = traitHeadToken;
+        init self.TraitPrimaryTokens[self.TraitPrimaryTokens.Length] = traitPrimaryToken;
+        init self.TraitStartTokens[self.TraitStartTokens.Length] = traitStartToken;
+        init self.TraitEndTokens[self.TraitEndTokens.Length] = traitEndToken;
+        init self.TraitGenericOpenTokens[self.TraitGenericOpenTokens.Length] = traitGenericOpenToken;
+        init self.TraitGenericCloseTokens[self.TraitGenericCloseTokens.Length] = traitGenericCloseToken;
+        init self.TraitTypeArgumentCounts[self.TraitTypeArgumentCounts.Length] = traitTypeArgumentCount;
+        init self.TraitComptimeArgumentCounts[self.TraitComptimeArgumentCounts.Length] = traitComptimeArgumentCount;
+        init self.Flags[self.Flags.Length] = flags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law bool TypedTraitConformanceDeclarationCanImplementTraits(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct || kind == DeclarationKind.Record;
+}
+
+internal fn u32[0 max] TypedTraitConformanceDeclarationSymbolByNameToken(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    u32[0 max] nameToken,
+    DeclarationKind requiredKind)
+{
+    if (nameToken == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && declarations.NameTokenAt(index) != 0
+            && declarations.DeclarationKindAt(index) == requiredKind
+            && BindingTokenTextEqualsToken(source, stream, declarations.NameTokenAt(index), nameToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedTraitConformanceGenericParameterSymbolByOwnerAndName(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedGenericParameterSymbolTable generics,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] subjectNameToken)
+{
+    if (subjectNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = generics.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && generics.KindAt(index) == TypedGenericParameterKind.Type
+            && generics.OwnerDeclarationSymbolIndexPlusOneAt(index) == ownerDeclarationSymbolIndexPlusOne
+            && generics.OwnerMemberSymbolIndexPlusOneAt(index) == ownerMemberSymbolIndexPlusOne
+            && BindingTokenTextEqualsToken(source, stream, generics.NameTokenAt(index), subjectNameToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn void TypedTraitConformanceCountTraitArguments(
+    borrow TokenStream stream,
+    u32[0 max] traitGenericOpenToken,
+    u32[0 max] traitGenericCloseToken,
+    out u32[0 max] typeArgumentCount,
+    out u32[0 max] comptimeArgumentCount)
+{
+    typeArgumentCount = 0;
+    comptimeArgumentCount = 0;
+    if (traitGenericOpenToken == 0 || traitGenericCloseToken <= traitGenericOpenToken)
+    {
+        return;
+    }
+
+    stack mut u32[0 max] segmentStart = (u32[0 max])(traitGenericOpenToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(traitGenericOpenToken + 1);
+    while willexit (scan <= traitGenericCloseToken)
+    {
+        stack mut bool boundary = false;
+        if (scan == traitGenericCloseToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < scan)
+            {
+                if (GenericArgumentSegmentIsValue(stream, segmentStart, scan))
+                {
+                    comptimeArgumentCount = (u32[0 max])(comptimeArgumentCount + 1);
+                }
+                else
+                {
+                    typeArgumentCount = (u32[0 max])(typeArgumentCount + 1);
+                }
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedTraitConformanceSegment(
+    mut borrow TypedTraitConformanceTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    TypedTraitConformanceKind kind,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    u32[0 max] subjectDeclarationSymbolIndexPlusOne,
+    u32[0 max] subjectGenericParameterSymbolIndexPlusOne,
+    u32[0 max] subjectNameToken,
+    u32[0 max] traitStartToken,
+    u32[0 max] traitEndToken)
+{
+    if (traitStartToken >= traitEndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] traitHeadToken = LastTypeHeadIdentifierInSpan(stream, traitStartToken, traitEndToken);
+    if (traitHeadToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] traitPrimaryToken = FirstTypeTokenInSpan(stream, traitStartToken, traitEndToken);
+    stack u32[0 max] traitDeclarationSymbolIndexPlusOne = TypedTraitConformanceDeclarationSymbolByNameToken(source, stream, declarations, traitHeadToken, DeclarationKind.Trait);
+    stack mut u32[0 max] traitGenericOpenToken = 0;
+    stack mut u32[0 max] traitGenericCloseToken = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])(traitHeadToken + 1)) == TokenKind.Lt)
+    {
+        traitGenericOpenToken = (u32[0 max])(traitHeadToken + 1);
+        traitGenericCloseToken = MatchingMemberCloseToken(stream, traitGenericOpenToken);
+        if (traitGenericCloseToken == traitGenericOpenToken)
+        {
+            traitGenericOpenToken = 0;
+            traitGenericCloseToken = 0;
+        }
+    }
+
+    stack mut u32[0 max] traitTypeArgumentCount = 0;
+    stack mut u32[0 max] traitComptimeArgumentCount = 0;
+    TypedTraitConformanceCountTraitArguments(stream, traitGenericOpenToken, traitGenericCloseToken, traitTypeArgumentCount, traitComptimeArgumentCount);
+
+    stack mut u32[0 max] flags = 0;
+    if (traitDeclarationSymbolIndexPlusOne != 0)
+    {
+        flags = flags | TypedTraitConformanceFlagTraitResolved();
+    }
+
+    if (traitGenericOpenToken != 0)
+    {
+        flags = flags | TypedTraitConformanceFlagTraitGeneric();
+    }
+
+    if (subjectGenericParameterSymbolIndexPlusOne != 0)
+    {
+        flags = flags | TypedTraitConformanceFlagSubjectGenericParameter();
+    }
+
+    return table.Append(
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerMemberSymbolIndexPlusOne,
+        ownerNameToken,
+        kind,
+        subjectDeclarationSymbolIndexPlusOne,
+        subjectGenericParameterSymbolIndexPlusOne,
+        subjectNameToken,
+        traitDeclarationSymbolIndexPlusOne,
+        traitHeadToken,
+        traitHeadToken,
+        traitPrimaryToken,
+        traitStartToken,
+        traitEndToken,
+        traitGenericOpenToken,
+        traitGenericCloseToken,
+        traitTypeArgumentCount,
+        traitComptimeArgumentCount,
+        flags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedTraitConformanceSegmentsFromList(
+    mut borrow TypedTraitConformanceTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    TypedTraitConformanceKind kind,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    u32[0 max] subjectDeclarationSymbolIndexPlusOne,
+    u32[0 max] subjectGenericParameterSymbolIndexPlusOne,
+    u32[0 max] subjectNameToken,
+    u32[0 max] listStartToken,
+    u32[0 max] listEndToken)
+{
+    stack mut u32[0 max] segmentStart = listStartToken;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = listStartToken;
+    while willexit (scan <= listEndToken)
+    {
+        stack mut bool boundary = false;
+        if (scan == listEndToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind tokenKind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (tokenKind == TokenKind.Lt || tokenKind == TokenKind.LBrack || tokenKind == TokenKind.LParen || tokenKind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (tokenKind == TokenKind.Gt || tokenKind == TokenKind.RBrack || tokenKind == TokenKind.RParen || tokenKind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && tokenKind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < scan)
+            {
+                switch (AppendTypedTraitConformanceSegment(
+                    table,
+                    source,
+                    stream,
+                    declarations,
+                    kind,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerMemberSymbolIndexPlusOne,
+                    ownerNameToken,
+                    subjectDeclarationSymbolIndexPlusOne,
+                    subjectGenericParameterSymbolIndexPlusOne,
+                    subjectNameToken,
+                    segmentStart,
+                    scan))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedTraitDeclarationBaseConformances(
+    mut borrow TypedTraitConformanceTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    u64[0 2 ** 63 - 1] declarationIndex)
+{
+    if (!TypedTraitConformanceDeclarationCanImplementTraits(declarations.DeclarationKindAt(declarationIndex)))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] listStartToken = 0;
+    stack mut u32[0 max] listEndToken = 0;
+    if (!TypedTraitConformanceBaseListBounds(
+        stream,
+        declarations.NameTokenAt(declarationIndex),
+        declarations.EndTokenAt(declarationIndex),
+        listStartToken,
+        listEndToken))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] subjectSymbolIndexPlusOne = (u32[0 max])(declarationIndex + 1);
+    return AppendTypedTraitConformanceSegmentsFromList(
+        table,
+        source,
+        stream,
+        declarations,
+        TypedTraitConformanceKind.DeclarationBase,
+        subjectSymbolIndexPlusOne,
+        0,
+        declarations.NameTokenAt(declarationIndex),
+        subjectSymbolIndexPlusOne,
+        0,
+        declarations.NameTokenAt(declarationIndex),
+        listStartToken,
+        listEndToken);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedTraitGenericConstraintSegments(
+    mut borrow TypedTraitConformanceTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedGenericParameterSymbolTable generics,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    u32[0 max] ownerKeywordToken)
+{
+    stack u32[0 max] whereToken = TypedGenericWhereTokenForOwner(stream, ownerKeywordToken);
+    stack u32[0 max] ownerEndToken = TypedGenericOwnerTerminatorToken(stream, ownerKeywordToken);
+    if (whereToken == 0 || ownerEndToken <= whereToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] subjectNameToken = 0;
+    stack mut u32[0 max] subjectGenericSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] segmentStart = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(whereToken + 1);
+    while willexit (scan <= ownerEndToken)
+    {
+        stack mut bool boundary = false;
+        if (scan >= ownerEndToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (depth == 0 && kind == TokenKind.Identifier
+                && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.Colon)
+            {
+                if (subjectNameToken != 0 && segmentStart < scan)
+                {
+                    switch (AppendTypedTraitConformanceSegment(
+                        table,
+                        source,
+                        stream,
+                        declarations,
+                        TypedTraitConformanceKind.GenericConstraint,
+                        ownerDeclarationSymbolIndexPlusOne,
+                        ownerMemberSymbolIndexPlusOne,
+                        ownerNameToken,
+                        0,
+                        subjectGenericSymbolIndexPlusOne,
+                        subjectNameToken,
+                        segmentStart,
+                        scan))
+                    {
+                        case System.Memory.MemoryStatus.Err(var previousError):
+                            return System.Memory.MemoryStatus.Err(previousError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                subjectNameToken = scan;
+                subjectGenericSymbolIndexPlusOne = TypedTraitConformanceGenericParameterSymbolByOwnerAndName(
+                    source,
+                    stream,
+                    generics,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerMemberSymbolIndexPlusOne,
+                    subjectNameToken);
+                segmentStart = (u32[0 max])(scan + 2);
+                scan = (u32[0 max])(scan + 2);
+                continue;
+            }
+
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (subjectNameToken != 0 && segmentStart < scan)
+            {
+                switch (AppendTypedTraitConformanceSegment(
+                    table,
+                    source,
+                    stream,
+                    declarations,
+                    TypedTraitConformanceKind.GenericConstraint,
+                    ownerDeclarationSymbolIndexPlusOne,
+                    ownerMemberSymbolIndexPlusOne,
+                    ownerNameToken,
+                    0,
+                    subjectGenericSymbolIndexPlusOne,
+                    subjectNameToken,
+                    segmentStart,
+                    scan))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<TypedTraitConformanceTable> BuildTypedTraitConformances(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedMemberSymbolTable members,
+    borrow TypedGenericParameterSymbolTable generics)
+{
+    stack mut TypedTraitConformanceTable table = new();
+    stack u64[0 2 ** 63 - 1] declarationCount = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declarationCount; index += 1)
+    {
+        switch (AppendTypedTraitDeclarationBaseConformances(table, source, stream, declarations, index))
+        {
+            case System.Memory.MemoryStatus.Err(var baseError):
+                return BindResult<TypedTraitConformanceTable>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (declarations.ClassAt(index) == TypedDeclarationSymbolClass.Type
+            || declarations.ClassAt(index) == TypedDeclarationSymbolClass.Function)
+        {
+            switch (AppendTypedTraitGenericConstraintSegments(
+                table,
+                source,
+                stream,
+                declarations,
+                generics,
+                (u32[0 max])(index + 1),
+                0,
+                declarations.NameTokenAt(index),
+                declarations.KeywordTokenAt(index)))
+            {
+                case System.Memory.MemoryStatus.Err(var constraintError):
+                    return BindResult<TypedTraitConformanceTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] memberCount = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < memberCount; index += 1)
+    {
+        if (members.KindAt(index) == TypedMemberSymbolKind.Method)
+        {
+            switch (AppendTypedTraitGenericConstraintSegments(
+                table,
+                source,
+                stream,
+                declarations,
+                generics,
+                members.OwnerDeclarationSymbolIndexPlusOneAt(index),
+                (u32[0 max])(index + 1),
+                members.NameTokenAt(index),
+                members.KeywordTokenAt(index)))
+            {
+                case System.Memory.MemoryStatus.Err(var memberConstraintError):
+                    return BindResult<TypedTraitConformanceTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<TypedTraitConformanceTable>.Ok(table);
+}

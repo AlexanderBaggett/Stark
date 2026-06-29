@@ -389,6 +389,7 @@ public finite law ascii TokenTextOf(
     ascii source,
     borrow TokenStream stream,
     u64[0 2 ** 63 - 1] index)
+    where overlap(source, stream)
 {
     if (index >= stream.Tokens.Length)
     {

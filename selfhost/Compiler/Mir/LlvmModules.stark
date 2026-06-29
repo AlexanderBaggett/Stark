@@ -1,0 +1,103 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Builder
+import Compiler.Mir.LlvmText
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFunctions
+import System.Memory
+import System.Text
+module Compiler.Mir.LlvmModules
+
+// LLVM module and global emission helpers.
+
+// === Module emission ===
+// Emits a whole LLVM module: one `define` per function in the function table,
+// named `@fN` (N = the function's 1-based id). PRECONDITION: each function is
+// single-block — only its entry block is emitted (over the whole instruction range),
+// and `OwnedBlockCount` is NOT consulted, so a function recorded with more than one
+// block would silently drop its non-entry blocks. Multi-block-per-function emission
+// (iterating the owned block range, each block over its own instruction sub-range)
+// is a later slice once the model records per-block instruction ranges; it reuses
+// `EmitLlvmLabeledBlock`.
+
+// Emits `define <ret> @<prefix><number>() { <entry block> }`.
+internal fn MemoryStatus EmitLlvmDefinitionNumbered(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii prefix, u32[0 max] number, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define ");
+    try EmitLlvmTypeName(MirBlockScalarReturnType(instrs, blocks, entryBlockIndex), sink);
+    try sink.AppendConstAscii(" @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try sink.AppendConstAscii("() {\n");
+    try EmitLlvmLabeledBlock(instrs, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// Emits an LLVM module: one single-block `define` per function in `funcs`, in id
+// order, each a single-block definition over its entry block. An empty table emits
+// nothing.
+public fn MemoryStatus EmitLlvmModule(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        try EmitLlvmDefinitionNumbered(instrs, blocks, "f", id, f.EntryIndex(), f.FirstInstrIndex(), f.OwnedInstrCount(), sink);
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmGlobalInitializer(MirType type, i64[min max] value, mut borrow OwnedAscii sink)
+{
+    if (type == MirType.Ptr)
+    {
+        if (value == 0)
+        {
+            try sink.AppendConstAscii("null");
+        }
+        else
+        {
+            try sink.AppendConstAscii("inttoptr (i64 ");
+            try sink.AppendI64(value);
+            try sink.AppendConstAscii(" to ptr)");
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendI64(value);
+    return MemoryStatus.Ok;
+}
+
+// Emits one `@gN = global <type> V` line per global in id order (empty table -> nothing).
+public fn MemoryStatus EmitLlvmGlobals(borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = globals.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirGlobal g = globals.Get(id);
+        try sink.AppendConstAscii("@g");
+        try sink.AppendU64((u64[0 max])id);
+        try sink.AppendConstAscii(" = global ");
+        try EmitLlvmTypeName(g.StoredType(), sink);
+        try sink.AppendConstAscii(" ");
+        try EmitLlvmGlobalInitializer(g.StoredType(), g.InitialValue(), sink);
+        try sink.AppendConstAscii("\n");
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Emits a complete module: globals first, then function definitions.
+public fn MemoryStatus EmitLlvmModuleWithGlobals(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobals(globals, sink);
+    try EmitLlvmModule(instrs, blocks, funcs, sink);
+    return MemoryStatus.Ok;
+}

@@ -1,0 +1,1321 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmText
+import Compiler.Mir.LlvmFacts
+import System.Memory
+import System.Text
+module Compiler.Mir.LlvmInstructions
+
+// LLVM instruction and typed-value emission for the MIR backend.
+
+internal fn MemoryStatus EmitLlvmRegister(mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    try sink.AppendConstAscii("%v");
+    try sink.AppendU64((u64[0 max])index);
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM reference for an OPERAND value at `valueIndex`: `%pK` when it
+// names a Param instruction (K = its 0-based param index), else `%vN`. Operands go
+// through this (not `EmitLlvmRegister`) so parameter uses lower to `%pK`.
+internal fn MemoryStatus EmitLlvmOperand(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] valueIndex)
+{
+    if (instrs.Contains(valueIndex))
+    {
+        stack MirInstruction op = instrs.Get(valueIndex);
+        if (op.Opcode() == MirOp.Param)
+        {
+            try sink.AppendConstAscii("%p");
+            try sink.AppendI64(op.Immediate());
+            return MemoryStatus.Ok;
+        }
+    }
+
+    return EmitLlvmRegister(sink, valueIndex);
+}
+
+internal fn bool MirInstructionIsArenaRuntime(MirInstruction instr)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.ArenaFrameEnter:
+            return true;
+        case MirOp.ArenaAlloc:
+            return true;
+        case MirOp.ArenaDynamicStorageInit:
+            return true;
+        case MirOp.ArenaDynamicStorageReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            return true;
+        case MirOp.ArenaFrameLeave:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool MirInstructionIsArenaDynamicRuntime(MirInstruction instr)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.ArenaDynamicStorageInit:
+            return true;
+        case MirOp.ArenaDynamicStorageReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool MirInstructionRangeUsesArenaRuntime(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirInstructionIsArenaRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeUsesArenaDynamicRuntime(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirInstructionIsArenaDynamicRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmArenaRuntimeDeclarations(mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("declare void @__stark_arena_enter(ptr captures(none) %frame) nounwind\n");
+    try sink.AppendConstAscii("declare noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind\n");
+    try sink.AppendConstAscii("declare void @__stark_arena_leave(ptr captures(none) %frame) nounwind\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaDynamicStorageGrowCopyHelperTail(mut borrow OwnedAscii sink, const ascii newCapacity, bool fallible, const ascii successLabel)
+{
+    try sink.AppendConstAscii("  %new_bytes = mul i64 ");
+    try sink.AppendConstAscii(newCapacity);
+    try sink.AppendConstAscii(", %element_size\n");
+    if (fallible)
+    {
+        try sink.AppendConstAscii("  %new_ptr = call noalias noundef ptr @__stark_arena_try_alloc(ptr %frame, i64 noundef %new_bytes, i64 noundef %alignment)\n");
+        try sink.AppendConstAscii("  %new_ptr_is_null = icmp eq ptr %new_ptr, null\n");
+        try sink.AppendConstAscii("  br i1 %new_ptr_is_null, label %failed, label %copy_check\n\n");
+        try sink.AppendConstAscii("copy_check:\n");
+    }
+    else
+    {
+        try sink.AppendConstAscii("  %new_ptr = call noalias nonnull noundef ptr @__stark_arena_alloc(ptr %frame, i64 noundef %new_bytes, i64 noundef %alignment)\n");
+    }
+
+    try sink.AppendConstAscii("  %has_live = icmp ne i64 %length, 0\n");
+    try sink.AppendConstAscii("  br i1 %has_live, label %copy, label %update\n\n");
+    try sink.AppendConstAscii("copy:\n");
+    try sink.AppendConstAscii("  %live_bytes = mul i64 %length, %element_size\n");
+    try sink.AppendConstAscii("  call void @llvm.memcpy.p0.p0.i64(ptr %new_ptr, ptr %ptr, i64 %live_bytes, i1 false)\n");
+    try sink.AppendConstAscii("  br label %update\n\n");
+    try sink.AppendConstAscii("update:\n");
+    try sink.AppendConstAscii("  %with_ptr = insertvalue { ptr, i64, i64 } %current, ptr %new_ptr, 0\n");
+    try sink.AppendConstAscii("  %updated = insertvalue { ptr, i64, i64 } %with_ptr, i64 ");
+    try sink.AppendConstAscii(newCapacity);
+    try sink.AppendConstAscii(", 2\n");
+    try sink.AppendConstAscii("  store { ptr, i64, i64 } %updated, ptr %storage\n");
+    try sink.AppendConstAscii("  br label %");
+    try sink.AppendConstAscii(successLabel);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaDynamicRuntimeDeclarations(mut borrow OwnedAscii sink)
+{
+    try EmitLlvmArenaRuntimeDeclarations(sink);
+    try sink.AppendConstAscii("declare noalias noundef ptr @__stark_arena_try_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind\n");
+    try sink.AppendConstAscii("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
+    try sink.AppendConstAscii("declare void @llvm.trap() nounwind\n\n");
+
+    try sink.AppendConstAscii("define internal void @__stark_arena_dynamic_reserve(ptr captures(none) %frame, ptr captures(none) %storage, i64 noundef %additional, i64 noundef %element_size, i64 noundef allocalign %alignment, i64 noundef %max_count) nounwind {\n");
+    try sink.AppendConstAscii("entry:\n");
+    try sink.AppendConstAscii("  %current = load { ptr, i64, i64 }, ptr %storage\n");
+    try sink.AppendConstAscii("  %ptr = extractvalue { ptr, i64, i64 } %current, 0\n");
+    try sink.AppendConstAscii("  %length = extractvalue { ptr, i64, i64 } %current, 1\n");
+    try sink.AppendConstAscii("  %capacity = extractvalue { ptr, i64, i64 } %current, 2\n");
+    try sink.AppendConstAscii("  %needed = add i64 %length, %additional\n");
+    try sink.AppendConstAscii("  %needed_overflow = icmp ult i64 %needed, %length\n");
+    try sink.AppendConstAscii("  br i1 %needed_overflow, label %overflow, label %check\n\n");
+    try sink.AppendConstAscii("overflow:\n");
+    try sink.AppendConstAscii("  call void @llvm.trap()\n");
+    try sink.AppendConstAscii("  unreachable\n\n");
+    try sink.AppendConstAscii("check:\n");
+    try sink.AppendConstAscii("  %enough = icmp ule i64 %needed, %capacity\n");
+    try sink.AppendConstAscii("  br i1 %enough, label %done, label %grow\n\n");
+    try sink.AppendConstAscii("grow:\n");
+    try sink.AppendConstAscii("  %doubled = shl i64 %capacity, 1\n");
+    try sink.AppendConstAscii("  %can_double = icmp ule i64 %capacity, 9223372036854775807\n");
+    try sink.AppendConstAscii("  %doubled_or_max = select i1 %can_double, i64 %doubled, i64 -1\n");
+    try sink.AppendConstAscii("  %capacity_small = icmp ult i64 %capacity, 2\n");
+    try sink.AppendConstAscii("  %minimum = select i1 %capacity_small, i64 4, i64 %doubled_or_max\n");
+    try sink.AppendConstAscii("  %needed_larger = icmp ugt i64 %needed, %minimum\n");
+    try sink.AppendConstAscii("  %new_capacity = select i1 %needed_larger, i64 %needed, i64 %minimum\n");
+    try sink.AppendConstAscii("  %too_large = icmp ugt i64 %new_capacity, %max_count\n");
+    try sink.AppendConstAscii("  br i1 %too_large, label %overflow, label %allocate\n\n");
+    try sink.AppendConstAscii("allocate:\n");
+    try EmitLlvmArenaDynamicStorageGrowCopyHelperTail(sink, "%new_capacity", false, "done");
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("done:\n");
+    try sink.AppendConstAscii("  ret void\n");
+    try sink.AppendConstAscii("}\n\n");
+
+    try sink.AppendConstAscii("define internal i1 @__stark_arena_dynamic_try_reserve(ptr captures(none) %frame, ptr captures(none) %storage, i64 noundef %additional, i64 noundef %element_size, i64 noundef allocalign %alignment, i64 noundef %max_count) nounwind {\n");
+    try sink.AppendConstAscii("entry:\n");
+    try sink.AppendConstAscii("  %current = load { ptr, i64, i64 }, ptr %storage\n");
+    try sink.AppendConstAscii("  %ptr = extractvalue { ptr, i64, i64 } %current, 0\n");
+    try sink.AppendConstAscii("  %length = extractvalue { ptr, i64, i64 } %current, 1\n");
+    try sink.AppendConstAscii("  %capacity = extractvalue { ptr, i64, i64 } %current, 2\n");
+    try sink.AppendConstAscii("  %needed = add i64 %length, %additional\n");
+    try sink.AppendConstAscii("  %needed_overflow = icmp ult i64 %needed, %length\n");
+    try sink.AppendConstAscii("  br i1 %needed_overflow, label %failed, label %check\n\n");
+    try sink.AppendConstAscii("check:\n");
+    try sink.AppendConstAscii("  %enough = icmp ule i64 %needed, %capacity\n");
+    try sink.AppendConstAscii("  br i1 %enough, label %succeeded, label %grow\n\n");
+    try sink.AppendConstAscii("grow:\n");
+    try sink.AppendConstAscii("  %doubled = shl i64 %capacity, 1\n");
+    try sink.AppendConstAscii("  %can_double = icmp ule i64 %capacity, 9223372036854775807\n");
+    try sink.AppendConstAscii("  %doubled_or_max = select i1 %can_double, i64 %doubled, i64 -1\n");
+    try sink.AppendConstAscii("  %capacity_small = icmp ult i64 %capacity, 2\n");
+    try sink.AppendConstAscii("  %minimum = select i1 %capacity_small, i64 4, i64 %doubled_or_max\n");
+    try sink.AppendConstAscii("  %needed_larger = icmp ugt i64 %needed, %minimum\n");
+    try sink.AppendConstAscii("  %new_capacity = select i1 %needed_larger, i64 %needed, i64 %minimum\n");
+    try sink.AppendConstAscii("  %too_large = icmp ugt i64 %new_capacity, %max_count\n");
+    try sink.AppendConstAscii("  br i1 %too_large, label %failed, label %allocate\n\n");
+    try sink.AppendConstAscii("allocate:\n");
+    try EmitLlvmArenaDynamicStorageGrowCopyHelperTail(sink, "%new_capacity", true, "succeeded");
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("succeeded:\n");
+    try sink.AppendConstAscii("  ret i1 true\n\n");
+    try sink.AppendConstAscii("failed:\n");
+    try sink.AppendConstAscii("  ret i1 false\n");
+    try sink.AppendConstAscii("}\n\n");
+
+    try sink.AppendConstAscii("define internal i1 @__stark_arena_dynamic_try_reserve_capacity(ptr captures(none) %frame, ptr captures(none) %storage, i64 noundef %target_capacity, i64 noundef %element_size, i64 noundef allocalign %alignment, i64 noundef %max_count) nounwind {\n");
+    try sink.AppendConstAscii("entry:\n");
+    try sink.AppendConstAscii("  %current = load { ptr, i64, i64 }, ptr %storage\n");
+    try sink.AppendConstAscii("  %ptr = extractvalue { ptr, i64, i64 } %current, 0\n");
+    try sink.AppendConstAscii("  %length = extractvalue { ptr, i64, i64 } %current, 1\n");
+    try sink.AppendConstAscii("  %capacity = extractvalue { ptr, i64, i64 } %current, 2\n");
+    try sink.AppendConstAscii("  %enough = icmp ule i64 %target_capacity, %capacity\n");
+    try sink.AppendConstAscii("  br i1 %enough, label %succeeded, label %check\n\n");
+    try sink.AppendConstAscii("check:\n");
+    try sink.AppendConstAscii("  %too_large = icmp ugt i64 %target_capacity, %max_count\n");
+    try sink.AppendConstAscii("  br i1 %too_large, label %failed, label %allocate\n\n");
+    try sink.AppendConstAscii("allocate:\n");
+    try EmitLlvmArenaDynamicStorageGrowCopyHelperTail(sink, "%target_capacity", true, "succeeded");
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("succeeded:\n");
+    try sink.AppendConstAscii("  ret i1 true\n\n");
+    try sink.AppendConstAscii("failed:\n");
+    try sink.AppendConstAscii("  ret i1 false\n");
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaRuntimePreambleForRange(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    if (MirInstructionRangeUsesArenaDynamicRuntime(instrs, firstInstr, instrCount))
+    {
+        try EmitLlvmArenaDynamicRuntimeDeclarations(sink);
+    }
+    else if (MirInstructionRangeUsesArenaRuntime(instrs, firstInstr, instrCount))
+    {
+        try EmitLlvmArenaRuntimeDeclarations(sink);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaInstruction(mut borrow OwnedAscii sink, u32[0 max] index, MirInstruction instr)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.ArenaFrameEnter:
+            try sink.AppendConstAscii("  %__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8\n");
+            try sink.AppendConstAscii("  call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)\n");
+        case MirOp.ArenaAlloc:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call noalias nonnull noundef align ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(" dereferenceable(");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(") ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame, i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(")\n");
+        case MirOp.ArenaDynamicStorageInit:
+            stack u64[0 max] capacity = (u64[0 max])instr.Immediate();
+            stack u64[0 max] elementSize = (u64[0 max])instr.OperandAIndex();
+            stack u64[0 max] byteLength = capacity * elementSize;
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = alloca { ptr, i64, i64 }, align 8\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".data = call noalias nonnull noundef align ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(" dereferenceable(");
+            try sink.AppendU64(byteLength);
+            try sink.AppendConstAscii(") ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame, i64 noundef ");
+            try sink.AppendU64(byteLength);
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(")\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_ptr = insertvalue { ptr, i64, i64 } zeroinitializer, ptr ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".data, 0\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_length = insertvalue { ptr, i64, i64 } ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_ptr, i64 0, 1\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".value = insertvalue { ptr, i64, i64 } ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_length, i64 ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", 2\n");
+            try sink.AppendConstAscii("  store { ptr, i64, i64 } ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".value, ptr ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(", align 8\n");
+        case MirOp.ArenaDynamicStorageReserve:
+            try sink.AppendConstAscii("  call void @__stark_arena_dynamic_reserve(ptr nonnull %__stark_arena_frame, ptr nonnull ");
+            try EmitLlvmRegister(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", i64 noundef 9223372036854775807)\n");
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call i1 @__stark_arena_dynamic_try_reserve(ptr nonnull %__stark_arena_frame, ptr nonnull ");
+            try EmitLlvmRegister(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", i64 noundef 9223372036854775807)\n");
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call i1 @__stark_arena_dynamic_try_reserve_capacity(ptr nonnull %__stark_arena_frame, ptr nonnull ");
+            try EmitLlvmRegister(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", i64 noundef 9223372036854775807)\n");
+        case MirOp.ArenaFrameLeave:
+            try sink.AppendConstAscii("  call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n");
+        default:
+            try sink.AppendConstAscii("");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArg(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] valueIndex)
+{
+    try EmitLlvmTypeName(MirValueType(instrs, valueIndex), sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, valueIndex);
+    return MemoryStatus.Ok;
+}
+
+// Appends an LLVM call argument list. Each argument carries the MIR type of its
+// defining value and lowers to either `%vN` or a parameter operand `%pK`.
+internal fn MemoryStatus EmitLlvmCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b, u32[0 max] c, u32[0 max] d)
+{
+    // Arguments are contiguous (a, then b, c, d, with 0 = absent in the trailing slots), so
+    // each non-zero slot after the first is preceded by an existing argument — the `, `
+    // separator never produces a leading comma.
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitLlvmCallArg(instrs, sink, a);
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArg(instrs, sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArg(instrs, sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArg(instrs, sink, d);
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArgWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] valueIndex)
+{
+    stack MirType valueType = MirValueType(instrs, valueIndex);
+    try EmitLlvmTypeName(valueType, sink);
+    try EmitLlvmRangeAttribute(
+        valueType,
+        RangeFactForValue(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, valueIndex),
+        sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, valueIndex);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmPointerCallArgAttributes(ParamAbiFacts abi, ValueFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.KnownNonNull())
+    {
+        try sink.AppendConstAscii(" nonnull");
+    }
+
+    if (facts.HasNoAlias())
+    {
+        try sink.AppendConstAscii(" noalias");
+    }
+
+    try EmitLlvmParamAbiAttributes(abi, sink);
+
+    if (facts.HasAlignment())
+    {
+        try sink.AppendConstAscii(" align ");
+        try sink.AppendU64((u64[0 max])facts.AlignmentBytes());
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArgWithRangeAndAbiFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    FunctionCallContractFacts calleeFacts,
+    u32[0 max] argIndex,
+    mut borrow OwnedAscii sink,
+    u32[0 max] valueIndex)
+{
+    stack ParamAbiFacts abi = FunctionCallContractParamAbi(calleeFacts, argIndex);
+    stack ValueFacts facts = RangeFactForValue(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, valueIndex);
+    if (abi.IsPointer)
+    {
+        try sink.AppendConstAscii("ptr");
+        try EmitLlvmPointerCallArgAttributes(abi, facts, sink);
+        try sink.AppendConstAscii(" ");
+        try EmitLlvmOperand(instrs, sink, valueIndex);
+        return MemoryStatus.Ok;
+    }
+
+    stack MirType valueType = MirValueType(instrs, valueIndex);
+    try EmitLlvmTypeName(valueType, sink);
+    try EmitLlvmRangeAttribute(valueType, facts, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, valueIndex);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArgsWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] a,
+    u32[0 max] b,
+    u32[0 max] c,
+    u32[0 max] d)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, a);
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, d);
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArgsWithRangeAndAbiFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    FunctionCallContractFacts calleeFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] a,
+    u32[0 max] b,
+    u32[0 max] c,
+    u32[0 max] d)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitLlvmCallArgWithRangeAndAbiFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, calleeFacts, 0, sink, a);
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeAndAbiFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, calleeFacts, 1, sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeAndAbiFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, calleeFacts, 2, sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeAndAbiFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, calleeFacts, 3, sink, d);
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal finite law u32[0 max] CallArgumentValueIndexForParam(MirInstruction instr, u32[0 max] paramIndex)
+{
+    switch (paramIndex)
+    {
+        case 0:
+            return instr.OperandAIndex();
+        case 1:
+            return instr.OperandBIndex();
+        case 2:
+            return instr.OperandCIndex();
+        case 3:
+            return instr.OperandDIndex();
+        default:
+            return 0;
+    }
+}
+
+internal fn MemoryStatus EmitLlvmSeparateStorageAssumeForValues(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] leftValue,
+    u32[0 max] rightValue,
+    mut borrow OwnedAscii sink)
+{
+    if (leftValue == 0 || rightValue == 0 || leftValue == rightValue)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr ");
+    try EmitLlvmOperand(instrs, sink, leftValue);
+    try sink.AppendConstAscii(", ptr ");
+    try EmitLlvmOperand(instrs, sink, rightValue);
+    try sink.AppendConstAscii(")]\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallSeparateStorageAssumes(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] i = 0;
+    while willexit (i < calleeFacts.DistinctCount)
+    {
+        stack DistinctStoragePair pair = FunctionCallContractDistinctPair(calleeFacts, i);
+        stack u32[0 max] leftValue = CallArgumentValueIndexForParam(instr, pair.LeftParam);
+        stack u32[0 max] rightValue = CallArgumentValueIndexForParam(instr, pair.RightParam);
+        try EmitLlvmSeparateStorageAssumeForValues(instrs, leftValue, rightValue, sink);
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Appends one LLVM line for a 2-incoming phi. The incoming values go through the
+// param-aware operand path; the block ids are decoded from `packed`.
+internal fn MemoryStatus EmitLlvmPhi(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, u32[0 max] a, u32[0 max] b, i64[min max] packed)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = phi ");
+    try EmitLlvmTypeName(MirValueType(instrs, dst), sink);
+    try sink.AppendConstAscii(" [ ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmBlockRef(sink, DecodePhiBlock0(packed));
+    try sink.AppendConstAscii(" ], [ ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmBlockRef(sink, DecodePhiBlock1(packed));
+    try sink.AppendConstAscii(" ]\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends one LLVM line for a binary op: `  %vDst = <mnemonic> i64 <a>, <b>`, where
+// each operand is a value reference (`%vN` or `%pK`).
+internal fn MemoryStatus EmitLlvmBinary(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" i64 ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM line for the instruction at 1-based `index` in `instrs`. An
+// out-of-range index emits nothing (rather than reading past the table — `Get`
+// requires `Contains`, and `index - 1` on a 0 index would wrap).
+internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> funcTailFlags, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            if (instr.ResultType() == MirType.Ptr)
+            {
+                try sink.AppendConstAscii(" = inttoptr i64 ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii(" to ptr\n");
+            }
+            else
+            {
+                try sink.AppendConstAscii(" = add ");
+                try EmitLlvmTypeName(instr.ResultType(), sink);
+                try sink.AppendConstAscii(" 0, ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii("\n");
+            }
+        case MirOp.Param:
+            // Declared in the signature; emits no body line.
+            try sink.AppendConstAscii("");
+        case MirOp.Add:
+            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingAdd:
+            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingSub:
+            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingMul:
+            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingAdd:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingSub:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingMul:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitLlvmBinary(instrs, sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitLlvmBinary(instrs, sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitLlvmBinary(instrs, sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitLlvmBinary(instrs, sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitLlvmBinary(instrs, sink, index, "or", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitLlvmBinary(instrs, sink, index, "xor", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitLlvmBinary(instrs, sink, index, "shl", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitLlvmBinary(instrs, sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitLlvmTypedComparison(instrs, sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitLlvmTypedComparison(instrs, sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.ZExt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = zext i1 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(" to i64\n");
+        case MirOp.LoadGlobal:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = load ");
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            try sink.AppendConstAscii("  store ");
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameEnter:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaAlloc:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageInit:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaFrameLeave:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.Phi:
+            try EmitLlvmPhi(instrs, sink, index, instr.OperandAIndex(), instr.OperandBIndex(), instr.Immediate());
+        case MirOp.Call:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call ");
+            if (FunctionIdIsTailCallable(funcTailFlags, (u32[0 max])instr.Immediate()))
+            {
+                try sink.AppendConstAscii("tailcc ");
+            }
+
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" @f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex(), instr.OperandCIndex(), instr.OperandDIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.TailCall:
+            // TailCall is a terminator payload. `EmitLlvmTerminatorWithTailCallees`
+            // emits the required `musttail call tailcc` followed by `ret`.
+            try sink.AppendConstAscii("");
+        case MirOp.Return:
+            try sink.AppendConstAscii("  ret ");
+            try EmitLlvmTypeName(MirValueType(instrs, instr.OperandAIndex()), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            if (instr.ResultType() == MirType.Ptr)
+            {
+                try sink.AppendConstAscii(" = inttoptr i64 ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii(" to ptr\n");
+            }
+            else
+            {
+                try sink.AppendConstAscii(" = add ");
+                try EmitLlvmTypeName(instr.ResultType(), sink);
+                try sink.AppendConstAscii(" 0, ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii("\n");
+            }
+        case MirOp.Param:
+            try sink.AppendConstAscii("");
+        case MirOp.Add:
+            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingAdd:
+            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingSub:
+            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingMul:
+            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingAdd:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingSub:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingMul:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitLlvmBinary(instrs, sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitLlvmBinary(instrs, sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitLlvmBinary(instrs, sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitLlvmBinary(instrs, sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitLlvmBinary(instrs, sink, index, "or", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitLlvmBinary(instrs, sink, index, "xor", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitLlvmBinary(instrs, sink, index, "shl", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitLlvmBinary(instrs, sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitLlvmTypedComparison(instrs, sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitLlvmTypedComparison(instrs, sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.ZExt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = zext i1 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(" to i64\n");
+        case MirOp.LoadGlobal:
+            stack ValueFacts loadFacts = FactAt(globalFacts, (u32[0 max])instr.Immediate());
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = load ");
+            try EmitLlvmVolatileMarker(loadFacts, sink);
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmMemoryAlignment(loadFacts, sink);
+            try EmitLlvmRangeMetadataAttachment(instr.ResultType(), loadFacts, rangeMetadata, sink);
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            stack ValueFacts storeFacts = FactAt(globalFacts, (u32[0 max])instr.Immediate());
+            try sink.AppendConstAscii("  store ");
+            try EmitLlvmVolatileMarker(storeFacts, sink);
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmMemoryAlignment(storeFacts, sink);
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameEnter:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaAlloc:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageInit:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaFrameLeave:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.Phi:
+            try EmitLlvmPhi(instrs, sink, index, instr.OperandAIndex(), instr.OperandBIndex(), instr.Immediate());
+        case MirOp.Call:
+            stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])instr.Immediate());
+            try EmitLlvmCallSeparateStorageAssumes(instrs, instr, calleeFacts, sink);
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call ");
+            try EmitLlvmCallCallingConvention(funcTailFlags, functionCallingConventionFacts, (u32[0 max])instr.Immediate(), sink);
+
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" @f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmCallArgsWithRangeAndAbiFacts(
+                instrs,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                calleeFacts,
+                sink,
+                instr.OperandAIndex(),
+                instr.OperandBIndex(),
+                instr.OperandCIndex(),
+                instr.OperandDIndex());
+            try EmitLlvmCallSiteEffectAttributes(functionEffectFacts, (u32[0 max])instr.Immediate(), sink);
+            try EmitLlvmRangeMetadataAttachment(instr.ResultType(), FactAt(functionReturnFacts, (u32[0 max])instr.Immediate()), rangeMetadata, sink);
+            try sink.AppendConstAscii("\n");
+        case MirOp.TailCall:
+            try sink.AppendConstAscii("");
+        case MirOp.Return:
+            try sink.AppendConstAscii("  ret ");
+            try EmitLlvmTypeName(MirValueType(instrs, instr.OperandAIndex()), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    return EmitLlvmInstructionWithTailCallees(instrs, noTailCallees, sink, index);
+}
+
+internal fn MemoryStatus EmitLlvmTypedBinary(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, MirType t, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmTypeName(t, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmTypedComparison(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii predicate, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = icmp ");
+    try sink.AppendConstAscii(predicate);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmTypeName(MirValueType(instrs, a), sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmSaturatingBinary(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] dst,
+    const ascii mnemonic,
+    MirType type,
+    u32[0 max] a,
+    u32[0 max] b)
+{
+    stack mut ascii wideType = "i64";
+    stack mut i64[min max] lower = (i64[min max])(-(2 ** 31));
+    stack mut i64[min max] upper = 2147483647;
+    if (type == MirType.I8)
+    {
+        wideType = "i32";
+        lower = -128;
+        upper = 127;
+    }
+    else if (type == MirType.I16)
+    {
+        wideType = "i32";
+        lower = -32768;
+        upper = 32767;
+    }
+    else if (type == MirType.I32)
+    {
+        wideType = "i64";
+        lower = (i64[min max])(-(2 ** 31));
+        upper = 2147483647;
+    }
+    else if (type == MirType.I64)
+    {
+        wideType = "i128";
+        lower = I64MinValue();
+        upper = I64MaxValue();
+    }
+    else
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wleft = sext ");
+    try EmitLlvmTypeName(type, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(" to ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii("\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wright = sext ");
+    try EmitLlvmTypeName(type, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii(" to ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii("\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wide = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wleft, ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wright\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".low = icmp slt ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wide, ");
+    try sink.AppendI64(lower);
+    try sink.AppendConstAscii("\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".high = icmp sgt ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wide, ");
+    try sink.AppendI64(upper);
+    try sink.AppendConstAscii("\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".clow = select i1 ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".low, ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendI64(lower);
+    try sink.AppendConstAscii(", ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".wide\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".clamp = select i1 ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".high, ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendI64(upper);
+    try sink.AppendConstAscii(", ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".clow\n  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = trunc ");
+    try sink.AppendAscii(wideType);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(".clamp to ");
+    try EmitLlvmTypeName(type, sink);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmTypedCallArg(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] valueIndex)
+{
+    try EmitLlvmTypeName(MirValueType(instrs, valueIndex), sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, valueIndex);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmTypedCallArgs(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] a,
+    u32[0 max] b,
+    u32[0 max] c,
+    u32[0 max] d)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitLlvmTypedCallArg(instrs, sink, a);
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmTypedCallArg(instrs, sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmTypedCallArg(instrs, sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmTypedCallArg(instrs, sink, d);
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+// Emits the typed LLVM line for the instruction at `index`; unsupported opcodes emit
+// nothing until their typed lowering slice lands.
+internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            if (instr.ResultType() == MirType.Ptr)
+            {
+                try sink.AppendConstAscii(" = inttoptr i64 ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii(" to ptr\n");
+            }
+            else
+            {
+                try sink.AppendConstAscii(" = add ");
+                try EmitLlvmTypeName(instr.ResultType(), sink);
+                try sink.AppendConstAscii(" 0, ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii("\n");
+            }
+        case MirOp.Add:
+            try EmitLlvmTypedBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitLlvmTypedBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitLlvmTypedBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingAdd:
+            try EmitLlvmTypedBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingSub:
+            try EmitLlvmTypedBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingMul:
+            try EmitLlvmTypedBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingAdd:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingSub:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingMul:
+            try EmitLlvmSaturatingBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitLlvmTypedBinary(instrs, sink, index, "sdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitLlvmTypedBinary(instrs, sink, index, "udiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitLlvmTypedBinary(instrs, sink, index, "srem", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitLlvmTypedBinary(instrs, sink, index, "and", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitLlvmTypedBinary(instrs, sink, index, "or", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitLlvmTypedBinary(instrs, sink, index, "xor", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitLlvmTypedBinary(instrs, sink, index, "shl", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitLlvmTypedBinary(instrs, sink, index, "ashr", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitLlvmTypedComparison(instrs, sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitLlvmTypedComparison(instrs, sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitLlvmTypedComparison(instrs, sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.LoadGlobal:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = load ");
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            try sink.AppendConstAscii("  store ");
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Call:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call ");
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" @f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmTypedCallArgs(
+                instrs,
+                sink,
+                instr.OperandAIndex(),
+                instr.OperandBIndex(),
+                instr.OperandCIndex(),
+                instr.OperandDIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Return:
+            try sink.AppendConstAscii("  ret ");
+            try EmitLlvmTypeName(MirValueType(instrs, instr.OperandAIndex()), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        default:
+            try sink.AppendConstAscii("");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// The return type of a typed function: the type of the value returned by its trailing
+// `Return` instruction (`I64` if absent / out of range).
+internal fn MirType TypedFunctionReturnType(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    if (instrCount == 0)
+    {
+        return MirType.I64;
+    }
+
+    stack u32[0 max] lastIndex = firstInstr + instrCount - 1;
+    if (!instrs.Contains(lastIndex))
+    {
+        return MirType.I64;
+    }
+
+    stack MirInstruction last = instrs.Get(lastIndex);
+    if (last.Opcode() != MirOp.Return)
+    {
+        return MirType.I64;
+    }
+
+    return MirValueType(instrs, last.OperandAIndex());
+}

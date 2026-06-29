@@ -1,0 +1,453 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir.Builder
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceExpressionLowering
+
+// Lowers a binary op token to the matching MIR instruction (Plus is the default).
+internal fn MirValueId LowerBinOp(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
+{
+    if (op == TokenKind.Minus)
+    {
+        return MirSub(instrs, a, b);
+    }
+
+    if (op == TokenKind.Star)
+    {
+        return MirMul(instrs, a, b);
+    }
+
+    // Division and modulo must route to their own opcodes — defaulting them to `add`
+    // silently miscompiles `/`/`%` (an AST-lowering path passes every product operator,
+    // not just `*`, through here).
+    if (op == TokenKind.Div)
+    {
+        return MirSDiv(instrs, a, b);
+    }
+
+    if (op == TokenKind.Mod)
+    {
+        return MirSRem(instrs, a, b);
+    }
+
+    return MirAdd(instrs, a, b);
+}
+
+// Lowers a `<`/`>` comparison to its signed MIR comparison (`<` is the default).
+internal fn MirValueId LowerComparison(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
+{
+    // Every comparison operator must route to its own opcode. Defaulting the four
+    // non-`<`/`>` operators to `slt` silently miscompiles them — the AST path passes all
+    // six comparison operators through here (the positional lowering only ever passes
+    // `<`/`>`, which is why this was latent).
+    if (op == TokenKind.Gt)
+    {
+        return MirCmpGt(instrs, a, b);
+    }
+
+    if (op == TokenKind.Lte)
+    {
+        return MirCmpLe(instrs, a, b);
+    }
+
+    if (op == TokenKind.Gte)
+    {
+        return MirCmpGe(instrs, a, b);
+    }
+
+    if (op == TokenKind.EqEq)
+    {
+        return MirCmpEq(instrs, a, b);
+    }
+
+    if (op == TokenKind.Neq)
+    {
+        return MirCmpNe(instrs, a, b);
+    }
+
+    return MirCmpLt(instrs, a, b);
+}
+
+// Lowers a multiplicative op token to its MIR instruction (`*` is the default).
+internal fn MirValueId LowerProductOp(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
+{
+    if (op == TokenKind.Div)
+    {
+        return MirSDiv(instrs, a, b);
+    }
+
+    if (op == TokenKind.Mod)
+    {
+        return MirSRem(instrs, a, b);
+    }
+
+    return MirMul(instrs, a, b);
+}
+
+// A "primary" expression token: an integer literal or an identifier (a parameter).
+internal fn bool IsPrimaryToken(TokenKind k)
+{
+    return k == TokenKind.IntegerLiteral
+        || k == TokenKind.Identifier
+        || k == TokenKind.True
+        || k == TokenKind.False;
+}
+// The token index of the first primary (literal or identifier), or -1 if none. The
+// `return` keyword lexes as `TokenKind.Return`, so it is never mistaken for a primary.
+internal fn i64[min max] FirstPrimaryIndex(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (IsPrimaryToken(stream.KindAt(i)))
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// The token index of the first `<`/`>` comparison operator, or -1 if absent.
+internal fn i64[min max] FirstComparisonIndex(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack TokenKind k = stream.KindAt(i);
+        if (k == TokenKind.Lt || k == TokenKind.Gt)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Lowers the primary at token `index` to a value: an integer literal becomes a MIR
+// constant; an identifier resolves to a local binding (its bound value) if present,
+// otherwise to the parameter named by its source span.
+internal fn MirValueId LowerPrimary(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> params, borrow IrTable<LocalBinding> locals, mut borrow IrTable<MirInstruction> instrs, u64[0 2 ** 63 - 1] index)
+{
+    if (stream.KindAt(index) == TokenKind.IntegerLiteral)
+    {
+        return MirConstInt(instrs, ParseDigitSpan(source, stream.StartAt(index), stream.LengthAt(index)));
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt(index);
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt(index);
+    stack i64[min max] localValue = LocalValueOf(locals, source, start, length);
+    if (localValue >= 0)
+    {
+        return MirValueIdOf((u32[0 max])localValue);
+    }
+
+    stack i64[min max] paramIndex = ParamIndexOf(params, source, start, length);
+    if (paramIndex < 0)
+    {
+        return MirParam(instrs, 0);
+    }
+
+    return MirParam(instrs, (u32[0 max])paramIndex);
+}
+// Folds a `term (('+'|'-') term)*` (sum of products) expression starting at the
+// primary under `startCursor`, returning the resulting MIR value. The fold stops at
+// the first token that is not a continuation (e.g. `;`, `return`, end of stream), so
+// it lowers exactly one expression. Identifiers resolve through `locals` then `params`.
+internal fn MirValueId FoldExpr(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> params, borrow IrTable<LocalBinding> locals, mut borrow IrTable<MirInstruction> instrs, u64[0 2 ** 63 - 1] startCursor)
+{
+    stack mut u64[0 2 ** 63 - 1] cursor = startCursor;
+    stack mut MirValueId acc = LowerPrimary(stream, source, params, locals, instrs, cursor);
+    while willexit (IsProductOpToken(stream.KindAt(cursor + 1)) && IsPrimaryToken(stream.KindAt(cursor + 2)))
+    {
+        stack TokenKind productOp = stream.KindAt(cursor + 1);
+        stack MirValueId factor = LowerPrimary(stream, source, params, locals, instrs, cursor + 2);
+        acc = LowerProductOp(instrs, productOp, acc, factor);
+        cursor = cursor + 2;
+    }
+
+    while willexit (IsAddSubToken(stream.KindAt(cursor + 1)) && IsPrimaryToken(stream.KindAt(cursor + 2)))
+    {
+        stack TokenKind op = stream.KindAt(cursor + 1);
+        cursor = cursor + 2;
+        stack mut MirValueId term = LowerPrimary(stream, source, params, locals, instrs, cursor);
+        while willexit (IsProductOpToken(stream.KindAt(cursor + 1)) && IsPrimaryToken(stream.KindAt(cursor + 2)))
+        {
+            stack TokenKind productOp = stream.KindAt(cursor + 1);
+            stack MirValueId factor = LowerPrimary(stream, source, params, locals, instrs, cursor + 2);
+            term = LowerProductOp(instrs, productOp, term, factor);
+            cursor = cursor + 2;
+        }
+
+        acc = LowerBinOp(instrs, op, acc, term);
+    }
+
+    return acc;
+}
+// True when `k` is one of Stark's scalar comparison operators.
+internal fn bool IsComparisonToken(TokenKind k)
+{
+    return k == TokenKind.Lt
+        || k == TokenKind.Lte
+        || k == TokenKind.Gt
+        || k == TokenKind.Gte
+        || k == TokenKind.EqEq
+        || k == TokenKind.Neq;
+}
+// The token index of the first primary strictly after `after`, or -1 if none.
+internal fn i64[min max] FirstPrimaryIndexAfter(borrow TokenStream stream, u64[0 2 ** 63 - 1] after)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = after + 1;
+    while willexit (i < count)
+    {
+        if (IsPrimaryToken(stream.KindAt(i)))
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Lowers an expression AST node to MIR, recursing over its children — the bridge from
+// the parser/AST front-end to the existing MIR/codegen back end. A literal becomes a MIR
+// constant; an arithmetic node its `add`/`sub`/… over the lowered operands; a comparison
+// its `icmp`. A name lowers to a parameter (`%pK`) UNLESS its index has a `localOverrides`
+// entry — a `var` local's index is redirected to the SSA value its initializer produced,
+// so locals and parameters share one index space but lower to different values. The
+// override table is positional: entry at index `paramIndex + 1` holds the local's MIR
+// value id (0 = a real parameter, no override). A `call` lowers to a placeholder callee
+// (callee resolution is later #33 work).
+internal fn MirValueId LowerCallExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    bool isTailCall)
+{
+    if (node.Arg4 != 0)
+    {
+        stack MirValueId a0 = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        stack MirValueId a1 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
+        stack MirValueId a2 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg3, instrs, localTypes, localOverrides);
+        stack MirValueId a3 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg4, instrs, localTypes, localOverrides);
+        if (isTailCall)
+        {
+            return MirTailCall4(instrs, MirFuncIdOf(node.Left), a0, a1, a2, a3);
+        }
+
+        return MirCall4(instrs, MirFuncIdOf(node.Left), a0, a1, a2, a3);
+    }
+
+    if (node.Arg3 != 0)
+    {
+        stack MirValueId b0 = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        stack MirValueId b1 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
+        stack MirValueId b2 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg3, instrs, localTypes, localOverrides);
+        if (isTailCall)
+        {
+            return MirTailCall3(instrs, MirFuncIdOf(node.Left), b0, b1, b2);
+        }
+
+        return MirCall3(instrs, MirFuncIdOf(node.Left), b0, b1, b2);
+    }
+
+    if (node.Arg2 != 0)
+    {
+        stack MirValueId firstCallArg = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        stack MirValueId secondCallArg = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
+        if (isTailCall)
+        {
+            return MirTailCall2(instrs, MirFuncIdOf(node.Left), firstCallArg, secondCallArg);
+        }
+
+        return MirCall2(instrs, MirFuncIdOf(node.Left), firstCallArg, secondCallArg);
+    }
+
+    if (node.Right != 0)
+    {
+        stack MirValueId callArgument = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+        if (isTailCall)
+        {
+            return MirTailCall1(instrs, MirFuncIdOf(node.Left), callArgument);
+        }
+
+        return MirCall1(instrs, MirFuncIdOf(node.Left), callArgument);
+    }
+
+    if (isTailCall)
+    {
+        return MirTailCall(instrs, MirFuncIdOf(node.Left));
+    }
+
+    return MirCall(instrs, MirFuncIdOf(node.Left));
+}
+
+internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, ExprNode node, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides, bool isTailCall)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, noLocalTypes, localOverrides, isTailCall);
+}
+
+internal fn MirValueId LowerTailCallExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    if (!nodes.Contains(id))
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.CallExpr)
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides, true);
+}
+
+internal fn MirValueId LowerTailCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return LowerTailCallExprNodeWithTypesAndLocals(nodes, id, instrs, noLocalTypes, localOverrides);
+}
+
+public fn MirValueId LowerExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    if (!nodes.Contains(id))
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
+            return MirConstInt(instrs, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return MirConstIntTyped(instrs, MirType.I1, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
+            stack u32[0 max] paramIndex = node.Left;
+            if (localOverrides.Contains(paramIndex + 1))
+            {
+                stack u32[0 max] override = localOverrides.Get(paramIndex + 1);
+                if (override != 0)
+                {
+                    return MirValueIdOf(override);
+                }
+            }
+
+            if (localTypes.Contains(paramIndex + 1))
+            {
+                stack u32[0 max] typeCode = localTypes.Get(paramIndex + 1);
+                if (typeCode == 1)
+                {
+                    return MirParamTyped(instrs, MirType.I1, paramIndex);
+                }
+
+                if (typeCode == 3)
+                {
+                    return MirParamTyped(instrs, MirType.Ptr, paramIndex);
+                }
+            }
+
+            return MirParam(instrs, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides, false);
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            stack MirValueId binLeft = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
+            stack MirValueId binRight = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+            return LowerBinOp(instrs, node.Op, binLeft, binRight);
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            stack MirValueId cmpLeft = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
+            stack MirValueId cmpRight = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
+            return LowerComparison(instrs, node.Op, cmpLeft, cmpRight);
+    }
+}
+
+public fn MirValueId LowerExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return LowerExprNodeWithTypesAndLocals(nodes, id, instrs, noLocalTypes, localOverrides);
+}
+
+// Lowers an expression with NO locals (every name is a parameter) — the common case.
+public fn MirValueId LowerExprNode(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs)
+{
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    return LowerExprNodeWithLocals(nodes, id, instrs, noOverrides);
+}
+
+// The unified front-to-back path for a single expression: lex -> parse to AST -> lower
+// the AST to MIR -> emit an LLVM `@main` that returns the expression's value. This wires
+// the recursive-descent parser to the MIR/codegen back end (source -> AST -> MIR -> LLVM).
+public fn bool CompileExpressionToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            stack ExprParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
+            // Type-gate codegen: an ill-typed expression (a chained comparison, a boolean
+            // fed to arithmetic) produces no output.
+            stack ExprType rootType = TypeOfNode(nodes, root.NodeId);
+            if (rootType == ExprType.ErrorType)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+            stack MirValueId value = LowerExprNode(nodes, root.NodeId, instrs);
+            // A boolean expression is an `i1`; zero-extend it to `i64` for the return.
+            stack mut MirValueId returnValue = value;
+            if (rootType == ExprType.BoolType)
+            {
+                returnValue = MirZExt(instrs, value);
+            }
+
+            stack MirBlockId entry = MirReturnBlock(blocks, returnValue);
+            stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
+            stack u32[0 max] paramCount = (u32[0 max])params.Count();
+            switch (EmitLlvmDefinitionWithParams(instrs, blocks, "main", paramCount, entry.Index(), 1, instrCount, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}

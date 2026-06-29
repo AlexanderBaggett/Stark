@@ -463,6 +463,98 @@ fn bool CopyabilityFactEquals(ascii source, borrow TokenStream stream, borrow Co
     return CopyabilityFactByName(source, stream, facts, name, copyable) && copyable == expected;
 }
 
+fn bool BuildThreadSafetyFactsForSource(ascii source, out TokenStream stream, out ThreadSafetyLawFactTable facts)
+{
+    stream = new();
+    facts = new();
+    stack mut TokenStream parsedStream = new();
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderForBinding(source, parsedStream, header))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(parsedStream, DeclarationStartFromHeader(header)))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, parsedStream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var builtTable):
+            table = builtTable;
+    }
+
+    switch (BuildThreadSafetyLawFacts(decls, table, source, parsedStream))
+    {
+        case BindResult<ThreadSafetyLawFactTable>.Err(var factError):
+            return false;
+        case BindResult<ThreadSafetyLawFactTable>.Ok(var builtFacts):
+            stream = parsedStream;
+            facts = builtFacts;
+            return true;
+    }
+}
+
+fn bool ThreadSafetyFactByName(
+    ascii source,
+    borrow TokenStream stream,
+    borrow ThreadSafetyLawFactTable facts,
+    ascii name,
+    out bool transferable,
+    out bool shareable,
+    out bool transferableConditional,
+    out bool shareableConditional)
+{
+    transferable = false;
+    shareable = false;
+    transferableConditional = false;
+    shareableConditional = false;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack ascii tokenText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])facts.NameTokenAt(index));
+        if (System.Text.Equals(tokenText, name))
+        {
+            transferable = facts.IsTransferableAt(index);
+            shareable = facts.IsShareableAt(index);
+            transferableConditional = facts.TransferableIsConditionalAt(index);
+            shareableConditional = facts.ShareableIsConditionalAt(index);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn bool ThreadSafetyFactEquals(
+    ascii source,
+    borrow TokenStream stream,
+    borrow ThreadSafetyLawFactTable facts,
+    ascii name,
+    bool expectedTransferable,
+    bool expectedShareable,
+    bool expectedTransferableConditional,
+    bool expectedShareableConditional)
+{
+    stack mut bool transferable = false;
+    stack mut bool shareable = false;
+    stack mut bool transferableConditional = false;
+    stack mut bool shareableConditional = false;
+    return ThreadSafetyFactByName(source, stream, facts, name, transferable, shareable, transferableConditional, shareableConditional)
+        && transferable == expectedTransferable
+        && shareable == expectedShareable
+        && transferableConditional == expectedTransferableConditional
+        && shareableConditional == expectedShareableConditional;
+}
+
 fn bool BuildTypedMemberSymbolsForSource(ascii source, out TokenStream stream, out TypedMemberSymbolTable members)
 {
     stream = new();
@@ -644,14 +736,14 @@ fn bool BuildTypedFunctionEffectSummariesForSource(ascii source, out TokenStream
     stack mut TypedDeclarationSymbolTable declarations = new();
     if (!BuildTypedDeclarationSymbolsForSource(source, parsedStream, declarations))
     {
-        return false;
+        return Fail("function-effects declarations");
     }
 
     stack mut TypedMemberSymbolTable members = new();
     switch (BuildTypedMemberAndMethodSymbols(source, parsedStream, declarations))
     {
         case BindResult<TypedMemberSymbolTable>.Err(var memberError):
-            return false;
+            return Fail("function-effects members");
         case BindResult<TypedMemberSymbolTable>.Ok(var builtMembers):
             members = builtMembers;
     }
@@ -659,7 +751,7 @@ fn bool BuildTypedFunctionEffectSummariesForSource(ascii source, out TokenStream
     switch (BuildTypedFunctionEffectSummaries(source, parsedStream, declarations, members))
     {
         case BindResult<TypedFunctionEffectSummaryTable>.Err(var summaryError):
-            return false;
+            return Fail("function-effects summaries");
         case BindResult<TypedFunctionEffectSummaryTable>.Ok(var builtSummaries):
             stream = parsedStream;
             summaries = builtSummaries;
@@ -2313,6 +2405,49 @@ fn bool CopyabilityFactsClassifyStructuralTypes()
 }
 
 [Fact]
+fn bool ThreadSafetyFactsClassifyStructuralTypes()
+{
+    stack ascii source = "module Demo\nstruct Plain { i32[min max] Value; }\nstruct RawHolder { rawptr<i32[min max]> Ptr; }\nstruct StoredBorrowHolder { storeborrow i32[min max] View; }\nstruct PlainArray { Plain[4] Items; }\nstruct RawArray { RawHolder[2] Items; }\nenum Packet { Empty, Data(Plain), Raw(RawHolder), }\nalias PlainAlias = Plain;\nalias RawAlias = RawHolder;\nstruct GenericBox<T> { T Value; }\nstruct AtomicBox { AtomicI64 Value; }\n";
+    stack mut TokenStream stream = new();
+    stack mut ThreadSafetyLawFactTable facts = new();
+    if (!BuildThreadSafetyFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    return ThreadSafetyFactEquals(source, stream, facts, "Plain", true, true, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "RawHolder", false, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "StoredBorrowHolder", false, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "PlainArray", true, true, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "RawArray", false, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "Packet", false, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "PlainAlias", true, true, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "RawAlias", false, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "GenericBox", true, true, true, true)
+        && ThreadSafetyFactEquals(source, stream, facts, "AtomicBox", true, true, false, false);
+}
+
+[Fact]
+fn bool ThreadSafetyFactsHonorGrantDenyAndConditionalGrantAttributes()
+{
+    stack ascii source = "module Demo\nstruct RawHolder { rawptr<i32[min max]> Ptr; }\n[Grant(Transferable)]\nstruct TransferOnly { rawptr<i32[min max]> Ptr; }\n[Deny(Shareable)]\nstruct DeniedShare { i32[min max] Value; }\n[Grant(Shareable) where Transferable(T)]\nstruct SharedIfTransfer<T> { rawptr<i32[min max]> Ptr; }\nstruct FieldGrant { [Grant(Shareable)] rawptr<i32[min max]> Ptr; }\nstruct FieldDeny { [Deny(Transferable)] i32[min max] Value; }\nstruct FieldConflict { [Grant(Shareable)] [Deny(Shareable)] i32[min max] Value; }\n";
+    stack mut TokenStream stream = new();
+    stack mut ThreadSafetyLawFactTable facts = new();
+    if (!BuildThreadSafetyFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    return ThreadSafetyFactEquals(source, stream, facts, "RawHolder", false, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "TransferOnly", true, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "DeniedShare", true, false, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "SharedIfTransfer", false, true, false, true)
+        && ThreadSafetyFactEquals(source, stream, facts, "FieldGrant", false, true, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "FieldDeny", false, true, false, false)
+        && ThreadSafetyFactEquals(source, stream, facts, "FieldConflict", true, false, false, false);
+}
+
+[Fact]
 fn bool CopyableAssertionsAcceptPlainEnumsStructsRecordsAndViews()
 {
     stack mut BindDiagnosticList diags = new();
@@ -3425,7 +3560,7 @@ fn bool InitializationRejectsInitIndexedReadAfterPartialSwitchAssignment()
 fn bool BorrowLivenessRejectsStraightLineMoveBeforeLastBorrowUse()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { stack borrow Box alias = box; Consume(box); alias.Value; return; }\n", diags))
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { stack borrow Box loan = box; Consume(box); loan.Value; return; }\n", diags))
     {
         return false;
     }
@@ -3437,7 +3572,7 @@ fn bool BorrowLivenessRejectsStraightLineMoveBeforeLastBorrowUse()
 fn bool BorrowLivenessAllowsStraightLineMoveAfterLastBorrowUse()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { stack borrow Box alias = box; alias.Value; Consume(box); return; }\n", diags))
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Consume(Box value) { return; }\nfn void Run(Box box) { stack borrow Box loan = box; loan.Value; Consume(box); return; }\n", diags))
     {
         return false;
     }
@@ -3449,7 +3584,7 @@ fn bool BorrowLivenessAllowsStraightLineMoveAfterLastBorrowUse()
 fn bool BorrowLivenessRejectsStraightLineOverwriteBeforeLastBorrowUse()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box replacement) { stack borrow Box alias = box; box = replacement; alias.Value; return; }\n", diags))
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box replacement) { stack borrow Box loan = box; box = replacement; loan.Value; return; }\n", diags))
     {
         return false;
     }
@@ -3461,7 +3596,7 @@ fn bool BorrowLivenessRejectsStraightLineOverwriteBeforeLastBorrowUse()
 fn bool BorrowLivenessRejectsStraightLineAssignmentMoveBeforeLastBorrowUse()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box other) { stack borrow Box alias = box; other = box; alias.Value; return; }\n", diags))
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box, Box other) { stack borrow Box loan = box; other = box; loan.Value; return; }\n", diags))
     {
         return false;
     }
@@ -3473,7 +3608,7 @@ fn bool BorrowLivenessRejectsStraightLineAssignmentMoveBeforeLastBorrowUse()
 fn bool BorrowLivenessRejectsStraightLineLocalMoveBeforeLastBorrowUse()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack borrow Box alias = box; stack Box other = box; alias.Value; return; }\n", diags))
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack borrow Box loan = box; stack Box other = box; loan.Value; return; }\n", diags))
     {
         return false;
     }
@@ -3545,7 +3680,7 @@ fn bool MoveSemanticsDoNotMoveCopyableValuesThroughByValueCalls()
 fn bool MoveSemanticsDoNotMoveBorrowLocalInitializers()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack borrow Box alias = box; box.Value; return; }\n", diags))
+    if (!BindSource("module Demo\nstruct Box { i32[min max] Value; mut drop { } }\nfn void Run(Box box) { stack borrow Box loan = box; box.Value; return; }\n", diags))
     {
         return false;
     }
@@ -6440,7 +6575,7 @@ fn bool LawBodyAllowsPureLocalMutation()
 fn bool LawBodyFlagsDynamicStorageAllocation()
 {
     stack mut BindDiagnosticList diags = new();
-    if (!BindSource("law dynamic i32[min max] Make() { return new(4); }\nlaw fn bool Grow(mut borrow dynamic i32[min max] values) { return values.TryReserve(4); }\nlaw fn void Reset(mut borrow dynamic i32[min max] values) { values = new(8); return; }\n", diags))
+    if (!BindSource("law fn dynamic i32[min max] Make() { return new(4); }\nlaw fn bool Grow(mut borrow dynamic i32[min max] values) { return values.TryReserve(4); }\nlaw fn void Reset(mut borrow dynamic i32[min max] values) { values = new(8); return; }\n", diags))
     {
         return false;
     }
@@ -6955,7 +7090,7 @@ fn bool AcceptsCallbackDeadOnReturnCallWhenCallerPropagatesContract()
 [Fact]
 fn bool AcceptsArenaLocalAndNonRetainingBorrowInFiniteFunction()
 {
-    stack ascii source = "struct Box { }\nfn void Read(borrow Box box) { return; }\nfinite fn void caller() { arena Box box = new Box(); Read(box); return; }\n";
+    stack ascii source = "struct Box { }\nfinite fn void Read(borrow Box box) { return; }\nfinite fn void caller() { arena Box box = new Box(); Read(box); return; }\n";
     stack mut BindDiagnosticList diags = new();
     return BindSource(source, diags)
         && diags.Count() == 0;
@@ -7204,7 +7339,15 @@ fn bool GenericUseSiteFactsCaptureTraitBaseArguments()
 [Fact]
 fn bool TypedGenericInstantiationPlansResolveDeclarationTargetsAndOpenArguments()
 {
-    stack ascii source = "struct Box<T> { }\nstruct Pair<T, comptime u8[1 8] N> { }\nfn Pair<Box<i32[min max]>, comptime N> make<T, comptime u8[1 8] N>(Box<T> input) { stack Pair<T, comptime N> local; }\n";
+    stack ascii source = raw"""
+    module App.GenericPlans
+    struct Box<T> { }
+    struct Pair<T, comptime u8[1 8] N> { }
+    fn Pair<Box<i32[min max]>, comptime N> make<T, comptime u8[1 8] N>(Box<T> input)
+    {
+        stack Pair<T, comptime N> local;
+    }
+    """;
     stack mut TokenStream stream = new();
     stack mut TypedGenericInstantiationPlanTable plans = new();
     if (!BuildTypedGenericInstantiationPlansForSource(source, stream, plans))
@@ -7243,7 +7386,11 @@ fn bool TypedGenericInstantiationPlansResolveDeclarationTargetsAndOpenArguments(
 [Fact]
 fn bool TypedGenericInstantiationPlansDetectTargetArityMismatches()
 {
-    stack ascii source = "struct Pair<T, U> { }\nfn Pair<i32[min max]> make() { }\n";
+    stack ascii source = raw"""
+    module App.GenericArity
+    struct Pair<T, U> { }
+    fn Pair<i32[min max]> make() { }
+    """;
     stack mut TokenStream stream = new();
     stack mut TypedGenericInstantiationPlanTable plans = new();
     if (!BuildTypedGenericInstantiationPlansForSource(source, stream, plans))
@@ -7271,7 +7418,11 @@ fn bool TypedGenericInstantiationPlansDetectTargetArityMismatches()
 [Fact]
 fn bool TypedGenericInstantiationPlansCaptureTraitBaseTargets()
 {
-    stack ascii source = "trait Tagged<T, comptime u8[1 8] N> { }\nstruct Widget : Tagged<i32[min max], 4> { }\n";
+    stack ascii source = raw"""
+    module App.GenericTraitBases
+    trait Tagged<T, comptime u8[1 8] N> { }
+    struct Widget : Tagged<i32[min max], 4> { }
+    """;
     stack mut TokenStream stream = new();
     stack mut TypedGenericInstantiationPlanTable plans = new();
     if (!BuildTypedGenericInstantiationPlansForSource(source, stream, plans))
@@ -7299,7 +7450,7 @@ fn bool TypedGenericInstantiationPlansCaptureTraitBaseTargets()
 [Fact]
 fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
 {
-    stack ascii source = "fn void Plain() { }\nexport fn void Exported() { }\nfinite law void Law(ascii text) { }\ntail finite law inline hot fn i32[min max] TailHot(i32[min max] value) { return value; }\nstrictfp noinline finite law f32 Precise(f32 value) { return value; }\nunsafe ffi(c) varargs fn i32[min max] Native(rawptr<i8[min max]> data);\n[Backend(Opaque)]\ninline fn void Opaque() { }\nasm fn void Fence();\nstruct Box { finite law i32[min max] Method(borrow Box self) { return 1; } }\n";
+    stack ascii source = "module Effects.Backend\nfn void Plain() { }\nexport fn void Exported() { }\nfinite law fn void Law(ascii text) { }\ntail finite law inline hot fn i32[min max] TailHot(i32[min max] value) { return value; }\nstrictfp noinline finite law fn f32 Precise(f32 value) { return value; }\nunsafe ffi(c) varargs fn i32[min max] Native(rawptr<i8[min max]> data);\n[Backend(Opaque)]\ninline fn void Opaque() { }\nasm fn void Fence();\nstruct Box { finite law fn i32[min max] Method(borrow Box self) { return 1; } }\n";
     stack mut TokenStream stream = new();
     stack mut TypedFunctionEffectSummaryTable summaries = new();
     if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
@@ -7316,11 +7467,17 @@ fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
     stack u32[0 max] opaqueSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Opaque");
     stack u32[0 max] fenceSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Fence");
     stack u32[0 max] methodSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Method");
-    if (plainSlot == 0 || exportedSlot == 0 || lawSlot == 0 || tailHotSlot == 0 || preciseSlot == 0
-        || nativeSlot == 0 || opaqueSlot == 0 || fenceSlot == 0 || methodSlot == 0)
-    {
-        return false;
-    }
+    if (summaries.Count() == 0) { return Fail("function-effects empty table"); }
+    if (summaries.Count() != 9) { return Fail("function-effects backend count before slots"); }
+    if (plainSlot == 0) { return Fail("function-effects missing Plain"); }
+    if (exportedSlot == 0) { return Fail("function-effects missing Exported"); }
+    if (lawSlot == 0) { return Fail("function-effects missing Law"); }
+    if (tailHotSlot == 0) { return Fail("function-effects missing TailHot"); }
+    if (preciseSlot == 0) { return Fail("function-effects missing Precise"); }
+    if (nativeSlot == 0) { return Fail("function-effects missing Native"); }
+    if (opaqueSlot == 0) { return Fail("function-effects missing Opaque"); }
+    if (fenceSlot == 0) { return Fail("function-effects missing Fence"); }
+    if (methodSlot == 0) { return Fail("function-effects missing Method"); }
 
     stack u64[0 2 ** 63 - 1] plain = (u64[0 2 ** 63 - 1])(plainSlot - 1);
     stack u64[0 2 ** 63 - 1] exported = (u64[0 2 ** 63 - 1])(exportedSlot - 1);
@@ -7331,44 +7488,44 @@ fn bool TypedFunctionEffectSummariesCaptureDeclarationBackendFacts()
     stack u64[0 2 ** 63 - 1] opaque = (u64[0 2 ** 63 - 1])(opaqueSlot - 1);
     stack u64[0 2 ** 63 - 1] fence = (u64[0 2 ** 63 - 1])(fenceSlot - 1);
     stack u64[0 2 ** 63 - 1] method = (u64[0 2 ** 63 - 1])(methodSlot - 1);
-    return summaries.Count() == 9
-        && summaries.OwnerKindAt(plain) == TypedFunctionEffectOwnerKind.Declaration
-        && summaries.HasBodyAt(plain)
-        && summaries.NoUnwindAt(plain)
-        && summaries.UseFastCallingConventionAt(plain)
-        && summaries.InlinePreferenceAt(plain) == TypedFunctionInlinePreference.InlineHint
-        && !summaries.UseFastCallingConventionAt(exported)
-        && summaries.FunctionKindAt(lawIndex) == TypedDeclarationFunctionKind.FiniteLaw
-        && summaries.IsPureAt(lawIndex)
-        && summaries.NoSyncAt(lawIndex)
-        && summaries.NoFreeAt(lawIndex)
-        && summaries.WillReturnAt(lawIndex)
-        && summaries.MustProgressAt(lawIndex)
-        && summaries.ReadsArgumentMemoryAt(lawIndex)
-        && summaries.IsTailCallableAt(tailHot)
-        && summaries.IsHotAt(tailHot)
-        && summaries.InlinePreferenceAt(tailHot) == TypedFunctionInlinePreference.Inline
-        && summaries.IsStrictFpAt(precise)
-        && summaries.InlinePreferenceAt(precise) == TypedFunctionInlinePreference.NoInline
-        && summaries.IsFfiAt(native)
-        && summaries.IsVarargsAt(native)
-        && !summaries.HasBodyAt(native)
-        && !summaries.UseFastCallingConventionAt(native)
-        && summaries.BackendOptimizationModeAt(opaque) == TypedFunctionBackendOptimizationMode.Opaque
-        && summaries.InlinePreferenceAt(opaque) == TypedFunctionInlinePreference.NoInline
-        && summaries.IsAsmAt(fence)
-        && summaries.IsFfiAt(fence)
-        && !summaries.WillReturnAt(fence)
-        && !summaries.MustProgressAt(fence)
-        && summaries.OwnerKindAt(method) == TypedFunctionEffectOwnerKind.MemberMethod
-        && summaries.IsPureAt(method)
-        && summaries.ReadsArgumentMemoryAt(method);
+    if (summaries.OwnerKindAt(plain) != TypedFunctionEffectOwnerKind.Declaration) { return Fail("function-effects plain owner"); }
+    if (!summaries.HasBodyAt(plain)) { return Fail("function-effects plain body"); }
+    if (!summaries.NoUnwindAt(plain)) { return Fail("function-effects plain nounwind"); }
+    if (!summaries.UseFastCallingConventionAt(plain)) { return Fail("function-effects plain fastcall"); }
+    if (summaries.InlinePreferenceAt(plain) != TypedFunctionInlinePreference.InlineHint) { return Fail("function-effects plain inline"); }
+    if (summaries.UseFastCallingConventionAt(exported)) { return Fail("function-effects exported fastcall"); }
+    if (summaries.FunctionKindAt(lawIndex) != TypedDeclarationFunctionKind.FiniteLaw) { return Fail("function-effects law kind"); }
+    if (!summaries.IsPureAt(lawIndex)) { return Fail("function-effects law pure"); }
+    if (!summaries.NoSyncAt(lawIndex)) { return Fail("function-effects law nosync"); }
+    if (!summaries.NoFreeAt(lawIndex)) { return Fail("function-effects law nofree"); }
+    if (!summaries.WillReturnAt(lawIndex)) { return Fail("function-effects law willreturn"); }
+    if (!summaries.MustProgressAt(lawIndex)) { return Fail("function-effects law mustprogress"); }
+    if (!summaries.ReadsArgumentMemoryAt(lawIndex)) { return Fail("function-effects law argument-memory"); }
+    if (!summaries.IsTailCallableAt(tailHot)) { return Fail("function-effects tail callable"); }
+    if (!summaries.IsHotAt(tailHot)) { return Fail("function-effects hot"); }
+    if (summaries.InlinePreferenceAt(tailHot) != TypedFunctionInlinePreference.Inline) { return Fail("function-effects tail inline"); }
+    if (!summaries.IsStrictFpAt(precise)) { return Fail("function-effects strictfp"); }
+    if (summaries.InlinePreferenceAt(precise) != TypedFunctionInlinePreference.NoInline) { return Fail("function-effects noinline"); }
+    if (!summaries.IsFfiAt(native)) { return Fail("function-effects native ffi"); }
+    if (!summaries.IsVarargsAt(native)) { return Fail("function-effects native varargs"); }
+    if (summaries.HasBodyAt(native)) { return Fail("function-effects native body"); }
+    if (summaries.UseFastCallingConventionAt(native)) { return Fail("function-effects native fastcall"); }
+    if (summaries.BackendOptimizationModeAt(opaque) != TypedFunctionBackendOptimizationMode.Opaque) { return Fail("function-effects opaque mode"); }
+    if (summaries.InlinePreferenceAt(opaque) != TypedFunctionInlinePreference.NoInline) { return Fail("function-effects opaque inline"); }
+    if (!summaries.IsAsmAt(fence)) { return Fail("function-effects asm"); }
+    if (!summaries.IsFfiAt(fence)) { return Fail("function-effects asm ffi"); }
+    if (summaries.WillReturnAt(fence)) { return Fail("function-effects asm willreturn"); }
+    if (summaries.MustProgressAt(fence)) { return Fail("function-effects asm mustprogress"); }
+    if (summaries.OwnerKindAt(method) != TypedFunctionEffectOwnerKind.MemberMethod) { return Fail("function-effects method owner"); }
+    if (!summaries.IsPureAt(method)) { return Fail("function-effects method pure"); }
+    if (!summaries.ReadsArgumentMemoryAt(method)) { return Fail("function-effects method argument-memory"); }
+    return true;
 }
 
 [Fact]
 fn bool TypedFunctionEffectSummariesCaptureNoRecurseFacts()
 {
-    stack ascii source = "fn i32 Leaf(i32 value) { return value; }\nfn i32 Caller(i32 value) { return Leaf(value); }\nfn i32 SelfRecursive(i32 value) { return SelfRecursive(value); }\nfn i32 MutualA(i32 value) { return MutualB(value); }\nfn i32 MutualB(i32 value) { return MutualA(value); }\nfn i32 CallsCallback(fnptr<fn i32(i32)> cb, i32 value) { return cb(value); }\n";
+    stack ascii source = "module Effects.Recursion\nfn i32 Leaf(i32 value) { return value; }\nfn i32 Caller(i32 value) { return Leaf(value); }\nfn i32 SelfRecursive(i32 value) { return SelfRecursive(value); }\nfn i32 left(i32 value) { return right(value); }\nfn i32 right(i32 value) { return left(value); }\nfn i32 CallsCallback(fnptr<fn i32(i32)> cb, i32 value) { return cb(value); }\n";
     stack mut TokenStream stream = new();
     stack mut TypedFunctionEffectSummaryTable summaries = new();
     if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
@@ -7379,32 +7536,35 @@ fn bool TypedFunctionEffectSummariesCaptureNoRecurseFacts()
     stack u32[0 max] leafSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Leaf");
     stack u32[0 max] callerSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "Caller");
     stack u32[0 max] selfSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "SelfRecursive");
-    stack u32[0 max] mutualASlot = TypedFunctionEffectIndexByName(summaries, source, stream, "MutualA");
-    stack u32[0 max] mutualBSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "MutualB");
+    stack u32[0 max] leftSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "left");
+    stack u32[0 max] rightSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "right");
     stack u32[0 max] callbackSlot = TypedFunctionEffectIndexByName(summaries, source, stream, "CallsCallback");
-    if (leafSlot == 0 || callerSlot == 0 || selfSlot == 0 || mutualASlot == 0 || mutualBSlot == 0 || callbackSlot == 0)
-    {
-        return false;
-    }
+    if (leafSlot == 0) { return Fail("function-effects missing Leaf"); }
+    if (callerSlot == 0) { return Fail("function-effects missing Caller"); }
+    if (selfSlot == 0) { return Fail("function-effects missing SelfRecursive"); }
+    if (leftSlot == 0) { return Fail("function-effects missing left"); }
+    if (rightSlot == 0) { return Fail("function-effects missing right"); }
+    if (callbackSlot == 0) { return Fail("function-effects missing CallsCallback"); }
 
     stack u64[0 2 ** 63 - 1] leaf = (u64[0 2 ** 63 - 1])(leafSlot - 1);
     stack u64[0 2 ** 63 - 1] caller = (u64[0 2 ** 63 - 1])(callerSlot - 1);
     stack u64[0 2 ** 63 - 1] selfRecursive = (u64[0 2 ** 63 - 1])(selfSlot - 1);
-    stack u64[0 2 ** 63 - 1] mutualA = (u64[0 2 ** 63 - 1])(mutualASlot - 1);
-    stack u64[0 2 ** 63 - 1] mutualB = (u64[0 2 ** 63 - 1])(mutualBSlot - 1);
+    stack u64[0 2 ** 63 - 1] left = (u64[0 2 ** 63 - 1])(leftSlot - 1);
+    stack u64[0 2 ** 63 - 1] right = (u64[0 2 ** 63 - 1])(rightSlot - 1);
     stack u64[0 2 ** 63 - 1] callback = (u64[0 2 ** 63 - 1])(callbackSlot - 1);
-    return summaries.NoRecurseAt(leaf)
-        && summaries.NoRecurseAt(caller)
-        && !summaries.NoRecurseAt(selfRecursive)
-        && !summaries.NoRecurseAt(mutualA)
-        && !summaries.NoRecurseAt(mutualB)
-        && !summaries.NoRecurseAt(callback);
+    if (!summaries.NoRecurseAt(leaf)) { return Fail("function-effects leaf norecurse"); }
+    if (!summaries.NoRecurseAt(caller)) { return Fail("function-effects caller norecurse"); }
+    if (summaries.NoRecurseAt(selfRecursive)) { return Fail("function-effects self recursive norecurse"); }
+    if (summaries.NoRecurseAt(left)) { return Fail("function-effects left norecurse"); }
+    if (summaries.NoRecurseAt(right)) { return Fail("function-effects right norecurse"); }
+    if (summaries.NoRecurseAt(callback)) { return Fail("function-effects callback norecurse"); }
+    return true;
 }
 
 [Fact]
 fn bool TypedFunctionEffectSummariesCaptureBodyShape()
 {
-    stack ascii source = "struct Widget { }\nfn void Callee() { }\nfn void Work(i32[min max] input) { stack i32[min max] value = input; value = value + 1; if (value > 0) { value = value + 2; } while (value < 10) { value = value + 1; } Callee(); new Widget(); return; }\n";
+    stack ascii source = "module Effects.Body\nstruct Widget { }\nfn void Callee() { }\nfn void Work(i32[min max] input) { stack i32[min max] value = input; value = value + 1; if (value > 0) { value = value + 2; } while (value < 10) { value = value + 1; } Callee(); new Widget(); return; }\n";
     stack mut TokenStream stream = new();
     stack mut TypedFunctionEffectSummaryTable summaries = new();
     if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))
@@ -7441,7 +7601,7 @@ fn bool TypedFunctionEffectSummariesCaptureBodyShape()
 [Fact]
 fn bool TypedFunctionEffectSummariesCaptureOtherMemoryFacts()
 {
-    stack ascii source = "static i32[min max] Counter = 0;\nconst Limit = 7;\nstruct Box { }\nfn i32[min max] ReadCounter() { return Counter; }\nfn i32[min max] ReadConst() { return Limit; }\nfn void WriteCounter() { Counter = 1; return; }\nfn i32[min max] LocalOnly(i32[min max] value) { stack mut i32[min max] local = value; local = local + 1; return local; }\nfn void HeapLocal() { heap Box box = new Box(); return; }\nfn dynamic i32[min max] MakeDynamic() { return new(4); }\nfn bool ReserveDynamic(mut borrow dynamic i32[min max] values) { return values.TryReserve(4); }\nfn void ArenaDynamic() { stack dynamic i32[min max] values = new(arena, 4); return; }\n";
+    stack ascii source = "module Effects.Memory\nstatic i32[min max] Counter = 0;\nconst Limit = 7;\nstruct Box { }\nfn i32[min max] ReadCounter() { return Counter; }\nfn i32[min max] ReadConst() { return Limit; }\nfn void WriteCounter() { Counter = 1; return; }\nfn i32[min max] LocalOnly(i32[min max] value) { stack mut i32[min max] local = value; local = local + 1; return local; }\nfn void HeapLocal() { heap Box box = new Box(); return; }\nfn dynamic i32[min max] MakeDynamic() { return new(4); }\nfn bool ReserveDynamic(mut borrow dynamic i32[min max] values) { return values.TryReserve(4); }\nfn void ArenaDynamic() { stack dynamic i32[min max] values = new(arena, 4); return; }\n";
     stack mut TokenStream stream = new();
     stack mut TypedFunctionEffectSummaryTable summaries = new();
     if (!BuildTypedFunctionEffectSummariesForSource(source, stream, summaries))

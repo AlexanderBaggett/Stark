@@ -1,0 +1,1500 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.LayoutHelpers
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.ConstructorValidation
+import Compiler.Binding.OwnershipHelpers
+import System.Memory
+module Compiler.Binding.OwnershipInitialization
+
+internal struct StraightLineInitializedTargetTable
+{
+    internal dynamic u32[0 max] Targets;
+    internal dynamic u32[0 max] InitializedFlags;
+
+    StraightLineInitializedTargetTable()
+    {
+        self.Targets = new();
+        self.InitializedFlags = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow StraightLineInitializedTargetTable self)
+    {
+        return self.Targets.Length;
+    }
+
+    internal law u32[0 max] TargetAt(borrow StraightLineInitializedTargetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] target = 0;
+        if (index < self.Targets.Length)
+        {
+            target = self.Targets[index];
+        }
+
+        return target;
+    }
+
+    internal law u32[0 max] InitializedFlagAt(borrow StraightLineInitializedTargetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flag = 0;
+        if (index < self.InitializedFlags.Length)
+        {
+            flag = self.InitializedFlags[index];
+        }
+
+        return flag;
+    }
+
+    internal fn u32[0 max] IndexPlusOneOf(borrow StraightLineInitializedTargetTable self, u32[0 max] target)
+    {
+        if (target == 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        stack mut u64[0 2 ** 63 - 1] remaining = count;
+        while willexit (remaining > 0)
+        {
+            remaining = (u64[0 2 ** 63 - 1])(remaining - 1);
+            stack u64[0 2 ** 63 - 1] index = remaining;
+            if (self.TargetAt(index) == target)
+            {
+                return (u32[0 max])(index + 1);
+            }
+        }
+
+        return 0;
+    }
+
+    internal fn bool IsTracked(borrow StraightLineInitializedTargetTable self, u32[0 max] target)
+    {
+        return self.IndexPlusOneOf(target) != 0;
+    }
+
+    internal fn bool IsInitialized(borrow StraightLineInitializedTargetTable self, u32[0 max] target)
+    {
+        stack u32[0 max] indexPlusOne = self.IndexPlusOneOf(target);
+        if (indexPlusOne == 0)
+        {
+            return false;
+        }
+
+        return self.InitializedFlagAt((u64[0 2 ** 63 - 1])(indexPlusOne - 1)) != 0;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendState(mut borrow StraightLineInitializedTargetTable self, u32[0 max] target, bool initialized)
+    {
+        if (target == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.Targets.TryReserve(1)
+            || !self.InitializedFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        stack mut u32[0 max] flag = 0;
+        if (initialized)
+        {
+            flag = 1;
+        }
+
+        init self.Targets[self.Targets.Length] = target;
+        init self.InitializedFlags[self.InitializedFlags.Length] = flag;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus TrackUninitialized(mut borrow StraightLineInitializedTargetTable self, u32[0 max] target)
+    {
+        if (target == 0 || self.IsTracked(target))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        return self.AppendState(target, false);
+    }
+
+    internal fn System.Memory.MemoryStatus MarkInitialized(mut borrow StraightLineInitializedTargetTable self, u32[0 max] target)
+    {
+        if (target == 0 || !self.IsTracked(target) || self.IsInitialized(target))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        return self.AppendState(target, true);
+    }
+}
+
+internal fn System.Memory.MemoryStatus CopyStraightLineInitializationState(
+    borrow StraightLineInitializedTargetTable sourceTable,
+    mut borrow StraightLineInitializedTargetTable targetTable)
+{
+    stack u64[0 2 ** 63 - 1] count = sourceTable.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] target = sourceTable.TargetAt(index);
+        if (target != 0 && !targetTable.IsTracked(target))
+        {
+            switch (targetTable.AppendState(target, sourceTable.IsInitialized(target)))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus ReplaceStraightLineInitializationState(
+    borrow StraightLineInitializedTargetTable sourceTable,
+    mut borrow StraightLineInitializedTargetTable targetTable)
+{
+    targetTable.Targets = new();
+    targetTable.InitializedFlags = new();
+    return CopyStraightLineInitializationState(sourceTable, targetTable);
+}
+
+internal fn System.Memory.MemoryStatus IntersectStraightLineInitializationState(
+    borrow StraightLineInitializedTargetTable left,
+    borrow StraightLineInitializedTargetTable right,
+    mut borrow StraightLineInitializedTargetTable targetTable)
+{
+    stack u64[0 2 ** 63 - 1] count = left.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] target = left.TargetAt(index);
+        if (target != 0 && !targetTable.IsTracked(target))
+        {
+            stack bool initialized = left.IsInitialized(target) && right.IsInitialized(target);
+            switch (targetTable.AppendState(target, initialized))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal struct InitializationExpressionWorkStack
+{
+    internal dynamic u32[0 max] Nodes;
+    internal dynamic u32[0 max] Phases;
+
+    InitializationExpressionWorkStack()
+    {
+        self.Nodes = new();
+        self.Phases = new();
+    }
+
+    internal fn System.Memory.MemoryStatus Push(mut borrow InitializationExpressionWorkStack self, u32[0 max] node, u32[0 max] phase)
+    {
+        if (node == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.Nodes.TryReserve(1)
+            || !self.Phases.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Nodes[self.Nodes.Length] = node;
+        init self.Phases[self.Phases.Length] = phase;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn bool TryPop(mut borrow InitializationExpressionWorkStack self, out u32[0 max] node, out u32[0 max] phase)
+    {
+        node = 0;
+        phase = 0;
+        if (self.Nodes.Length == 0 || self.Phases.Length == 0)
+        {
+            return false;
+        }
+
+        node = self.Nodes.MoveLast();
+        phase = self.Phases.MoveLast();
+        return true;
+    }
+}
+
+internal fn System.Memory.MemoryStatus BuildInitialStraightLineInitializationState(
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    bool trackOutputOnlyParameters,
+    mut borrow StraightLineInitializedTargetTable initializedTargets)
+{
+    stack u64[0 2 ** 63 - 1] count = scope.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] target = (u32[0 max])(index + 1);
+        if (scope.KindAt(index) == SymbolKind.Local
+            || (trackOutputOnlyParameters && FunctionScopeSymbolIsOutputOnlyParameter(stream, scope, target)))
+        {
+            switch (initializedTargets.TrackUninitialized(target))
+            {
+                case System.Memory.MemoryStatus.Err(var trackError):
+                    return System.Memory.MemoryStatus.Err(trackError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CheckStraightLineInitializationRead(
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] node,
+    borrow StraightLineInitializedTargetTable initializedTargets,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] target = 0;
+    if (TryScopeTargetForIdentifierNode(refs, body, node, target)
+        && initializedTargets.IsTracked(target)
+        && !initializedTargets.IsInitialized(target))
+    {
+        switch (diags.Append(BindDiagnosticCode.ReadBeforeInitialization, body.ExprTokenAt(node)))
+        {
+            case System.Memory.MemoryStatus.Err(var diagError):
+                return System.Memory.MemoryStatus.Err(diagError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool ScopeTargetIsTrackedOutputOnlyParameter(
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] target = 0;
+    return TryScopeTargetForIdentifierNode(refs, body, node, target)
+        && FunctionScopeSymbolIsOutputOnlyParameter(stream, scope, target);
+}
+
+internal fn bool FunctionScopeSymbolIsInitParameter(borrow TokenStream stream, borrow FunctionScope scope, u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    return target < scope.Count()
+        && scope.KindAt(target) == SymbolKind.Parameter
+        && TypeSpanHasTopLevelToken(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target), TokenKind.Init);
+}
+
+internal fn bool AssignmentTargetHasInitQualifier(
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] targetNode)
+{
+    stack mut u32[0 max] current = targetNode;
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ExprNodeCount() + 1);
+    while willexit (current != 0 && guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack ExprKind kind = body.ExprKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current)) == TokenKind.Init)
+            {
+                return true;
+            }
+
+            current = body.ExprLeftAt(current);
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
+        {
+            current = body.ExprLeftAt(current);
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TryTrackedInitAssignmentRoot(
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    borrow StraightLineInitializedTargetTable initializedTargets,
+    u32[0 max] targetNode,
+    out u32[0 max] rootNode)
+{
+    rootNode = 0;
+    if (!AssignmentTargetHasInitQualifier(stream, body, targetNode))
+    {
+        return false;
+    }
+
+    stack u32[0 max] root = AssignmentTargetRootNode(body, targetNode);
+    stack mut u32[0 max] target = 0;
+    if (TryScopeTargetForIdentifierNode(refs, body, root, target)
+        && initializedTargets.IsTracked(target)
+        && FunctionScopeSymbolIsInitParameter(stream, scope, target))
+    {
+        rootNode = root;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus AppendUninitializedOutputDiagnostics(
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StraightLineInitializedTargetTable initializedTargets,
+    u32[0 max] token,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = scope.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] target = (u32[0 max])(index + 1);
+        if (FunctionScopeSymbolIsOutputOnlyParameter(stream, scope, target)
+            && initializedTargets.IsTracked(target)
+            && !initializedTargets.IsInitialized(target))
+        {
+            stack mut u32[0 max] diagnosticToken = token;
+            if (diagnosticToken == 0)
+            {
+                diagnosticToken = scope.NameTokenAt(index);
+            }
+
+            switch (diags.Append(BindDiagnosticCode.OutputNotInitializedOnReturn, diagnosticToken))
+            {
+                case System.Memory.MemoryStatus.Err(var diagError):
+                    return System.Memory.MemoryStatus.Err(diagError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool TryCallArgumentOutputTypeSpan(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    u32[0 max] argIndex,
+    out u32[0 max] start,
+    out u32[0 max] endExclusive)
+{
+    start = 0;
+    endExclusive = 0;
+    if (callNode == 0 || body.ExprKindAt(callNode) != Compiler.Parsing.ExprKind.Call)
+    {
+        return false;
+    }
+
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    stack mut u32[0 max] targetPlusOne = 0;
+    if (TryDirectFunctionCallTarget(table, source, refs, stream, body, calleeNode, targetPlusOne))
+    {
+        stack mut FunctionSignature callee = new();
+        if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee)
+            && argIndex < callee.ParamCount())
+        {
+            start = callee.ParamTypeStartTokenAt((u64[0 2 ** 63 - 1])argIndex);
+            endExclusive = callee.ParamTypeEndTokenAt((u64[0 2 ** 63 - 1])argIndex);
+            return start < endExclusive;
+        }
+
+        return false;
+    }
+
+    if (TryScopeTargetForIdentifierNode(refs, body, calleeNode, targetPlusOne))
+    {
+        stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+        stack mut u32[0 max] lparen = 0;
+        stack mut u32[0 max] rparen = 0;
+        return target < scope.Count()
+            && TryFindCallableParamList(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target), lparen, rparen)
+            && TryCallableParamSpan(stream, lparen, rparen, argIndex, start, endExclusive);
+    }
+
+    return false;
+}
+
+internal fn bool CallArgumentIsOutputOnly(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    u32[0 max] argIndex)
+{
+    stack mut u32[0 max] start = 0;
+    stack mut u32[0 max] endExclusive = 0;
+    return TryCallArgumentOutputTypeSpan(table, source, refs, scope, stream, body, callNode, argIndex, start, endExclusive)
+        && TypeSpanIsOutputOnlyParameter(stream, start, endExclusive);
+}
+
+internal fn System.Memory.MemoryStatus MarkStraightLineCallOutputArguments(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    mut borrow StraightLineInitializedTargetTable initializedTargets)
+{
+    stack u32[0 max] argCount = body.ExprCallArgCountAt(callNode);
+    for willexit (stack mut u32[0 max] arg = 0; arg < argCount; arg = (u32[0 max])(arg + 1))
+    {
+        if (CallArgumentIsOutputOnly(table, source, refs, scope, stream, body, callNode, arg))
+        {
+            stack u32[0 max] root = AssignmentTargetRootNode(body, body.ExprCallArgAt(callNode, arg));
+            stack mut u32[0 max] target = 0;
+            if (TryScopeTargetForIdentifierNode(refs, body, root, target)
+                && initializedTargets.IsTracked(target))
+            {
+                switch (initializedTargets.MarkInitialized(target))
+                {
+                    case System.Memory.MemoryStatus.Err(var markError):
+                        return System.Memory.MemoryStatus.Err(markError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectStraightLineInitializationDiagnosticsInExpression(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] node,
+    mut borrow StraightLineInitializedTargetTable initializedTargets,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut InitializationExpressionWorkStack work = new();
+    switch (work.Push(node, 0))
+    {
+        case System.Memory.MemoryStatus.Err(var pushRootError):
+            return System.Memory.MemoryStatus.Err(pushRootError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut u32[0 max] current = 0;
+    stack mut u32[0 max] phase = 0;
+    while willexit (work.TryPop(current, phase))
+    {
+        if (phase == 1)
+        {
+            stack mut u32[0 max] assignedTarget = 0;
+            if (TryScopeTargetForIdentifierNode(refs, body, current, assignedTarget))
+            {
+                switch (initializedTargets.MarkInitialized(assignedTarget))
+                {
+                    case System.Memory.MemoryStatus.Err(var markError):
+                        return System.Memory.MemoryStatus.Err(markError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            continue;
+        }
+
+        if (phase == 3)
+        {
+            switch (MarkStraightLineCallOutputArguments(table, source, refs, scope, stream, body, current, initializedTargets))
+            {
+                case System.Memory.MemoryStatus.Err(var callMarkError):
+                    return System.Memory.MemoryStatus.Err(callMarkError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        stack ExprKind kind = body.ExprKindAt(current);
+        if (phase == 2)
+        {
+            if (kind == Compiler.Parsing.ExprKind.Identifier)
+            {
+                if (!ScopeTargetIsTrackedOutputOnlyParameter(refs, scope, stream, body, current))
+                {
+                    switch (CheckStraightLineInitializationRead(refs, body, current, initializedTargets, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var placeReadError):
+                            return System.Memory.MemoryStatus.Err(placeReadError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                continue;
+            }
+
+            if (kind == Compiler.Parsing.ExprKind.Member)
+            {
+                switch (work.Push(body.ExprLeftAt(current), 2))
+                {
+                    case System.Memory.MemoryStatus.Err(var memberPlaceError):
+                        return System.Memory.MemoryStatus.Err(memberPlaceError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            if (kind == Compiler.Parsing.ExprKind.Index)
+            {
+                switch (work.Push(body.ExprAuxAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var indexLengthError):
+                        return System.Memory.MemoryStatus.Err(indexLengthError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (work.Push(body.ExprRightAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var indexReadError):
+                        return System.Memory.MemoryStatus.Err(indexReadError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (work.Push(body.ExprLeftAt(current), 2))
+                {
+                    case System.Memory.MemoryStatus.Err(var indexReceiverError):
+                        return System.Memory.MemoryStatus.Err(indexReceiverError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+
+            if (kind == Compiler.Parsing.ExprKind.Unary)
+            {
+                switch (work.Push(body.ExprLeftAt(current), 2))
+                {
+                    case System.Memory.MemoryStatus.Err(var unaryPlaceError):
+                        return System.Memory.MemoryStatus.Err(unaryPlaceError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                continue;
+            }
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
+        {
+            switch (CheckStraightLineInitializationRead(refs, body, current, initializedTargets, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var readError):
+                    return System.Memory.MemoryStatus.Err(readError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            stack TokenKind operatorKind = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(current));
+            if (operatorKind == TokenKind.Assign)
+            {
+                stack u32[0 max] targetNode = body.ExprLeftAt(current);
+                stack mut u32[0 max] target = 0;
+                if (targetNode != 0
+                    && body.ExprKindAt(targetNode) == Compiler.Parsing.ExprKind.Identifier
+                    && TryScopeTargetForIdentifierNode(refs, body, targetNode, target)
+                    && initializedTargets.IsTracked(target))
+                {
+                    switch (work.Push(targetNode, 1))
+                    {
+                        case System.Memory.MemoryStatus.Err(var markPushError):
+                            return System.Memory.MemoryStatus.Err(markPushError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+                else if (TryTrackedInitAssignmentRoot(refs, scope, stream, body, initializedTargets, targetNode, target))
+                {
+                    switch (work.Push(target, 1))
+                    {
+                        case System.Memory.MemoryStatus.Err(var initMarkPushError):
+                            return System.Memory.MemoryStatus.Err(initMarkPushError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+
+                    switch (work.Push(targetNode, 2))
+                    {
+                        case System.Memory.MemoryStatus.Err(var initTargetPushError):
+                            return System.Memory.MemoryStatus.Err(initTargetPushError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+                else
+                {
+                    switch (work.Push(targetNode, 2))
+                    {
+                        case System.Memory.MemoryStatus.Err(var targetPushError):
+                            return System.Memory.MemoryStatus.Err(targetPushError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                switch (work.Push(body.ExprRightAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var rightPushError):
+                        return System.Memory.MemoryStatus.Err(rightPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                switch (work.Push(body.ExprRightAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var compoundRightPushError):
+                        return System.Memory.MemoryStatus.Err(compoundRightPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (work.Push(body.ExprLeftAt(current), 0))
+                {
+                    case System.Memory.MemoryStatus.Err(var compoundLeftPushError):
+                        return System.Memory.MemoryStatus.Err(compoundLeftPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Member)
+        {
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var memberReceiverPushError):
+                    return System.Memory.MemoryStatus.Err(memberReceiverPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Binary
+            || kind == Compiler.Parsing.ExprKind.Index)
+        {
+            switch (work.Push(body.ExprAuxAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var auxPushError):
+                    return System.Memory.MemoryStatus.Err(auxPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprRightAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var rightPushError):
+                    return System.Memory.MemoryStatus.Err(rightPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var leftPushError):
+                    return System.Memory.MemoryStatus.Err(leftPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var unaryPushError):
+                    return System.Memory.MemoryStatus.Err(unaryPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Call || kind == Compiler.Parsing.ExprKind.New)
+        {
+            if (kind == Compiler.Parsing.ExprKind.Call)
+            {
+                switch (work.Push(current, 3))
+                {
+                    case System.Memory.MemoryStatus.Err(var callMarkPushError):
+                        return System.Memory.MemoryStatus.Err(callMarkPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            stack mut u32[0 max] remainingArgs = body.ExprCallArgCountAt(current);
+            while willexit (remainingArgs > 0)
+            {
+                remainingArgs = (u32[0 max])(remainingArgs - 1);
+                stack mut u32[0 max] argumentPhase = 0;
+                if (kind == Compiler.Parsing.ExprKind.Call
+                    && CallArgumentIsOutputOnly(table, source, refs, scope, stream, body, current, remainingArgs))
+                {
+                    argumentPhase = 2;
+                }
+
+                switch (work.Push(body.ExprCallArgAt(current, remainingArgs), argumentPhase))
+                {
+                    case System.Memory.MemoryStatus.Err(var argPushError):
+                        return System.Memory.MemoryStatus.Err(argPushError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var calleePushError):
+                    return System.Memory.MemoryStatus.Err(calleePushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conversion)
+        {
+            switch (work.Push(body.ExprRightAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var conversionPushError):
+                    return System.Memory.MemoryStatus.Err(conversionPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            continue;
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Conditional)
+        {
+            switch (work.Push(body.ExprAuxAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var elsePushError):
+                    return System.Memory.MemoryStatus.Err(elsePushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprRightAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var thenPushError):
+                    return System.Memory.MemoryStatus.Err(thenPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (work.Push(body.ExprLeftAt(current), 0))
+            {
+                case System.Memory.MemoryStatus.Err(var conditionPushError):
+                    return System.Memory.MemoryStatus.Err(conditionPushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool LocalStatementIsForEachBinding(borrow StatementList body, u64[0 2 ** 63 - 1] statement)
+{
+    if (statement >= body.Count())
+    {
+        return false;
+    }
+
+    stack StatementItem item = body.ItemAt(statement);
+    if (item.Kind != StatementKind.Local || body.ExprRootAt(statement) != 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] depth = body.DepthAt(statement);
+    stack mut u64[0 2 ** 63 - 1] scan = (u64[0 2 ** 63 - 1])(statement + 1);
+    while willexit (scan < body.Count() && body.DepthAt(scan) == depth)
+    {
+        stack StatementItem next = body.ItemAt(scan);
+        if (next.Kind == StatementKind.ForEach
+            && item.StartToken > next.StartToken
+            && item.EndToken < next.EndToken)
+        {
+            return true;
+        }
+
+        if (next.Kind != StatementKind.Local)
+        {
+            return false;
+        }
+
+        scan = (u64[0 2 ** 63 - 1])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus MarkStraightLineLocalInitializedAfterStatement(
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statement,
+    mut borrow StraightLineInitializedTargetTable initializedTargets)
+{
+    stack StatementItem item = body.ItemAt(statement);
+    stack bool initializesLocal = item.Kind == StatementKind.PatternBinding
+        || (item.Kind == StatementKind.Local
+            && (body.ExprRootAt(statement) != 0 || LocalStatementIsForEachBinding(body, statement)));
+    if (!initializesLocal)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] target = SymbolIndexPlusOneForStatement(scope, (u32[0 max])statement);
+    return initializedTargets.MarkInitialized(target);
+}
+
+internal fn System.Memory.MemoryStatus CollectBranchCompleteInitializationDiagnosticsInIfArms(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] firstArmStatement,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] parentDepth,
+    bool hasCompleteElse,
+    u32[0 max] sourceArmCount,
+    mut borrow StraightLineInitializedTargetTable initializedTargets,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = false;
+    stack mut StraightLineInitializedTargetTable merged = new();
+    stack mut bool haveMergedPath = false;
+    stack mut u32[0 max] statementArmCount = 0;
+    stack mut u64[0 2 ** 63 - 1] armStart = firstArmStatement;
+    while willexit (armStart < subtreeEnd)
+    {
+        if (body.DepthAt(armStart) != parentDepth + 1)
+        {
+            armStart += 1;
+            continue;
+        }
+
+        stack u32[0 max] armScope = body.ScopeIdAt(armStart);
+        stack u64[0 2 ** 63 - 1] armEnd = ConstructorNextIfArmEnd(body, armStart, subtreeEnd, parentDepth, armScope);
+        stack mut StraightLineInitializedTargetTable armState = new();
+        switch (CopyStraightLineInitializationState(initializedTargets, armState))
+        {
+            case System.Memory.MemoryStatus.Err(var copyArmError):
+                return System.Memory.MemoryStatus.Err(copyArmError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack mut bool armCanContinue = true;
+        switch (CollectBranchCompleteInitializationDiagnosticsInStatementRange(
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            armStart,
+            armEnd,
+            (u32[0 max])(parentDepth + 1),
+            armState,
+            diags,
+            armCanContinue))
+        {
+            case System.Memory.MemoryStatus.Err(var armError):
+                return System.Memory.MemoryStatus.Err(armError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        statementArmCount = (u32[0 max])(statementArmCount + 1);
+        if (armCanContinue)
+        {
+            canContinue = true;
+            if (!haveMergedPath)
+            {
+                switch (CopyStraightLineInitializationState(armState, merged))
+                {
+                    case System.Memory.MemoryStatus.Err(var firstMergeError):
+                        return System.Memory.MemoryStatus.Err(firstMergeError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                haveMergedPath = true;
+            }
+            else
+            {
+                stack mut StraightLineInitializedTargetTable intersection = new();
+                switch (IntersectStraightLineInitializationState(merged, armState, intersection))
+                {
+                    case System.Memory.MemoryStatus.Err(var intersectError):
+                        return System.Memory.MemoryStatus.Err(intersectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                merged = intersection;
+            }
+        }
+
+        armStart = armEnd;
+    }
+
+    if (!hasCompleteElse || sourceArmCount > statementArmCount)
+    {
+        canContinue = true;
+        if (!haveMergedPath)
+        {
+            switch (CopyStraightLineInitializationState(initializedTargets, merged))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitCopyError):
+                    return System.Memory.MemoryStatus.Err(implicitCopyError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            haveMergedPath = true;
+        }
+        else
+        {
+            stack mut StraightLineInitializedTargetTable implicitIntersection = new();
+            switch (IntersectStraightLineInitializationState(merged, initializedTargets, implicitIntersection))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitIntersectError):
+                    return System.Memory.MemoryStatus.Err(implicitIntersectError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            merged = implicitIntersection;
+        }
+    }
+
+    if (canContinue && haveMergedPath)
+    {
+        switch (ReplaceStraightLineInitializationState(merged, initializedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var replaceError):
+                return System.Memory.MemoryStatus.Err(replaceError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectBranchCompleteInitializationDiagnosticsInSwitchSection(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] firstLabelStatement,
+    u64[0 2 ** 63 - 1] sectionEnd,
+    u32[0 max] switchDepth,
+    u32[0 max] sectionDepth,
+    mut borrow StraightLineInitializedTargetTable initializedTargets,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = true;
+    stack mut u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(firstLabelStatement + 1);
+    while willexit (statement < sectionEnd)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        if (body.DepthAt(statement) == switchDepth && item.Kind == StatementKind.Case)
+        {
+            statement += 1;
+            continue;
+        }
+
+        if (body.DepthAt(statement) < sectionDepth)
+        {
+            statement += 1;
+            continue;
+        }
+
+        if (body.DepthAt(statement) > sectionDepth)
+        {
+            statement += 1;
+            continue;
+        }
+
+        if (item.Kind == StatementKind.Break)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+        stack mut bool statementCanContinue = true;
+        switch (CollectBranchCompleteInitializationDiagnosticsInStatementRange(
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            statement,
+            subtreeEnd,
+            sectionDepth,
+            initializedTargets,
+            diags,
+            statementCanContinue))
+        {
+            case System.Memory.MemoryStatus.Err(var statementError):
+                return System.Memory.MemoryStatus.Err(statementError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        statement = subtreeEnd;
+        if (!statementCanContinue)
+        {
+            canContinue = false;
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectBranchCompleteInitializationDiagnosticsInSwitchSections(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    StatementItem switchItem,
+    u32[0 max] switchSubjectRoot,
+    u64[0 2 ** 63 - 1] firstBodyStatement,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] switchDepth,
+    mut borrow StraightLineInitializedTargetTable initializedTargets,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = false;
+    stack mut StraightLineInitializedTargetTable merged = new();
+    stack mut bool haveMergedSection = false;
+    stack bool hasDefault = ConstructorSwitchHasDefaultSection(stream, switchItem);
+    stack mut bool hasExhaustiveNonDefaultSections = false;
+    if (!hasDefault)
+    {
+        hasExhaustiveNonDefaultSections = InitializationSwitchHasExhaustiveNonDefaultSections(
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            switchSubjectRoot,
+            firstBodyStatement,
+            subtreeEnd,
+            switchDepth);
+    }
+
+    stack u32[0 max] sectionDepth = (u32[0 max])(switchDepth + 1);
+    stack mut u64[0 2 ** 63 - 1] sectionLabel = ConstructorNextSwitchCaseAt(body, firstBodyStatement, subtreeEnd, switchDepth);
+    while willexit (sectionLabel < subtreeEnd)
+    {
+        stack u64[0 2 ** 63 - 1] sectionEnd = ConstructorSwitchSectionEnd(body, stream, sectionLabel, subtreeEnd, switchDepth);
+        stack mut StraightLineInitializedTargetTable sectionState = new();
+        switch (CopyStraightLineInitializationState(initializedTargets, sectionState))
+        {
+            case System.Memory.MemoryStatus.Err(var copySectionError):
+                return System.Memory.MemoryStatus.Err(copySectionError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack mut bool sectionCanContinue = true;
+        switch (CollectBranchCompleteInitializationDiagnosticsInSwitchSection(
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            sectionLabel,
+            sectionEnd,
+            switchDepth,
+            sectionDepth,
+            sectionState,
+            diags,
+            sectionCanContinue))
+        {
+            case System.Memory.MemoryStatus.Err(var sectionError):
+                return System.Memory.MemoryStatus.Err(sectionError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (sectionCanContinue)
+        {
+            canContinue = true;
+            if (!haveMergedSection)
+            {
+                switch (CopyStraightLineInitializationState(sectionState, merged))
+                {
+                    case System.Memory.MemoryStatus.Err(var firstMergeError):
+                        return System.Memory.MemoryStatus.Err(firstMergeError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                haveMergedSection = true;
+            }
+            else
+            {
+                stack mut StraightLineInitializedTargetTable intersection = new();
+                switch (IntersectStraightLineInitializationState(merged, sectionState, intersection))
+                {
+                    case System.Memory.MemoryStatus.Err(var intersectError):
+                        return System.Memory.MemoryStatus.Err(intersectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                merged = intersection;
+            }
+        }
+
+        sectionLabel = ConstructorNextSwitchCaseAt(body, sectionEnd, subtreeEnd, switchDepth);
+    }
+
+    if (!hasDefault && !hasExhaustiveNonDefaultSections)
+    {
+        canContinue = true;
+        if (!haveMergedSection)
+        {
+            switch (CopyStraightLineInitializationState(initializedTargets, merged))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitCopyError):
+                    return System.Memory.MemoryStatus.Err(implicitCopyError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            haveMergedSection = true;
+        }
+        else
+        {
+            stack mut StraightLineInitializedTargetTable implicitIntersection = new();
+            switch (IntersectStraightLineInitializationState(merged, initializedTargets, implicitIntersection))
+            {
+                case System.Memory.MemoryStatus.Err(var implicitIntersectError):
+                    return System.Memory.MemoryStatus.Err(implicitIntersectError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            merged = implicitIntersection;
+        }
+    }
+
+    if (canContinue && haveMergedSection)
+    {
+        switch (ReplaceStraightLineInitializationState(merged, initializedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var replaceError):
+                return System.Memory.MemoryStatus.Err(replaceError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectBranchCompleteInitializationDiagnosticsInStatementRange(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] startStatement,
+    u64[0 2 ** 63 - 1] endStatement,
+    u32[0 max] depth,
+    mut borrow StraightLineInitializedTargetTable initializedTargets,
+    mut borrow BindDiagnosticList diags,
+    out bool canContinue)
+{
+    canContinue = true;
+    stack mut u64[0 2 ** 63 - 1] statement = startStatement;
+    while willexit (statement < endStatement)
+    {
+        if (body.DepthAt(statement) < depth)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (body.DepthAt(statement) > depth)
+        {
+            statement += 1;
+            continue;
+        }
+
+        stack StatementItem item = body.ItemAt(statement);
+        switch (CollectStraightLineInitializationDiagnosticsInExpression(
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            body.ExprRootAt(statement),
+            initializedTargets,
+            diags))
+        {
+            case System.Memory.MemoryStatus.Err(var expressionError):
+                return System.Memory.MemoryStatus.Err(expressionError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (MarkStraightLineLocalInitializedAfterStatement(scope, body, statement, initializedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var localError):
+                return System.Memory.MemoryStatus.Err(localError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == StatementKind.Return || item.Kind == StatementKind.Become)
+        {
+            switch (AppendUninitializedOutputDiagnostics(scope, stream, initializedTargets, item.StartToken, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var outputError):
+                    return System.Memory.MemoryStatus.Err(outputError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            canContinue = false;
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (item.Kind == StatementKind.If)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut bool branchCanContinue = true;
+            switch (CollectBranchCompleteInitializationDiagnosticsInIfArms(
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                body,
+                statement + 1,
+                subtreeEnd,
+                depth,
+                ConstructorIfStatementHasCompleteElse(stream, item),
+                ConstructorIfBraceArmCount(stream, item),
+                initializedTargets,
+                diags,
+                branchCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var branchError):
+                    return System.Memory.MemoryStatus.Err(branchError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            if (!branchCanContinue)
+            {
+                canContinue = false;
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            continue;
+        }
+
+        if (item.Kind == StatementKind.Block || item.Kind == StatementKind.Unsafe)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut bool blockCanContinue = true;
+            switch (CollectBranchCompleteInitializationDiagnosticsInStatementRange(
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                body,
+                statement + 1,
+                subtreeEnd,
+                (u32[0 max])(depth + 1),
+                initializedTargets,
+                diags,
+                blockCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var blockError):
+                    return System.Memory.MemoryStatus.Err(blockError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            if (!blockCanContinue)
+            {
+                canContinue = false;
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            continue;
+        }
+
+        if (item.Kind == StatementKind.Switch)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut bool switchCanContinue = true;
+            switch (CollectBranchCompleteInitializationDiagnosticsInSwitchSections(
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                body,
+                item,
+                body.ExprRootAt(statement),
+                statement + 1,
+                subtreeEnd,
+                (u32[0 max])(depth + 1),
+                initializedTargets,
+                diags,
+                switchCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var switchError):
+                    return System.Memory.MemoryStatus.Err(switchError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            if (!switchCanContinue)
+            {
+                canContinue = false;
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            continue;
+        }
+
+        if (item.Kind == StatementKind.While
+            || item.Kind == StatementKind.For
+            || item.Kind == StatementKind.ForEach)
+        {
+            stack u64[0 2 ** 63 - 1] subtreeEnd = ConstructorStatementSubtreeEnd(body, statement);
+            stack mut StraightLineInitializedTargetTable nestedState = new();
+            switch (CopyStraightLineInitializationState(initializedTargets, nestedState))
+            {
+                case System.Memory.MemoryStatus.Err(var nestedCopyError):
+                    return System.Memory.MemoryStatus.Err(nestedCopyError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut bool nestedCanContinue = true;
+            switch (CollectBranchCompleteInitializationDiagnosticsInStatementRange(
+                table,
+                source,
+                refs,
+                scope,
+                stream,
+                body,
+                statement + 1,
+                subtreeEnd,
+                (u32[0 max])(depth + 1),
+                nestedState,
+                diags,
+                nestedCanContinue))
+            {
+                case System.Memory.MemoryStatus.Err(var nestedError):
+                    return System.Memory.MemoryStatus.Err(nestedError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            statement = subtreeEnd;
+            continue;
+        }
+
+        statement += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectStraightLineInitializationDiagnostics(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    bool trackOutputOnlyParameters,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut StraightLineInitializedTargetTable initializedTargets = new();
+    switch (BuildInitialStraightLineInitializationState(scope, stream, trackOutputOnlyParameters, initializedTargets))
+    {
+        case System.Memory.MemoryStatus.Err(var buildError):
+            return System.Memory.MemoryStatus.Err(buildError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut bool canContinue = true;
+    switch (CollectBranchCompleteInitializationDiagnosticsInStatementRange(
+        table,
+        source,
+        refs,
+        scope,
+        stream,
+        body,
+        0,
+        body.Count(),
+        0,
+        initializedTargets,
+        diags,
+        canContinue))
+    {
+        case System.Memory.MemoryStatus.Err(var rangeError):
+            return System.Memory.MemoryStatus.Err(rangeError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (canContinue)
+    {
+        switch (AppendUninitializedOutputDiagnostics(scope, stream, initializedTargets, 0, diags))
+        {
+            case System.Memory.MemoryStatus.Err(var outputError):
+                return System.Memory.MemoryStatus.Err(outputError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

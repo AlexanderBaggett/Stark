@@ -1,0 +1,1423 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.ReceiverTokenHelpers
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.ReceiverCandidates
+import Compiler.Binding.FunctionEffects
+import System.Memory
+module Compiler.Binding.DestructorValidation
+
+internal finite law u32[0 max] DropValidityBodyOpenToken(borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind != DeclarationKind.Struct && item.Kind != DeclarationKind.Record)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] open = item.KeywordToken;
+    while willexit (open < item.EndToken
+        && stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.LBrace
+        && stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.EndOfFile)
+    {
+        open = (u32[0 max])(open + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])open) == TokenKind.LBrace)
+    {
+        return open;
+    }
+
+    return 0;
+}
+
+internal finite law bool DropValidityTokenIsMutable(borrow TokenStream stream, u32[0 max] dropToken, u32[0 max] bodyOpenToken)
+{
+    return dropToken > bodyOpenToken
+        && stream.KindAt((u64[0 2 ** 63 - 1])(dropToken - 1)) == TokenKind.Mut;
+}
+
+internal finite law bool DropValidityTokenIsAssignmentOperator(TokenKind kind)
+{
+    return kind == TokenKind.Assign
+        || kind == TokenKind.WrapAddAssign
+        || kind == TokenKind.WrapSubAssign
+        || kind == TokenKind.WrapMulAssign
+        || kind == TokenKind.SatAddAssign
+        || kind == TokenKind.SatSubAssign
+        || kind == TokenKind.SatMulAssign
+        || kind == TokenKind.AddAssign
+        || kind == TokenKind.SubAssign
+        || kind == TokenKind.MulAssign
+        || kind == TokenKind.DivAssign
+        || kind == TokenKind.ModAssign
+        || kind == TokenKind.AndAssign
+        || kind == TokenKind.OrAssign
+        || kind == TokenKind.XorAssign;
+}
+
+internal fn bool DropValiditySelfTokenAssignsBeforeStatementEnd(borrow TokenStream stream, u32[0 max] selfToken, u32[0 max] bodyCloseToken)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(selfToken + 1);
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < bodyCloseToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Semi)
+        {
+            return false;
+        }
+
+        if (DropValidityTokenIsAssignmentOperator(kind))
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0 && kind == TokenKind.RBrace)
+            {
+                return false;
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool DropValiditySelfTokenHasRootedCallBeforeStatementEnd(borrow TokenStream stream, u32[0 max] selfToken, u32[0 max] bodyCloseToken)
+{
+    if ((u32[0 max])(selfToken + 1) >= bodyCloseToken
+        || stream.KindAt((u64[0 2 ** 63 - 1])(selfToken + 1)) != TokenKind.Dot)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(selfToken + 2);
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < bodyCloseToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Semi)
+        {
+            return false;
+        }
+
+        if (depth == 0 && kind == TokenKind.LParen)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0 && kind == TokenKind.RBrace)
+            {
+                return false;
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool DropValidityBodyMutatesSelf(ascii source, borrow TokenStream stream, u32[0 max] bodyOpenToken, u32[0 max] bodyCloseToken)
+{
+    if (bodyOpenToken == 0 || bodyCloseToken <= bodyOpenToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpenToken + 1);
+    while willexit (scan < bodyCloseToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, "self")
+            && (DropValiditySelfTokenAssignsBeforeStatementEnd(stream, scan, bodyCloseToken)
+                || DropValiditySelfTokenHasRootedCallBeforeStatementEnd(stream, scan, bodyCloseToken)))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool DropValidityBodyContainsReturn(borrow TokenStream stream, u32[0 max] bodyOpenToken, u32[0 max] bodyCloseToken)
+{
+    if (bodyOpenToken == 0 || bodyCloseToken <= bodyOpenToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpenToken + 1);
+    while willexit (scan < bodyCloseToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Return)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn BindResult<FunctionScope> BuildDestructorFunctionScope(DeclItem item, ascii source, borrow TokenStream stream, borrow StatementList body)
+{
+    stack mut FunctionScope scope = new();
+    stack u32[0 max] selfToken = DropValidityBodyIdentifierToken(source, stream, body, "self");
+    if (selfToken != 0 && item.NameToken != 0)
+    {
+        switch (scope.Append(
+            selfToken,
+            SymbolKind.Parameter,
+            0,
+            0,
+            item.NameToken,
+            item.NameToken,
+            (u32[0 max])(item.NameToken + 1)))
+        {
+            case System.Memory.MemoryStatus.Err(var selfError):
+                return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < statementCount; index += 1)
+    {
+        stack StatementItem local = body.ItemAt(index);
+        if ((local.Kind == StatementKind.Local || local.Kind == StatementKind.PatternBinding) && local.NameToken != 0)
+        {
+            switch (scope.Append(
+                local.NameToken,
+                SymbolKind.Local,
+                body.DepthAt(index),
+                (u32[0 max])index,
+                local.TypeToken,
+                local.TypeStartToken,
+                local.TypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<FunctionScope>.Ok(scope);
+}
+
+internal finite law bool DropValidityStorageAllocates(TokenKind storage)
+{
+    return storage == TokenKind.Heap || storage == TokenKind.Arena;
+}
+
+internal fn bool DropValidityExpressionIsDynamicStorageNew(borrow StatementList body, u32[0 max] node)
+{
+    return node != 0 && body.ExprKindAt(node) == Compiler.Parsing.ExprKind.New;
+}
+
+internal inline finite law u32[0 max] DestructorEffectFlagAllocation() { return 1; }
+internal inline finite law u32[0 max] DestructorEffectFlagDynamicStorageMutation() { return 2; }
+
+internal inline finite law bool DestructorEffectFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+internal inline finite law bool DestructorEffectHasForbiddenEffects(u32[0 max] flags)
+{
+    return flags != 0;
+}
+
+internal fn bool DropEffectTypeSpanOwnsNamedData(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, u32[0 max] typeHead)
+{
+    return typeHead != 0
+        && !TypeSpanFormsSafeBorrow(stream, start, endExclusive)
+        && !TypeSpanIsOutputOnlyParameter(stream, start, endExclusive);
+}
+
+internal fn u32[0 max] DropEffectTopLevelFunctionTarget(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] callNode)
+{
+    if (callNode == 0 || body.ExprKindAt(callNode) != Compiler.Parsing.ExprKind.Call)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return 0;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+    if (refIndexPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+        if (refs.KindAt(refIndex) == ReferenceKind.Declaration)
+        {
+            stack mut FunctionSignature signature = new();
+            if (TryParseFunctionSignatureFromTable(table, stream, refs.TargetAt(refIndex), signature))
+            {
+                return refs.TargetAt(refIndex);
+            }
+        }
+
+        return 0;
+    }
+
+    stack u32[0 max] nameToken = body.ExprTokenAt(calleeNode);
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), nameToken))
+        {
+            stack u32[0 max] targetPlusOne = (u32[0 max])(index + 1);
+            stack mut FunctionSignature signature = new();
+            if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, signature))
+            {
+                return targetPlusOne;
+            }
+        }
+    }
+
+    return 0;
+}
+
+internal fn bool TryFindReceiverMethodFunctionToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerNameToken,
+    u32[0 max] methodNameToken,
+    bool wantStatic,
+    out u32[0 max] fnKeyword)
+{
+    fnKeyword = 0;
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, ownerNameToken);
+    if (bodyOpen == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] memberStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])memberStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberEnd = ReceiverMemberEndToken(stream, memberStart);
+        if (memberEnd < memberStart)
+        {
+            return false;
+        }
+
+        stack u32[0 max] candidateFn = ReceiverMemberFunctionToken(stream, memberStart, memberEnd);
+        if (candidateFn != 0 && ReceiverMemberHasStaticBefore(stream, memberStart, candidateFn) == wantStatic)
+        {
+            switch (ParseFunctionSignature(stream, candidateFn))
+            {
+                case ParseResult<FunctionSignature>.Err(var sigError):
+                {
+                }
+                case ParseResult<FunctionSignature>.Ok(var signature):
+                    if (BindingTokenTextEqualsToken(source, stream, signature.Name(), methodNameToken))
+                    {
+                        fnKeyword = candidateFn;
+                        return true;
+                    }
+            }
+        }
+
+        memberStart = (u32[0 max])(memberEnd + 1);
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectBodyDirectDestructorEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        stack u32[0 max] root = body.ExprRootAt(statement);
+        if (item.Kind == StatementKind.Local)
+        {
+            if (DropValidityStorageAllocates(stream.KindAt((u64[0 2 ** 63 - 1])item.StartToken)))
+            {
+                flags = flags | DestructorEffectFlagAllocation();
+            }
+
+            if (TypeSpanIsDynamicStorage(stream, item.TypeStartToken, item.TypeEndToken)
+                && DropValidityExpressionIsDynamicStorageNew(body, root))
+            {
+                flags = flags | DestructorEffectFlagAllocation();
+            }
+        }
+
+        if (ExpressionContainsArenaSelectorNew(body, stream, root))
+        {
+            flags = flags | DestructorEffectFlagAllocation();
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == Compiler.Parsing.ExprKind.Assign
+            && AssignmentTargetIsDynamicStorage(table, source, refs, scope, stream, body, body.ExprLeftAt(node))
+            && DropValidityExpressionIsDynamicStorageNew(body, body.ExprRightAt(node)))
+        {
+            flags = flags | DestructorEffectFlagAllocation();
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Call
+            && CallAllocatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            flags = flags | DestructorEffectFlagAllocation();
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Call
+            && CallMutatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            flags = flags | DestructorEffectFlagDynamicStorageMutation();
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectFunctionDirectDestructorEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow FunctionSignature signature,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    out u32[0 max] flags)
+{
+    switch (CollectBodyDirectDestructorEffectFlags(table, source, stream, refs, scope, body, flags))
+    {
+        case System.Memory.MemoryStatus.Err(var directError):
+            return System.Memory.MemoryStatus.Err(directError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        if (item.Kind == StatementKind.Return
+            && TypeSpanIsDynamicStorage(stream, signature.ReturnTypeStartTokenAt(), signature.ReturnTypeEndTokenAt())
+            && DropValidityExpressionIsDynamicStorageNew(body, body.ExprRootAt(statement)))
+        {
+            flags = flags | DestructorEffectFlagAllocation();
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectSignatureImplicitDropEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow FunctionSignature signature,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+    {
+        stack u32[0 max] typeHead = signature.ParamTypeAt(param);
+        if (DropEffectTypeSpanOwnsNamedData(stream, signature.ParamTypeStartTokenAt(param), signature.ParamTypeEndTokenAt(param), typeHead))
+        {
+            stack mut u32[0 max] paramFlags = 0;
+            switch (CollectDataDestructorEffectFlags(table, source, stream, typeHead, visitedFunctions, visitedMethods, visitedData, paramFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var paramError):
+                    return System.Memory.MemoryStatus.Err(paramError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | paramFlags;
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectBodyImplicitDropEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        if (item.Kind == StatementKind.Local
+            && DropEffectTypeSpanOwnsNamedData(stream, item.TypeStartToken, item.TypeEndToken, item.TypeHead))
+        {
+            stack mut u32[0 max] localFlags = 0;
+            switch (CollectDataDestructorEffectFlags(table, source, stream, item.TypeHead, visitedFunctions, visitedMethods, visitedData, localFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return System.Memory.MemoryStatus.Err(localError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | localFlags;
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectBodyTransitiveCallDestructorEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] targetPlusOne = DropEffectTopLevelFunctionTarget(table, source, stream, refs, body, node);
+            if (targetPlusOne != 0)
+            {
+                stack mut u32[0 max] callFlags = 0;
+                switch (CollectFunctionDestructorEffectFlags(table, source, stream, targetPlusOne, visitedFunctions, visitedMethods, visitedData, callFlags))
+                {
+                    case System.Memory.MemoryStatus.Err(var callError):
+                        return System.Memory.MemoryStatus.Err(callError);
+                    case System.Memory.MemoryStatus.Ok:
+                        flags = flags | callFlags;
+                }
+            }
+        }
+    }
+
+    switch (BuildReceiverCandidateSets(table, source, stream, refs, scope, body))
+    {
+        case BindResult<ReceiverCandidateSetTable>.Err(var receiverError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ReceiverCandidateSetTable>.Ok(var candidates):
+            stack u64[0 2 ** 63 - 1] siteCount = candidates.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < siteCount; site += 1)
+            {
+                if (candidates.CallNodeAt(site) != 0)
+                {
+                    stack u32[0 max] candidateCount = candidates.CandidateCountAt(site);
+                    for willexit (stack mut u32[0 max] candidate = 0; candidate < candidateCount; candidate += 1)
+                    {
+                        stack ReceiverCandidateKind kind = candidates.CandidateKindAt(site, candidate);
+                        if (kind == ReceiverCandidateKind.InstanceMethod || kind == ReceiverCandidateKind.StaticMethod)
+                        {
+                            stack u32[0 max] ownerNameToken = FindDataDeclarationName(table, source, stream, candidates.ReceiverTypeTokenAt(site));
+                            stack mut u32[0 max] fnKeyword = 0;
+                            if (ownerNameToken != 0
+                                && TryFindReceiverMethodFunctionToken(
+                                    source,
+                                    stream,
+                                    ownerNameToken,
+                                    candidates.CandidateTokenAt(site, candidate),
+                                    kind == ReceiverCandidateKind.StaticMethod,
+                                    fnKeyword))
+                            {
+                                stack mut u32[0 max] methodFlags = 0;
+                                switch (CollectMethodDestructorEffectFlags(table, source, stream, fnKeyword, visitedFunctions, visitedMethods, visitedData, methodFlags))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var methodError):
+                                        return System.Memory.MemoryStatus.Err(methodError);
+                                    case System.Memory.MemoryStatus.Ok:
+                                        flags = flags | methodFlags;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectFunctionDestructorEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] functionPlusOne,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    if (functionPlusOne == 0 || U32ListContains(visitedFunctions, functionPlusOne))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (AppendU32(visitedFunctions, functionPlusOne))
+    {
+        case System.Memory.MemoryStatus.Err(var visitError):
+            return System.Memory.MemoryStatus.Err(visitError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut FunctionSignature signature = new();
+    if (!TryParseFunctionSignatureFromTable(table, stream, functionPlusOne, signature))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(functionPlusOne - 1);
+    switch (ParseFunctionBody(stream, table.KeywordTokenAt(slot)))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<StatementList>.Ok(var body):
+            stack mut FunctionScope scope = new();
+            switch (BuildFunctionScope(signature, body))
+            {
+                case BindResult<FunctionScope>.Err(var scopeError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<FunctionScope>.Ok(var builtScope):
+                    scope = builtScope;
+            }
+
+            stack mut ReferenceTable refs = new();
+            switch (ResolveReferences(scope, table, source, stream, body))
+            {
+                case BindResult<ReferenceTable>.Err(var refError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<ReferenceTable>.Ok(var builtRefs):
+                    refs = builtRefs;
+            }
+
+            stack mut u32[0 max] directFlags = 0;
+            switch (CollectFunctionDirectDestructorEffectFlags(table, source, stream, signature, refs, scope, body, directFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var directError):
+                    return System.Memory.MemoryStatus.Err(directError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | directFlags;
+            }
+
+            stack mut u32[0 max] paramFlags = 0;
+            switch (CollectSignatureImplicitDropEffectFlags(table, source, stream, signature, visitedFunctions, visitedMethods, visitedData, paramFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var paramError):
+                    return System.Memory.MemoryStatus.Err(paramError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | paramFlags;
+            }
+
+            stack mut u32[0 max] localFlags = 0;
+            switch (CollectBodyImplicitDropEffectFlags(table, source, stream, body, visitedFunctions, visitedMethods, visitedData, localFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return System.Memory.MemoryStatus.Err(localError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | localFlags;
+            }
+
+            stack mut u32[0 max] callFlags = 0;
+            switch (CollectBodyTransitiveCallDestructorEffectFlags(table, source, stream, refs, scope, body, visitedFunctions, visitedMethods, visitedData, callFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var callError):
+                    return System.Memory.MemoryStatus.Err(callError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | callFlags;
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectMethodDestructorEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] fnKeyword,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    if (fnKeyword == 0 || U32ListContains(visitedMethods, fnKeyword))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (AppendU32(visitedMethods, fnKeyword))
+    {
+        case System.Memory.MemoryStatus.Err(var visitError):
+            return System.Memory.MemoryStatus.Err(visitError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<StatementList>.Ok(var body):
+            stack mut FunctionScope scope = new();
+            switch (BuildFunctionScope(signature, body))
+            {
+                case BindResult<FunctionScope>.Err(var scopeError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<FunctionScope>.Ok(var builtScope):
+                    scope = builtScope;
+            }
+
+            stack mut ReferenceTable refs = new();
+            switch (ResolveReferences(scope, table, source, stream, body))
+            {
+                case BindResult<ReferenceTable>.Err(var refError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<ReferenceTable>.Ok(var builtRefs):
+                    refs = builtRefs;
+            }
+
+            stack mut u32[0 max] directFlags = 0;
+            switch (CollectFunctionDirectDestructorEffectFlags(table, source, stream, signature, refs, scope, body, directFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var directError):
+                    return System.Memory.MemoryStatus.Err(directError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | directFlags;
+            }
+
+            stack mut u32[0 max] paramFlags = 0;
+            switch (CollectSignatureImplicitDropEffectFlags(table, source, stream, signature, visitedFunctions, visitedMethods, visitedData, paramFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var paramError):
+                    return System.Memory.MemoryStatus.Err(paramError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | paramFlags;
+            }
+
+            stack mut u32[0 max] localFlags = 0;
+            switch (CollectBodyImplicitDropEffectFlags(table, source, stream, body, visitedFunctions, visitedMethods, visitedData, localFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return System.Memory.MemoryStatus.Err(localError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | localFlags;
+            }
+
+            stack mut u32[0 max] callFlags = 0;
+            switch (CollectBodyTransitiveCallDestructorEffectFlags(table, source, stream, refs, scope, body, visitedFunctions, visitedMethods, visitedData, callFlags))
+            {
+                case System.Memory.MemoryStatus.Err(var callError):
+                    return System.Memory.MemoryStatus.Err(callError);
+                case System.Memory.MemoryStatus.Ok:
+                    flags = flags | callFlags;
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDataDestructorBodyEffectFlags(
+    DeclItem item,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] dropBodyOpenToken,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack mut StatementList body = new();
+    switch (ParseStatements(stream, dropBodyOpenToken))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    stack mut FunctionScope scope = new();
+    switch (BuildDestructorFunctionScope(item, source, stream, body))
+    {
+        case BindResult<FunctionScope>.Err(var scopeError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<FunctionScope>.Ok(var builtScope):
+            scope = builtScope;
+    }
+
+    stack mut ReferenceTable refs = new();
+    switch (ResolveReferences(scope, table, source, stream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var refsError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ReferenceTable>.Ok(var resolvedRefs):
+            refs = resolvedRefs;
+    }
+
+    stack mut u32[0 max] directFlags = 0;
+    switch (CollectBodyDirectDestructorEffectFlags(table, source, stream, refs, scope, body, directFlags))
+    {
+        case System.Memory.MemoryStatus.Err(var directError):
+            return System.Memory.MemoryStatus.Err(directError);
+        case System.Memory.MemoryStatus.Ok:
+            flags = flags | directFlags;
+    }
+
+    stack mut u32[0 max] localFlags = 0;
+    switch (CollectBodyImplicitDropEffectFlags(table, source, stream, body, visitedFunctions, visitedMethods, visitedData, localFlags))
+    {
+        case System.Memory.MemoryStatus.Err(var localError):
+            return System.Memory.MemoryStatus.Err(localError);
+        case System.Memory.MemoryStatus.Ok:
+            flags = flags | localFlags;
+    }
+
+    stack mut u32[0 max] callFlags = 0;
+    switch (CollectBodyTransitiveCallDestructorEffectFlags(table, source, stream, refs, scope, body, visitedFunctions, visitedMethods, visitedData, callFlags))
+    {
+        case System.Memory.MemoryStatus.Err(var callError):
+            return System.Memory.MemoryStatus.Err(callError);
+        case System.Memory.MemoryStatus.Ok:
+            flags = flags | callFlags;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDataFieldDropEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] dataNameToken,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    switch (ParseStructFields(stream, dataNameToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] count = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < count; field += 1)
+            {
+                stack u32[0 max] typeHead = fields.TypeHeadAt(field);
+                if (DropEffectTypeSpanOwnsNamedData(stream, fields.TypeStartAt(field), fields.TypeEndAt(field), typeHead))
+                {
+                    stack mut u32[0 max] fieldFlags = 0;
+                    switch (CollectDataDestructorEffectFlags(table, source, stream, typeHead, visitedFunctions, visitedMethods, visitedData, fieldFlags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var fieldError):
+                            return System.Memory.MemoryStatus.Err(fieldError);
+                        case System.Memory.MemoryStatus.Ok:
+                            flags = flags | fieldFlags;
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDataDestructorEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeHead,
+    mut borrow dynamic u32[0 max] visitedFunctions,
+    mut borrow dynamic u32[0 max] visitedMethods,
+    mut borrow dynamic u32[0 max] visitedData,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack u32[0 max] dataNameToken = FindDataDeclarationName(table, source, stream, typeHead);
+    if (dataNameToken == 0 || U32ListContains(visitedData, dataNameToken))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (AppendU32(visitedData, dataNameToken))
+    {
+        case System.Memory.MemoryStatus.Err(var visitError):
+            return System.Memory.MemoryStatus.Err(visitError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u32[0 max] dataPlusOne = FindSourceDeclarationByNameToken(table, source, stream, dataNameToken);
+    if (dataPlusOne == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(dataPlusOne - 1);
+    stack DeclarationKind kind = table.KindAt(slot);
+    if (kind != DeclarationKind.Struct && kind != DeclarationKind.Record)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] fieldFlags = 0;
+    switch (CollectDataFieldDropEffectFlags(table, source, stream, dataNameToken, visitedFunctions, visitedMethods, visitedData, fieldFlags))
+    {
+        case System.Memory.MemoryStatus.Err(var fieldError):
+            return System.Memory.MemoryStatus.Err(fieldError);
+        case System.Memory.MemoryStatus.Ok:
+            flags = flags | fieldFlags;
+    }
+
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, dataNameToken);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyClose = MatchingMemberCloseToken(stream, bodyOpen);
+    if (bodyClose <= bodyOpen)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut DeclItem item = new();
+    item.Kind = kind;
+    item.NameToken = dataNameToken;
+    item.KeywordToken = table.KeywordTokenAt(slot);
+    item.StartToken = item.KeywordToken;
+    item.EndToken = bodyClose;
+
+    stack mut u32[0 max] depth = 1;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < bodyClose)
+    {
+        stack TokenKind tokenKind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 1 && tokenKind == TokenKind.Drop)
+        {
+            stack mut u32[0 max] dropBodyOpen = scan;
+            while willexit (dropBodyOpen <= bodyClose
+                && stream.KindAt((u64[0 2 ** 63 - 1])dropBodyOpen) != TokenKind.LBrace
+                && stream.KindAt((u64[0 2 ** 63 - 1])dropBodyOpen) != TokenKind.EndOfFile)
+            {
+                dropBodyOpen = (u32[0 max])(dropBodyOpen + 1);
+            }
+
+            if (stream.KindAt((u64[0 2 ** 63 - 1])dropBodyOpen) == TokenKind.LBrace)
+            {
+                stack mut u32[0 max] bodyFlags = 0;
+                switch (CollectDataDestructorBodyEffectFlags(item, table, source, stream, dropBodyOpen, visitedFunctions, visitedMethods, visitedData, bodyFlags))
+                {
+                    case System.Memory.MemoryStatus.Err(var bodyError):
+                        return System.Memory.MemoryStatus.Err(bodyError);
+                    case System.Memory.MemoryStatus.Ok:
+                        flags = flags | bodyFlags;
+                }
+
+                stack u32[0 max] dropBodyClose = MatchingMemberCloseToken(stream, dropBodyOpen);
+                if (dropBodyClose > dropBodyOpen)
+                {
+                    scan = dropBodyClose;
+                }
+            }
+        }
+
+        if (tokenKind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (tokenKind == TokenKind.RBrace)
+        {
+            if (depth <= 1)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            depth = (u32[0 max])(depth - 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendDestructorEffectDiagnosticsForFlags(
+    mut borrow BindDiagnosticList diags,
+    u32[0 max] flags,
+    u32[0 max] token)
+{
+    if (DestructorEffectFlagPresent(flags, DestructorEffectFlagAllocation()))
+    {
+        switch (diags.Append(BindDiagnosticCode.DestructorAllocation, token))
+        {
+            case System.Memory.MemoryStatus.Err(var allocationError):
+                return System.Memory.MemoryStatus.Err(allocationError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    if (DestructorEffectFlagPresent(flags, DestructorEffectFlagDynamicStorageMutation()))
+    {
+        switch (diags.Append(BindDiagnosticCode.DestructorDynamicStorageMutation, token))
+        {
+            case System.Memory.MemoryStatus.Err(var mutationError):
+                return System.Memory.MemoryStatus.Err(mutationError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDropBodyTransitiveCallEffectDiagnostics(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] targetPlusOne = DropEffectTopLevelFunctionTarget(table, source, stream, refs, body, node);
+            if (targetPlusOne != 0)
+            {
+                stack mut dynamic u32[0 max] visitedFunctions = new();
+                stack mut dynamic u32[0 max] visitedMethods = new();
+                stack mut dynamic u32[0 max] visitedData = new();
+                stack mut u32[0 max] flags = 0;
+                switch (CollectFunctionDestructorEffectFlags(table, source, stream, targetPlusOne, visitedFunctions, visitedMethods, visitedData, flags))
+                {
+                    case System.Memory.MemoryStatus.Err(var callError):
+                        return System.Memory.MemoryStatus.Err(callError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                if (DestructorEffectHasForbiddenEffects(flags))
+                {
+                    switch (AppendDestructorEffectDiagnosticsForFlags(diags, flags, body.ExprTokenAt(body.ExprLeftAt(node))))
+                    {
+                        case System.Memory.MemoryStatus.Err(var appendError):
+                            return System.Memory.MemoryStatus.Err(appendError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+
+    switch (BuildReceiverCandidateSets(table, source, stream, refs, scope, body))
+    {
+        case BindResult<ReceiverCandidateSetTable>.Err(var receiverError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ReceiverCandidateSetTable>.Ok(var candidates):
+            stack u64[0 2 ** 63 - 1] siteCount = candidates.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] site = 0; site < siteCount; site += 1)
+            {
+                if (candidates.CallNodeAt(site) != 0)
+                {
+                    stack u32[0 max] candidateCount = candidates.CandidateCountAt(site);
+                    for willexit (stack mut u32[0 max] candidate = 0; candidate < candidateCount; candidate += 1)
+                    {
+                        stack ReceiverCandidateKind kind = candidates.CandidateKindAt(site, candidate);
+                        if (kind == ReceiverCandidateKind.InstanceMethod || kind == ReceiverCandidateKind.StaticMethod)
+                        {
+                            stack u32[0 max] ownerNameToken = FindDataDeclarationName(table, source, stream, candidates.ReceiverTypeTokenAt(site));
+                            stack mut u32[0 max] fnKeyword = 0;
+                            if (ownerNameToken != 0
+                                && TryFindReceiverMethodFunctionToken(
+                                    source,
+                                    stream,
+                                    ownerNameToken,
+                                    candidates.CandidateTokenAt(site, candidate),
+                                    kind == ReceiverCandidateKind.StaticMethod,
+                                    fnKeyword))
+                            {
+                                stack mut dynamic u32[0 max] visitedFunctions = new();
+                                stack mut dynamic u32[0 max] visitedMethods = new();
+                                stack mut dynamic u32[0 max] visitedData = new();
+                                stack mut u32[0 max] flags = 0;
+                                switch (CollectMethodDestructorEffectFlags(table, source, stream, fnKeyword, visitedFunctions, visitedMethods, visitedData, flags))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var methodError):
+                                        return System.Memory.MemoryStatus.Err(methodError);
+                                    case System.Memory.MemoryStatus.Ok:
+                                }
+
+                                if (DestructorEffectHasForbiddenEffects(flags))
+                                {
+                                    switch (AppendDestructorEffectDiagnosticsForFlags(diags, flags, candidates.NameTokenAt(site)))
+                                    {
+                                        case System.Memory.MemoryStatus.Err(var appendError):
+                                            return System.Memory.MemoryStatus.Err(appendError);
+                                        case System.Memory.MemoryStatus.Ok:
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDropBodyImplicitDropEffectDiagnostics(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        if (item.Kind == StatementKind.Local
+            && DropEffectTypeSpanOwnsNamedData(stream, item.TypeStartToken, item.TypeEndToken, item.TypeHead))
+        {
+            stack mut dynamic u32[0 max] visitedFunctions = new();
+            stack mut dynamic u32[0 max] visitedMethods = new();
+            stack mut dynamic u32[0 max] visitedData = new();
+            stack mut u32[0 max] flags = 0;
+            switch (CollectDataDestructorEffectFlags(table, source, stream, item.TypeHead, visitedFunctions, visitedMethods, visitedData, flags))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return System.Memory.MemoryStatus.Err(localError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (DestructorEffectHasForbiddenEffects(flags))
+            {
+                stack mut u32[0 max] token = item.NameToken;
+                if (token == 0)
+                {
+                    token = item.StartToken;
+                }
+
+                switch (AppendDestructorEffectDiagnosticsForFlags(diags, flags, token))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDropBodyMemoryEffectDiagnostics(
+    DeclItem item,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] dropBodyOpenToken,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut StatementList body = new();
+    switch (ParseStatements(stream, dropBodyOpenToken))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    stack mut FunctionScope scope = new();
+    switch (BuildDestructorFunctionScope(item, source, stream, body))
+    {
+        case BindResult<FunctionScope>.Err(var scopeError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<FunctionScope>.Ok(var builtScope):
+            scope = builtScope;
+    }
+
+    stack mut ReferenceTable refs = new();
+    switch (ResolveReferences(scope, table, source, stream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var refsError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ReferenceTable>.Ok(var resolvedRefs):
+            refs = resolvedRefs;
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem statementItem = body.ItemAt(statement);
+        if (statementItem.Kind == StatementKind.Local)
+        {
+            stack TokenKind storage = stream.KindAt((u64[0 2 ** 63 - 1])statementItem.StartToken);
+            if (DropValidityStorageAllocates(storage))
+            {
+                switch (diags.Append(BindDiagnosticCode.DestructorAllocation, statementItem.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var storageError):
+                        return System.Memory.MemoryStatus.Err(storageError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            stack u32[0 max] root = body.ExprRootAt(statement);
+            if (TypeSpanIsDynamicStorage(stream, statementItem.TypeStartToken, statementItem.TypeEndToken)
+                && DropValidityExpressionIsDynamicStorageNew(body, root))
+            {
+                switch (diags.Append(BindDiagnosticCode.DestructorAllocation, body.ExprTokenAt(root)))
+                {
+                    case System.Memory.MemoryStatus.Err(var localDynamicError):
+                        return System.Memory.MemoryStatus.Err(localDynamicError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == Compiler.Parsing.ExprKind.Assign
+            && AssignmentTargetIsDynamicStorage(table, source, refs, scope, stream, body, body.ExprLeftAt(node))
+            && DropValidityExpressionIsDynamicStorageNew(body, body.ExprRightAt(node)))
+        {
+            switch (diags.Append(BindDiagnosticCode.DestructorAllocation, body.ExprTokenAt(body.ExprRightAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var assignDynamicError):
+                    return System.Memory.MemoryStatus.Err(assignDynamicError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+            else if (kind == Compiler.Parsing.ExprKind.Call
+                && CallAllocatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            switch (diags.Append(BindDiagnosticCode.DestructorAllocation, body.ExprTokenAt(body.ExprLeftAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var callAllocationError):
+                    return System.Memory.MemoryStatus.Err(callAllocationError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Call
+            && CallMutatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            switch (diags.Append(BindDiagnosticCode.DestructorDynamicStorageMutation, body.ExprTokenAt(body.ExprLeftAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var callMutationError):
+                    return System.Memory.MemoryStatus.Err(callMutationError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    switch (CollectDropBodyTransitiveCallEffectDiagnostics(table, source, stream, refs, scope, body, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var transitiveError):
+            return System.Memory.MemoryStatus.Err(transitiveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectDropBodyImplicitDropEffectDiagnostics(table, source, stream, body, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var implicitError):
+            return System.Memory.MemoryStatus.Err(implicitError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDropValidityDiagnostics(DeclItem item, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u32[0 max] bodyOpenToken = DropValidityBodyOpenToken(stream, item);
+    if (bodyOpenToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] destructorCount = 0;
+    stack mut u32[0 max] depth = 1;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpenToken + 1);
+    while willexit (scan <= item.EndToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 1 && kind == TokenKind.Drop)
+        {
+            destructorCount = (u32[0 max])(destructorCount + 1);
+            if (destructorCount > 1)
+            {
+                switch (diags.Append(BindDiagnosticCode.DuplicateDestructorBlock, scan))
+                {
+                    case System.Memory.MemoryStatus.Err(var duplicateError):
+                        return System.Memory.MemoryStatus.Err(duplicateError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            stack mut u32[0 max] dropBodyOpenToken = scan;
+            while willexit (dropBodyOpenToken <= item.EndToken
+                && stream.KindAt((u64[0 2 ** 63 - 1])dropBodyOpenToken) != TokenKind.LBrace
+                && stream.KindAt((u64[0 2 ** 63 - 1])dropBodyOpenToken) != TokenKind.EndOfFile)
+            {
+                dropBodyOpenToken = (u32[0 max])(dropBodyOpenToken + 1);
+            }
+
+            if (stream.KindAt((u64[0 2 ** 63 - 1])dropBodyOpenToken) == TokenKind.LBrace)
+            {
+                stack u32[0 max] dropBodyCloseToken = MatchingMemberCloseToken(stream, dropBodyOpenToken);
+                stack bool isMutable = DropValidityTokenIsMutable(stream, scan, bodyOpenToken);
+                stack bool mutatesSelf = DropValidityBodyMutatesSelf(source, stream, dropBodyOpenToken, dropBodyCloseToken);
+                if (!isMutable && mutatesSelf)
+                {
+                    switch (diags.Append(BindDiagnosticCode.ReadOnlyDropMutatesSelf, scan))
+                    {
+                        case System.Memory.MemoryStatus.Err(var readOnlyError):
+                            return System.Memory.MemoryStatus.Err(readOnlyError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                if (isMutable && !mutatesSelf)
+                {
+                    switch (diags.AppendWarning(BindDiagnosticCode.MutDropWithoutSelfMutation, scan))
+                    {
+                        case System.Memory.MemoryStatus.Err(var warningError):
+                            return System.Memory.MemoryStatus.Err(warningError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                if (DropValidityBodyContainsReturn(stream, dropBodyOpenToken, dropBodyCloseToken))
+                {
+                    switch (diags.Append(BindDiagnosticCode.DestructorReturn, scan))
+                    {
+                        case System.Memory.MemoryStatus.Err(var returnError):
+                            return System.Memory.MemoryStatus.Err(returnError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                switch (CollectDropBodyMemoryEffectDiagnostics(item, table, source, stream, dropBodyOpenToken, diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var effectError):
+                        return System.Memory.MemoryStatus.Err(effectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                if (dropBodyCloseToken > dropBodyOpenToken)
+                {
+                    scan = dropBodyCloseToken;
+                }
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth <= 1)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            depth = (u32[0 max])(depth - 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

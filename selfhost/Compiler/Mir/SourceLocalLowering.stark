@@ -1,0 +1,850 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Mir.Builder
+import Compiler.Mir.Model
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSymbols
+module Compiler.Mir.SourceLocalLowering
+
+internal finite law u32[0 max] MatchingBraceForMirLowering(borrow TokenStream stream, u32[0 max] open)
+{
+    stack mut u32[0 max] index = open;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return open;
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return open;
+}
+
+// Detects whether the source stream uses arena-backed runtime storage.
+internal fn bool TokenStreamMentionsArenaRuntime(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Arena)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TokenTextIsReserveName(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 7)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == 82
+        && source[start + 1] == 101
+        && source[start + 2] == 115
+        && source[start + 3] == 101
+        && source[start + 4] == 114
+        && source[start + 5] == 118
+        && source[start + 6] == 101;
+}
+
+internal fn bool TokenTextIsTryReserveName(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 10)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == 84
+        && source[start + 1] == 114
+        && source[start + 2] == 121
+        && source[start + 3] == 82
+        && source[start + 4] == 101
+        && source[start + 5] == 115
+        && source[start + 6] == 101
+        && source[start + 7] == 114
+        && source[start + 8] == 118
+        && source[start + 9] == 101;
+}
+
+internal fn bool TokenTextIsTryReserveCapacityName(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 18)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == 84
+        && source[start + 1] == 114
+        && source[start + 2] == 121
+        && source[start + 3] == 82
+        && source[start + 4] == 101
+        && source[start + 5] == 115
+        && source[start + 6] == 101
+        && source[start + 7] == 114
+        && source[start + 8] == 118
+        && source[start + 9] == 101
+        && source[start + 10] == 67
+        && source[start + 11] == 97
+        && source[start + 12] == 112
+        && source[start + 13] == 97
+        && source[start + 14] == 99
+        && source[start + 15] == 105
+        && source[start + 16] == 116
+        && source[start + 17] == 121;
+}
+
+internal fn bool TokenTextIsArenaDynamicReserveMethod(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    return TokenTextIsReserveName(stream, source, token)
+        || TokenTextIsTryReserveName(stream, source, token)
+        || TokenTextIsTryReserveCapacityName(stream, source, token);
+}
+
+internal fn bool TokenStreamMentionsArenaDynamicRuntime(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut bool sawArena = false;
+    stack mut bool sawDynamicReserve = false;
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack TokenKind kind = stream.KindAt(i);
+        if (kind == TokenKind.Arena)
+        {
+            sawArena = true;
+        }
+        else if (kind == TokenKind.Identifier && TokenTextIsArenaDynamicReserveMethod(stream, source, (u32[0 max])i))
+        {
+            sawDynamicReserve = true;
+        }
+
+        i = i + 1;
+    }
+
+    return sawArena && sawDynamicReserve;
+}
+
+internal fn bool TokenStartsSelfHostedLocal(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Var:
+            return true;
+        case TokenKind.Stack:
+            return true;
+        case TokenKind.Register:
+            return true;
+        case TokenKind.Heap:
+            return true;
+        case TokenKind.Arena:
+            return true;
+        case TokenKind.Static:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TokenCanStartSelfHostedType(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.IntegerType:
+            return true;
+        case TokenKind.Bool:
+            return true;
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.Dynamic:
+            return true;
+        case TokenKind.Dyn:
+            return true;
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
+        case TokenKind.Fnptr:
+            return true;
+        case TokenKind.AsciiView:
+            return true;
+        case TokenKind.UnicodeView:
+            return true;
+        case TokenKind.AsciiOwned:
+            return true;
+        case TokenKind.UnicodeOwned:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn u32[0 max] NaturalAlignmentForByteExtent(u32[0 max] sizeBytes)
+{
+    if (sizeBytes >= 8)
+    {
+        return 8;
+    }
+
+    if (sizeBytes >= 4)
+    {
+        return 4;
+    }
+
+    if (sizeBytes >= 2)
+    {
+        return 2;
+    }
+
+    return 1;
+}
+
+internal fn u32[0 max] AlignUpU32(u32[0 max] value, u32[0 max] alignment)
+{
+    if (alignment <= 1)
+    {
+        return value;
+    }
+
+    stack u32[0 max] remainder = value % alignment;
+    if (remainder == 0)
+    {
+        return value;
+    }
+
+    return value + alignment - remainder;
+}
+
+internal fn bool IsPowerOfTwoU32(u32[0 max] value)
+{
+    if (value == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] remaining = value;
+    while willexit (remaining > 1)
+    {
+        if (remaining % 2 != 0)
+        {
+            return false;
+        }
+
+        remaining = remaining / 2;
+    }
+
+    return true;
+}
+
+internal fn bool FindSelfHostedStatementEnd(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] limit, out u64[0 2 ** 63 - 1] end)
+{
+    end = start;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] parenDepth = 0;
+    stack mut u32[0 max] bracketDepth = 0;
+    while willexit (scan < limit && stream.KindAt(scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen)
+        {
+            parenDepth = parenDepth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            if (parenDepth > 0)
+            {
+                parenDepth = parenDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            bracketDepth = bracketDepth + 1;
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (bracketDepth > 0)
+            {
+                bracketDepth = bracketDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.Semi && parenDepth == 0 && bracketDepth == 0)
+        {
+            end = scan;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool FindSelfHostedStatementAssign(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end, out u64[0 2 ** 63 - 1] assign)
+{
+    assign = end;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (kind == TokenKind.Assign && depth == 0)
+        {
+            assign = scan;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] FindSelfHostedLocalNameToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut u32[0 max] nameToken = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start + 1;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (depth == 0 && kind == TokenKind.Assign)
+        {
+            break;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (kind == TokenKind.Identifier && depth == 0)
+        {
+            nameToken = (u32[0 max])scan;
+        }
+
+        scan = scan + 1;
+    }
+
+    return nameToken;
+}
+
+internal fn u32[0 max] FindSelfHostedLocalTypeToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack u32[0 max] nameToken = FindSelfHostedLocalNameToken(stream, start, end);
+    stack mut u64[0 2 ** 63 - 1] scan = start + 1;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        if (nameToken != 0 && scan >= (u64[0 2 ** 63 - 1])nameToken)
+        {
+            break;
+        }
+
+        stack TokenKind kind = stream.KindAt(scan);
+        if (depth == 0 && kind == TokenKind.Assign)
+        {
+            break;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (depth == 0 && kind != TokenKind.Mut && TokenCanStartSelfHostedType(kind))
+        {
+            return (u32[0 max])scan;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteExtent(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return 1;
+    }
+
+    if (kind == TokenKind.IntegerType)
+    {
+        stack u32[0 max] bits = IntegerTypeBitWidth(stream, source, typeToken);
+        return (u32[0 max])((bits + 7) / 8);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] BuiltinTypeKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return NaturalAlignmentForByteExtent(builtinSize);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] StructKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (stream.KindAt(scan) == TokenKind.Struct
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack i64[min max] lbrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, scan + 1);
+            if (lbrace < 0)
+            {
+                return 0;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = (u64[0 2 ** 63 - 1])lbrace + 1;
+            stack mut u32[0 max] maxAlign = 1;
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u32[0 max] align = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
+                    if (align == 0)
+                    {
+                        return 0;
+                    }
+
+                    if (align > maxAlign)
+                    {
+                        maxAlign = align;
+                    }
+
+                    while willexit (field < count && stream.KindAt(field) != TokenKind.Semi && stream.KindAt(field) != TokenKind.RBrace)
+                    {
+                        field = field + 1;
+                    }
+                }
+
+                field = field + 1;
+            }
+
+            return maxAlign;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] StructKnownByteExtent(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (stream.KindAt(scan) == TokenKind.Struct
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack i64[min max] lbrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, scan + 1);
+            if (lbrace < 0)
+            {
+                return 0;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = (u64[0 2 ** 63 - 1])lbrace + 1;
+            stack mut u32[0 max] offset = 0;
+            stack mut u32[0 max] maxAlign = 1;
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])field);
+                    stack u32[0 max] fieldAlign = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
+                    if (fieldSize == 0 || fieldAlign == 0)
+                    {
+                        return 0;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    offset = offset + fieldSize;
+                    if (fieldAlign > maxAlign)
+                    {
+                        maxAlign = fieldAlign;
+                    }
+
+                    while willexit (field < count && stream.KindAt(field) != TokenKind.Semi && stream.KindAt(field) != TokenKind.RBrace)
+                    {
+                        field = field + 1;
+                    }
+                }
+
+                field = field + 1;
+            }
+
+            return AlignUpU32(offset, maxAlign);
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return NaturalAlignmentForByteExtent(builtinSize);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteAlignment(stream, source, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteExtentForLocal(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return builtinSize;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteExtent(stream, source, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn bool TryReadPositiveIntegerToken(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] token, out u32[0 max] value)
+{
+    value = 0;
+    if (stream.KindAt(token) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack i64[min max] parsed = ParseDigitSpan(source, stream.StartAt(token), stream.LengthAt(token));
+    if (parsed <= 0 || parsed > 4294967295)
+    {
+        return false;
+    }
+
+    value = (u32[0 max])parsed;
+    return true;
+}
+
+internal fn bool TryReadNonNegativeIntegerToken(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] token, out u32[0 max] value)
+{
+    value = 0;
+    if (stream.KindAt(token) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack i64[min max] parsed = ParseDigitSpan(source, stream.StartAt(token), stream.LengthAt(token));
+    if (parsed < 0 || parsed > 4294967295)
+    {
+        return false;
+    }
+
+    value = (u32[0 max])parsed;
+    return true;
+}
+
+internal fn bool TryParseArenaSelectorAllocation(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
+    sizeBytes = 0;
+    alignBytes = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    while willexit (scan + 5 < end)
+    {
+        if (stream.KindAt(scan) == TokenKind.New
+            && stream.KindAt(scan + 1) == TokenKind.LParen
+            && stream.KindAt(scan + 2) == TokenKind.Arena
+            && stream.KindAt(scan + 3) == TokenKind.Comma)
+        {
+            stack mut u32[0 max] size = 0;
+            if (!TryReadPositiveIntegerToken(stream, source, scan + 4, size))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = scan + 5;
+            stack mut u32[0 max] alignment = NaturalAlignmentForByteExtent(size);
+            if (stream.KindAt(cursor) == TokenKind.Comma)
+            {
+                if (!TryReadPositiveIntegerToken(stream, source, cursor + 1, alignment))
+                {
+                    return false;
+                }
+
+                cursor = cursor + 2;
+            }
+
+            if (stream.KindAt(cursor) != TokenKind.RParen)
+            {
+                return false;
+            }
+
+            if (!IsPowerOfTwoU32(alignment))
+            {
+                return false;
+            }
+
+            sizeBytes = size;
+            alignBytes = alignment;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseArenaSelectorCapacity(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] capacity,
+    out u32[0 max] alignBytes)
+{
+    capacity = 0;
+    alignBytes = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    while willexit (scan + 5 < end)
+    {
+        if (stream.KindAt(scan) == TokenKind.New
+            && stream.KindAt(scan + 1) == TokenKind.LParen
+            && stream.KindAt(scan + 2) == TokenKind.Arena
+            && stream.KindAt(scan + 3) == TokenKind.Comma)
+        {
+            stack mut u32[0 max] parsedCapacity = 0;
+            if (!TryReadPositiveIntegerToken(stream, source, scan + 4, parsedCapacity))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = scan + 5;
+            stack mut u32[0 max] parsedAlignment = 0;
+            if (stream.KindAt(cursor) == TokenKind.Comma)
+            {
+                if (!TryReadPositiveIntegerToken(stream, source, cursor + 1, parsedAlignment))
+                {
+                    return false;
+                }
+
+                cursor = cursor + 2;
+            }
+
+            if (stream.KindAt(cursor) != TokenKind.RParen)
+            {
+                return false;
+            }
+
+            if (parsedAlignment != 0 && !IsPowerOfTwoU32(parsedAlignment))
+            {
+                return false;
+            }
+
+            capacity = parsedCapacity;
+            alignBytes = parsedAlignment;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] FindSelfHostedDynamicElementTypeToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack u32[0 max] typeToken = FindSelfHostedLocalTypeToken(stream, start, end);
+    if (typeToken == 0)
+    {
+        return 0;
+    }
+
+    stack TokenKind typeKind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (typeKind != TokenKind.Dynamic && typeKind != TokenKind.Dyn)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] elementToken = (u64[0 2 ** 63 - 1])typeToken + 1;
+    if (elementToken >= end || !TokenCanStartSelfHostedType(stream.KindAt(elementToken)))
+    {
+        return 0;
+    }
+
+    return (u32[0 max])elementToken;
+}
+
+internal struct ArenaDynamicLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] StorageValue;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+
+    ArenaDynamicLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.StorageValue = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+    }
+}
+
+internal fn bool TryFindArenaDynamicLocal(borrow IrTable<ArenaDynamicLocal> locals, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length, out ArenaDynamicLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = locals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack ArenaDynamicLocal local = locals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryLowerArenaDynamicReserveStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ArenaDynamicLocal> arenaDynamicLocals,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    mut borrow IrTable<MirInstruction> instrs)
+{
+    if (start + 6 != end
+        || stream.KindAt(start) != TokenKind.Identifier
+        || stream.KindAt(start + 1) != TokenKind.Dot
+        || stream.KindAt(start + 2) != TokenKind.Identifier
+        || stream.KindAt(start + 3) != TokenKind.LParen
+        || stream.KindAt(start + 5) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] amount = 0;
+    if (!TryReadNonNegativeIntegerToken(stream, source, start + 4, amount))
+    {
+        return false;
+    }
+
+    stack mut ArenaDynamicLocal local = new();
+    if (!TryFindArenaDynamicLocal(arenaDynamicLocals, source, stream.StartAt(start), stream.LengthAt(start), local))
+    {
+        return false;
+    }
+
+    stack u32[0 max] methodToken = (u32[0 max])(start + 2);
+    stack MirValueId storage = MirValueIdOf(local.StorageValue);
+    if (TokenTextIsReserveName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageReserve(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    if (TokenTextIsTryReserveName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserve(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    if (TokenTextIsTryReserveCapacityName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserveCapacity(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    return false;
+}

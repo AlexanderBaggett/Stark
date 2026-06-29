@@ -1,0 +1,328 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.ModuleResolution
+import Compiler.Binding.DeclarationPrelude
+import System.Text
+import System.Memory
+module Compiler.Binding.TypedModuleSymbols
+
+public enum TypedModuleSymbolVisibility
+{
+    ModulePrivate,
+    Internal,
+    Public,
+    Export,
+}
+
+// A typed module-level symbol catalog for one source or package module. It keeps
+// declaration tokens for diagnostics and precomputes qualified names for fast
+// cross-pass lookup and deterministic backend symbol planning.
+public struct TypedModuleSymbolTable
+{
+    internal OwnedAscii ModuleName;
+    internal ModuleOrigin Origin;
+    internal u32[0 max] OriginIndex;
+    internal bool HasModule;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic u32[0 max] DeclIndices;
+    internal dynamic DeclarationKind Kinds;
+    internal dynamic TypedModuleSymbolVisibility Visibilities;
+    internal dynamic OwnedAscii QualifiedNames;
+
+    TypedModuleSymbolTable()
+    {
+        self.ModuleName = new();
+        self.Origin = ModuleOrigin.Source;
+        self.OriginIndex = 0;
+        self.HasModule = false;
+        self.NameTokens = new();
+        self.KeywordTokens = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.DeclIndices = new();
+        self.Kinds = new();
+        self.Visibilities = new();
+        self.QualifiedNames = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedModuleSymbolTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public inline finite law ModuleOrigin ModuleOriginKind(borrow TypedModuleSymbolTable self)
+    {
+        return self.Origin;
+    }
+
+    public inline finite law u32[0 max] ModuleOriginIndex(borrow TypedModuleSymbolTable self)
+    {
+        return self.OriginIndex;
+    }
+
+    public inline finite law bool HasModuleName(borrow TypedModuleSymbolTable self)
+    {
+        return self.HasModule;
+    }
+
+    public fn bool ModuleNameEquals(mut borrow TypedModuleSymbolTable self, ascii expected)
+    {
+        if (!self.HasModule)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.ModuleName, expected);
+    }
+
+    public law u32[0 max] NameTokenAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] KeywordTokenAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            token = self.KeywordTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] DeclIndexAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] declIndex = 0;
+        if (index < self.DeclIndices.Length)
+        {
+            declIndex = self.DeclIndices[index];
+        }
+
+        return declIndex;
+    }
+
+    public law DeclarationKind KindAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut DeclarationKind kind = DeclarationKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedModuleSymbolVisibility VisibilityAt(borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedModuleSymbolVisibility visibility = TypedModuleSymbolVisibility.ModulePrivate;
+        if (index < self.Visibilities.Length)
+        {
+            visibility = self.Visibilities[index];
+        }
+
+        return visibility;
+    }
+
+    public fn bool QualifiedNameEqualsAt(mut borrow TypedModuleSymbolTable self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.QualifiedNames.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.QualifiedNames[index], expected);
+    }
+
+    internal fn System.Memory.MemoryStatus SetModule(
+        mut borrow TypedModuleSymbolTable self,
+        OwnedAscii moduleName,
+        ModuleOrigin origin,
+        u32[0 max] originIndex)
+    {
+        self.ModuleName = moduleName;
+        self.Origin = origin;
+        self.OriginIndex = originIndex;
+        self.HasModule = true;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedModuleSymbolTable self,
+        DeclItem item,
+        u32[0 max] declIndex,
+        TypedModuleSymbolVisibility visibility,
+        OwnedAscii qualifiedName)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.DeclIndices.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.Visibilities.TryReserve(1)
+            || !self.QualifiedNames.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = item.NameToken;
+        init self.KeywordTokens[self.KeywordTokens.Length] = item.KeywordToken;
+        init self.StartTokens[self.StartTokens.Length] = item.StartToken;
+        init self.EndTokens[self.EndTokens.Length] = item.EndToken;
+        init self.DeclIndices[self.DeclIndices.Length] = declIndex;
+        init self.Kinds[self.Kinds.Length] = item.Kind;
+        init self.Visibilities[self.Visibilities.Length] = visibility;
+        init self.QualifiedNames[self.QualifiedNames.Length] = qualifiedName;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law TypedModuleSymbolVisibility DeclarationVisibility(borrow TokenStream stream, DeclItem item)
+{
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Export))
+    {
+        return TypedModuleSymbolVisibility.Export;
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Public))
+    {
+        return TypedModuleSymbolVisibility.Public;
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Internal))
+    {
+        return TypedModuleSymbolVisibility.Internal;
+    }
+
+    return TypedModuleSymbolVisibility.ModulePrivate;
+}
+
+internal fn System.Memory.MemoryStatus BuildQualifiedModuleSymbolName(
+    mut borrow TypedModuleSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] nameToken,
+    mut borrow OwnedAscii qualifiedName)
+{
+    switch (qualifiedName.AppendAscii(symbols.ModuleName.View()))
+    {
+        case System.Memory.MemoryStatus.Err(var moduleError):
+            return System.Memory.MemoryStatus.Err(moduleError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (qualifiedName.AppendAscii("."))
+    {
+        case System.Memory.MemoryStatus.Err(var dotError):
+            return System.Memory.MemoryStatus.Err(dotError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return qualifiedName.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])nameToken));
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedModuleSymbols(
+    mut borrow TypedModuleSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList decls)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (item.NameToken != 0)
+        {
+            stack mut OwnedAscii qualifiedName = new();
+            switch (BuildQualifiedModuleSymbolName(symbols, source, stream, item.NameToken, qualifiedName))
+            {
+                case System.Memory.MemoryStatus.Err(var nameError):
+                    return System.Memory.MemoryStatus.Err(nameError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (symbols.Append(item, (u32[0 max])index, DeclarationVisibility(stream, item), qualifiedName))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<TypedModuleSymbolTable> BuildTypedModuleSymbols(
+    ascii source,
+    borrow TokenStream stream,
+    borrow CompilationUnitHeader header,
+    borrow DeclarationList decls,
+    ModuleOrigin origin,
+    u32[0 max] originIndex)
+{
+    stack mut TypedModuleSymbolTable symbols = new();
+    stack u64[0 2 ** 63 - 1] moduleIndex = FindModuleHeaderIndex(header);
+    if (moduleIndex >= header.Count())
+    {
+        return BindResult<TypedModuleSymbolTable>.Ok(symbols);
+    }
+
+    stack HeaderItem moduleItem = header.ItemAt(moduleIndex);
+    stack mut OwnedAscii moduleName = new();
+    switch (AppendHeaderDottedName(source, stream, moduleItem, moduleName))
+    {
+        case System.Memory.MemoryStatus.Err(var nameError):
+            return BindResult<TypedModuleSymbolTable>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (symbols.SetModule(moduleName, origin, originIndex))
+    {
+        case System.Memory.MemoryStatus.Err(var setError):
+            return BindResult<TypedModuleSymbolTable>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (AppendTypedModuleSymbols(symbols, source, stream, decls))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return BindResult<TypedModuleSymbolTable>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return BindResult<TypedModuleSymbolTable>.Ok(symbols);
+}

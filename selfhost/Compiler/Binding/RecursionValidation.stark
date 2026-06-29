@@ -1,0 +1,234 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.FunctionEffects
+import System.Memory
+module Compiler.Binding.RecursionValidation
+
+internal fn bool FunctionDeclarationIsFinite(borrow DeclarationTable table, borrow TokenStream stream, u32[0 max] declarationPlusOne)
+{
+    if (declarationPlusOne == 0 || (u64[0 2 ** 63 - 1])declarationPlusOne > table.Count())
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(declarationPlusOne - 1);
+    if (table.KindAt(index) != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    stack mut FunctionSignature signature = new();
+    return TryParseFunctionSignatureFromTable(table, stream, declarationPlusOne, signature)
+        && signature.FiniteKind();
+}
+
+internal fn System.Memory.MemoryStatus RuntimeFiniteCallPathExists(
+    borrow DeclarationTable table,
+    borrow TokenStream stream,
+    borrow RuntimeCallEdgeTable edges,
+    u32[0 max] start,
+    u32[0 max] target,
+    out bool exists)
+{
+    exists = start == target;
+    if (exists)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic u32[0 max] reachable = new();
+    switch (AppendU32(reachable, start))
+    {
+        case System.Memory.MemoryStatus.Err(var startError):
+            return System.Memory.MemoryStatus.Err(startError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] round = 0; round < edgeCount; round += 1)
+    {
+        if (exists)
+        {
+            break;
+        }
+
+        stack u64[0 2 ** 63 - 1] reachableCount = reachable.Length;
+        stack mut bool changed = false;
+        for willexit (stack mut u64[0 2 ** 63 - 1] reachableIndex = 0; reachableIndex < reachableCount; reachableIndex += 1)
+        {
+            if (reachableIndex >= reachable.Length)
+            {
+                continue;
+            }
+
+            stack u32[0 max] current = reachable[reachableIndex];
+            for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+            {
+                if (edges.CallerAt(edge) == current)
+                {
+                    stack u32[0 max] next = edges.CalleeAt(edge);
+                    if (FunctionDeclarationIsFinite(table, stream, next))
+                    {
+                        if (next == target)
+                        {
+                            exists = true;
+                        }
+                        else if (!U32ListContains(reachable, next))
+                        {
+                            switch (AppendU32(reachable, next))
+                            {
+                                case System.Memory.MemoryStatus.Err(var nextError):
+                                    return System.Memory.MemoryStatus.Err(nextError);
+                                case System.Memory.MemoryStatus.Ok:
+                                    changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!changed)
+        {
+            break;
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectFiniteRecursionDiagnostics(
+    borrow DeclarationTable table,
+    borrow TokenStream stream,
+    borrow RuntimeCallEdgeTable edges,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] functionCount = table.Count();
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] functionIndex = 0; functionIndex < functionCount; functionIndex += 1)
+    {
+        stack u32[0 max] callerPlusOne = (u32[0 max])(functionIndex + 1);
+        if (FunctionDeclarationIsFinite(table, stream, callerPlusOne))
+        {
+            stack mut bool isRecursive = false;
+            for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+            {
+                if (!isRecursive && edges.CallerAt(edge) == callerPlusOne)
+                {
+                    stack u32[0 max] calleePlusOne = edges.CalleeAt(edge);
+                    if (FunctionDeclarationIsFinite(table, stream, calleePlusOne))
+                    {
+                        if (calleePlusOne == callerPlusOne)
+                        {
+                            isRecursive = true;
+                        }
+                        else
+                        {
+                            switch (RuntimeFiniteCallPathExists(table, stream, edges, calleePlusOne, callerPlusOne, isRecursive))
+                            {
+                                case System.Memory.MemoryStatus.Err(var pathError):
+                                    return System.Memory.MemoryStatus.Err(pathError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isRecursive)
+            {
+                switch (diags.Append(BindDiagnosticCode.FiniteRecursiveCycle, table.NameTokenAt(functionIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var finiteError):
+                        return System.Memory.MemoryStatus.Err(finiteError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectRuntimeRecursionWarningsFromEdges(
+    borrow DeclarationTable table,
+    borrow TokenStream stream,
+    borrow RuntimeCallEdgeTable edges,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+    {
+        stack u32[0 max] callerPlusOne = edges.CallerAt(edge);
+        stack mut FunctionSignature caller = new();
+        if (TryParseFunctionSignatureFromTable(table, stream, callerPlusOne, caller) && !caller.FiniteKind())
+        {
+            stack u32[0 max] calleePlusOne = edges.CalleeAt(edge);
+            stack mut bool isRecursive = calleePlusOne == callerPlusOne;
+            for willexit (stack mut u64[0 2 ** 63 - 1] other = 0; other < edgeCount; other += 1)
+            {
+                if (!isRecursive && edges.CallerAt(other) == calleePlusOne && edges.CalleeAt(other) == callerPlusOne)
+                {
+                    isRecursive = true;
+                }
+            }
+
+            if (!isRecursive)
+            {
+                switch (RuntimeCallPathExists(edges, calleePlusOne, callerPlusOne, isRecursive))
+                {
+                    case System.Memory.MemoryStatus.Err(var pathError):
+                        return System.Memory.MemoryStatus.Err(pathError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            if (isRecursive)
+            {
+                switch (diags.AppendWarning(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome, edges.TokenAt(edge)))
+                {
+                    case System.Memory.MemoryStatus.Err(var warningError):
+                        return System.Memory.MemoryStatus.Err(warningError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectRuntimeRecursionWarnings(borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack mut RuntimeCallEdgeTable edges = new();
+    switch (CollectRuntimeCallEdges(table, source, stream, edges))
+    {
+        case System.Memory.MemoryStatus.Err(var edgeError):
+            return System.Memory.MemoryStatus.Err(edgeError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return CollectRuntimeRecursionWarningsFromEdges(table, stream, edges, diags);
+}
+
+internal fn System.Memory.MemoryStatus CollectRecursionDiagnostics(borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack mut RuntimeCallEdgeTable edges = new();
+    switch (CollectRuntimeCallEdges(table, source, stream, edges))
+    {
+        case System.Memory.MemoryStatus.Err(var edgeError):
+            return System.Memory.MemoryStatus.Err(edgeError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectFiniteRecursionDiagnostics(table, stream, edges, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var finiteError):
+            return System.Memory.MemoryStatus.Err(finiteError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return CollectRuntimeRecursionWarningsFromEdges(table, stream, edges, diags);
+}

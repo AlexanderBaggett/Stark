@@ -1,0 +1,336 @@
+import Compiler.Ir
+module Compiler.Mir.Model
+
+
+// A first slice of the self-hosted compiler's MIR (mid-level IR), built on the
+// `Compiler.Ir` typed-handle substrate (docs/Self-host-Prep/24). Instructions live
+// in a dense `IrTable<MirInstruction>` the caller owns directly; each instruction's
+// result is named by a `MirValueId` (its 1-based table index), and operands are
+// raw 1-based value indices into the same table.
+//
+// The MIR builder is a set of FREE FUNCTIONS over the table rather than methods on a
+// wrapper struct: a struct field whose type is a generic aggregate (an `IrTable<T>`
+// field) currently miscompiles in the host backend (an invalid `getelementptr`), so
+// the table is passed directly instead of being wrapped. `MirInstruction` is a flat
+// record (plain enum + raw `u32`/`i64`), avoiding nested handle structs.
+
+// A MIR instruction opcode (a flat, non-generic enum).
+public enum MirOp
+{
+    // An integer constant; its value is the instruction's immediate.
+    ConstInt,
+    // A function parameter; its 0-based index rides in the immediate. Declared in the
+    // signature, so it emits no body line and is referenced as `%pK` by its uses.
+    Param,
+    Add,
+    Sub,
+    Mul,
+    // Explicit two's-complement wrapping arithmetic. These map to LLVM's ordinary
+    // add/sub/mul without no-wrap flags, even when ordinary proofs would permit them.
+    WrappingAdd,
+    WrappingSub,
+    WrappingMul,
+    // Explicit signed saturating arithmetic. These are distinct from ordinary ALU
+    // because overflow clamps to the destination type bounds instead of trapping.
+    SaturatingAdd,
+    SaturatingSub,
+    SaturatingMul,
+    // The rest of the integer ALU over operands A/B: signed/unsigned divide and
+    // remainder, bitwise and/or/xor, and left/arithmetic-right shifts. Map to LLVM
+    // sdiv/udiv/srem/and/or/xor/shl/ashr.
+    SDiv,
+    UDiv,
+    SRem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    AShr,
+    // Signed integer comparisons over operands A/B; each yields an i1 (LLVM `icmp`),
+    // meant to feed a `CondBranch` condition. Eq/Ne/Lt/Le/Gt/Ge map to LLVM
+    // eq/ne/slt/sle/sgt/sge.
+    CmpEq,
+    CmpNe,
+    CmpLt,
+    CmpLe,
+    CmpGt,
+    CmpGe,
+    // Zero-extends operand A (an i1, e.g. a comparison result) to i64.
+    ZExt,
+    // Loads the i64 value of module global `@gN` (N = the global id in the immediate);
+    // its result is the value naming this instruction.
+    LoadGlobal,
+    // Stores operand A into module global `@gN` (N = the global id in the immediate).
+    // A side-effecting instruction with no meaningful result register.
+    StoreGlobal,
+    // Opens the hidden arena frame for function-scope arena storage. Side-effecting;
+    // emits the frame alloca and arena-enter helper call.
+    ArenaFrameEnter,
+    // Allocates positive constant-sized storage from the current function arena. The
+    // allocation byte size rides in `Imm`; the requested alignment rides in A.
+    ArenaAlloc,
+    // Creates an arena-backed dynamic-storage owner. The result is a pointer to a
+    // stack slot holding `{ data, length, capacity }`; `Imm` is the constant element
+    // capacity, A is the element byte size, and B is the requested element alignment.
+    ArenaDynamicStorageInit,
+    // Grows an arena-backed dynamic-storage owner with allocate-copy semantics. The
+    // owner slot is operand A; `Imm` is the additional element count, B is the element
+    // byte size, and C is the requested element alignment.
+    ArenaDynamicStorageReserve,
+    // Fallible arena-backed dynamic growth; same operands as Reserve, result is i1.
+    ArenaDynamicStorageTryReserve,
+    // Fallible exact-capacity arena-backed dynamic growth; same operand layout, but
+    // `Imm` is the target capacity instead of an additional element count.
+    ArenaDynamicStorageTryReserveCapacity,
+    // Leaves the hidden arena frame after live values have been ended/dropped by the
+    // front end. Side-effecting; emits the arena-leave helper call.
+    ArenaFrameLeave,
+    // A 2-incoming SSA phi: result = operand A from one predecessor block, operand B
+    // from another. The two predecessor block ids are packed into the immediate as
+    // `block0 + block1 * 2**32` (decoded by div/mod 2**32), since the flat instruction
+    // has no spare fields for them. Used at a control-flow merge.
+    Phi,
+    // Calls function `@fN` where N is the callee id held in the immediate. Its result
+    // is the value naming this instruction.
+    Call,
+    // A call-shaped payload used only by a TailCall block terminator. Normal instruction
+    // emission skips it; terminator lowering emits `musttail call tailcc` + `ret`.
+    TailCall,
+    // Returns operand A from the function.
+    Return,
+}
+
+// A MIR value type. The integer subset is currently the only modeled family; values
+// default to `I64` so untyped builders emit `i64` exactly as before.
+public enum MirType
+{
+    I1,
+    I8,
+    I16,
+    I32,
+    I64,
+    Ptr,
+}
+
+// One MIR instruction: an opcode, up to two operand value indices (0 = absent), an
+// integer immediate (used by `ConstInt`/`Param`/`Call`/`*Global`/`Phi`), and the
+// type of its result value (defaults to `I64`).
+public struct MirInstruction
+{
+    MirOp Op;
+    u32[0 max] AIndex;
+    u32[0 max] BIndex;
+    // Extra operand slots for calls with three or four arguments (0 = unused). A call's
+    // arguments ride in operands A/B/C/D; ordinary instructions use only A/B.
+    u32[0 max] CIndex;
+    u32[0 max] DIndex;
+    i64[min max] Imm;
+    MirType ResType;
+
+    MirInstruction()
+    {
+        self.Op = MirOp.ConstInt;
+        self.AIndex = 0;
+        self.BIndex = 0;
+        self.CIndex = 0;
+        self.DIndex = 0;
+        self.Imm = 0;
+        self.ResType = MirType.I64;
+    }
+
+    public inline finite law MirOp Opcode(borrow MirInstruction self)
+    {
+        return self.Op;
+    }
+
+    public inline finite law MirType ResultType(borrow MirInstruction self)
+    {
+        return self.ResType;
+    }
+
+    public inline finite law u32[0 max] OperandAIndex(borrow MirInstruction self)
+    {
+        return self.AIndex;
+    }
+
+    public inline finite law u32[0 max] OperandBIndex(borrow MirInstruction self)
+    {
+        return self.BIndex;
+    }
+
+    public inline finite law u32[0 max] OperandCIndex(borrow MirInstruction self)
+    {
+        return self.CIndex;
+    }
+
+    public inline finite law u32[0 max] OperandDIndex(borrow MirInstruction self)
+    {
+        return self.DIndex;
+    }
+
+    public inline finite law i64[min max] Immediate(borrow MirInstruction self)
+    {
+        return self.Imm;
+    }
+}
+
+// === Basic blocks + terminators ===
+// A MIR control-flow block is named by a `MirBlockId` (its 1-based index in an
+// `IrTable<MirBlock>` the caller owns). This first slice records each block's
+// terminator; associating instructions to a block is a later slice. Like the
+// instruction layer, blocks are flat records built/read through free functions.
+
+// How a block transfers control at its end.
+public enum MirTermKind
+{
+    // No terminator yet (a freshly created or out-of-range block).
+    Unterminated,
+    // `return Slot0` — returns the value named by slot 0.
+    Return,
+    // `return void` — returns without a value.
+    ReturnVoid,
+    // `branch Slot0` — unconditionally jumps to the block named by slot 0.
+    Branch,
+    // `if Slot0 then Slot1 else Slot2` — conditional branch on a value to two blocks.
+    CondBranch,
+    // `tailcall Slot0` — transfers to the call-shaped TailCall instruction named by slot 0.
+    TailCall,
+}
+
+// A MIR basic block: its terminator kind and up to three operand slots whose meaning
+// depends on the kind (a value id or a block id, 0 when unused).
+public struct MirBlock
+{
+    MirTermKind Term;
+    u32[0 max] Slot0;
+    u32[0 max] Slot1;
+    u32[0 max] Slot2;
+    u32[0 max] Flags;
+
+    MirBlock()
+    {
+        self.Term = MirTermKind.Unterminated;
+        self.Slot0 = 0;
+        self.Slot1 = 0;
+        self.Slot2 = 0;
+        self.Flags = 0;
+    }
+
+    public inline finite law MirTermKind Terminator(borrow MirBlock self)
+    {
+        return self.Term;
+    }
+
+    public inline finite law u32[0 max] Slot0Index(borrow MirBlock self)
+    {
+        return self.Slot0;
+    }
+
+    public inline finite law u32[0 max] Slot1Index(borrow MirBlock self)
+    {
+        return self.Slot1;
+    }
+
+    public inline finite law u32[0 max] Slot2Index(borrow MirBlock self)
+    {
+        return self.Slot2;
+    }
+
+    public inline finite law u32[0 max] FlagBits(borrow MirBlock self)
+    {
+        return self.Flags;
+    }
+}
+
+internal inline finite law u32[0 max] MirBlockFlagIndependentLoopBackedge()
+{
+    return 1;
+}
+
+internal finite law bool MirBlockFlagsAreValid(MirTermKind term, u32[0 max] flags)
+{
+    if (flags == 0)
+    {
+        return true;
+    }
+
+    return term == MirTermKind.Branch && flags == MirBlockFlagIndependentLoopBackedge();
+}
+
+// === Function model ===
+// A MIR function is the unit a backend pass lowers. It owns a CONTIGUOUS range of
+// blocks in an `IrTable<MirBlock>` and a contiguous range of instructions in an
+// `IrTable<MirInstruction>` (both built in order during lowering), and names its
+// entry block. Like the rest of the MIR it is a flat record (only raw indices, no
+// nested generic field) built/read through free functions over `IrTable<MirFunction>`.
+
+// A MIR function: its entry block plus the half-open block range it owns and the
+// half-open instruction range it owns, each as (first 1-based index, count).
+public struct MirFunction
+{
+    u32[0 max] Entry;
+    u32[0 max] FirstBlock;
+    u32[0 max] BlockCount;
+    u32[0 max] FirstInstr;
+    u32[0 max] InstrCount;
+
+    MirFunction()
+    {
+        self.Entry = 0;
+        self.FirstBlock = 0;
+        self.BlockCount = 0;
+        self.FirstInstr = 0;
+        self.InstrCount = 0;
+    }
+
+    public inline finite law u32[0 max] EntryIndex(borrow MirFunction self)
+    {
+        return self.Entry;
+    }
+
+    public inline finite law u32[0 max] FirstBlockIndex(borrow MirFunction self)
+    {
+        return self.FirstBlock;
+    }
+
+    public inline finite law u32[0 max] OwnedBlockCount(borrow MirFunction self)
+    {
+        return self.BlockCount;
+    }
+
+    public inline finite law u32[0 max] FirstInstrIndex(borrow MirFunction self)
+    {
+        return self.FirstInstr;
+    }
+
+    public inline finite law u32[0 max] OwnedInstrCount(borrow MirFunction self)
+    {
+        return self.InstrCount;
+    }
+}
+
+// === Module-level globals ===
+// A module global variable with a scalar initializer, named `@gN` (N = its 1-based
+// id in an `IrTable<MirGlobal>`). Flat record + free functions, like the rest of MIR.
+
+public struct MirGlobal
+{
+    MirType TypeValue;
+    i64[min max] Init;
+
+    MirGlobal()
+    {
+        self.TypeValue = MirType.I64;
+        self.Init = 0;
+    }
+
+    public inline finite law MirType StoredType(borrow MirGlobal self)
+    {
+        return self.TypeValue;
+    }
+
+    public inline finite law i64[min max] InitialValue(borrow MirGlobal self)
+    {
+        return self.Init;
+    }
+}

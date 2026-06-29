@@ -1,0 +1,253 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Builder
+import System.Memory
+import System.Text
+module Compiler.Mir.TextRendering
+
+// === MIR text disassembler ===
+// A readable dump of the MIR instruction stream (the textual core of an `inspect`
+// tool). MIR operands are spelled `vN` (the raw value id) uniformly — the LLVM
+// `%pK` parameter distinction is an LLVM-emission concern, not a MIR-level one.
+
+// Appends a MIR value reference `vN`.
+internal fn MemoryStatus EmitMirValue(mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    try sink.AppendConstAscii("v");
+    try sink.AppendU64((u64[0 max])index);
+    return MemoryStatus.Ok;
+}
+
+// Appends `  vDst = <mnemonic> vA, vB` for a binary op / comparison.
+internal fn MemoryStatus EmitMirBinaryLine(mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, u32[0 max] a, u32[0 max] b)
+{
+    try EmitMirValue(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" ");
+    try EmitMirValue(sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitMirValue(sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends the MIR text line for the instruction at 1-based `index`.
+internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try EmitMirValue(sink, index);
+            if (instr.ResultType() == MirType.Ptr)
+            {
+                try sink.AppendConstAscii(" = const-null ptr\n");
+            }
+            else
+            {
+                try sink.AppendConstAscii(" = const ");
+                try sink.AppendI64(instr.Immediate());
+                try sink.AppendConstAscii("\n");
+            }
+        case MirOp.Param:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = param ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Add:
+            try EmitMirBinaryLine(sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitMirBinaryLine(sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitMirBinaryLine(sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingAdd:
+            try EmitMirBinaryLine(sink, index, "wrap-add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingSub:
+            try EmitMirBinaryLine(sink, index, "wrap-sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.WrappingMul:
+            try EmitMirBinaryLine(sink, index, "wrap-mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingAdd:
+            try EmitMirBinaryLine(sink, index, "sat-add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingSub:
+            try EmitMirBinaryLine(sink, index, "sat-sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SaturatingMul:
+            try EmitMirBinaryLine(sink, index, "sat-mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitMirBinaryLine(sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitMirBinaryLine(sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitMirBinaryLine(sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitMirBinaryLine(sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitMirBinaryLine(sink, index, "or", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitMirBinaryLine(sink, index, "xor", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitMirBinaryLine(sink, index, "shl", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitMirBinaryLine(sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitMirBinaryLine(sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitMirBinaryLine(sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitMirBinaryLine(sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitMirBinaryLine(sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitMirBinaryLine(sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitMirBinaryLine(sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.ZExt:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = zext ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.LoadGlobal:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = load g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            try sink.AppendConstAscii("store g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameEnter:
+            try sink.AppendConstAscii("arena-frame.enter\n");
+        case MirOp.ArenaAlloc:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.alloc ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageInit:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.dynamic.init capacity ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageReserve:
+            try sink.AppendConstAscii("arena.dynamic.reserve ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", additional ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.dynamic.try-reserve ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", additional ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.dynamic.try-reserve-capacity ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", capacity ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameLeave:
+            try sink.AppendConstAscii("arena-frame.leave\n");
+        case MirOp.Phi:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = phi ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("@b");
+            try sink.AppendU64((u64[0 max])DecodePhiBlock0(instr.Immediate()));
+            try sink.AppendConstAscii(", ");
+            try EmitMirValue(sink, instr.OperandBIndex());
+            try sink.AppendConstAscii("@b");
+            try sink.AppendU64((u64[0 max])DecodePhiBlock1(instr.Immediate()));
+            try sink.AppendConstAscii("\n");
+        case MirOp.Call:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = call f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitMirCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex(), instr.OperandCIndex(), instr.OperandDIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.TailCall:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = tailcall f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitMirCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex(), instr.OperandCIndex(), instr.OperandDIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Return:
+            try sink.AppendConstAscii("ret ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Appends a MIR call argument list `(vA, vB)` for the up-to-two operand slots.
+internal fn MemoryStatus EmitMirCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b, u32[0 max] c, u32[0 max] d)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitMirValue(sink, a);
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitMirValue(sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitMirValue(sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitMirValue(sink, d);
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+// Dumps the MIR text for the instruction range [firstInstr, firstInstr+instrCount).
+public fn MemoryStatus EmitMirInstructions(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitMirInstruction(instrs, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return MemoryStatus.Ok;
+}

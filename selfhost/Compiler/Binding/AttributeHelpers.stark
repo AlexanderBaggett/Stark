@@ -1,0 +1,22 @@
+import Compiler.Lexing
+import Compiler.Binding.TokenHelpers
+module Compiler.Binding.AttributeHelpers
+
+internal finite law bool IsLinkNameAttribute(ascii source, borrow TokenStream stream, u32[0 max] attrStart)
+{
+    return stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 1)) == TokenKind.Identifier
+        && TokenTextEquals(source, stream, (u32[0 max])(attrStart + 1), "LinkName");
+}
+
+internal finite law u32[0 max] LinkNameValueToken(borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+{
+    if (attrEnd == (u32[0 max])(attrStart + 5)
+        && stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 2)) == TokenKind.LParen
+        && stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 3)) == TokenKind.StringLiteral
+        && stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 4)) == TokenKind.RParen)
+    {
+        return (u32[0 max])(attrStart + 3);
+    }
+
+    return 0;
+}

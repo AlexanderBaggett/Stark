@@ -1,0 +1,1323 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.TargetFacts
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+module Compiler.Mir.SourceFunctionContext
+
+internal fn bool BuildFunctionCallContractFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    out FunctionCallContractFacts facts)
+{
+    facts = new();
+    stack mut FunctionCallContractFacts built = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    built.ParamCount = (u32[0 max])signature.ParamCount();
+    built.Param0 = AbiFactAt(paramAbiFacts, 1);
+    built.Param1 = AbiFactAt(paramAbiFacts, 2);
+    built.Param2 = AbiFactAt(paramAbiFacts, 3);
+    built.Param3 = AbiFactAt(paramAbiFacts, 4);
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, fnKeyword, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] distinctCount = distinctStorageFacts.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= distinctCount && i <= 6)
+    {
+        stack DistinctStoragePair pair = distinctStorageFacts.Get(i);
+        switch (i)
+        {
+            case 1:
+                built.Distinct0 = pair;
+            case 2:
+                built.Distinct1 = pair;
+            case 3:
+                built.Distinct2 = pair;
+            case 4:
+                built.Distinct3 = pair;
+            case 5:
+                built.Distinct4 = pair;
+            case 6:
+                built.Distinct5 = pair;
+            default:
+                stack bool ignored = true;
+        }
+
+        i = i + 1;
+    }
+
+    built.DistinctCount = (u32[0 max])distinctCount;
+    if (built.DistinctCount > 6)
+    {
+        built.DistinctCount = 6;
+    }
+
+    facts = built;
+    return true;
+}
+
+// Seeds the symbol table with the parameters declared in a `( … )` signature, in
+// DECLARATION order — so the parameter index is fixed by the signature, not by which name
+// the body happens to reference first.
+internal fn void SeedSignatureParams(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] lparenIndex, mut borrow IrTable<ParamName> params)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] cursor = lparenIndex + 1;
+    while willexit (cursor < count && stream.KindAt(cursor) != TokenKind.RParen)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Identifier)
+        {
+            stack u32[0 max] index = ResolveParam(params, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        }
+
+        cursor = cursor + 1;
+    }
+}
+
+internal fn void SeedSignatureParamsFromParsed(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature, mut borrow IrTable<ParamName> params)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] token = signature.ParamNameAt(i);
+        if (token != 0)
+        {
+            stack u32[0 max] index = ResolveParam(params, source, stream.StartAt((u64[0 2 ** 63 - 1])token), stream.LengthAt((u64[0 2 ** 63 - 1])token));
+        }
+
+        i = i + 1;
+    }
+}
+
+internal fn bool ParseFunctionSignatureAt(borrow TokenStream stream, u32[0 max] fnIndex, out Compiler.Parsing.FunctionSignature signature)
+{
+    signature = new();
+    switch (Compiler.Parsing.ParseFunctionSignature(stream, fnIndex))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var parsed):
+            signature = parsed;
+            return signature.Name() != 0;
+    }
+
+    return false;
+}
+
+internal fn ValueFacts FunctionReturnRangeFact(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature)
+{
+    stack mut ValueFacts facts = new();
+    stack u32[0 max] typeToken = signature.ReturnTypeTokenAt();
+    stack bool hasRange = TryReadIntegerRangeFact(stream, source, typeToken, facts);
+    return facts;
+}
+
+internal fn bool BuildParamRangeFacts(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature, mut borrow IrTable<ValueFacts> paramFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack mut ValueFacts facts = new();
+        stack bool hasRange = TryReadIntegerRangeFact(stream, source, signature.ParamTypeTokenAt(i), facts);
+        if (paramFacts.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TokenTextEqualsToken(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] left, u32[0 max] right)
+{
+    return SpanEquals(
+        source,
+        stream.StartAt((u64[0 2 ** 63 - 1])left),
+        stream.LengthAt((u64[0 2 ** 63 - 1])left),
+        stream.StartAt((u64[0 2 ** 63 - 1])right),
+        stream.LengthAt((u64[0 2 ** 63 - 1])right));
+}
+
+internal fn bool TopLevelParamSpanContainsKind(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, TokenKind target)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == target)
+        {
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SignatureParamHasDeadOnReturnContract(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack u32[0 max] paramName = signature.ParamNameAt(paramIndex);
+    stack u64[0 2 ** 63 - 1] count = signature.DeadOnReturnParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (TokenTextEqualsToken(stream, source, paramName, signature.DeadOnReturnParamNameAt(i)))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn ParamAbiFacts ClassifySignatureParamAbi(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack mut ParamAbiFacts facts = new();
+    stack u32[0 max] start = signature.ParamStartTokenAt(paramIndex);
+    stack u32[0 max] nameToken = signature.ParamNameAt(paramIndex);
+    if (nameToken == 0 || start >= nameToken)
+    {
+        return facts;
+    }
+
+    stack bool hasRetborrow = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Retborrow);
+    stack bool hasStoreborrow = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Storeborrow);
+    stack bool hasBorrow = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Borrow);
+    stack bool hasOut = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Out);
+    stack bool hasInit = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Init);
+    stack bool hasRawPtr = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Rawptr)
+        || TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Rawmutptr);
+    stack bool hasMut = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Mut);
+
+    if (hasRetborrow)
+    {
+        facts.IsPointer = true;
+        if (hasMut)
+        {
+            facts.CaptureKind = 3;
+        }
+        else
+        {
+            facts.CaptureKind = 2;
+            facts.ReadOnly = true;
+        }
+    }
+    else if (hasStoreborrow)
+    {
+        facts.IsPointer = true;
+        if (hasMut)
+        {
+            facts.CaptureKind = 5;
+        }
+        else
+        {
+            facts.CaptureKind = 4;
+            facts.ReadOnly = true;
+        }
+    }
+    else if (hasOut || hasInit)
+    {
+        facts.IsPointer = true;
+        facts.CaptureKind = 1;
+        facts.WriteOnly = true;
+        facts.Writable = true;
+        facts.InitializesBytes = TypeKnownByteExtent(stream, source, signature.ParamTypeTokenAt(paramIndex));
+    }
+    else if (hasBorrow)
+    {
+        facts.IsPointer = true;
+        facts.CaptureKind = 1;
+        if (!hasMut)
+        {
+            facts.ReadOnly = true;
+        }
+    }
+    else if (hasRawPtr)
+    {
+        facts.IsPointer = true;
+    }
+
+    if (SignatureParamHasDeadOnReturnContract(stream, source, signature, paramIndex))
+    {
+        facts.DeadOnReturn = true;
+    }
+
+    return facts;
+}
+
+internal fn bool DeadOnReturnContractsNamePointerParams(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stack u64[0 2 ** 63 - 1] contractCount = signature.DeadOnReturnParamCount();
+    stack mut u64[0 2 ** 63 - 1] c = 0;
+    while willexit (c < contractCount)
+    {
+        stack u32[0 max] contractName = signature.DeadOnReturnParamNameAt(c);
+        stack mut bool found = false;
+        stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+        stack mut u64[0 2 ** 63 - 1] p = 0;
+        while willexit (p < paramCount)
+        {
+            if (TokenTextEqualsToken(stream, source, signature.ParamNameAt(p), contractName))
+            {
+                found = true;
+                if (!AbiFactAt(paramAbiFacts, (u32[0 max])(p + 1)).IsPointer)
+                {
+                    return false;
+                }
+            }
+
+            p = p + 1;
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        c = c + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildParamAbiFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    mut borrow IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamAbiFacts facts = ClassifySignatureParamAbi(stream, source, signature, i);
+        if (facts.DeadOnReturn && !facts.IsPointer)
+        {
+            return false;
+        }
+
+        if (paramAbiFacts.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return DeadOnReturnContractsNamePointerParams(stream, source, signature, paramAbiFacts);
+}
+
+internal fn bool IsFunctionStorageModifierKind(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Internal:
+            return true;
+        case TokenKind.Public:
+            return true;
+        case TokenKind.Export:
+            return true;
+        case TokenKind.Finite:
+            return true;
+        case TokenKind.Law:
+            return true;
+        case TokenKind.Inline:
+            return true;
+        case TokenKind.Noinline:
+            return true;
+        case TokenKind.Inlinehint:
+            return true;
+        case TokenKind.Hot:
+            return true;
+        case TokenKind.Cold:
+            return true;
+        case TokenKind.Ffi:
+            return true;
+        case TokenKind.Varargs:
+            return true;
+        case TokenKind.Unsafe:
+            return true;
+        case TokenKind.Strictfp:
+            return true;
+        case TokenKind.Asm:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn u32[0 max] FindOpeningParenBefore(borrow TokenStream stream, u32[0 max] rparen)
+{
+    stack mut u32[0 max] scan = rparen;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.RParen)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.LParen)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+                if (depth == 0)
+                {
+                    return scan;
+                }
+            }
+        }
+
+        scan = scan - 1;
+    }
+
+    return 0;
+}
+
+internal fn bool FunctionTokenHasStorageModifier(borrow TokenStream stream, u32[0 max] fnKeyword, TokenKind modifier)
+{
+    if (fnKeyword == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnKeyword - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        stack TokenKind kind = stream.KindAt(token);
+        if (kind == modifier)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = FindOpeningParenBefore(stream, (u32[0 max])scan);
+            if (open > 0)
+            {
+                stack TokenKind groupedKind = stream.KindAt((u64[0 2 ** 63 - 1])(open - 1));
+                if (groupedKind == modifier)
+                {
+                    return true;
+                }
+
+                if (groupedKind == TokenKind.Ffi || groupedKind == TokenKind.Asm)
+                {
+                    scan = (i64[min max])open - 2;
+                    continue;
+                }
+            }
+
+            return false;
+        }
+
+        if (IsTailContextualToken(stream, token))
+        {
+            scan = scan - 1;
+        }
+        else if (IsFunctionStorageModifierKind(kind))
+        {
+            scan = scan - 1;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TryFindFunctionFfiAbiNameToken(borrow TokenStream stream, u32[0 max] fnKeyword, out u32[0 max] abiNameToken)
+{
+    abiNameToken = 0;
+    if (fnKeyword == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnKeyword - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        stack TokenKind kind = stream.KindAt(token);
+        if (kind == TokenKind.Ffi)
+        {
+            return true;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = FindOpeningParenBefore(stream, (u32[0 max])scan);
+            if (open > 0)
+            {
+                stack TokenKind groupedKind = stream.KindAt((u64[0 2 ** 63 - 1])(open - 1));
+                if (groupedKind == TokenKind.Ffi)
+                {
+                    if (open + 1 < (u32[0 max])scan
+                        && stream.KindAt((u64[0 2 ** 63 - 1])(open + 1)) == TokenKind.Identifier)
+                    {
+                        abiNameToken = open + 1;
+                    }
+
+                    return true;
+                }
+
+                if (groupedKind == TokenKind.Asm)
+                {
+                    scan = (i64[min max])open - 2;
+                    continue;
+                }
+            }
+
+            return false;
+        }
+
+        if (IsTailContextualToken(stream, token) || IsFunctionStorageModifierKind(kind))
+        {
+            scan = scan - 1;
+            continue;
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+internal fn bool BuildFunctionCallingConventionFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    u32[0 max] fnKeyword,
+    out FunctionCallingConventionFacts facts)
+{
+    facts = new();
+    stack mut FunctionCallingConventionFacts built = new();
+    stack mut u32[0 max] abiNameToken = 0;
+    if (!TryFindFunctionFfiAbiNameToken(stream, fnKeyword, abiNameToken))
+    {
+        return true;
+    }
+
+    stack mut Compiler.TargetFacts.StarkFfiAbi abi = Compiler.TargetFacts.StarkFfiAbi.C;
+    if (abiNameToken != 0)
+    {
+        stack ascii abiName = Compiler.Lexing.TokenTextOf(sourceText, stream, (u64[0 2 ** 63 - 1])abiNameToken);
+        if (!Compiler.TargetFacts.TryParseFfiAbiName(abiName, abi))
+        {
+            return false;
+        }
+    }
+
+    SetFfiCallingConvention(built, abi);
+    facts = built;
+    return true;
+}
+
+internal fn FunctionLinkageFacts BuildFunctionLinkageFacts(borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    stack mut FunctionLinkageFacts facts = new();
+    if (!FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Public)
+        && !FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Export))
+    {
+        facts.IsInternal = true;
+    }
+
+    return facts;
+}
+
+internal fn u32[0 max] FindFunctionParameterListClose(borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    stack mut u32[0 max] scan = fnKeyword;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.LParen)
+        {
+            stack mut u32[0 max] depth = 1;
+            scan = scan + 1;
+            stack mut u64[0 2 ** 63 - 1] closeGuard = stream.Count();
+            while willexit (closeGuard > 0)
+            {
+                closeGuard = (u64[0 2 ** 63 - 1])(closeGuard - 1);
+                stack TokenKind closeKind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+                if (closeKind == TokenKind.EndOfFile)
+                {
+                    return 0;
+                }
+
+                if (closeKind == TokenKind.LParen)
+                {
+                    depth = depth + 1;
+                }
+                else if (closeKind == TokenKind.RParen)
+                {
+                    depth = depth - 1;
+                    if (depth == 0)
+                    {
+                        return scan;
+                    }
+                }
+
+                scan = scan + 1;
+            }
+
+            return 0;
+        }
+
+        if (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] FindClosingParenAfter(borrow TokenStream stream, u32[0 max] lparen)
+{
+    stack mut u32[0 max] scan = lparen + 1;
+    stack mut u32[0 max] depth = 1;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            depth = depth - 1;
+            if (depth == 0)
+            {
+                return scan;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn bool ContractArgIsWholeParamName(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, out u32[0 max] nameToken)
+{
+    nameToken = 0;
+    if (start >= endExclusive)
+    {
+        return false;
+    }
+
+    if (start + 1 != endExclusive)
+    {
+        return false;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])start) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    nameToken = start;
+    return true;
+}
+
+internal fn bool TryReadTwoWholeParamContractArgs(borrow TokenStream stream, u32[0 max] lparen, out u32[0 max] leftName, out u32[0 max] rightName)
+{
+    leftName = 0;
+    rightName = 0;
+    stack u32[0 max] closeParen = FindClosingParenAfter(stream, lparen);
+    if (closeParen == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] argStart = lparen + 1;
+    stack mut u32[0 max] scan = argStart;
+    stack mut u32[0 max] depth = 0;
+    stack mut bool foundComma = false;
+    while willexit (scan < closeParen)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Comma)
+        {
+            if (foundComma)
+            {
+                return false;
+            }
+
+            if (!ContractArgIsWholeParamName(stream, argStart, scan, leftName))
+            {
+                return false;
+            }
+
+            foundComma = true;
+            argStart = scan + 1;
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    if (!foundComma)
+    {
+        return false;
+    }
+
+    return ContractArgIsWholeParamName(stream, argStart, closeParen, rightName);
+}
+
+internal fn bool TrySignatureParamIndexByNameToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] nameToken,
+    out u32[0 max] paramIndex)
+{
+    paramIndex = 0;
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (TokenTextEqualsToken(stream, source, signature.ParamNameAt(i), nameToken))
+        {
+            paramIndex = (u32[0 max])i;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryReadWholeParamContractPair(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] lparen,
+    out u32[0 max] leftParam,
+    out u32[0 max] rightParam)
+{
+    leftParam = 0;
+    rightParam = 0;
+    stack mut u32[0 max] leftName = 0;
+    stack mut u32[0 max] rightName = 0;
+    if (!TryReadTwoWholeParamContractArgs(stream, lparen, leftName, rightName))
+    {
+        return false;
+    }
+
+    return TrySignatureParamIndexByNameToken(stream, source, signature, leftName, leftParam)
+        && TrySignatureParamIndexByNameToken(stream, source, signature, rightName, rightParam);
+}
+
+internal fn bool CollectSignatureStorageContracts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    mut borrow IrTable<DistinctStoragePair> explicitDisjointPairs,
+    mut borrow IrTable<DistinctStoragePair> suppressedWholePairs)
+{
+    stack u32[0 max] closeParams = FindFunctionParameterListClose(stream, fnKeyword);
+    if (closeParams == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = closeParams + 1;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.EndOfFile))
+        {
+            return true;
+        }
+
+        if (depth == 0
+            && (kind == TokenKind.Disjoint || kind == TokenKind.Overlap || kind == TokenKind.Same)
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            stack mut u32[0 max] leftParam = 0;
+            stack mut u32[0 max] rightParam = 0;
+            if (TryReadWholeParamContractPair(stream, source, signature, (u32[0 max])(scan + 1), leftParam, rightParam))
+            {
+                if (kind == TokenKind.Disjoint)
+                {
+                    if (!AddDistinctStoragePairIfAbsent(explicitDisjointPairs, leftParam, rightParam))
+                    {
+                        return false;
+                    }
+                }
+                else if (!AddDistinctStoragePairIfAbsent(suppressedWholePairs, leftParam, rightParam))
+                {
+                    return false;
+                }
+            }
+
+            stack u32[0 max] closeContract = FindClosingParenAfter(stream, (u32[0 max])(scan + 1));
+            if (closeContract == 0)
+            {
+                return false;
+            }
+
+            scan = closeContract + 1;
+        }
+        else
+        {
+            if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+            {
+                depth = depth + 1;
+            }
+            else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+            {
+                if (depth > 0)
+                {
+                    depth = depth - 1;
+                }
+            }
+
+            scan = scan + 1;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool BuildDistinctStorageFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<DistinctStoragePair> distinctStorageFacts)
+{
+    stack mut IrTable<DistinctStoragePair> explicitDisjointPairs = new();
+    stack mut IrTable<DistinctStoragePair> suppressedWholePairs = new();
+    if (!CollectSignatureStorageContracts(stream, source, signature, fnKeyword, explicitDisjointPairs, suppressedWholePairs))
+    {
+        return false;
+    }
+
+    stack bool defaultNoOverlap = !FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Ffi)
+        && !FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Asm);
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    if (defaultNoOverlap)
+    {
+        stack mut u32[0 max] left = 0;
+        while willexit ((u64[0 2 ** 63 - 1])left < paramCount)
+        {
+            stack mut u32[0 max] right = left + 1;
+            while willexit ((u64[0 2 ** 63 - 1])right < paramCount)
+            {
+                if (!DistinctStoragePairExists(suppressedWholePairs, left, right)
+                    && !AddDistinctStoragePairIfPointerParams(paramAbiFacts, distinctStorageFacts, left, right))
+                {
+                    return false;
+                }
+
+                right = right + 1;
+            }
+
+            left = left + 1;
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] explicitCount = explicitDisjointPairs.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= explicitCount)
+    {
+        stack DistinctStoragePair pair = explicitDisjointPairs.Get(i);
+        if (!DistinctStoragePairExists(suppressedWholePairs, pair.LeftParam, pair.RightParam)
+            && !AddDistinctStoragePairIfPointerParams(paramAbiFacts, distinctStorageFacts, pair.LeftParam, pair.RightParam))
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow IrTable<ParamAbiFacts> paramAbiFacts, u32[0 max] id)
+{
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
+            return AbiFactAt(paramAbiFacts, node.Left + 1).IsPointer;
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg2)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg3)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg4);
+        default:
+            return false;
+    }
+}
+
+internal fn bool ExpressionTableUsesPointerParams(borrow IrTable<ExprNode> nodes, borrow IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (ExprNodeUsesPointerParam(nodes, paramAbiFacts, (u32[0 max])(i + 1)))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] LocalTypeCodeForSignatureParam(
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(paramIndex + 1));
+    if (facts.IsPointer)
+    {
+        return 3;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Bool)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+internal fn bool SeedParamLocalTypesFromSignature(
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] paramCount,
+    mut borrow IrTable<u32[0 max]> localTypes)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < paramCount)
+    {
+        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParam(stream, signature, paramAbiFacts, i));
+        if (added == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// True iff every CALL node in the AST is well-formed against the module: (1) its callee
+// resolved to a defined function (a non-0 1-based id — a 0 would emit an invalid `@f0`);
+// (2) its argument count is at most four (the AST call model carries up to four arguments,
+// so a wider call cannot be lowered); (3) that count matches the callee's declared parameter
+// count (an arity mismatch would emit a `call` LLVM rejects); (4) each present argument
+// matches the callee's scalar-or-pointer ABI shape; and (5) memory-backed arguments satisfy
+// the callee's required distinct-storage contract. `funcParamCounts` is indexed by 1-based
+// id. `localTypes` records each name index's type (1 = boolean, 3 = pointer), so a boolean
+// local passed as an integer argument and a scalar local passed as a pointer are caught.
+internal fn u32[0 max] CallArgumentNodeForParam(ExprNode node, u32[0 max] paramIndex)
+{
+    switch (paramIndex)
+    {
+        case 0:
+            return node.Right;
+        case 1:
+            return node.Arg2;
+        case 2:
+            return node.Arg3;
+        case 3:
+            return node.Arg4;
+        default:
+            return 0;
+    }
+}
+
+internal fn bool ValidateCallArgumentType(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] argNode,
+    ParamAbiFacts expected)
+{
+    stack ExprType actual = TypeOfNodeWithLocals(nodes, argNode, localTypes);
+    if (expected.IsPointer)
+    {
+        return actual == ExprType.PtrType;
+    }
+
+    return actual == ExprType.IntType;
+}
+
+internal fn bool TryReadDirectPointerParamArgument(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] argNode,
+    out u32[0 max] paramIndex)
+{
+    paramIndex = 0;
+    if (!nodes.Contains(argNode))
+    {
+        return false;
+    }
+
+    stack ExprNode arg = nodes.Get(argNode);
+    if (arg.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr)
+    {
+        return false;
+    }
+
+    if (!localTypes.Contains(arg.Left + 1) || localTypes.Get(arg.Left + 1) != 3)
+    {
+        return false;
+    }
+
+    paramIndex = arg.Left;
+    return true;
+}
+
+internal fn bool ValidateCallDistinctStorageArguments(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
+    ExprNode callNode,
+    FunctionCallContractFacts calleeFacts)
+{
+    stack mut u32[0 max] i = 0;
+    while willexit (i < calleeFacts.DistinctCount)
+    {
+        stack DistinctStoragePair pair = FunctionCallContractDistinctPair(calleeFacts, i);
+        stack u32[0 max] leftArgNode = CallArgumentNodeForParam(callNode, pair.LeftParam);
+        stack u32[0 max] rightArgNode = CallArgumentNodeForParam(callNode, pair.RightParam);
+        stack mut u32[0 max] leftParam = 0;
+        stack mut u32[0 max] rightParam = 0;
+        if (!TryReadDirectPointerParamArgument(nodes, localTypes, leftArgNode, leftParam)
+            || !TryReadDirectPointerParamArgument(nodes, localTypes, rightArgNode, rightParam)
+            || !DistinctStoragePairExists(callerDistinctStorageFacts, leftParam, rightParam))
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ValidateModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ExprNode node = nodes.Get((u32[0 max])(i + 1));
+        if (node.Kind == Compiler.Mir.SourceExpressions.ExprKind.CallExpr)
+        {
+            if (node.Left == 0)
+            {
+                return false;
+            }
+
+            if (node.Imm > 4)
+            {
+                return false;
+            }
+
+            if (node.Imm != (i64[min max])funcParamCounts.Get(node.Left))
+            {
+                return false;
+            }
+
+            stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
+            if (node.Right != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Right, FunctionCallContractParamAbi(calleeFacts, 0)))
+            {
+                return false;
+            }
+
+            if (node.Arg2 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg2, FunctionCallContractParamAbi(calleeFacts, 1)))
+            {
+                return false;
+            }
+
+            if (node.Arg3 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg3, FunctionCallContractParamAbi(calleeFacts, 2)))
+            {
+                return false;
+            }
+
+            if (node.Arg4 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg4, FunctionCallContractParamAbi(calleeFacts, 3)))
+            {
+                return false;
+            }
+
+            if (!ValidateCallDistinctStorageArguments(nodes, localTypes, callerDistinctStorageFacts, node, calleeFacts))
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ValidateModuleCallNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
+    ExprNode node)
+{
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.CallExpr)
+    {
+        return true;
+    }
+
+    if (node.Left == 0)
+    {
+        return false;
+    }
+
+    if (node.Imm > 4)
+    {
+        return false;
+    }
+
+    if (node.Imm != (i64[min max])funcParamCounts.Get(node.Left))
+    {
+        return false;
+    }
+
+    stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
+    if (node.Right != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Right, FunctionCallContractParamAbi(calleeFacts, 0)))
+    {
+        return false;
+    }
+
+    if (node.Arg2 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg2, FunctionCallContractParamAbi(calleeFacts, 1)))
+    {
+        return false;
+    }
+
+    if (node.Arg3 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg3, FunctionCallContractParamAbi(calleeFacts, 2)))
+    {
+        return false;
+    }
+
+    if (node.Arg4 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg4, FunctionCallContractParamAbi(calleeFacts, 3)))
+    {
+        return false;
+    }
+
+    return ValidateCallDistinctStorageArguments(nodes, localTypes, callerDistinctStorageFacts, node, calleeFacts);
+}
+
+internal fn bool ValidateModuleCallsForRoot(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] root,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!nodes.Contains(root))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(root);
+    if (!ValidateModuleCallNode(nodes, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts, node))
+    {
+        return false;
+    }
+
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            if (node.Right != 0 && !ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (node.Arg2 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg2, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (node.Arg3 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg3, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (node.Arg4 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg4, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            return true;
+    }
+}
+
+internal fn bool TailCallTargetIsTailCallable(borrow IrTable<ExprNode> nodes, u32[0 max] root, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<u32[0 max]> funcParamCounts, u32[0 max] callerParamCount)
+{
+    if (!nodes.Contains(root))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(root);
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.CallExpr || node.Left == 0)
+    {
+        return false;
+    }
+
+    if (!FunctionIdIsTailCallable(funcTailFlags, node.Left))
+    {
+        return false;
+    }
+
+    if (!funcParamCounts.Contains(node.Left))
+    {
+        return false;
+    }
+
+    return funcParamCounts.Get(node.Left) == callerParamCount;
+}
+
+// The result of lowering a function body: whether it was well-formed, its entry block's
+// 1-based index, and its declared parameter count (the emit caller turns these into a
+// `define`). Ok = false means the body was malformed / ill-typed / had an invalid call.
+public struct LoweredBody
+{
+    bool Ok;
+    u32[0 max] EntryBlock;
+    u32[0 max] ParamCount;
+    u32[0 max] CondValue;
+    u32[0 max] ThenValue;
+    u32[0 max] ElseValue;
+
+    LoweredBody()
+    {
+        self.Ok = false;
+        self.EntryBlock = 0;
+        self.ParamCount = 0;
+        self.CondValue = 0;
+        self.ThenValue = 0;
+        self.ElseValue = 0;
+    }
+}

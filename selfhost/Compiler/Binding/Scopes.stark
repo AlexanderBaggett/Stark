@@ -1,0 +1,390 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TokenHelpers
+import System.Text
+import System.Memory
+module Compiler.Binding.Scopes
+
+// Whether a function-scope symbol is a parameter or a body-local declaration.
+public enum SymbolKind
+{
+    Parameter,
+    Local,
+}
+
+// A function's local symbol table: every parameter (block depth 0) and every
+// `Local` declaration in the body, in source order, each carrying its name
+// token, kind, and block nesting depth. Like `DeclarationTable`, names are kept
+// as tokens and compared by source text at lookup time.
+public struct FunctionScope
+{
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic SymbolKind Kinds;
+    internal dynamic u32[0 max] Depths;
+    // For a `Local` symbol, the body-statement index where it is declared (used
+    // to gate a reference: a local is visible only at statements that follow its
+    // declaration and stay within its block). 0 for parameters (always visible).
+    internal dynamic u32[0 max] StmtIndices;
+    // Each symbol's declared type-primary token (a built-in type token or a
+    // user-type identifier; 0 when unknown), for classifying the symbol's type.
+    internal dynamic u32[0 max] TypeTokens;
+    // Each symbol's declared type span, retained so callable-value contracts
+    // keep their finite/law facts through binding.
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+
+    FunctionScope()
+    {
+        self.NameTokens = new();
+        self.Kinds = new();
+        self.Depths = new();
+        self.StmtIndices = new();
+        self.TypeTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow FunctionScope self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    // The name token of symbol `index`, or 0 when out of range.
+    public finite law u32[0 max] NameTokenAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    // The kind of symbol `index` (Parameter when out of range).
+    public finite law SymbolKind KindAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut SymbolKind kind = SymbolKind.Parameter;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    // The block nesting depth of symbol `index` (0 = parameter / body top level).
+    public finite law u32[0 max] DepthAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] depth = 0;
+        if (index < self.Depths.Length)
+        {
+            depth = self.Depths[index];
+        }
+
+        return depth;
+    }
+
+    // The declaring body-statement index of symbol `index` (0 for parameters).
+    public finite law u32[0 max] StmtIndexAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] stmt = 0;
+        if (index < self.StmtIndices.Length)
+        {
+            stmt = self.StmtIndices[index];
+        }
+
+        return stmt;
+    }
+
+    // The declared type-primary token of symbol `index` (0 when unknown).
+    public finite law u32[0 max] TypeTokenAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeTokens.Length)
+        {
+            token = self.TypeTokens[index];
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] TypeStartTokenAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public finite law u32[0 max] TypeEndTokenAt(borrow FunctionScope self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow FunctionScope self,
+        u32[0 max] nameToken,
+        SymbolKind kind,
+        u32[0 max] depth,
+        u32[0 max] stmtIndex,
+        u32[0 max] typeToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.Depths.TryReserve(1)
+            || !self.StmtIndices.TryReserve(1)
+            || !self.TypeTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.Depths[self.Depths.Length] = depth;
+        init self.StmtIndices[self.StmtIndices.Length] = stmtIndex;
+        init self.TypeTokens[self.TypeTokens.Length] = typeToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn u32[0 max] DropValidityBodyIdentifierToken(ascii source, borrow TokenStream stream, borrow StatementList body, ascii name)
+{
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Identifier
+            && TokenTextEquals(source, stream, body.ExprTokenAt(node), name))
+        {
+            return body.ExprTokenAt(node);
+        }
+    }
+
+    return 0;
+}
+
+// Builds a function scope from a parsed signature and body: every named
+// parameter (depth 0) followed by every named `Local` declaration in body order
+// (at its block depth).
+public fn BindResult<FunctionScope> BuildFunctionScope(borrow FunctionSignature signature, borrow StatementList body)
+{
+    stack mut FunctionScope scope = new();
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
+    {
+        stack u32[0 max] nameToken = signature.ParamNameAt(index);
+        if (nameToken != 0)
+        {
+            switch (scope.Append(
+                nameToken,
+                SymbolKind.Parameter,
+                0,
+                0,
+                signature.ParamTypeTokenAt(index),
+                signature.ParamTypeStartTokenAt(index),
+                signature.ParamTypeEndTokenAt(index)))
+            {
+                case System.Memory.MemoryStatus.Err(var paramError):
+                    return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < statementCount; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        // Both ordinary `Local`s and `case`-pattern `var` bindings name in-scope
+        // values resolvable by reference; they differ only for the duplicate-in-block
+        // check (pattern bindings may repeat across `or` alternatives).
+        if ((item.Kind == StatementKind.Local || item.Kind == StatementKind.PatternBinding) && item.NameToken != 0)
+        {
+            switch (scope.Append(
+                item.NameToken,
+                SymbolKind.Local,
+                body.DepthAt(index),
+                (u32[0 max])index,
+                item.TypeToken,
+                item.TypeStartToken,
+                item.TypeEndToken))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return BindResult<FunctionScope>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<FunctionScope>.Ok(scope);
+}
+
+// The 1-based index of the symbol that `name` resolves to (0 when unbound). When
+// a name has several bindings the most-recently-declared wins, so an inner local
+// shadows an outer one or a parameter of the same name.
+public fn u32[0 max] LookupSymbol(borrow FunctionScope scope, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = scope.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack ascii entryName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(index));
+        if (System.Text.Equals(entryName, name))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+// True when two parameters share a name: a genuine redefinition in the single
+// parameter scope. (Locals are excluded — a local reusing a parameter's name is
+// shadowing, and same-name locals in distinct sibling blocks are legal, so local
+// redefinition needs the not-yet-built block-scope tree.)
+public fn bool HasDuplicateParameter(borrow FunctionScope scope, ascii source, borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = scope.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] outer = 0; outer < count; outer += 1)
+    {
+        if (scope.KindAt(outer) == SymbolKind.Parameter)
+        {
+            stack ascii outerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(outer));
+            for willexit (stack mut u64[0 2 ** 63 - 1] inner = (u64[0 2 ** 63 - 1])(outer + 1); inner < count; inner += 1)
+            {
+                if (scope.KindAt(inner) == SymbolKind.Parameter)
+                {
+                    stack ascii innerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(inner));
+                    if (System.Text.Equals(outerName, innerName))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+// True when a `Local` declaration shadows a parameter of the same name (the
+// parameter is the unique enclosing scope, so this comparison is exact).
+public fn bool LocalShadowsParameter(borrow FunctionScope scope, ascii source, borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = scope.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] localIndex = 0; localIndex < count; localIndex += 1)
+    {
+        if (scope.KindAt(localIndex) == SymbolKind.Local)
+        {
+            stack ascii localName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(localIndex));
+            for willexit (stack mut u64[0 2 ** 63 - 1] paramIndex = 0; paramIndex < count; paramIndex += 1)
+            {
+                if (scope.KindAt(paramIndex) == SymbolKind.Parameter)
+                {
+                    stack ascii paramName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(paramIndex));
+                    if (System.Text.Equals(localName, paramName))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+// Whether a `Local` declared at body statement `declStmt` is in lexical scope at
+// statement `refStmt`: the declaration must precede the reference, and the local's
+// scope must enclose the reference's scope — i.e. the local's scope is an
+// ancestor-or-equal of the reference's scope in the scope tree. Parameters are
+// handled separately and are always visible.
+internal fn bool LocalVisibleAt(borrow StatementList body, u64[0 2 ** 63 - 1] declStmt, u64[0 2 ** 63 - 1] refStmt)
+{
+    stack mut bool visible = false;
+    if (declStmt < refStmt)
+    {
+        stack u32[0 max] declScope = body.ScopeIdAt(declStmt);
+        stack mut u32[0 max] cur = body.ScopeIdAt(refStmt);
+        // Walk the reference's scope up to the root; the local is visible iff the
+        // walk meets the local's scope. The guard (scope count) bounds the walk —
+        // each parent has a smaller id than its child, so the tree is finite.
+        stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ScopeCount() + 1);
+        while willexit (guard > 0)
+        {
+            guard = (u64[0 2 ** 63 - 1])(guard - 1);
+            if (cur == declScope)
+            {
+                visible = true;
+                guard = 0;
+            }
+            else
+            {
+                stack u32[0 max] parent = body.ScopeParentAt(cur);
+                if (parent == cur)
+                {
+                    guard = 0;
+                }
+                else
+                {
+                    cur = parent;
+                }
+            }
+        }
+    }
+
+    return visible;
+}
+
+// True when two `Local` declarations in the same block (same lexical scope id)
+// share a name — a redefinition. A same-name local in a nested or sibling block
+// has a different scope id, so it is shadowing, not redefinition, and not
+// reported.
+public fn bool HasDuplicateLocalInBlock(ascii source, borrow TokenStream stream, borrow StatementList body)
+{
+    stack mut bool duplicate = false;
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] i = 0; i < count; i += 1)
+    {
+        stack StatementItem si = body.ItemAt(i);
+        if (!duplicate && si.Kind == StatementKind.Local && si.NameToken != 0)
+        {
+            stack u32[0 max] scopeI = body.ScopeIdAt(i);
+            stack ascii nameI = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])si.NameToken);
+            for willexit (stack mut u64[0 2 ** 63 - 1] j = (u64[0 2 ** 63 - 1])(i + 1); j < count; j += 1)
+            {
+                if (!duplicate)
+                {
+                    stack StatementItem sj = body.ItemAt(j);
+                    if (sj.Kind == StatementKind.Local && sj.NameToken != 0 && body.ScopeIdAt(j) == scopeI)
+                    {
+                        stack ascii nameJ = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])sj.NameToken);
+                        if (System.Text.Equals(nameI, nameJ))
+                        {
+                            duplicate = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return duplicate;
+}

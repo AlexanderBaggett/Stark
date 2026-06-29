@@ -168,6 +168,96 @@ Execution constraints:
     - [ ] Port CTFE.
     - [ ] Port compile-time generic value evaluation.
 
+- [~] Decompose the oversized self-host binding implementation into focused modules.
+  - [x] Record the target `Compiler.Binding.*` module map from the stage0 C# counterpart files.
+  - [x] Keep `Compiler.Binding` as an API-compatible facade that re-exports the new binding submodules.
+  - [x] Move bind result, bind diagnostic, and diagnostic-list types into a diagnostics module.
+  - [x] Move declaration table, duplicate declaration, and raw declaration lookup helpers into a declarations module.
+  - [x] Move function scope, lexical local visibility, and raw value-reference scope helpers into a scopes module.
+  - [x] Move reference table construction and unresolved reference counting into a references module.
+  - [x] Move type-reference resolution and type-span unresolved-reference scans into a type-resolution module.
+  - [x] Move generic use-site syntax collection into a generic-use-sites module.
+  - [x] Move module resolver, import resolution, and module-origin tables into a module-resolution module.
+  - [x] Move typed module symbol construction into a typed-module-symbols module.
+  - [x] Move typed declaration symbol construction into a typed-declarations module.
+  - [x] Move typed member and method symbol construction into a typed-members module.
+  - [x] Move typed local and parameter symbol construction into a typed-locals module.
+  - [x] Move typed generic parameter symbol construction into a typed-generics module.
+  - [x] Move generic instantiation planning into a generic-instantiation module.
+  - [x] Move callable candidate and receiver candidate construction into callable-resolution modules.
+  - [x] Move function effect summary construction into a function-effects module.
+  - [x] Move typed trait conformance table construction into a trait-conformance module.
+  - [x] Move associated alias symbol construction into an associated-types module without creating a typed-members cycle.
+  - [x] Move copyability fact construction and `where Copyable` predicate validation into a copyability module.
+  - [x] Move shared function-signature parameter helpers into a signature helpers module.
+  - [x] Move thread-safety law facts and law predicate helpers into a thread-safety module.
+    - [x] Move shared law-predicate table and single-identifier helpers into a thread-safety module.
+    - [x] Port `Transferable` and `Shareable` binding facts into the thread-safety module.
+  - [x] Move layout-control attribute validation and concrete-layout query validation into a layout-validation module.
+  - [x] Move C layout aggregate facts and C ABI aggregate boundary facts into C ABI layout modules.
+  - [x] Move semantic validation diagnostics into focused validation modules.
+    - [x] Move exported-surface visibility and ABI enum diagnostics into an exported-surfaces module.
+    - [x] Move return and break/continue diagnostics into a control-flow validation module.
+    - [x] Move function-kind obligation diagnostics into a function-kind validation module.
+    - [x] Move law signature and law body diagnostics into a law validation module.
+    - [x] Move recursion and tail-become diagnostics into recursion validation modules.
+  - [x] Move destructor shape, drop validity, and destructor effect diagnostics into destructor validation modules.
+  - [x] Move constructor initialization, local initialization, move, borrow, arena, and dead-on-return checks into ownership validation modules.
+    - [x] Move constructor field initialization validation into a constructor validation module.
+    - [x] Move local and output initialization validation into an ownership initialization module.
+    - [x] Move straight-line move-after-move validation into an ownership move module.
+    - [x] Move straight-line borrow-liveness validation into an ownership borrow module.
+    - [x] Move packed-field safe-borrow validation into an ownership borrow module.
+    - [x] Move arena escape and arena retention validation into an ownership arena module.
+    - [x] Move dead-on-return contract and call validation into an ownership dead-on-return module.
+  - [x] Move assembly signature and register diagnostics into an assembly binding module.
+  - [x] Move `BindCompilationUnit` orchestration into a narrow binding pipeline module.
+  - [x] Add dependency-direction checks so binding data modules do not import semantic, ownership, C ABI, or assembly validation modules.
+  - [ ] Run focused selfhost binding and typing tests after each module split.
+### Typing.stark
+- [~] Decompose the oversized self-host typing implementation into focused modules.
+  - [ ] Record the target `Compiler.Typing.*` module map from the stage0 C# counterpart files.
+  - [x] Keep `Compiler.Typing` as an API-compatible facade that re-exports the new typing submodules.
+  - [x] Move coarse expression classification and non-boolean condition checks into an expression-classification module.
+  - [x] Move typed function signature tables into a typed-signatures module.
+  - [x] Move Stark type-resolution, type-kind flags, type-span scanners, and alias-aware type-head classification helpers into a type-resolution module.
+  - [x] Move type compatibility, conversion permissibility, and conversion-cost facts into a type-compatibility module.
+  - [x] Move global declaration typing and global storage facts into a typed-globals module.
+  - [x] Move explicit storage selector collection into a storage-selectors module.
+  - [x] Move struct, record, and record-header field typing into a typed-fields module.
+  - [x] Move enum payload typing and enum variant role facts into a typed-enum-payloads module.
+  - [x] Move enum layout construction and layout-table query helpers into a typed-enum-layouts module.
+  - [x] Move enum-layout attribute and field-offset readers into a typed-enum-layout-attributes module.
+  - [x] Move enum-layout scalar sizing and alignment arithmetic into a typed-enum-layout-arithmetic module.
+  - [x] Move enum-layout generic contexts and comptime-value readers into a typed-enum-layout-generics module.
+  - [x] Move local declaration typing and local storage facts into a typed-locals module.
+  - [x] Move literal expression typing and literal scalar/text fact derivation into a typed-literals module.
+  - [x] Move identifier expression typing and visible-symbol lookup into a typed-identifiers module.
+  - [x] Move direct call typing, call argument facts, and overload resolution into a typed-calls module.
+  - [x] Move member expression typing and method-candidate logic into a typed-members module.
+  - [x] Move indexing and slicing expression typing into a typed-indexing module.
+  - [x] Move explicit conversion typing and target/operand fact propagation into a typed-conversions module.
+  - [x] Move assignment target typing, assignment value facts, and compound-operator typing into a typed-assignments module.
+  - [x] Move return expression typing and expected-return fact derivation into a typed-returns module.
+  - [x] Move generic argument syntax helpers and function generic parameter helpers into generic-typing modules.
+  - [~] Move associated-type and dyn-trait facts consumed by typing into focused fact modules.
+    - [x] Move dyn-trait token, layout, and call-cost facts into a typed-dynamic-facts module.
+    - [ ] Move associated-type facts after associated-type consumers exist in selfhost typing.
+  - [ ] Move copyability, thread-safety law, and atomic builtin facts consumed by typing into focused fact modules.
+  - [~] Move CTFE expression, CTFE function, and structural-fact typing hooks into CTFE typing modules.
+    - [x] Move enum-layout structural query-call folding into a typed CTFE query module.
+    - [x] Share enum-layout generic comptime-value readers between CTFE query folding and enum layout construction.
+    - [ ] Move CTFE expression typing hooks into CTFE typing modules.
+    - [ ] Move CTFE function typing hooks into CTFE typing modules.
+    - [ ] Move remaining `System.Compiler` structural-fact typing hooks into CTFE typing modules.
+  - [x] Move `BuildTyped*` orchestration into a narrow typing pipeline module.
+  - [x] Add dependency-direction checks so typing data modules do not import semantic validation, ownership validation, MIR, or LLVM modules.
+  - [~] Run focused selfhost typing and artifact-rendering tests after each module split.
+    - [x] Run focused tests for the type-resolution and CTFE query module splits.
+    - [x] Run focused lower-MIR checks for the enum-layout attribute and arithmetic splits.
+    - [x] Run focused lower-MIR checks for the enum-layout generic helper split.
+    - [ ] Run focused tests for future typing module splits.
+
 - [x] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.
   - [x] Port diagnostic records.
   - [x] Port stable diagnostic codes.
@@ -225,24 +315,44 @@ Execution constraints:
   - [x] Add phase-boundary validation for layout facts.
   - [x] Add phase-boundary validation for durable package facts.
 
-- [ ] Decompose the oversized self-host MIR implementation into focused modules.
-  - [ ] Keep `Compiler.Mir` as an API-compatible facade that re-exports the new MIR submodules.
-  - [ ] Move MIR op, type, instruction, block, function, and global models into a core MIR model module.
-  - [ ] Move MIR instruction, block, function, global, call, and phi builders into a core MIR builder module.
-  - [ ] Move MIR enum layout, enum ABI, and enum LLVM storage helpers into an enum-layout module.
-  - [ ] Move LLVM module, function, block, terminator, instruction, global, and typed-value emission into LLVM emission modules.
-  - [ ] Move direct-switch and control-flow LLVM emission helpers into a control-flow emission module.
-  - [ ] Move function effect, call-contract, ABI, range-metadata, and separate-storage emission helpers into LLVM fact modules.
-  - [ ] Move MIR text rendering helpers into a MIR text-rendering module.
-  - [ ] Move MIR byte codecs and fixed-record section serializers into a package-image codec module.
-  - [ ] Move package-image validation, inspection, summary, and file IO helpers into package-image modules.
-  - [ ] Move value-range transfer, branch refinement, and returned-value validation helpers into a MIR facts module.
-  - [ ] Move source-expression parsing, name checks, arity checks, and semantic probes out of MIR into source-lowering modules.
-  - [ ] Move structured source lowering for `if`, loops, switches, locals, calls, and function bodies into lowering-builder modules.
-  - [ ] Move assembly metadata collection and assembly package-image serialization into an assembly metadata module.
-  - [ ] Move clang verification and temporary-file helpers into a test-support or compiler harness module.
-  - [ ] Add dependency-direction checks so MIR core does not import parsing, LLVM emission, package images, or test helpers.
-  - [ ] Run focused behavior-preserving tests after each module split.
+- [x] Decompose the oversized self-host MIR implementation into focused modules.
+  - [x] Keep `Compiler.Mir` as an API-compatible facade that re-exports the new MIR submodules.
+  - [x] Move MIR op, type, instruction, block, function, and global models into a core MIR model module.
+  - [x] Move MIR instruction, block, function, global, call, and phi builders into a core MIR builder module.
+  - [x] Move MIR enum layout, enum ABI, and enum LLVM storage helpers into an enum-layout module.
+  - [x] Move LLVM module, function, block, terminator, instruction, global, and typed-value emission into LLVM emission modules.
+    - [x] Move shared LLVM type, ABI-carrier, and C ABI boundary text helpers into a shared LLVM text module.
+    - [x] Move LLVM instruction and typed-value emission helpers into an instruction-emission module.
+    - [x] Move LLVM terminator and labeled block emission helpers into a block-emission module.
+    - [x] Move LLVM function, module, and global emission helpers into function and module emission modules.
+  - [x] Move direct-switch and control-flow LLVM emission helpers into a control-flow emission module.
+  - [x] Move function effect, call-contract, ABI, range-metadata, and separate-storage emission helpers into LLVM fact modules.
+  - [x] Move MIR text rendering helpers into a MIR text-rendering module.
+  - [x] Move MIR byte codecs and fixed-record section serializers into a package-image codec module.
+  - [x] Move package-image validation, inspection, summary, and file IO helpers into package-image modules.
+  - [x] Move value-range transfer, branch refinement, and returned-value validation helpers into a MIR facts module.
+  - [x] Move source-expression parsing, name checks, arity checks, and semantic probes out of MIR into source-lowering modules.
+    - [x] Move integer range endpoint parsing and range fact readers into a source range-facts module.
+    - [x] Move source token span, parameter-name, and local-binding helpers into a source symbols module.
+    - [x] Move name resolution, declaration uniqueness, function-name uniqueness, and call-arity probes into a source semantic-probes module.
+    - [x] Move boolean condition and boolean operand probes into the source semantic-probes module.
+    - [x] Move structural expression nodes, the expression parser, and source expression type inference into a source expressions module.
+  - [x] Move structured source lowering for `if`, loops, switches, locals, calls, and function bodies into lowering-builder modules.
+    - [x] Move single-expression and single-return source lowering wrappers into a source expression-lowering module.
+    - [x] Move self-host local, storage, and layout scanner helpers into a source local-lowering module.
+    - [x] Move shared source signature, ABI, contract, and call-validation helpers into a source function-context module.
+    - [x] Move `if` and if-expression arm parsers and lowering helpers into a source if-lowering module.
+    - [x] Move switch arm parsers and lowering helpers into a source switch-lowering module.
+    - [x] Move while and for loop shape detection and lowering helpers into a source loop-lowering module.
+    - [x] Move module/function AST lowering orchestration and package-image-with-asm table builders into a source module-lowering module.
+  - [x] Move assembly metadata collection into an assembly metadata module.
+  - [x] Move clang verification and temporary-file helpers into a test-support or compiler harness module.
+  - [x] Add dependency-direction checks so MIR core does not import parsing, LLVM emission, package images, or test helpers.
+  - [x] Run focused behavior-preserving tests after each module split.
+    - [x] Run focused lower-MIR checks for the source-expression and source-local lowering splits.
+    - [x] Run focused lower-MIR checks and selected if facts for the source function-context and source if-lowering splits.
+    - [x] Run focused lower-MIR checks for the source switch-lowering and source loop-lowering splits.
+    - [x] Run focused lower-MIR and API re-export checks for the source module-lowering split.
 
 - [ ] Implement HIR/MIR lowering.
   - [x] Define the self-host HIR model or explicit direct-to-MIR boundary.
