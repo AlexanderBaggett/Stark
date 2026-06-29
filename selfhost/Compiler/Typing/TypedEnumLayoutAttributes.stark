@@ -1,0 +1,238 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedEnumLayoutGenerics
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedEnumLayoutAttributes
+
+internal enum TypedEnumLayoutControlKind
+{
+    Auto,
+    C,
+    Explicit,
+}
+
+internal fn u32[0 max] TypedEnumLayoutAttributeNameToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] attrStart,
+    u32[0 max] attrEnd,
+    ascii name)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TypedSignatureTokenTextEquals(source, stream, scan, name))
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedEnumLayoutAttributeArgumentToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] attrStart,
+    u32[0 max] attrEnd,
+    ascii name)
+{
+    stack u32[0 max] nameToken = TypedEnumLayoutAttributeNameToken(source, stream, attrStart, attrEnd, name);
+    if (nameToken != 0
+        && (u32[0 max])(nameToken + 3) <= attrEnd
+        && stream.KindAt((u64[0 2 ** 63 - 1])(nameToken + 1)) == TokenKind.LParen
+        && stream.KindAt((u64[0 2 ** 63 - 1])(nameToken + 3)) == TokenKind.RParen)
+    {
+        return (u32[0 max])(nameToken + 2);
+    }
+
+    return 0;
+}
+
+internal fn TypedEnumLayoutControlKind TypedEnumLayoutKindFromArgument(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    if (token != 0 && stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Identifier)
+    {
+        if (TypedSignatureTokenTextEquals(source, stream, token, "C"))
+        {
+            return TypedEnumLayoutControlKind.C;
+        }
+
+        if (TypedSignatureTokenTextEquals(source, stream, token, "Explicit"))
+        {
+            return TypedEnumLayoutControlKind.Explicit;
+        }
+    }
+
+    return TypedEnumLayoutControlKind.Auto;
+}
+
+internal fn TypedEnumLayoutControlKind TypedEnumLayoutDeclarationLayoutKind(DeclItem item, ascii source, borrow TokenStream stream)
+{
+    stack mut TypedEnumLayoutControlKind layoutKind = TypedEnumLayoutControlKind.Auto;
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = TypedSignatureMatchingCloseToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return layoutKind;
+        }
+
+        stack u32[0 max] argToken = TypedEnumLayoutAttributeArgumentToken(source, stream, scan, attrEnd, "StructLayout");
+        if (argToken != 0)
+        {
+            layoutKind = TypedEnumLayoutKindFromArgument(source, stream, argToken);
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return layoutKind;
+}
+
+internal fn u64[0 max] TypedEnumLayoutDeclarationAttributeU64Value(DeclItem item, ascii source, borrow TokenStream stream, ascii name)
+{
+    stack mut u64[0 max] value = 0;
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = TypedSignatureMatchingCloseToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return value;
+        }
+
+        stack u32[0 max] argToken = TypedEnumLayoutAttributeArgumentToken(source, stream, scan, attrEnd, name);
+        stack mut u64[0 max] parsed = 0;
+        if (TypedEnumLayoutTryReadU64Token(source, stream, argToken, parsed))
+        {
+            value = parsed;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return value;
+}
+
+internal finite law u64[0 max] TypedEnumLayoutEffectiveFieldAlignment(u64[0 max] naturalAlignment, u64[0 max] packBytes)
+{
+    if (packBytes != 0 && packBytes < naturalAlignment)
+    {
+        return packBytes;
+    }
+
+    return naturalAlignment;
+}
+
+internal finite law u32[0 max] TypedEnumLayoutSkipDeclarationMember(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut bool sawBrace = false;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+            sawBrace = true;
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0 && sawBrace)
+            {
+                return index;
+            }
+        }
+        else if (kind == TokenKind.Semi && depth == 0 && !sawBrace)
+        {
+            return index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return index;
+}
+
+internal finite law bool TypedEnumLayoutTokenStartsMemberDeclaration(TokenKind kind)
+{
+    return kind == TokenKind.Fn
+        || kind == TokenKind.Struct
+        || kind == TokenKind.Record
+        || kind == TokenKind.Enum
+        || kind == TokenKind.Trait
+        || kind == TokenKind.Doctrine
+        || kind == TokenKind.Alias
+        || kind == TokenKind.Drop;
+}
+
+internal fn bool TypedEnumLayoutTryReadFieldOffset(
+    DeclItem item,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] fieldNameToken,
+    out u64[0 max] offsetBytes)
+{
+    offsetBytes = 0;
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = (u32[0 max])(bodyOpen + 1);
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberStart = index;
+        stack u32[0 max] memberEnd = TypedEnumLayoutSkipDeclarationMember(stream, memberStart);
+        stack u32[0 max] cursor = TypedFieldMemberKindCursor(stream, memberStart);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])memberEnd) == TokenKind.Semi
+            && !TypedEnumLayoutTokenStartsMemberDeclaration(stream.KindAt((u64[0 2 ** 63 - 1])cursor)))
+        {
+            stack u32[0 max] nameToken = TypedFieldLastIdentifierInSpan(stream, cursor, memberEnd);
+            if (nameToken != 0 && TypedSignatureTokenTextEqualsToken(source, stream, nameToken, fieldNameToken))
+            {
+                stack mut u32[0 max] scan = memberStart;
+                while willexit (scan < cursor && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+                {
+                    stack u32[0 max] attrEnd = TypedSignatureMatchingCloseToken(stream, scan);
+                    if (attrEnd <= scan)
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] argToken = TypedEnumLayoutAttributeArgumentToken(source, stream, scan, attrEnd, "FieldOffset");
+                    if (TypedEnumLayoutTryReadU64Token(source, stream, argToken, offsetBytes))
+                    {
+                        return true;
+                    }
+
+                    scan = (u32[0 max])(attrEnd + 1);
+                }
+
+                return false;
+            }
+        }
+
+        index = (u32[0 max])(memberEnd + 1);
+    }
+
+    return false;
+}

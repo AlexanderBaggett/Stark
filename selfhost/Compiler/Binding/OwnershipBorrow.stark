@@ -1,0 +1,734 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.ExpressionTypeHelpers
+import Compiler.Binding.LayoutTypeInfo
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.Copyability
+import Compiler.Binding.OwnershipHelpers
+import System.Memory
+module Compiler.Binding.OwnershipBorrow
+
+internal fn bool ExpressionHasMisalignedLayoutFieldProjection(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] current = node;
+    while willexit (current != 0)
+    {
+        stack ExprKind kind = body.ExprKindAt(current);
+        if (kind == Compiler.Parsing.ExprKind.Member)
+        {
+            stack u32[0 max] receiver = body.ExprLeftAt(current);
+            stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, receiver);
+            if (LayoutFieldIsMisaligned(decls, table, source, stream, receiverStruct, body.ExprTokenAt(current)))
+            {
+                return true;
+            }
+
+            current = receiver;
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Index)
+        {
+            current = body.ExprLeftAt(current);
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus AppendPackedFieldSafeBorrowDiagnostic(mut borrow BindDiagnosticList diags, u32[0 max] token)
+{
+    return diags.Append(BindDiagnosticCode.PackedFieldSafeBorrow, token);
+}
+
+internal fn System.Memory.MemoryStatus CheckPackedFieldSafeBorrowArgument(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    u32[0 max] argIndex,
+    mut borrow BindDiagnosticList diags)
+{
+    if (argIndex >= body.ExprCallArgCountAt(callNode))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] argNode = body.ExprCallArgAt(callNode, argIndex);
+    if (ExpressionHasMisalignedLayoutFieldProjection(decls, table, source, refs, scope, stream, body, argNode))
+    {
+        switch (AppendPackedFieldSafeBorrowDiagnostic(diags, body.ExprTokenAt(argNode)))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDirectPackedFieldSafeBorrowCallDiagnostics(
+    borrow FunctionSignature callee,
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] paramCount = callee.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+    {
+        if ((u32[0 max])param < body.ExprCallArgCountAt(callNode)
+            && TypeSpanFormsSafeBorrow(stream, callee.ParamStartTokenAt(param), callee.ParamNameAt(param)))
+        {
+            switch (CheckPackedFieldSafeBorrowArgument(decls, table, source, refs, scope, stream, body, callNode, (u32[0 max])param, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var argError):
+                    return System.Memory.MemoryStatus.Err(argError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectCallbackPackedFieldSafeBorrowCallDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    u32[0 max] callNode,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] callableLParen = 0;
+    stack mut u32[0 max] callableRParen = 0;
+    if (!TryFindCallableParamList(stream, typeStart, typeEnd, callableLParen, callableRParen))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] paramCount = CallableParamCount(stream, callableLParen, callableRParen);
+    for willexit (stack mut u32[0 max] param = 0; param < paramCount; param = (u32[0 max])(param + 1))
+    {
+        stack mut u32[0 max] paramStart = 0;
+        stack mut u32[0 max] paramEnd = 0;
+        if (param < body.ExprCallArgCountAt(callNode)
+            && TryCallableParamSpan(stream, callableLParen, callableRParen, param, paramStart, paramEnd)
+            && TypeSpanFormsSafeBorrow(stream, paramStart, paramEnd))
+        {
+            switch (CheckPackedFieldSafeBorrowArgument(decls, table, source, refs, scope, stream, body, callNode, param, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var argError):
+                    return System.Memory.MemoryStatus.Err(argError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectPackedFieldSafeBorrowDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        stack u32[0 max] root = body.ExprRootAt(statement);
+        if (root != 0
+            && item.Kind == StatementKind.Local
+            && TypeSpanFormsSafeBorrow(stream, item.TypeStartToken, item.TypeEndToken)
+            && ExpressionHasMisalignedLayoutFieldProjection(decls, table, source, refs, scope, stream, body, root))
+        {
+            switch (AppendPackedFieldSafeBorrowDiagnostic(diags, body.ExprTokenAt(root)))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return System.Memory.MemoryStatus.Err(localError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (root != 0
+            && item.Kind == StatementKind.Return
+            && TypeSpanFormsSafeBorrow(stream, signature.ReturnTypeStartTokenAt(), signature.ReturnTypeEndTokenAt())
+            && ExpressionHasMisalignedLayoutFieldProjection(decls, table, source, refs, scope, stream, body, root))
+        {
+            switch (AppendPackedFieldSafeBorrowDiagnostic(diags, body.ExprTokenAt(root)))
+            {
+                case System.Memory.MemoryStatus.Err(var returnError):
+                    return System.Memory.MemoryStatus.Err(returnError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] callNode = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(callNode) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+            if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+                if (refIndexPlusOne != 0)
+                {
+                    stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+                    stack ReferenceKind kind = refs.KindAt(refIndex);
+                    if (kind == ReferenceKind.Declaration)
+                    {
+                        stack mut FunctionSignature callee = new();
+                        if (TryParseFunctionSignatureFromTable(table, stream, refs.TargetAt(refIndex), callee))
+                        {
+                            switch (CollectDirectPackedFieldSafeBorrowCallDiagnostics(callee, decls, table, source, refs, scope, stream, body, callNode, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var directError):
+                                    return System.Memory.MemoryStatus.Err(directError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+                    else if (kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+                    {
+                        stack u32[0 max] target = refs.TargetAt(refIndex);
+                        if (target != 0)
+                        {
+                            stack u64[0 2 ** 63 - 1] targetIndex = (u64[0 2 ** 63 - 1])(target - 1);
+                            if (targetIndex < scope.Count())
+                            {
+                                switch (CollectCallbackPackedFieldSafeBorrowCallDiagnostics(
+                                    decls,
+                                    table,
+                                    source,
+                                    refs,
+                                    scope,
+                                    stream,
+                                    body,
+                                    scope.TypeStartTokenAt(targetIndex),
+                                    scope.TypeEndTokenAt(targetIndex),
+                                    callNode,
+                                    diags))
+                                {
+                                    case System.Memory.MemoryStatus.Err(var callbackError):
+                                        return System.Memory.MemoryStatus.Err(callbackError);
+                                    case System.Memory.MemoryStatus.Ok:
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u32[0 max] LastUseStatementIndexPlusOneForScopeTarget(
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] targetPlusOne,
+    u32[0 max] startStatementPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] lastUse = 0;
+    stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] refIndex = 0; refIndex < refCount; refIndex += 1)
+    {
+        stack ReferenceKind kind = refs.KindAt(refIndex);
+        if ((kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+            && refs.TargetAt(refIndex) == targetPlusOne
+            && !ExpressionNodeIsDirectAssignmentTarget(body, refs.NodeAt(refIndex)))
+        {
+            stack u32[0 max] statementPlusOne = StatementIndexPlusOneForExprNode(body, refs.NodeAt(refIndex));
+            if (statementPlusOne > startStatementPlusOne && statementPlusOne > lastUse)
+            {
+                lastUse = statementPlusOne;
+            }
+        }
+    }
+
+    return lastUse;
+}
+
+internal fn bool CallMovesScopeTarget(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    u32[0 max] ownerTargetPlusOne,
+    bool ownerIsCopyable,
+    out u32[0 max] conflictToken)
+{
+    conflictToken = 0;
+    if (callNode == 0
+        || body.ExprKindAt(callNode) != Compiler.Parsing.ExprKind.Call
+        || ownerIsCopyable)
+    {
+        return false;
+    }
+
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] targetPlusOne = 0;
+    if (!TryDirectFunctionCallTarget(table, source, refs, stream, body, calleeNode, targetPlusOne))
+    {
+        return false;
+    }
+
+    stack mut FunctionSignature callee = new();
+    if (!TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] argLimit = body.ExprCallArgCountAt(callNode);
+    stack u32[0 max] paramCount = (u32[0 max])callee.ParamCount();
+    if (argLimit > paramCount)
+    {
+        argLimit = paramCount;
+    }
+
+    for willexit (stack mut u32[0 max] arg = 0; arg < argLimit; arg = (u32[0 max])(arg + 1))
+    {
+        stack u32[0 max] argNode = body.ExprCallArgAt(callNode, arg);
+        stack mut u32[0 max] argTarget = 0;
+        if (TryScopeTargetForIdentifierNode(refs, body, argNode, argTarget)
+            && argTarget == ownerTargetPlusOne
+            && !TypeSpanFormsSafeBorrow(
+                stream,
+                callee.ParamTypeStartTokenAt((u64[0 2 ** 63 - 1])arg),
+                callee.ParamTypeEndTokenAt((u64[0 2 ** 63 - 1])arg)))
+        {
+            conflictToken = body.ExprTokenAt(argNode);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool StatementOverwritesScopeTarget(
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] statementPlusOne,
+    u32[0 max] ownerTargetPlusOne,
+    out u32[0 max] conflictToken)
+{
+    conflictToken = 0;
+    if (statementPlusOne == 0 || ownerTargetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(statementPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+    stack mut u64[0 2 ** 63 - 1] high = body.ExprNodeCount();
+    if ((u64[0 2 ** 63 - 1])(statement + 1) < body.Count())
+    {
+        high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])(low + 1); nodeIndex <= high; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Assign)
+        {
+            stack u32[0 max] root = AssignmentTargetRootNode(body, body.ExprLeftAt(node));
+            stack mut u32[0 max] target = 0;
+            if (TryScopeTargetForIdentifierNode(refs, body, root, target)
+                && target == ownerTargetPlusOne)
+            {
+                conflictToken = body.ExprTokenAt(root);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+internal fn bool SimpleAssignmentMovesScopeTarget(
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] assignmentNode,
+    u32[0 max] ownerTargetPlusOne,
+    bool ownerIsCopyable,
+    out u32[0 max] conflictToken)
+{
+    conflictToken = 0;
+    if (assignmentNode == 0
+        || ownerTargetPlusOne == 0
+        || ownerIsCopyable
+        || body.ExprKindAt(assignmentNode) != Compiler.Parsing.ExprKind.Assign
+        || stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(assignmentNode)) != TokenKind.Assign)
+    {
+        return false;
+    }
+
+    stack u32[0 max] targetNode = body.ExprLeftAt(assignmentNode);
+    stack mut u32[0 max] target = 0;
+    if (targetNode == 0
+        || body.ExprKindAt(targetNode) != Compiler.Parsing.ExprKind.Identifier
+        || !TryScopeTargetForIdentifierNode(refs, body, targetNode, target)
+        || FunctionScopeSymbolTypeFormsSafeBorrow(stream, scope, target))
+    {
+        return false;
+    }
+
+    stack u32[0 max] sourceNode = body.ExprRightAt(assignmentNode);
+    stack mut u32[0 max] sourceTarget = 0;
+    if (TryScopeTargetForIdentifierNode(refs, body, sourceNode, sourceTarget)
+        && sourceTarget == ownerTargetPlusOne
+        && !FunctionScopeSymbolTypeFormsSafeBorrow(stream, scope, sourceTarget))
+    {
+        conflictToken = body.ExprTokenAt(sourceNode);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool LocalInitializerMovesScopeTarget(
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statement,
+    u32[0 max] ownerTargetPlusOne,
+    bool ownerIsCopyable,
+    out u32[0 max] conflictToken)
+{
+    conflictToken = 0;
+    if (ownerTargetPlusOne == 0 || ownerIsCopyable)
+    {
+        return false;
+    }
+
+    stack StatementItem item = body.ItemAt(statement);
+    if (item.Kind != StatementKind.Local
+        || TypeSpanFormsSafeBorrow(stream, item.TypeStartToken, item.TypeEndToken))
+    {
+        return false;
+    }
+
+    stack u32[0 max] root = body.ExprRootAt(statement);
+    stack mut u32[0 max] sourceTarget = 0;
+    if (TryScopeTargetForIdentifierNode(refs, body, root, sourceTarget)
+        && sourceTarget == ownerTargetPlusOne
+        && !FunctionScopeSymbolTypeFormsSafeBorrow(stream, scope, sourceTarget))
+    {
+        conflictToken = body.ExprTokenAt(root);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool StatementMovesScopeTargetIntoAssignmentOrLocal(
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] statementPlusOne,
+    u32[0 max] ownerTargetPlusOne,
+    bool ownerIsCopyable,
+    out u32[0 max] conflictToken)
+{
+    conflictToken = 0;
+    if (statementPlusOne == 0 || ownerTargetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(statementPlusOne - 1);
+    if (LocalInitializerMovesScopeTarget(refs, scope, stream, body, statement, ownerTargetPlusOne, ownerIsCopyable, conflictToken))
+    {
+        return true;
+    }
+
+    stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+    stack mut u64[0 2 ** 63 - 1] high = body.ExprNodeCount();
+    if ((u64[0 2 ** 63 - 1])(statement + 1) < body.Count())
+    {
+        high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])(low + 1); nodeIndex <= high; nodeIndex += 1)
+    {
+        if (SimpleAssignmentMovesScopeTarget(
+            refs,
+            scope,
+            stream,
+            body,
+            (u32[0 max])nodeIndex,
+            ownerTargetPlusOne,
+            ownerIsCopyable,
+            conflictToken))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool StatementMovesScopeTargetIntoDirectCall(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] statementPlusOne,
+    u32[0 max] ownerTargetPlusOne,
+    bool ownerIsCopyable,
+    out u32[0 max] conflictToken)
+{
+    conflictToken = 0;
+    if (statementPlusOne == 0 || ownerTargetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(statementPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+    stack mut u64[0 2 ** 63 - 1] high = body.ExprNodeCount();
+    if ((u64[0 2 ** 63 - 1])(statement + 1) < body.Count())
+    {
+        high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])(low + 1); nodeIndex <= high; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (CallMovesScopeTarget(
+            table,
+            source,
+            refs,
+            stream,
+            body,
+            node,
+            ownerTargetPlusOne,
+            ownerIsCopyable,
+            conflictToken))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectStraightLineBorrowAliasConflictDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    u32[0 max] aliasTargetPlusOne,
+    u32[0 max] ownerTargetPlusOne,
+    u32[0 max] aliasStatementPlusOne,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u32[0 max] lastUse = LastUseStatementIndexPlusOneForScopeTarget(refs, body, aliasTargetPlusOne, aliasStatementPlusOne);
+    if (lastUse <= aliasStatementPlusOne)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack bool ownerIsCopyable = FunctionScopeSymbolTypeIsCopyable(decls, table, source, stream, facts, scope, ownerTargetPlusOne);
+    for willexit (stack mut u32[0 max] statement = (u32[0 max])(aliasStatementPlusOne + 1); statement < lastUse; statement = (u32[0 max])(statement + 1))
+    {
+        stack mut u32[0 max] conflictToken = 0;
+        if (StatementOverwritesScopeTarget(refs, body, statement, ownerTargetPlusOne, conflictToken))
+        {
+            switch (diags.Append(BindDiagnosticCode.BorrowLiveConflict, conflictToken))
+            {
+                case System.Memory.MemoryStatus.Err(var overwriteError):
+                    return System.Memory.MemoryStatus.Err(overwriteError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (StatementMovesScopeTargetIntoAssignmentOrLocal(
+            refs,
+            scope,
+            stream,
+            body,
+            statement,
+            ownerTargetPlusOne,
+            ownerIsCopyable,
+            conflictToken))
+        {
+            switch (diags.Append(BindDiagnosticCode.BorrowLiveConflict, conflictToken))
+            {
+                case System.Memory.MemoryStatus.Err(var assignmentMoveError):
+                    return System.Memory.MemoryStatus.Err(assignmentMoveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (StatementMovesScopeTargetIntoDirectCall(
+            table,
+            source,
+            refs,
+            stream,
+            body,
+            statement,
+            ownerTargetPlusOne,
+            ownerIsCopyable,
+            conflictToken))
+        {
+            switch (diags.Append(BindDiagnosticCode.BorrowLiveConflict, conflictToken))
+            {
+                case System.Memory.MemoryStatus.Err(var moveError):
+                    return System.Memory.MemoryStatus.Err(moveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectStraightLineBorrowLivenessDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        stack u32[0 max] root = body.ExprRootAt(statement);
+        stack u32[0 max] aliasStatementPlusOne = (u32[0 max])(statement + 1);
+        if (root != 0
+            && item.Kind == StatementKind.Local
+            && TypeSpanFormsSafeBorrow(stream, item.TypeStartToken, item.TypeEndToken))
+        {
+            stack mut u32[0 max] ownerTarget = 0;
+            stack u32[0 max] aliasTarget = SymbolIndexPlusOneForStatement(scope, (u32[0 max])statement);
+            if (aliasTarget != 0
+                && TryScopeTargetForIdentifierNode(refs, body, root, ownerTarget)
+                && ownerTarget != aliasTarget)
+            {
+                switch (CollectStraightLineBorrowAliasConflictDiagnostics(
+                    decls,
+                    table,
+                    source,
+                    refs,
+                    scope,
+                    stream,
+                    body,
+                    facts,
+                    aliasTarget,
+                    ownerTarget,
+                    aliasStatementPlusOne,
+                    diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var localError):
+                        return System.Memory.MemoryStatus.Err(localError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else if (root != 0 && body.ExprKindAt(root) == Compiler.Parsing.ExprKind.Assign)
+        {
+            stack u32[0 max] aliasRoot = AssignmentTargetRootNode(body, body.ExprLeftAt(root));
+            stack mut u32[0 max] aliasTarget = 0;
+            stack mut u32[0 max] ownerTarget = 0;
+            if (TryScopeTargetForIdentifierNode(refs, body, aliasRoot, aliasTarget)
+                && FunctionScopeSymbolTypeFormsSafeBorrow(stream, scope, aliasTarget)
+                && TryScopeTargetForIdentifierNode(refs, body, body.ExprRightAt(root), ownerTarget)
+                && ownerTarget != aliasTarget)
+            {
+                switch (CollectStraightLineBorrowAliasConflictDiagnostics(
+                    decls,
+                    table,
+                    source,
+                    refs,
+                    scope,
+                    stream,
+                    body,
+                    facts,
+                    aliasTarget,
+                    ownerTarget,
+                    aliasStatementPlusOne,
+                    diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var assignmentError):
+                        return System.Memory.MemoryStatus.Err(assignmentError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

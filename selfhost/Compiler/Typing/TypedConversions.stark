@@ -1,0 +1,1708 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallMemberDependencies
+import Compiler.Typing.TypedCalls
+import Compiler.Typing.TypedFields
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifiers
+import Compiler.Typing.TypedIndexing
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedMembers
+import Compiler.Typing.TypedSignatures
+import System.Memory
+import System.Text
+module Compiler.Typing.TypedConversions
+
+public enum TypedConversionContext
+{
+    GlobalInitializer,
+    FunctionBody,
+    Unknown,
+}
+
+public enum TypedConversionOperandKind
+{
+    Identifier,
+    Member,
+    Call,
+    Index,
+    Literal,
+    New,
+    Conversion,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagTargetResolved()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagOperandResolved()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagExplicit()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagNumeric()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagPointer()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagText()
+{
+    return 32;
+}
+
+internal inline finite law u32[0 max] TypedConversionFlagArrayToSlice()
+{
+    return 64;
+}
+
+internal inline finite law bool TypedConversionFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+public struct TypedConversionExpressionTable
+{
+    internal dynamic TypedConversionContext Contexts;
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] StatementIndices;
+    internal dynamic u32[0 max] ConversionNodes;
+    internal dynamic u32[0 max] OpenParenTokens;
+    internal dynamic u32[0 max] OperandNodes;
+    internal dynamic TypedConversionOperandKind OperandKinds;
+    internal dynamic TypedSignatureTypeKind TargetTypeKinds;
+    internal dynamic u32[0 max] TargetTypeHeadTokens;
+    internal dynamic u32[0 max] TargetTypePrimaryTokens;
+    internal dynamic u32[0 max] TargetTypeStartTokens;
+    internal dynamic u32[0 max] TargetTypeEndTokens;
+    internal dynamic u32[0 max] TargetRangeStartTokens;
+    internal dynamic u32[0 max] TargetRangeEndTokens;
+    internal dynamic u32[0 max] TargetElementCountStartTokens;
+    internal dynamic u32[0 max] TargetElementCountEndTokens;
+    internal dynamic u32[0 max] TargetBitWidths;
+    internal dynamic u32[0 max] TargetTypeArgumentCounts;
+    internal dynamic u32[0 max] TargetComptimeArgumentCounts;
+    internal dynamic u32[0 max] TargetTypeFlags;
+    internal dynamic TypedSignatureTypeKind OperandTypeKinds;
+    internal dynamic u32[0 max] OperandTypeHeadTokens;
+    internal dynamic u32[0 max] OperandTypePrimaryTokens;
+    internal dynamic u32[0 max] OperandTypeStartTokens;
+    internal dynamic u32[0 max] OperandTypeEndTokens;
+    internal dynamic u32[0 max] OperandRangeStartTokens;
+    internal dynamic u32[0 max] OperandRangeEndTokens;
+    internal dynamic u32[0 max] OperandElementCountStartTokens;
+    internal dynamic u32[0 max] OperandElementCountEndTokens;
+    internal dynamic u32[0 max] OperandBitWidths;
+    internal dynamic u32[0 max] OperandTypeArgumentCounts;
+    internal dynamic u32[0 max] OperandComptimeArgumentCounts;
+    internal dynamic u32[0 max] OperandTypeFlags;
+    internal dynamic u32[0 max] ConversionFlags;
+
+    TypedConversionExpressionTable()
+    {
+        self.Contexts = new();
+        self.OwnerDeclarationIndices = new();
+        self.OwnerNameTokens = new();
+        self.FunctionNameTokens = new();
+        self.StatementIndices = new();
+        self.ConversionNodes = new();
+        self.OpenParenTokens = new();
+        self.OperandNodes = new();
+        self.OperandKinds = new();
+        self.TargetTypeKinds = new();
+        self.TargetTypeHeadTokens = new();
+        self.TargetTypePrimaryTokens = new();
+        self.TargetTypeStartTokens = new();
+        self.TargetTypeEndTokens = new();
+        self.TargetRangeStartTokens = new();
+        self.TargetRangeEndTokens = new();
+        self.TargetElementCountStartTokens = new();
+        self.TargetElementCountEndTokens = new();
+        self.TargetBitWidths = new();
+        self.TargetTypeArgumentCounts = new();
+        self.TargetComptimeArgumentCounts = new();
+        self.TargetTypeFlags = new();
+        self.OperandTypeKinds = new();
+        self.OperandTypeHeadTokens = new();
+        self.OperandTypePrimaryTokens = new();
+        self.OperandTypeStartTokens = new();
+        self.OperandTypeEndTokens = new();
+        self.OperandRangeStartTokens = new();
+        self.OperandRangeEndTokens = new();
+        self.OperandElementCountStartTokens = new();
+        self.OperandElementCountEndTokens = new();
+        self.OperandBitWidths = new();
+        self.OperandTypeArgumentCounts = new();
+        self.OperandComptimeArgumentCounts = new();
+        self.OperandTypeFlags = new();
+        self.ConversionFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedConversionExpressionTable self)
+    {
+        return self.ConversionNodes.Length;
+    }
+
+    public law TypedConversionContext ContextAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedConversionContext context = TypedConversionContext.Unknown;
+        if (index < self.Contexts.Length)
+        {
+            context = self.Contexts[index];
+        }
+
+        return context;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StatementIndexPlusOneAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.StatementIndices.Length)
+        {
+            value = self.StatementIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ConversionNodeAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.ConversionNodes.Length)
+        {
+            node = self.ConversionNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] OperandNodeAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.OperandNodes.Length)
+        {
+            node = self.OperandNodes[index];
+        }
+
+        return node;
+    }
+
+    public law TypedConversionOperandKind OperandKindAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedConversionOperandKind kind = TypedConversionOperandKind.Unknown;
+        if (index < self.OperandKinds.Length)
+        {
+            kind = self.OperandKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedSignatureTypeKind TargetTypeKindAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.TargetTypeKinds.Length)
+        {
+            kind = self.TargetTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TargetTypeHeadTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypeHeadTokens.Length)
+        {
+            token = self.TargetTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetTypePrimaryTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypePrimaryTokens.Length)
+        {
+            token = self.TargetTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetTypeStartTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypeStartTokens.Length)
+        {
+            token = self.TargetTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetTypeEndTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetTypeEndTokens.Length)
+        {
+            token = self.TargetTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetRangeStartTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetRangeStartTokens.Length)
+        {
+            token = self.TargetRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetRangeEndTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetRangeEndTokens.Length)
+        {
+            token = self.TargetRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetElementCountStartTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetElementCountStartTokens.Length)
+        {
+            token = self.TargetElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetElementCountEndTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetElementCountEndTokens.Length)
+        {
+            token = self.TargetElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetBitWidthAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.TargetBitWidths.Length)
+        {
+            width = self.TargetBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] TargetTypeArgumentCountAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TargetTypeArgumentCounts.Length)
+        {
+            count = self.TargetTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TargetComptimeArgumentCountAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TargetComptimeArgumentCounts.Length)
+        {
+            count = self.TargetComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TargetTypeFlagsAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.TargetTypeFlags.Length)
+        {
+            flags = self.TargetTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law TypedSignatureTypeKind OperandTypeKindAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.OperandTypeKinds.Length)
+        {
+            kind = self.OperandTypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] OperandTypeHeadTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandTypeHeadTokens.Length)
+        {
+            token = self.OperandTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandTypePrimaryTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandTypePrimaryTokens.Length)
+        {
+            token = self.OperandTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandTypeStartTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandTypeStartTokens.Length)
+        {
+            token = self.OperandTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandTypeEndTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandTypeEndTokens.Length)
+        {
+            token = self.OperandTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandRangeStartTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandRangeStartTokens.Length)
+        {
+            token = self.OperandRangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandRangeEndTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandRangeEndTokens.Length)
+        {
+            token = self.OperandRangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandElementCountStartTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandElementCountStartTokens.Length)
+        {
+            token = self.OperandElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandElementCountEndTokenAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OperandElementCountEndTokens.Length)
+        {
+            token = self.OperandElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OperandBitWidthAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.OperandBitWidths.Length)
+        {
+            width = self.OperandBitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] OperandTypeArgumentCountAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.OperandTypeArgumentCounts.Length)
+        {
+            count = self.OperandTypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] OperandComptimeArgumentCountAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.OperandComptimeArgumentCounts.Length)
+        {
+            count = self.OperandComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] OperandTypeFlagsAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.OperandTypeFlags.Length)
+        {
+            flags = self.OperandTypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u32[0 max] ConversionFlagsAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.ConversionFlags.Length)
+        {
+            flags = self.ConversionFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool TargetResolvedAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagTargetResolved());
+    }
+
+    public law bool OperandResolvedAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagOperandResolved());
+    }
+
+    public law bool IsExplicitAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagExplicit());
+    }
+
+    public law bool IsNumericConversionAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagNumeric());
+    }
+
+    public law bool IsPointerConversionAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagPointer());
+    }
+
+    public law bool IsTextConversionAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagText());
+    }
+
+    public law bool IsArrayToSliceConversionAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedConversionFlagPresent(self.ConversionFlagsAt(index), TypedConversionFlagArrayToSlice());
+    }
+
+    public law bool TargetIsIntegerSignedAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool TargetIsIntegerUnsignedAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool TargetHasIntegerRangeAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool TargetIsRawMutablePointerAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagRawMutablePointer());
+    }
+
+    public law bool TargetIsUnicodeTextAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TargetTypeFlagsAt(index), TypedSignatureTypeFlagUnicodeText());
+    }
+
+    public law bool OperandIsIntegerSignedAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.OperandTypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool OperandIsIntegerUnsignedAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.OperandTypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool OperandHasIntegerRangeAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.OperandTypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool OperandIsRawMutablePointerAt(borrow TypedConversionExpressionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.OperandTypeFlagsAt(index), TypedSignatureTypeFlagRawMutablePointer());
+    }
+
+    internal fn System.Memory.MemoryStatus AppendConversion(
+        mut borrow TypedConversionExpressionTable self,
+        TypedConversionContext context,
+        u32[0 max] ownerDeclarationIndex,
+        u32[0 max] ownerNameToken,
+        u32[0 max] functionNameToken,
+        u32[0 max] statementIndexPlusOne,
+        u32[0 max] conversionNode,
+        u32[0 max] openParenToken,
+        u32[0 max] operandNode,
+        TypedConversionOperandKind operandKind,
+        TypedSignatureTypeKind targetTypeKind,
+        u32[0 max] targetTypeHeadToken,
+        u32[0 max] targetTypePrimaryToken,
+        u32[0 max] targetTypeStartToken,
+        u32[0 max] targetTypeEndToken,
+        u32[0 max] targetRangeStartToken,
+        u32[0 max] targetRangeEndToken,
+        u32[0 max] targetElementCountStartToken,
+        u32[0 max] targetElementCountEndToken,
+        u32[0 max] targetBitWidth,
+        u32[0 max] targetTypeArgumentCount,
+        u32[0 max] targetComptimeArgumentCount,
+        u32[0 max] targetTypeFlags,
+        TypedSignatureTypeKind operandTypeKind,
+        u32[0 max] operandTypeHeadToken,
+        u32[0 max] operandTypePrimaryToken,
+        u32[0 max] operandTypeStartToken,
+        u32[0 max] operandTypeEndToken,
+        u32[0 max] operandRangeStartToken,
+        u32[0 max] operandRangeEndToken,
+        u32[0 max] operandElementCountStartToken,
+        u32[0 max] operandElementCountEndToken,
+        u32[0 max] operandBitWidth,
+        u32[0 max] operandTypeArgumentCount,
+        u32[0 max] operandComptimeArgumentCount,
+        u32[0 max] operandTypeFlags,
+        u32[0 max] conversionFlags)
+    {
+        if (!self.Contexts.TryReserve(1)
+            || !self.OwnerDeclarationIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.FunctionNameTokens.TryReserve(1)
+            || !self.StatementIndices.TryReserve(1)
+            || !self.ConversionNodes.TryReserve(1)
+            || !self.OpenParenTokens.TryReserve(1)
+            || !self.OperandNodes.TryReserve(1)
+            || !self.OperandKinds.TryReserve(1)
+            || !self.TargetTypeKinds.TryReserve(1)
+            || !self.TargetTypeHeadTokens.TryReserve(1)
+            || !self.TargetTypePrimaryTokens.TryReserve(1)
+            || !self.TargetTypeStartTokens.TryReserve(1)
+            || !self.TargetTypeEndTokens.TryReserve(1)
+            || !self.TargetRangeStartTokens.TryReserve(1)
+            || !self.TargetRangeEndTokens.TryReserve(1)
+            || !self.TargetElementCountStartTokens.TryReserve(1)
+            || !self.TargetElementCountEndTokens.TryReserve(1)
+            || !self.TargetBitWidths.TryReserve(1)
+            || !self.TargetTypeArgumentCounts.TryReserve(1)
+            || !self.TargetComptimeArgumentCounts.TryReserve(1)
+            || !self.TargetTypeFlags.TryReserve(1)
+            || !self.OperandTypeKinds.TryReserve(1)
+            || !self.OperandTypeHeadTokens.TryReserve(1)
+            || !self.OperandTypePrimaryTokens.TryReserve(1)
+            || !self.OperandTypeStartTokens.TryReserve(1)
+            || !self.OperandTypeEndTokens.TryReserve(1)
+            || !self.OperandRangeStartTokens.TryReserve(1)
+            || !self.OperandRangeEndTokens.TryReserve(1)
+            || !self.OperandElementCountStartTokens.TryReserve(1)
+            || !self.OperandElementCountEndTokens.TryReserve(1)
+            || !self.OperandBitWidths.TryReserve(1)
+            || !self.OperandTypeArgumentCounts.TryReserve(1)
+            || !self.OperandComptimeArgumentCounts.TryReserve(1)
+            || !self.OperandTypeFlags.TryReserve(1)
+            || !self.ConversionFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Contexts[self.Contexts.Length] = context;
+        init self.OwnerDeclarationIndices[self.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.FunctionNameTokens[self.FunctionNameTokens.Length] = functionNameToken;
+        init self.StatementIndices[self.StatementIndices.Length] = statementIndexPlusOne;
+        init self.ConversionNodes[self.ConversionNodes.Length] = conversionNode;
+        init self.OpenParenTokens[self.OpenParenTokens.Length] = openParenToken;
+        init self.OperandNodes[self.OperandNodes.Length] = operandNode;
+        init self.OperandKinds[self.OperandKinds.Length] = operandKind;
+        init self.TargetTypeKinds[self.TargetTypeKinds.Length] = targetTypeKind;
+        init self.TargetTypeHeadTokens[self.TargetTypeHeadTokens.Length] = targetTypeHeadToken;
+        init self.TargetTypePrimaryTokens[self.TargetTypePrimaryTokens.Length] = targetTypePrimaryToken;
+        init self.TargetTypeStartTokens[self.TargetTypeStartTokens.Length] = targetTypeStartToken;
+        init self.TargetTypeEndTokens[self.TargetTypeEndTokens.Length] = targetTypeEndToken;
+        init self.TargetRangeStartTokens[self.TargetRangeStartTokens.Length] = targetRangeStartToken;
+        init self.TargetRangeEndTokens[self.TargetRangeEndTokens.Length] = targetRangeEndToken;
+        init self.TargetElementCountStartTokens[self.TargetElementCountStartTokens.Length] = targetElementCountStartToken;
+        init self.TargetElementCountEndTokens[self.TargetElementCountEndTokens.Length] = targetElementCountEndToken;
+        init self.TargetBitWidths[self.TargetBitWidths.Length] = targetBitWidth;
+        init self.TargetTypeArgumentCounts[self.TargetTypeArgumentCounts.Length] = targetTypeArgumentCount;
+        init self.TargetComptimeArgumentCounts[self.TargetComptimeArgumentCounts.Length] = targetComptimeArgumentCount;
+        init self.TargetTypeFlags[self.TargetTypeFlags.Length] = targetTypeFlags;
+        init self.OperandTypeKinds[self.OperandTypeKinds.Length] = operandTypeKind;
+        init self.OperandTypeHeadTokens[self.OperandTypeHeadTokens.Length] = operandTypeHeadToken;
+        init self.OperandTypePrimaryTokens[self.OperandTypePrimaryTokens.Length] = operandTypePrimaryToken;
+        init self.OperandTypeStartTokens[self.OperandTypeStartTokens.Length] = operandTypeStartToken;
+        init self.OperandTypeEndTokens[self.OperandTypeEndTokens.Length] = operandTypeEndToken;
+        init self.OperandRangeStartTokens[self.OperandRangeStartTokens.Length] = operandRangeStartToken;
+        init self.OperandRangeEndTokens[self.OperandRangeEndTokens.Length] = operandRangeEndToken;
+        init self.OperandElementCountStartTokens[self.OperandElementCountStartTokens.Length] = operandElementCountStartToken;
+        init self.OperandElementCountEndTokens[self.OperandElementCountEndTokens.Length] = operandElementCountEndToken;
+        init self.OperandBitWidths[self.OperandBitWidths.Length] = operandBitWidth;
+        init self.OperandTypeArgumentCounts[self.OperandTypeArgumentCounts.Length] = operandTypeArgumentCount;
+        init self.OperandComptimeArgumentCounts[self.OperandComptimeArgumentCounts.Length] = operandComptimeArgumentCount;
+        init self.OperandTypeFlags[self.OperandTypeFlags.Length] = operandTypeFlags;
+        init self.ConversionFlags[self.ConversionFlags.Length] = conversionFlags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law TypedIdentifierContext TypedConversionIdentifierContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedIdentifierContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedIdentifierContext.FunctionBody;
+    }
+
+    return TypedIdentifierContext.Unknown;
+}
+
+internal finite law TypedLiteralContext TypedConversionLiteralContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedLiteralContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedLiteralContext.FunctionBody;
+    }
+
+    return TypedLiteralContext.Unknown;
+}
+
+internal finite law TypedMemberContext TypedConversionMemberContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedMemberContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedMemberContext.FunctionBody;
+    }
+
+    return TypedMemberContext.Unknown;
+}
+
+internal finite law TypedIndexContext TypedConversionIndexContext(TypedConversionContext context)
+{
+    if (context == TypedConversionContext.GlobalInitializer)
+    {
+        return TypedIndexContext.GlobalInitializer;
+    }
+
+    if (context == TypedConversionContext.FunctionBody)
+    {
+        return TypedIndexContext.FunctionBody;
+    }
+
+    return TypedIndexContext.Unknown;
+}
+
+internal fn u32[0 max] TypedConversionExpressionIndexForNode(
+    borrow TypedConversionExpressionTable table,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && table.ContextAt(index) == context
+            && table.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && table.OwnerNameTokenAt(index) == ownerNameToken
+            && table.FunctionNameTokenAt(index) == functionNameToken
+            && table.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && table.ConversionNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedConversionLiteralIndexForNode(
+    borrow TypedLiteralExpressionTable literals,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] node)
+{
+    stack TypedLiteralContext literalContext = TypedConversionLiteralContext(context);
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && literals.ContextAt(index) == literalContext
+            && literals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && literals.OwnerNameTokenAt(index) == ownerNameToken
+            && literals.FunctionNameTokenAt(index) == functionNameToken
+            && literals.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && literals.ExprNodeAt(index) == node)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn void TypedConversionTargetFactsFromConversion(
+    borrow TypedConversionExpressionTable conversions,
+    u32[0 max] conversionIndexPlusOne,
+    mut borrow TypedMemberTypeFacts facts)
+{
+    if (conversionIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(conversionIndexPlusOne - 1);
+    facts.ReceiverKind = TypedMemberReceiverKind.Value;
+    facts.TypeKind = conversions.TargetTypeKindAt(index);
+    facts.TypeHeadToken = conversions.TargetTypeHeadTokenAt(index);
+    facts.TypePrimaryToken = conversions.TargetTypePrimaryTokenAt(index);
+    facts.TypeStartToken = conversions.TargetTypeStartTokenAt(index);
+    facts.TypeEndToken = conversions.TargetTypeEndTokenAt(index);
+    facts.RangeStartToken = conversions.TargetRangeStartTokenAt(index);
+    facts.RangeEndToken = conversions.TargetRangeEndTokenAt(index);
+    facts.ElementCountStartToken = conversions.TargetElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = conversions.TargetElementCountEndTokenAt(index);
+    facts.BitWidth = conversions.TargetBitWidthAt(index);
+    facts.TypeArgumentCount = conversions.TargetTypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = conversions.TargetComptimeArgumentCountAt(index);
+    facts.TypeFlags = conversions.TargetTypeFlagsAt(index);
+}
+
+internal finite law bool TypedConversionTypeKindIsNumeric(TypedSignatureTypeKind kind)
+{
+    return kind == TypedSignatureTypeKind.Integer || kind == TypedSignatureTypeKind.Float;
+}
+
+internal fn u32[0 max] TypedConversionFlagsFromFacts(borrow TypedMemberTypeFacts targetFacts, borrow TypedMemberTypeFacts operandFacts)
+{
+    stack mut u32[0 max] flags = TypedConversionFlagExplicit();
+    if (targetFacts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedConversionFlagTargetResolved();
+    }
+
+    if (operandFacts.TypeKind != TypedSignatureTypeKind.Unknown)
+    {
+        flags = flags | TypedConversionFlagOperandResolved();
+    }
+
+    if (TypedConversionTypeKindIsNumeric(targetFacts.TypeKind)
+        && TypedConversionTypeKindIsNumeric(operandFacts.TypeKind))
+    {
+        flags = flags | TypedConversionFlagNumeric();
+    }
+
+    if ((targetFacts.TypeKind == TypedSignatureTypeKind.RawPointer
+            && (operandFacts.TypeKind == TypedSignatureTypeKind.RawPointer || operandFacts.TypeKind == TypedSignatureTypeKind.Integer))
+        || (operandFacts.TypeKind == TypedSignatureTypeKind.RawPointer
+            && (targetFacts.TypeKind == TypedSignatureTypeKind.RawPointer || targetFacts.TypeKind == TypedSignatureTypeKind.Integer)))
+    {
+        flags = flags | TypedConversionFlagPointer();
+    }
+
+    if (targetFacts.TypeKind == TypedSignatureTypeKind.Text && operandFacts.TypeKind == TypedSignatureTypeKind.Text)
+    {
+        flags = flags | TypedConversionFlagText();
+    }
+
+    if (targetFacts.TypeKind == TypedSignatureTypeKind.Slice && operandFacts.TypeKind == TypedSignatureTypeKind.FixedArray)
+    {
+        flags = flags | TypedConversionFlagArrayToSlice();
+    }
+
+    return flags;
+}
+
+internal fn void TypedConversionOperandFactsFromTreeNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow ExprTree tree,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] operandNode,
+    mut borrow TypedMemberTypeFacts operandFacts,
+    out TypedConversionOperandKind operandKind)
+{
+    operandKind = TypedConversionOperandKind.Unknown;
+    stack ExprKind kind = tree.NodeKindAt(operandNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        operandKind = TypedConversionOperandKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        operandKind = TypedConversionOperandKind.Member;
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        operandKind = TypedConversionOperandKind.Call;
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        operandKind = TypedConversionOperandKind.Index;
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedConversionIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (TypedLiteralExprKindIsLiteral(kind))
+    {
+        operandKind = TypedConversionOperandKind.Literal;
+        stack u32[0 max] literalIndexPlusOne = TypedConversionLiteralIndexForNode(
+            literals,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromLiteral(literals, literalIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        operandKind = TypedConversionOperandKind.New;
+        stack u32[0 max] typeNode = tree.LeftAt(operandNode);
+        if (typeNode != 0 && tree.NodeKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, tree.TokenAt(typeNode), operandFacts);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        operandKind = TypedConversionOperandKind.Conversion;
+        stack u32[0 max] conversionIndexPlusOne = TypedConversionExpressionIndexForNode(
+            conversions,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedConversionTargetFactsFromConversion(conversions, conversionIndexPlusOne, operandFacts);
+    }
+}
+
+internal fn void TypedConversionOperandFactsFromBodyNode(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    borrow TypedConversionExpressionTable conversions,
+    borrow StatementList body,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] operandNode,
+    mut borrow TypedMemberTypeFacts operandFacts,
+    out TypedConversionOperandKind operandKind)
+{
+    operandKind = TypedConversionOperandKind.Unknown;
+    stack ExprKind kind = body.ExprKindAt(operandNode);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        operandKind = TypedConversionOperandKind.Identifier;
+        stack u32[0 max] identifierIndexPlusOne = TypedMemberIdentifierIndexForNode(
+            identifiers,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromIdentifier(source, stream, declarations, identifiers, identifierIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        operandKind = TypedConversionOperandKind.Member;
+        stack u32[0 max] memberIndexPlusOne = TypedMemberExpressionIndexForNode(
+            members,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromMember(source, stream, declarations, members, memberIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        operandKind = TypedConversionOperandKind.Call;
+        stack u32[0 max] callIndexPlusOne = TypedMemberCallIndexForNode(
+            calls,
+            TypedConversionMemberContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromCall(source, stream, declarations, calls, callIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Index)
+    {
+        operandKind = TypedConversionOperandKind.Index;
+        stack u32[0 max] indexIndexPlusOne = TypedIndexExpressionIndexForNode(
+            indexes,
+            TypedConversionIndexContext(context),
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedIndexFactsFromIndex(source, stream, declarations, indexes, indexIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (TypedLiteralExprKindIsLiteral(kind))
+    {
+        operandKind = TypedConversionOperandKind.Literal;
+        stack u32[0 max] literalIndexPlusOne = TypedConversionLiteralIndexForNode(
+            literals,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedMemberFactsFromLiteral(literals, literalIndexPlusOne, operandFacts);
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        operandKind = TypedConversionOperandKind.New;
+        stack u32[0 max] typeNode = body.ExprLeftAt(operandNode);
+        if (typeNode != 0 && body.ExprKindAt(typeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            TypedMemberFactsFromNewTypeNode(source, stream, declarations, body.ExprTokenAt(typeNode), operandFacts);
+        }
+
+        return;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        operandKind = TypedConversionOperandKind.Conversion;
+        stack u32[0 max] conversionIndexPlusOne = TypedConversionExpressionIndexForNode(
+            conversions,
+            context,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            statementIndexPlusOne,
+            operandNode);
+        TypedConversionTargetFactsFromConversion(conversions, conversionIndexPlusOne, operandFacts);
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionExpression(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] conversionNode,
+    u32[0 max] openParenToken,
+    u32[0 max] targetPrimaryToken,
+    u32[0 max] targetCloseToken,
+    u32[0 max] operandNode,
+    borrow ExprTree tree)
+{
+    stack mut TypedMemberTypeFacts targetFacts = new();
+    TypedMemberFactsFromTypeSpan(
+        source,
+        stream,
+        declarations,
+        (u32[0 max])(openParenToken + 1),
+        targetCloseToken,
+        targetPrimaryToken,
+        0,
+        0,
+        targetFacts);
+
+    stack mut TypedMemberTypeFacts operandFacts = new();
+    stack mut TypedConversionOperandKind operandKind = TypedConversionOperandKind.Unknown;
+    TypedConversionOperandFactsFromTreeNode(
+        source,
+        stream,
+        declarations,
+        literals,
+        identifiers,
+        calls,
+        members,
+        indexes,
+        table,
+        tree,
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        operandNode,
+        operandFacts,
+        operandKind);
+
+    stack u32[0 max] flags = TypedConversionFlagsFromFacts(targetFacts, operandFacts);
+    return table.AppendConversion(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        conversionNode,
+        openParenToken,
+        operandNode,
+        operandKind,
+        targetFacts.TypeKind,
+        targetFacts.TypeHeadToken,
+        targetFacts.TypePrimaryToken,
+        targetFacts.TypeStartToken,
+        targetFacts.TypeEndToken,
+        targetFacts.RangeStartToken,
+        targetFacts.RangeEndToken,
+        targetFacts.ElementCountStartToken,
+        targetFacts.ElementCountEndToken,
+        targetFacts.BitWidth,
+        targetFacts.TypeArgumentCount,
+        targetFacts.ComptimeArgumentCount,
+        targetFacts.TypeFlags,
+        operandFacts.TypeKind,
+        operandFacts.TypeHeadToken,
+        operandFacts.TypePrimaryToken,
+        operandFacts.TypeStartToken,
+        operandFacts.TypeEndToken,
+        operandFacts.RangeStartToken,
+        operandFacts.RangeEndToken,
+        operandFacts.ElementCountStartToken,
+        operandFacts.ElementCountEndToken,
+        operandFacts.BitWidth,
+        operandFacts.TypeArgumentCount,
+        operandFacts.ComptimeArgumentCount,
+        operandFacts.TypeFlags,
+        flags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionBodyExpression(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    TypedConversionContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] conversionNode,
+    u32[0 max] openParenToken,
+    u32[0 max] targetPrimaryToken,
+    u32[0 max] targetCloseToken,
+    u32[0 max] operandNode,
+    borrow StatementList body)
+{
+    stack mut TypedMemberTypeFacts targetFacts = new();
+    TypedMemberFactsFromTypeSpan(
+        source,
+        stream,
+        declarations,
+        (u32[0 max])(openParenToken + 1),
+        targetCloseToken,
+        targetPrimaryToken,
+        0,
+        0,
+        targetFacts);
+
+    stack mut TypedMemberTypeFacts operandFacts = new();
+    stack mut TypedConversionOperandKind operandKind = TypedConversionOperandKind.Unknown;
+    TypedConversionOperandFactsFromBodyNode(
+        source,
+        stream,
+        declarations,
+        literals,
+        identifiers,
+        calls,
+        members,
+        indexes,
+        table,
+        body,
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        operandNode,
+        operandFacts,
+        operandKind);
+
+    stack u32[0 max] flags = TypedConversionFlagsFromFacts(targetFacts, operandFacts);
+    return table.AppendConversion(
+        context,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        functionNameToken,
+        statementIndexPlusOne,
+        conversionNode,
+        openParenToken,
+        operandNode,
+        operandKind,
+        targetFacts.TypeKind,
+        targetFacts.TypeHeadToken,
+        targetFacts.TypePrimaryToken,
+        targetFacts.TypeStartToken,
+        targetFacts.TypeEndToken,
+        targetFacts.RangeStartToken,
+        targetFacts.RangeEndToken,
+        targetFacts.ElementCountStartToken,
+        targetFacts.ElementCountEndToken,
+        targetFacts.BitWidth,
+        targetFacts.TypeArgumentCount,
+        targetFacts.ComptimeArgumentCount,
+        targetFacts.TypeFlags,
+        operandFacts.TypeKind,
+        operandFacts.TypeHeadToken,
+        operandFacts.TypePrimaryToken,
+        operandFacts.TypeStartToken,
+        operandFacts.TypeEndToken,
+        operandFacts.RangeStartToken,
+        operandFacts.RangeEndToken,
+        operandFacts.ElementCountStartToken,
+        operandFacts.ElementCountEndToken,
+        operandFacts.BitWidth,
+        operandFacts.TypeArgumentCount,
+        operandFacts.ComptimeArgumentCount,
+        operandFacts.TypeFlags,
+        flags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionsFromGlobalDeclaration(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    DeclItem item,
+    u32[0 max] declarationIndex)
+{
+    if (!TypedGlobalDeclarationKindIsGlobal(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] assignToken = TypedGlobalFindAssignToken(stream, item);
+    if (assignToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] ownerNameToken = TypedGlobalFindNameToken(stream, item);
+    stack ExprTree tree = ParseExpression(stream, (u32[0 max])(assignToken + 1));
+    stack u64[0 2 ** 63 - 1] count = tree.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= count; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (tree.NodeKindAt(node) == Compiler.Parsing.ExprKind.Conversion)
+        {
+            switch (AppendTypedConversionExpression(
+                table,
+                source,
+                stream,
+                declarations,
+                literals,
+                identifiers,
+                calls,
+                members,
+                indexes,
+                TypedConversionContext.GlobalInitializer,
+                declarationIndex,
+                ownerNameToken,
+                0,
+                0,
+                node,
+                tree.TokenAt(node),
+                tree.LeftAt(node),
+                tree.AuxAt(node),
+                tree.RightAt(node),
+                tree))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionsFromBodyStatement(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] statementIndex)
+{
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    stack u32[0 max] start = (u32[0 max])(body.ExprStartAt(statementIndex) + 1);
+    stack mut u32[0 max] end = (u32[0 max])body.ExprNodeCount();
+    if (statementIndex + 1 < statementCount)
+    {
+        end = body.ExprStartAt((u64[0 2 ** 63 - 1])(statementIndex + 1));
+    }
+
+    if (start > end)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] statementIndexPlusOne = (u32[0 max])(statementIndex + 1);
+    stack u64[0 2 ** 63 - 1] endIndex = (u64[0 2 ** 63 - 1])end;
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])start; nodeIndex <= endIndex; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Conversion)
+        {
+            switch (AppendTypedConversionBodyExpression(
+                table,
+                source,
+                stream,
+                declarations,
+                literals,
+                identifiers,
+                calls,
+                members,
+                indexes,
+                TypedConversionContext.FunctionBody,
+                ownerDeclarationIndex,
+                ownerNameToken,
+                functionNameToken,
+                statementIndexPlusOne,
+                node,
+                body.ExprTokenAt(node),
+                body.ExprLeftAt(node),
+                body.ExprAuxAt(node),
+                body.ExprRightAt(node),
+                body))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionsFromBody(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    borrow StatementList body)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedConversionsFromBodyStatement(
+            table,
+            source,
+            stream,
+            declarations,
+            literals,
+            identifiers,
+            calls,
+            members,
+            indexes,
+            ownerDeclarationIndex,
+            ownerNameToken,
+            functionNameToken,
+            body,
+            index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionsForFunction(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] fnKeyword)
+{
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack mut StatementList body = new();
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<StatementList>.Ok(var parsedBody):
+            body = parsedBody;
+    }
+
+    return AppendTypedConversionsFromBody(
+        table,
+        source,
+        stream,
+        declarations,
+        literals,
+        identifiers,
+        calls,
+        members,
+        indexes,
+        ownerDeclarationIndex,
+        ownerNameToken,
+        signature.Name(),
+        body);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedConversionsForMemberFunctions(
+    mut borrow TypedConversionExpressionTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes,
+    DeclItem item,
+    u32[0 max] ownerDeclarationIndex)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedConversionsForFunction(table, source, stream, declarations, literals, identifiers, calls, members, indexes, ownerDeclarationIndex, item.NameToken, scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn ParseResult<TypedConversionExpressionTable> BuildTypedConversionExpressionsFromDependencies(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList declarations,
+    borrow TypedLiteralExpressionTable literals,
+    borrow TypedIdentifierExpressionTable identifiers,
+    borrow TypedCallExpressionTable calls,
+    borrow TypedMemberExpressionTable members,
+    borrow TypedIndexExpressionTable indexes)
+{
+    stack mut TypedConversionExpressionTable table = new();
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        switch (AppendTypedConversionsFromGlobalDeclaration(
+            table,
+            source,
+            stream,
+            declarations,
+            literals,
+            identifiers,
+            calls,
+            members,
+            indexes,
+            item,
+            (u32[0 max])index))
+        {
+            case System.Memory.MemoryStatus.Err(var globalError):
+                return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (item.Kind == DeclarationKind.Function)
+        {
+            switch (AppendTypedConversionsForFunction(table, source, stream, declarations, literals, identifiers, calls, members, indexes, (u32[0 max])index, 0, item.KeywordToken))
+            {
+                case System.Memory.MemoryStatus.Err(var functionError):
+                    return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (AppendTypedConversionsForMemberFunctions(table, source, stream, declarations, literals, identifiers, calls, members, indexes, item, (u32[0 max])index))
+            {
+                case System.Memory.MemoryStatus.Err(var memberFunctionError):
+                    return ParseResult<TypedConversionExpressionTable>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<TypedConversionExpressionTable>.Ok(table);
+}

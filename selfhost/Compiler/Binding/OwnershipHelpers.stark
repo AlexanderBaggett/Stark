@@ -1,0 +1,197 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.SignatureHelpers
+module Compiler.Binding.OwnershipHelpers
+
+internal fn u32[0 max] SymbolIndexPlusOneForStatement(borrow FunctionScope scope, u32[0 max] stmtIndex)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = scope.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0 && scope.KindAt(index) == SymbolKind.Local
+            && scope.StmtIndexAt(index) == stmtIndex)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] StatementIndexPlusOneForExprNode(borrow StatementList body, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    stack u64[0 2 ** 63 - 1] totalNodes = body.ExprNodeCount();
+    stack u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])node;
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+        stack mut u64[0 2 ** 63 - 1] high = totalNodes;
+        if ((u64[0 2 ** 63 - 1])(statement + 1) < statementCount)
+        {
+            high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+        }
+
+        if (nodeIndex > low && nodeIndex <= high)
+        {
+            return (u32[0 max])(statement + 1);
+        }
+    }
+
+    return 0;
+}
+
+internal fn bool ExpressionNodeIsDirectAssignmentTarget(borrow StatementList body, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] candidate = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(candidate) == Compiler.Parsing.ExprKind.Assign
+            && body.ExprLeftAt(candidate) == node)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TryScopeTargetForIdentifierNode(
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] node,
+    out u32[0 max] targetPlusOne)
+{
+    targetPlusOne = 0;
+    if (node == 0 || body.ExprKindAt(node) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
+    if (refIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+    stack ReferenceKind kind = refs.KindAt(refIndex);
+    if ((kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+        && refs.TargetAt(refIndex) != 0)
+    {
+        targetPlusOne = refs.TargetAt(refIndex);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool FunctionScopeSymbolTypeFormsSafeBorrow(borrow TokenStream stream, borrow FunctionScope scope, u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    return target < scope.Count()
+        && TypeSpanFormsSafeBorrow(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target));
+}
+
+internal fn bool FunctionScopeSymbolIsOutputOnlyParameter(borrow TokenStream stream, borrow FunctionScope scope, u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    return target < scope.Count()
+        && scope.KindAt(target) == SymbolKind.Parameter
+        && TypeSpanIsOutputOnlyParameter(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target));
+}
+
+internal fn bool TrySingleFunctionDeclarationByName(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] nameToken,
+    out u32[0 max] targetPlusOne)
+{
+    targetPlusOne = 0;
+    stack mut u32[0 max] matchCount = 0;
+    stack mut u32[0 max] matchTarget = 0;
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (table.KindAt(index) == DeclarationKind.Function
+            && BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), nameToken))
+        {
+            matchCount = (u32[0 max])(matchCount + 1);
+            matchTarget = (u32[0 max])(index + 1);
+        }
+    }
+
+    if (matchCount == 1)
+    {
+        targetPlusOne = matchTarget;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryDirectFunctionCallTarget(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] calleeNode,
+    out u32[0 max] targetPlusOne)
+{
+    targetPlusOne = 0;
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+    if (refIndexPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+        if (refs.KindAt(refIndex) == ReferenceKind.Declaration)
+        {
+            stack u32[0 max] target = refs.TargetAt(refIndex);
+            if (target != 0)
+            {
+                stack u64[0 2 ** 63 - 1] tableIndex = (u64[0 2 ** 63 - 1])(target - 1);
+                if (tableIndex < table.Count() && table.KindAt(tableIndex) == DeclarationKind.Function)
+                {
+                    targetPlusOne = target;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    return TrySingleFunctionDeclarationByName(table, source, stream, body.ExprTokenAt(calleeNode), targetPlusOne);
+}

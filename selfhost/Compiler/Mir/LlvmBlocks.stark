@@ -1,0 +1,529 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Builder
+import Compiler.Mir.LlvmText
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmInstructions
+import System.Memory
+import System.Text
+module Compiler.Mir.LlvmBlocks
+
+// LLVM terminator, labeled-block, loop metadata, and block-range emission helpers.
+
+// Emits a multi-block diamond-CFG function: an entry
+// block (ending in a conditional branch to the then/else blocks), then/else blocks
+// (each over its own instruction range — the branch-arm computation — ending in an
+// unconditional branch to the merge block), and a merge block (its instruction range,
+// typically a phi, ending in a return). Each block emits over the (first, count)
+// instruction range it is given. Real branching control flow with a phi merge, built
+// by composing `EmitLlvmLabeledBlock`; the block terminators come from `blocks`.
+// One block's emission descriptor: which block, and the contiguous instruction range
+// (1-based first index + count) it owns. A sequence of these is a whole function body
+// for an arbitrary CFG shape (diamond, loop, nested-if, switch, …).
+public struct BlockEmit
+{
+    u32[0 max] BlockIndex;
+    u32[0 max] First;
+    u32[0 max] Count;
+
+    BlockEmit()
+    {
+        self.BlockIndex = 0;
+        self.First = 0;
+        self.Count = 0;
+    }
+}
+
+// Builds a `BlockEmit` descriptor.
+internal fn BlockEmit MakeBlockEmit(u32[0 max] blockIndex, u32[0 max] first, u32[0 max] count)
+{
+    stack mut BlockEmit be = new();
+    be.BlockIndex = blockIndex;
+    be.First = first;
+    be.Count = count;
+    return be;
+}
+
+internal fn bool MirBlockHasScalarReturnType(borrow IrTable<MirBlock> blocks, u32[0 max] blockIndex)
+{
+    if (!blocks.Contains(blockIndex))
+    {
+        return false;
+    }
+
+    stack MirBlock block = blocks.Get(blockIndex);
+    return block.Terminator() == MirTermKind.Return
+        || block.Terminator() == MirTermKind.TailCall;
+}
+
+internal fn MirType MirBlockScalarReturnType(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex)
+{
+    if (!blocks.Contains(blockIndex))
+    {
+        return MirType.I64;
+    }
+
+    stack MirBlock block = blocks.Get(blockIndex);
+    switch (block.Terminator())
+    {
+        case MirTermKind.Return:
+            return MirValueType(instrs, block.Slot0Index());
+        case MirTermKind.TailCall:
+            if (!instrs.Contains(block.Slot0Index()))
+            {
+                return MirType.I64;
+            }
+
+            stack MirInstruction tailCall = instrs.Get(block.Slot0Index());
+            return tailCall.ResultType();
+        default:
+            return MirType.I64;
+    }
+}
+
+internal fn MirType MirBlockRangesScalarReturnType(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack u32[0 max] blockIndex = ranges.Get(i).BlockIndex;
+        if (MirBlockHasScalarReturnType(blocks, blockIndex))
+        {
+            return MirBlockScalarReturnType(instrs, blocks, blockIndex);
+        }
+
+        i = i + 1;
+    }
+
+    return MirType.I64;
+}
+
+internal fn bool MirInstructionRangesUseArenaRuntime(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeUsesArenaRuntime(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesUseArenaDynamicRuntime(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeUsesArenaDynamicRuntime(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmArenaRuntimePreambleForRanges(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges, mut borrow OwnedAscii sink)
+{
+    if (MirInstructionRangesUseArenaDynamicRuntime(instrs, ranges))
+    {
+        try EmitLlvmArenaDynamicRuntimeDeclarations(sink);
+    }
+    else if (MirInstructionRangesUseArenaRuntime(instrs, ranges))
+    {
+        try EmitLlvmArenaRuntimeDeclarations(sink);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal inline finite law u32[0 max] LlvmLoopMetadataBase()
+{
+    return 100000;
+}
+
+internal inline finite law u32[0 max] LlvmLoopMetadataNodeId(u32[0 max] base, u32[0 max] blockIndex)
+{
+    return base + blockIndex * 2;
+}
+
+internal fn MemoryStatus EmitLlvmIndependentLoopMetadataAttachment(
+    borrow IrTable<MirBlock> blocks,
+    MirBlockId block,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    if (!MirBlockHasIndependentLoopBackedge(blocks, block))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(", !llvm.loop !");
+    try sink.AppendU64((u64[0 max])LlvmLoopMetadataNodeId(metadataBase, block.Index()));
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmIndependentLoopMetadataDefinitions(
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<BlockEmit> ranges,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack u32[0 max] blockIndex = ranges.Get(i).BlockIndex;
+        if (MirBlockHasIndependentLoopBackedge(blocks, MirBlockIdOf(blockIndex)))
+        {
+            stack u32[0 max] nodeId = LlvmLoopMetadataNodeId(metadataBase, blockIndex);
+            try sink.AppendConstAscii("!");
+            try sink.AppendU64((u64[0 max])nodeId);
+            try sink.AppendConstAscii(" = distinct !{!");
+            try sink.AppendU64((u64[0 max])nodeId);
+            try sink.AppendConstAscii(", !");
+            try sink.AppendU64((u64[0 max])(nodeId + 1));
+            try sink.AppendConstAscii("}\n!");
+            try sink.AppendU64((u64[0 max])(nodeId + 1));
+            try sink.AppendConstAscii(" = !{!\"llvm.loop.vectorize.enable\", i1 true}\n");
+        }
+
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM terminator line for block `b`: a typed `ret <v>` for a Return,
+// `br label %bN` for an unconditional Branch, `br i1 <c>, label %bT, label %bE`
+// for a CondBranch, or `unreachable` for an unterminated/out-of-range block. The
+// returned value and the condition are value operands, so they go through
+// `EmitLlvmOperand` (a `%pK` parameter or a `%vN` instruction result) — `instrs` is
+// threaded in for that lookup.
+public fn MemoryStatus EmitLlvmTerminatorWithTailCallees(borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<MirBlock> blocks, MirBlockId b, mut borrow OwnedAscii sink)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        try sink.AppendConstAscii("  unreachable\n");
+        return MemoryStatus.Ok;
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    switch (blk.Terminator())
+    {
+        case MirTermKind.Return:
+            try sink.AppendConstAscii("  ret ");
+            try EmitLlvmTypeName(MirValueType(instrs, blk.Slot0Index()), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.ReturnVoid:
+            try sink.AppendConstAscii("  ret void\n");
+        case MirTermKind.Branch:
+            try sink.AppendConstAscii("  br label ");
+            try EmitLlvmBlockRef(sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.CondBranch:
+            try sink.AppendConstAscii("  br i1 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot1Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot2Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.TailCall:
+            if (!instrs.Contains(blk.Slot0Index()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            stack MirInstruction tailCall = instrs.Get(blk.Slot0Index());
+            if (tailCall.Opcode() != MirOp.TailCall)
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            if (!FunctionIdIsTailCallable(funcTailFlags, (u32[0 max])tailCall.Immediate()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, blk.Slot0Index());
+            try sink.AppendConstAscii(" = musttail call tailcc ");
+            try EmitLlvmTypeName(tailCall.ResultType(), sink);
+            try sink.AppendConstAscii(" @f");
+            try sink.AppendI64(tailCall.Immediate());
+            try EmitLlvmCallArgs(instrs, sink, tailCall.OperandAIndex(), tailCall.OperandBIndex(), tailCall.OperandCIndex(), tailCall.OperandDIndex());
+            try sink.AppendConstAscii("\n  ret ");
+            try EmitLlvmTypeName(tailCall.ResultType(), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.Unterminated:
+            try sink.AppendConstAscii("  unreachable\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<MirBlock> blocks,
+    MirBlockId b,
+    u32[0 max] loopMetadataBase,
+    mut borrow OwnedAscii sink)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        try sink.AppendConstAscii("  unreachable\n");
+        return MemoryStatus.Ok;
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    switch (blk.Terminator())
+    {
+        case MirTermKind.Return:
+            try sink.AppendConstAscii("  ret ");
+            try EmitLlvmTypeName(MirValueType(instrs, blk.Slot0Index()), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.ReturnVoid:
+            try sink.AppendConstAscii("  ret void\n");
+        case MirTermKind.Branch:
+            try sink.AppendConstAscii("  br label ");
+            try EmitLlvmBlockRef(sink, blk.Slot0Index());
+            try EmitLlvmIndependentLoopMetadataAttachment(blocks, b, loopMetadataBase, sink);
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.CondBranch:
+            try sink.AppendConstAscii("  br i1 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot1Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot2Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.TailCall:
+            if (!instrs.Contains(blk.Slot0Index()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            stack MirInstruction tailCall = instrs.Get(blk.Slot0Index());
+            if (tailCall.Opcode() != MirOp.TailCall)
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            if (!FunctionIdIsTailCallable(funcTailFlags, (u32[0 max])tailCall.Immediate()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])tailCall.Immediate());
+            try EmitLlvmCallSeparateStorageAssumes(instrs, tailCall, calleeFacts, sink);
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, blk.Slot0Index());
+            try sink.AppendConstAscii(" = musttail call tailcc ");
+            try EmitLlvmTypeName(tailCall.ResultType(), sink);
+            try sink.AppendConstAscii(" @f");
+            try sink.AppendI64(tailCall.Immediate());
+            try EmitLlvmCallArgsWithRangeAndAbiFacts(
+                instrs,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                calleeFacts,
+                sink,
+                tailCall.OperandAIndex(),
+                tailCall.OperandBIndex(),
+                tailCall.OperandCIndex(),
+                tailCall.OperandDIndex());
+            try EmitLlvmCallSiteEffectAttributes(functionEffectFacts, (u32[0 max])tailCall.Immediate(), sink);
+            try EmitLlvmRangeMetadataAttachment(tailCall.ResultType(), FactAt(functionReturnFacts, (u32[0 max])tailCall.Immediate()), rangeMetadata, sink);
+            try sink.AppendConstAscii("\n  ret ");
+            try EmitLlvmTypeName(tailCall.ResultType(), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.Unterminated:
+            try sink.AppendConstAscii("  unreachable\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmTerminator(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, MirBlockId b, mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    return EmitLlvmTerminatorWithTailCallees(instrs, noTailCallees, blocks, b, sink);
+}
+
+// === Whole-function LLVM emission ===
+// Stitches the instruction and control-flow layers into a complete LLVM function.
+// A block owns a CONTIGUOUS instruction range [firstInstr, firstInstr+instrCount)
+// (the caller tracks the per-block split, since the flat model stores instructions
+// in one table); each block emits as `bN:` + its body instructions + its terminator.
+
+// Emits one labelled LLVM block: `bN:` then the instructions
+// [firstInstr, firstInstr+instrCount) then block N's terminator.
+public fn MemoryStatus EmitLlvmLabeledBlockWithTailCallees(borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<MirBlock> blocks, u32[0 max] blockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithTailCallees(instrs, funcTailFlags, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try EmitLlvmTerminatorWithTailCallees(instrs, funcTailFlags, blocks, MirBlockIdOf(blockIndex), sink);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<DistinctStoragePair> noSeparateStorageFacts = new();
+    stack mut IrTable<FunctionEffectFacts> noFunctionEffectFacts = new();
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<FunctionCallingConventionFacts> noFunctionCallingConventionFacts = new();
+    return EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+        instrs,
+        funcTailFlags,
+        noFunctionEffectFacts,
+        noFunctionCallContractFacts,
+        noFunctionCallingConventionFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        noSeparateStorageFacts,
+        false,
+        blocks,
+        blockIndex,
+        firstInstr,
+        instrCount,
+        LlvmLoopMetadataBase(),
+        sink);
+}
+
+internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    bool emitSeparateStorageFacts,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    u32[0 max] loopMetadataBase,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    if (emitSeparateStorageFacts)
+    {
+        try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
+    }
+
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithRangeFacts(
+            instrs,
+            funcTailFlags,
+            functionEffectFacts,
+            functionCallContractFacts,
+            functionCallingConventionFacts,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            rangeMetadata,
+            sink,
+            index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try EmitLlvmTerminatorWithRangeFacts(
+        instrs,
+        funcTailFlags,
+        functionEffectFacts,
+        functionCallContractFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        blocks,
+        MirBlockIdOf(blockIndex),
+        loopMetadataBase,
+        sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmLabeledBlock(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, u32[0 max] blockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    return EmitLlvmLabeledBlockWithTailCallees(instrs, noTailCallees, blocks, blockIndex, firstInstr, instrCount, sink);
+}

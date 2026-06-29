@@ -1,0 +1,1180 @@
+import Compiler.Lexing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.GenericUseSites
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.TypedGenerics
+import System.Memory
+module Compiler.Binding.TypedGenericInstantiations
+
+public enum TypedGenericInstantiationTargetKind
+{
+    Declaration,
+    MemberMethod,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagTargetResolved()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagTargetGeneric()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagArityMatches()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagHasTypeArguments()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagHasComptimeArguments()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagContainsOpenGenericArguments()
+{
+    return 32;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagHasUnresolvedArguments()
+{
+    return 64;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationFlagDirectlyMaterializable()
+{
+    return 128;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationArgumentFlagResolvedDeclaration()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationArgumentFlagResolvedGenericParameter()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationArgumentFlagOpenGeneric()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationArgumentFlagNestedGeneric()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedGenericInstantiationArgumentFlagComptimeForward()
+{
+    return 16;
+}
+
+public struct TypedGenericInstantiationPlanTable
+{
+    internal dynamic u32[0 max] GenericUseSiteIndices;
+    internal dynamic u32[0 max] OwnerDeclarationSymbolIndices;
+    internal dynamic u32[0 max] OwnerMemberSymbolIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic TypedGenericInstantiationTargetKind TargetKinds;
+    internal dynamic u32[0 max] TargetDeclarationSymbolIndices;
+    internal dynamic u32[0 max] TargetMemberSymbolIndices;
+    internal dynamic u32[0 max] TargetNameTokens;
+    internal dynamic u32[0 max] OpenTokens;
+    internal dynamic u32[0 max] CloseTokens;
+    internal dynamic u32[0 max] ArgumentStartSlots;
+    internal dynamic u32[0 max] ArgumentCounts;
+    internal dynamic u32[0 max] TypeArgumentCounts;
+    internal dynamic u32[0 max] ComptimeArgumentCounts;
+    internal dynamic u32[0 max] ExpectedTypeParameterCounts;
+    internal dynamic u32[0 max] ExpectedComptimeParameterCounts;
+    internal dynamic u32[0 max] OpenGenericArgumentCounts;
+    internal dynamic u32[0 max] UnresolvedArgumentCounts;
+    internal dynamic u32[0 max] Flags;
+    internal dynamic GenericUseSiteArgumentKind ArgumentKinds;
+    internal dynamic u32[0 max] ArgumentStartTokens;
+    internal dynamic u32[0 max] ArgumentEndTokens;
+    internal dynamic u32[0 max] ArgumentTypeHeadTokens;
+    internal dynamic u32[0 max] ArgumentTypePrimaryTokens;
+    internal dynamic u32[0 max] ArgumentDeclarationSymbolIndices;
+    internal dynamic u32[0 max] ArgumentGenericParameterSymbolIndices;
+    internal dynamic u32[0 max] ArgumentFlags;
+
+    TypedGenericInstantiationPlanTable()
+    {
+        self.GenericUseSiteIndices = new();
+        self.OwnerDeclarationSymbolIndices = new();
+        self.OwnerMemberSymbolIndices = new();
+        self.OwnerNameTokens = new();
+        self.TargetKinds = new();
+        self.TargetDeclarationSymbolIndices = new();
+        self.TargetMemberSymbolIndices = new();
+        self.TargetNameTokens = new();
+        self.OpenTokens = new();
+        self.CloseTokens = new();
+        self.ArgumentStartSlots = new();
+        self.ArgumentCounts = new();
+        self.TypeArgumentCounts = new();
+        self.ComptimeArgumentCounts = new();
+        self.ExpectedTypeParameterCounts = new();
+        self.ExpectedComptimeParameterCounts = new();
+        self.OpenGenericArgumentCounts = new();
+        self.UnresolvedArgumentCounts = new();
+        self.Flags = new();
+        self.ArgumentKinds = new();
+        self.ArgumentStartTokens = new();
+        self.ArgumentEndTokens = new();
+        self.ArgumentTypeHeadTokens = new();
+        self.ArgumentTypePrimaryTokens = new();
+        self.ArgumentDeclarationSymbolIndices = new();
+        self.ArgumentGenericParameterSymbolIndices = new();
+        self.ArgumentFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedGenericInstantiationPlanTable self)
+    {
+        return self.TargetKinds.Length;
+    }
+
+    public law u32[0 max] GenericUseSiteIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.GenericUseSiteIndices.Length)
+        {
+            value = self.GenericUseSiteIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerDeclarationSymbolIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationSymbolIndices.Length)
+        {
+            value = self.OwnerDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerMemberSymbolIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerMemberSymbolIndices.Length)
+        {
+            value = self.OwnerMemberSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedGenericInstantiationTargetKind TargetKindAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedGenericInstantiationTargetKind kind = TypedGenericInstantiationTargetKind.Unknown;
+        if (index < self.TargetKinds.Length)
+        {
+            kind = self.TargetKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TargetDeclarationSymbolIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TargetDeclarationSymbolIndices.Length)
+        {
+            value = self.TargetDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TargetMemberSymbolIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.TargetMemberSymbolIndices.Length)
+        {
+            value = self.TargetMemberSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] TargetNameTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TargetNameTokens.Length)
+        {
+            token = self.TargetNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OpenTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OpenTokens.Length)
+        {
+            token = self.OpenTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CloseTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CloseTokens.Length)
+        {
+            token = self.CloseTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ArgumentCounts.Length)
+        {
+            count = self.ArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TypeArgumentCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TypeArgumentCounts.Length)
+        {
+            count = self.TypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ComptimeArgumentCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ComptimeArgumentCounts.Length)
+        {
+            count = self.ComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ExpectedTypeParameterCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ExpectedTypeParameterCounts.Length)
+        {
+            count = self.ExpectedTypeParameterCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ExpectedComptimeParameterCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ExpectedComptimeParameterCounts.Length)
+        {
+            count = self.ExpectedComptimeParameterCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] OpenGenericArgumentCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.OpenGenericArgumentCounts.Length)
+        {
+            count = self.OpenGenericArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] UnresolvedArgumentCountAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.UnresolvedArgumentCounts.Length)
+        {
+            count = self.UnresolvedArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] FlagsAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.Flags.Length)
+        {
+            flags = self.Flags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool TargetResolvedAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagTargetResolved());
+    }
+
+    public law bool TargetIsGenericAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagTargetGeneric());
+    }
+
+    public law bool ArityMatchesAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagArityMatches());
+    }
+
+    public law bool HasTypeArgumentsAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagHasTypeArguments());
+    }
+
+    public law bool HasComptimeArgumentsAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagHasComptimeArguments());
+    }
+
+    public law bool ContainsOpenGenericArgumentsAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagContainsOpenGenericArguments());
+    }
+
+    public law bool HasUnresolvedArgumentsAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagHasUnresolvedArguments());
+    }
+
+    public law bool DirectlyMaterializableAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericInstantiationFlagDirectlyMaterializable());
+    }
+
+    public law GenericUseSiteArgumentKind ArgumentKindAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut GenericUseSiteArgumentKind kind = GenericUseSiteArgumentKind.Type;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentKinds.Length)
+        {
+            kind = self.ArgumentKinds[slot];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ArgumentStartTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] token = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentStartTokens.Length)
+        {
+            token = self.ArgumentStartTokens[slot];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentEndTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] token = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentEndTokens.Length)
+        {
+            token = self.ArgumentEndTokens[slot];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentTypeHeadTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] token = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentTypeHeadTokens.Length)
+        {
+            token = self.ArgumentTypeHeadTokens[slot];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentTypePrimaryTokenAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] token = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentTypePrimaryTokens.Length)
+        {
+            token = self.ArgumentTypePrimaryTokens[slot];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentDeclarationSymbolIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] value = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentDeclarationSymbolIndices.Length)
+        {
+            value = self.ArgumentDeclarationSymbolIndices[slot];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ArgumentGenericParameterSymbolIndexPlusOneAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] value = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentGenericParameterSymbolIndices.Length)
+        {
+            value = self.ArgumentGenericParameterSymbolIndices[slot];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] ArgumentFlagsAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        stack mut u32[0 max] flags = 0;
+        stack u64[0 2 ** 63 - 1] slot = self.ArgumentSlotOrInvalid(plan, arg);
+        if (slot < self.ArgumentFlags.Length)
+        {
+            flags = self.ArgumentFlags[slot];
+        }
+
+        return flags;
+    }
+
+    public law bool ArgumentIsOpenGenericAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        return TypedDeclFlagPresent(self.ArgumentFlagsAt(plan, arg), TypedGenericInstantiationArgumentFlagOpenGeneric());
+    }
+
+    public law bool ArgumentHasNestedGenericAt(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        return TypedDeclFlagPresent(self.ArgumentFlagsAt(plan, arg), TypedGenericInstantiationArgumentFlagNestedGeneric());
+    }
+
+    internal law u64[0 2 ** 63 - 1] ArgumentSlotOrInvalid(borrow TypedGenericInstantiationPlanTable self, u64[0 2 ** 63 - 1] plan, u32[0 max] arg)
+    {
+        if (plan >= self.ArgumentStartSlots.Length)
+        {
+            return 2 ** 63 - 1;
+        }
+
+        if (arg >= self.ArgumentCountAt(plan))
+        {
+            return 2 ** 63 - 1;
+        }
+
+        stack u32[0 max] start = self.ArgumentStartSlots[plan];
+        if (start == 0)
+        {
+            return 2 ** 63 - 1;
+        }
+
+        return (u64[0 2 ** 63 - 1])((start - 1) + arg);
+    }
+
+    internal fn System.Memory.MemoryStatus AppendPlan(
+        mut borrow TypedGenericInstantiationPlanTable self,
+        u32[0 max] genericUseSiteIndexPlusOne,
+        u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+        u32[0 max] ownerMemberSymbolIndexPlusOne,
+        u32[0 max] ownerNameToken,
+        TypedGenericInstantiationTargetKind targetKind,
+        u32[0 max] targetDeclarationSymbolIndexPlusOne,
+        u32[0 max] targetMemberSymbolIndexPlusOne,
+        u32[0 max] targetNameToken,
+        u32[0 max] openToken,
+        u32[0 max] closeToken,
+        u32[0 max] argumentCount,
+        u32[0 max] typeArgumentCount,
+        u32[0 max] comptimeArgumentCount,
+        u32[0 max] expectedTypeParameterCount,
+        u32[0 max] expectedComptimeParameterCount,
+        u32[0 max] openGenericArgumentCount,
+        u32[0 max] unresolvedArgumentCount,
+        u32[0 max] flags,
+        out u32[0 max] planIndexPlusOne)
+    {
+        planIndexPlusOne = 0;
+        if (!self.GenericUseSiteIndices.TryReserve(1)
+            || !self.OwnerDeclarationSymbolIndices.TryReserve(1)
+            || !self.OwnerMemberSymbolIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.TargetKinds.TryReserve(1)
+            || !self.TargetDeclarationSymbolIndices.TryReserve(1)
+            || !self.TargetMemberSymbolIndices.TryReserve(1)
+            || !self.TargetNameTokens.TryReserve(1)
+            || !self.OpenTokens.TryReserve(1)
+            || !self.CloseTokens.TryReserve(1)
+            || !self.ArgumentStartSlots.TryReserve(1)
+            || !self.ArgumentCounts.TryReserve(1)
+            || !self.TypeArgumentCounts.TryReserve(1)
+            || !self.ComptimeArgumentCounts.TryReserve(1)
+            || !self.ExpectedTypeParameterCounts.TryReserve(1)
+            || !self.ExpectedComptimeParameterCounts.TryReserve(1)
+            || !self.OpenGenericArgumentCounts.TryReserve(1)
+            || !self.UnresolvedArgumentCounts.TryReserve(1)
+            || !self.Flags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        planIndexPlusOne = (u32[0 max])(self.TargetKinds.Length + 1);
+        init self.GenericUseSiteIndices[self.GenericUseSiteIndices.Length] = genericUseSiteIndexPlusOne;
+        init self.OwnerDeclarationSymbolIndices[self.OwnerDeclarationSymbolIndices.Length] = ownerDeclarationSymbolIndexPlusOne;
+        init self.OwnerMemberSymbolIndices[self.OwnerMemberSymbolIndices.Length] = ownerMemberSymbolIndexPlusOne;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.TargetKinds[self.TargetKinds.Length] = targetKind;
+        init self.TargetDeclarationSymbolIndices[self.TargetDeclarationSymbolIndices.Length] = targetDeclarationSymbolIndexPlusOne;
+        init self.TargetMemberSymbolIndices[self.TargetMemberSymbolIndices.Length] = targetMemberSymbolIndexPlusOne;
+        init self.TargetNameTokens[self.TargetNameTokens.Length] = targetNameToken;
+        init self.OpenTokens[self.OpenTokens.Length] = openToken;
+        init self.CloseTokens[self.CloseTokens.Length] = closeToken;
+        init self.ArgumentStartSlots[self.ArgumentStartSlots.Length] = (u32[0 max])(self.ArgumentKinds.Length + 1);
+        init self.ArgumentCounts[self.ArgumentCounts.Length] = argumentCount;
+        init self.TypeArgumentCounts[self.TypeArgumentCounts.Length] = typeArgumentCount;
+        init self.ComptimeArgumentCounts[self.ComptimeArgumentCounts.Length] = comptimeArgumentCount;
+        init self.ExpectedTypeParameterCounts[self.ExpectedTypeParameterCounts.Length] = expectedTypeParameterCount;
+        init self.ExpectedComptimeParameterCounts[self.ExpectedComptimeParameterCounts.Length] = expectedComptimeParameterCount;
+        init self.OpenGenericArgumentCounts[self.OpenGenericArgumentCounts.Length] = openGenericArgumentCount;
+        init self.UnresolvedArgumentCounts[self.UnresolvedArgumentCounts.Length] = unresolvedArgumentCount;
+        init self.Flags[self.Flags.Length] = flags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendArgument(
+        mut borrow TypedGenericInstantiationPlanTable self,
+        u32[0 max] planIndexPlusOne,
+        GenericUseSiteArgumentKind kind,
+        u32[0 max] startToken,
+        u32[0 max] endToken,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] declarationSymbolIndexPlusOne,
+        u32[0 max] genericParameterSymbolIndexPlusOne,
+        u32[0 max] flags)
+    {
+        if (planIndexPlusOne == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.ArgumentKinds.TryReserve(1)
+            || !self.ArgumentStartTokens.TryReserve(1)
+            || !self.ArgumentEndTokens.TryReserve(1)
+            || !self.ArgumentTypeHeadTokens.TryReserve(1)
+            || !self.ArgumentTypePrimaryTokens.TryReserve(1)
+            || !self.ArgumentDeclarationSymbolIndices.TryReserve(1)
+            || !self.ArgumentGenericParameterSymbolIndices.TryReserve(1)
+            || !self.ArgumentFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.ArgumentKinds[self.ArgumentKinds.Length] = kind;
+        init self.ArgumentStartTokens[self.ArgumentStartTokens.Length] = startToken;
+        init self.ArgumentEndTokens[self.ArgumentEndTokens.Length] = endToken;
+        init self.ArgumentTypeHeadTokens[self.ArgumentTypeHeadTokens.Length] = typeHeadToken;
+        init self.ArgumentTypePrimaryTokens[self.ArgumentTypePrimaryTokens.Length] = typePrimaryToken;
+        init self.ArgumentDeclarationSymbolIndices[self.ArgumentDeclarationSymbolIndices.Length] = declarationSymbolIndexPlusOne;
+        init self.ArgumentGenericParameterSymbolIndices[self.ArgumentGenericParameterSymbolIndices.Length] = genericParameterSymbolIndexPlusOne;
+        init self.ArgumentFlags[self.ArgumentFlags.Length] = flags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn void TypedGenericInstantiationOwnerForSite(
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedMemberSymbolTable members,
+    u32[0 max] siteToken,
+    out u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    out u32[0 max] ownerMemberSymbolIndexPlusOne,
+    out u32[0 max] ownerNameToken)
+{
+    ownerDeclarationSymbolIndexPlusOne = 0;
+    ownerMemberSymbolIndexPlusOne = 0;
+    ownerNameToken = 0;
+
+    stack u64[0 2 ** 63 - 1] memberCount = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < memberCount; index += 1)
+    {
+        if (ownerMemberSymbolIndexPlusOne == 0
+            && members.KindAt(index) == TypedMemberSymbolKind.Method
+            && members.StartTokenAt(index) <= siteToken
+            && siteToken <= members.EndTokenAt(index))
+        {
+            ownerDeclarationSymbolIndexPlusOne = members.OwnerDeclarationSymbolIndexPlusOneAt(index);
+            ownerMemberSymbolIndexPlusOne = (u32[0 max])(index + 1);
+            ownerNameToken = members.NameTokenAt(index);
+        }
+    }
+
+    if (ownerMemberSymbolIndexPlusOne != 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] declarationCount = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declarationCount; index += 1)
+    {
+        if (ownerDeclarationSymbolIndexPlusOne == 0
+            && declarations.StartTokenAt(index) <= siteToken
+            && siteToken <= declarations.EndTokenAt(index))
+        {
+            ownerDeclarationSymbolIndexPlusOne = (u32[0 max])(index + 1);
+            ownerNameToken = declarations.NameTokenAt(index);
+        }
+    }
+
+    return;
+}
+
+internal fn u32[0 max] TypedGenericInstantiationDeclarationByNameToken(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    u32[0 max] nameToken)
+{
+    if (nameToken == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && declarations.NameTokenAt(index) != 0
+            && (declarations.ClassAt(index) == TypedDeclarationSymbolClass.Type
+                || declarations.ClassAt(index) == TypedDeclarationSymbolClass.Function)
+            && BindingTokenTextEqualsToken(source, stream, declarations.NameTokenAt(index), nameToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedGenericInstantiationMemberMethodByNameToken(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedMemberSymbolTable members,
+    u32[0 max] nameToken)
+{
+    if (nameToken == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && members.KindAt(index) == TypedMemberSymbolKind.Method
+            && BindingTokenTextEqualsToken(source, stream, members.NameTokenAt(index), nameToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}
+
+internal fn u32[0 max] TypedGenericInstantiationParameterCountForOwner(
+    borrow TypedGenericParameterSymbolTable generics,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    TypedGenericParameterKind kind)
+{
+    stack mut u32[0 max] count = 0;
+    stack u64[0 2 ** 63 - 1] genericCount = generics.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < genericCount; index += 1)
+    {
+        if (generics.OwnerDeclarationSymbolIndexPlusOneAt(index) == ownerDeclarationSymbolIndexPlusOne
+            && generics.OwnerMemberSymbolIndexPlusOneAt(index) == ownerMemberSymbolIndexPlusOne
+            && generics.KindAt(index) == kind)
+        {
+            count = (u32[0 max])(count + 1);
+        }
+    }
+
+    return count;
+}
+
+internal fn u32[0 max] TypedGenericInstantiationGenericParameterByOwnerAndName(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedGenericParameterSymbolTable generics,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] nameToken,
+    TypedGenericParameterKind kind)
+{
+    if (nameToken == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = generics.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && generics.KindAt(index) == kind
+            && generics.OwnerDeclarationSymbolIndexPlusOneAt(index) == ownerDeclarationSymbolIndexPlusOne
+            && generics.OwnerMemberSymbolIndexPlusOneAt(index) == ownerMemberSymbolIndexPlusOne
+            && BindingTokenTextEqualsToken(source, stream, generics.NameTokenAt(index), nameToken))
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    if (found == 0 && ownerMemberSymbolIndexPlusOne != 0)
+    {
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (found == 0
+                && generics.KindAt(index) == kind
+                && generics.OwnerDeclarationSymbolIndexPlusOneAt(index) == ownerDeclarationSymbolIndexPlusOne
+                && generics.OwnerMemberSymbolIndexPlusOneAt(index) == 0
+                && BindingTokenTextEqualsToken(source, stream, generics.NameTokenAt(index), nameToken))
+            {
+                found = (u32[0 max])(index + 1);
+            }
+        }
+    }
+
+    return found;
+}
+
+internal finite law bool TypedGenericInstantiationArgumentHasNestedGeneric(
+    borrow TokenStream stream,
+    u32[0 max] startToken,
+    u32[0 max] endToken)
+{
+    stack mut u32[0 max] scan = startToken;
+    while willexit (scan < endToken)
+    {
+        if (scan > startToken
+            && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Lt
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan - 1)) == TokenKind.Identifier)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] TypedGenericInstantiationComptimeArgumentNameToken(
+    borrow TokenStream stream,
+    u32[0 max] startToken,
+    u32[0 max] endToken)
+{
+    if (startToken >= endToken)
+    {
+        return 0;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])startToken) == TokenKind.Comptime
+        && (u32[0 max])(startToken + 1) < endToken
+        && stream.KindAt((u64[0 2 ** 63 - 1])(startToken + 1)) == TokenKind.Identifier)
+    {
+        return (u32[0 max])(startToken + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])startToken) == TokenKind.Identifier)
+    {
+        return startToken;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedGenericInstantiationArgumentFlags(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedGenericParameterSymbolTable generics,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    GenericUseSiteArgumentKind kind,
+    u32[0 max] startToken,
+    u32[0 max] endToken,
+    out u32[0 max] typeHeadToken,
+    out u32[0 max] typePrimaryToken,
+    out u32[0 max] declarationSymbolIndexPlusOne,
+    out u32[0 max] genericParameterSymbolIndexPlusOne)
+{
+    typeHeadToken = 0;
+    typePrimaryToken = 0;
+    declarationSymbolIndexPlusOne = 0;
+    genericParameterSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] flags = 0;
+    stack mut u32[0 max] computedTypeHeadToken = 0;
+    stack mut u32[0 max] computedTypePrimaryToken = 0;
+    stack mut u32[0 max] computedDeclarationSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] computedGenericParameterSymbolIndexPlusOne = 0;
+
+    if (kind == GenericUseSiteArgumentKind.Type)
+    {
+        computedTypeHeadToken = LastTypeHeadIdentifierInSpan(stream, startToken, endToken);
+        computedTypePrimaryToken = FirstTypeTokenInSpan(stream, startToken, endToken);
+        computedDeclarationSymbolIndexPlusOne = TypedGenericInstantiationDeclarationByNameToken(source, stream, declarations, computedTypeHeadToken);
+        computedGenericParameterSymbolIndexPlusOne = TypedGenericInstantiationGenericParameterByOwnerAndName(
+            source,
+            stream,
+            generics,
+            ownerDeclarationSymbolIndexPlusOne,
+            ownerMemberSymbolIndexPlusOne,
+            computedTypeHeadToken,
+            TypedGenericParameterKind.Type);
+    }
+    else
+    {
+        stack u32[0 max] argumentNameToken = TypedGenericInstantiationComptimeArgumentNameToken(stream, startToken, endToken);
+        computedGenericParameterSymbolIndexPlusOne = TypedGenericInstantiationGenericParameterByOwnerAndName(
+            source,
+            stream,
+            generics,
+            ownerDeclarationSymbolIndexPlusOne,
+            ownerMemberSymbolIndexPlusOne,
+            argumentNameToken,
+            TypedGenericParameterKind.ComptimeValue);
+    }
+
+    if (computedDeclarationSymbolIndexPlusOne != 0)
+    {
+        flags = flags | TypedGenericInstantiationArgumentFlagResolvedDeclaration();
+    }
+
+    if (computedGenericParameterSymbolIndexPlusOne != 0)
+    {
+        flags = flags | TypedGenericInstantiationArgumentFlagResolvedGenericParameter();
+        flags = flags | TypedGenericInstantiationArgumentFlagOpenGeneric();
+        if (kind == GenericUseSiteArgumentKind.ComptimeValue)
+        {
+            flags = flags | TypedGenericInstantiationArgumentFlagComptimeForward();
+        }
+    }
+
+    if (TypedGenericInstantiationArgumentHasNestedGeneric(stream, startToken, endToken))
+    {
+        flags = flags | TypedGenericInstantiationArgumentFlagNestedGeneric();
+    }
+
+    typeHeadToken = computedTypeHeadToken;
+    typePrimaryToken = computedTypePrimaryToken;
+    declarationSymbolIndexPlusOne = computedDeclarationSymbolIndexPlusOne;
+    genericParameterSymbolIndexPlusOne = computedGenericParameterSymbolIndexPlusOne;
+    return flags;
+}
+
+internal finite law bool TypedGenericInstantiationTypeArgumentIsUnresolvedIdentifier(
+    borrow TokenStream stream,
+    GenericUseSiteArgumentKind kind,
+    u32[0 max] typeHeadToken,
+    u32[0 max] declarationSymbolIndexPlusOne,
+    u32[0 max] genericParameterSymbolIndexPlusOne)
+{
+    return kind == GenericUseSiteArgumentKind.Type
+        && typeHeadToken != 0
+        && stream.KindAt((u64[0 2 ** 63 - 1])typeHeadToken) == TokenKind.Identifier
+        && declarationSymbolIndexPlusOne == 0
+        && genericParameterSymbolIndexPlusOne == 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedGenericInstantiationPlan(
+    mut borrow TypedGenericInstantiationPlanTable plans,
+    ascii source,
+    borrow TokenStream stream,
+    borrow GenericUseSiteTable useSites,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedMemberSymbolTable members,
+    borrow TypedGenericParameterSymbolTable generics,
+    u64[0 2 ** 63 - 1] siteIndex)
+{
+    stack u32[0 max] targetNameToken = useSites.OwnerTokenAt(siteIndex);
+    stack mut u32[0 max] ownerDeclarationSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] ownerMemberSymbolIndexPlusOne = 0;
+    stack mut u32[0 max] ownerNameToken = 0;
+    TypedGenericInstantiationOwnerForSite(
+        declarations,
+        members,
+        targetNameToken,
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerMemberSymbolIndexPlusOne,
+        ownerNameToken);
+
+    stack mut TypedGenericInstantiationTargetKind targetKind = TypedGenericInstantiationTargetKind.Unknown;
+    stack mut u32[0 max] targetDeclarationSymbolIndexPlusOne = TypedGenericInstantiationDeclarationByNameToken(source, stream, declarations, targetNameToken);
+    stack mut u32[0 max] targetMemberSymbolIndexPlusOne = 0;
+    if (targetDeclarationSymbolIndexPlusOne != 0)
+    {
+        targetKind = TypedGenericInstantiationTargetKind.Declaration;
+    }
+    else
+    {
+        targetMemberSymbolIndexPlusOne = TypedGenericInstantiationMemberMethodByNameToken(source, stream, members, targetNameToken);
+        if (targetMemberSymbolIndexPlusOne != 0)
+        {
+            targetKind = TypedGenericInstantiationTargetKind.MemberMethod;
+        }
+    }
+
+    stack mut u32[0 max] expectedTypeParameterCount = 0;
+    stack mut u32[0 max] expectedComptimeParameterCount = 0;
+    if (targetDeclarationSymbolIndexPlusOne != 0)
+    {
+        expectedTypeParameterCount = TypedGenericInstantiationParameterCountForOwner(
+            generics,
+            targetDeclarationSymbolIndexPlusOne,
+            0,
+            TypedGenericParameterKind.Type);
+        expectedComptimeParameterCount = TypedGenericInstantiationParameterCountForOwner(
+            generics,
+            targetDeclarationSymbolIndexPlusOne,
+            0,
+            TypedGenericParameterKind.ComptimeValue);
+    }
+    else if (targetMemberSymbolIndexPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] memberIndex = (u64[0 2 ** 63 - 1])(targetMemberSymbolIndexPlusOne - 1);
+        expectedTypeParameterCount = TypedGenericInstantiationParameterCountForOwner(
+            generics,
+            members.OwnerDeclarationSymbolIndexPlusOneAt(memberIndex),
+            targetMemberSymbolIndexPlusOne,
+            TypedGenericParameterKind.Type);
+        expectedComptimeParameterCount = TypedGenericInstantiationParameterCountForOwner(
+            generics,
+            members.OwnerDeclarationSymbolIndexPlusOneAt(memberIndex),
+            targetMemberSymbolIndexPlusOne,
+            TypedGenericParameterKind.ComptimeValue);
+    }
+
+    stack u32[0 max] argumentCount = useSites.ArgumentCountAt(siteIndex);
+    stack u32[0 max] typeArgumentCount = useSites.TypeArgumentCountAt(siteIndex);
+    stack u32[0 max] comptimeArgumentCount = useSites.ComptimeValueArgumentCountAt(siteIndex);
+    stack mut u32[0 max] openGenericArgumentCount = 0;
+    stack mut u32[0 max] unresolvedArgumentCount = 0;
+    for willexit (stack mut u32[0 max] arg = 0; arg < argumentCount; arg += 1)
+    {
+        stack GenericUseSiteArgumentKind argKind = useSites.ArgumentKindAt(siteIndex, arg);
+        stack u32[0 max] startToken = useSites.ArgumentStartTokenAt(siteIndex, arg);
+        stack u32[0 max] endToken = useSites.ArgumentEndTokenAt(siteIndex, arg);
+        stack mut u32[0 max] typeHeadToken = 0;
+        stack mut u32[0 max] typePrimaryToken = 0;
+        stack mut u32[0 max] declarationSymbolIndexPlusOne = 0;
+        stack mut u32[0 max] genericParameterSymbolIndexPlusOne = 0;
+        stack u32[0 max] argumentFlags = TypedGenericInstantiationArgumentFlags(
+            source,
+            stream,
+            declarations,
+            generics,
+            ownerDeclarationSymbolIndexPlusOne,
+            ownerMemberSymbolIndexPlusOne,
+            argKind,
+            startToken,
+            endToken,
+            typeHeadToken,
+            typePrimaryToken,
+            declarationSymbolIndexPlusOne,
+            genericParameterSymbolIndexPlusOne);
+
+        if (TypedDeclFlagPresent(argumentFlags, TypedGenericInstantiationArgumentFlagOpenGeneric()))
+        {
+            openGenericArgumentCount = (u32[0 max])(openGenericArgumentCount + 1);
+        }
+
+        if (TypedGenericInstantiationTypeArgumentIsUnresolvedIdentifier(
+                stream,
+                argKind,
+                typeHeadToken,
+                declarationSymbolIndexPlusOne,
+                genericParameterSymbolIndexPlusOne))
+        {
+            unresolvedArgumentCount = (u32[0 max])(unresolvedArgumentCount + 1);
+        }
+    }
+
+    stack mut u32[0 max] flags = 0;
+    if (targetDeclarationSymbolIndexPlusOne != 0 || targetMemberSymbolIndexPlusOne != 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagTargetResolved();
+    }
+
+    if (expectedTypeParameterCount > 0 || expectedComptimeParameterCount > 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagTargetGeneric();
+    }
+
+    if (typeArgumentCount == expectedTypeParameterCount
+        && comptimeArgumentCount == expectedComptimeParameterCount)
+    {
+        flags = flags | TypedGenericInstantiationFlagArityMatches();
+    }
+
+    if (typeArgumentCount > 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagHasTypeArguments();
+    }
+
+    if (comptimeArgumentCount > 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagHasComptimeArguments();
+    }
+
+    if (openGenericArgumentCount > 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagContainsOpenGenericArguments();
+    }
+
+    if (unresolvedArgumentCount > 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagHasUnresolvedArguments();
+    }
+
+    if (TypedDeclFlagPresent(flags, TypedGenericInstantiationFlagTargetResolved())
+        && TypedDeclFlagPresent(flags, TypedGenericInstantiationFlagArityMatches())
+        && openGenericArgumentCount == 0
+        && unresolvedArgumentCount == 0)
+    {
+        flags = flags | TypedGenericInstantiationFlagDirectlyMaterializable();
+    }
+
+    stack mut u32[0 max] planIndexPlusOne = 0;
+    switch (plans.AppendPlan(
+        (u32[0 max])(siteIndex + 1),
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerMemberSymbolIndexPlusOne,
+        ownerNameToken,
+        targetKind,
+        targetDeclarationSymbolIndexPlusOne,
+        targetMemberSymbolIndexPlusOne,
+        targetNameToken,
+        useSites.OpenTokenAt(siteIndex),
+        useSites.CloseTokenAt(siteIndex),
+        argumentCount,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        expectedTypeParameterCount,
+        expectedComptimeParameterCount,
+        openGenericArgumentCount,
+        unresolvedArgumentCount,
+        flags,
+        planIndexPlusOne))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    for willexit (stack mut u32[0 max] arg = 0; arg < argumentCount; arg += 1)
+    {
+        stack GenericUseSiteArgumentKind argKind = useSites.ArgumentKindAt(siteIndex, arg);
+        stack u32[0 max] startToken = useSites.ArgumentStartTokenAt(siteIndex, arg);
+        stack u32[0 max] endToken = useSites.ArgumentEndTokenAt(siteIndex, arg);
+        stack mut u32[0 max] typeHeadToken = 0;
+        stack mut u32[0 max] typePrimaryToken = 0;
+        stack mut u32[0 max] declarationSymbolIndexPlusOne = 0;
+        stack mut u32[0 max] genericParameterSymbolIndexPlusOne = 0;
+        stack u32[0 max] argumentFlags = TypedGenericInstantiationArgumentFlags(
+            source,
+            stream,
+            declarations,
+            generics,
+            ownerDeclarationSymbolIndexPlusOne,
+            ownerMemberSymbolIndexPlusOne,
+            argKind,
+            startToken,
+            endToken,
+            typeHeadToken,
+            typePrimaryToken,
+            declarationSymbolIndexPlusOne,
+            genericParameterSymbolIndexPlusOne);
+
+        switch (plans.AppendArgument(
+            planIndexPlusOne,
+            argKind,
+            startToken,
+            endToken,
+            typeHeadToken,
+            typePrimaryToken,
+            declarationSymbolIndexPlusOne,
+            genericParameterSymbolIndexPlusOne,
+            argumentFlags))
+        {
+            case System.Memory.MemoryStatus.Err(var argumentError):
+                return System.Memory.MemoryStatus.Err(argumentError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<TypedGenericInstantiationPlanTable> BuildTypedGenericInstantiationPlans(
+    ascii source,
+    borrow TokenStream stream,
+    borrow GenericUseSiteTable useSites,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedMemberSymbolTable members,
+    borrow TypedGenericParameterSymbolTable generics)
+{
+    stack mut TypedGenericInstantiationPlanTable plans = new();
+    stack u64[0 2 ** 63 - 1] count = useSites.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedGenericInstantiationPlan(plans, source, stream, useSites, declarations, members, generics, index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return BindResult<TypedGenericInstantiationPlanTable>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return BindResult<TypedGenericInstantiationPlanTable>.Ok(plans);
+}

@@ -1,0 +1,639 @@
+import Compiler.Ir
+import Compiler.TargetFacts
+import Compiler.Mir.Model
+import Compiler.Mir.LlvmText
+import System.Memory
+import System.Text
+module Compiler.Mir.LlvmFacts
+
+internal fn ValueFacts FactAt(borrow IrTable<ValueFacts> facts, u32[0 max] index)
+{
+    return ValueFactsAtIndex(facts, index);
+}
+
+internal fn MemoryStatus EmitLlvmVolatileMarker(ValueFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.Volatile())
+    {
+        try sink.AppendConstAscii("volatile ");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmMemoryAlignment(ValueFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.HasAlignment() && facts.AlignmentBytes() != 0)
+    {
+        try sink.AppendConstAscii(", align ");
+        try sink.AppendU64((u64[0 max])facts.AlignmentBytes());
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn ValueFacts RangeFactForValue(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    u32[0 max] valueIndex)
+{
+    if (!instrs.Contains(valueIndex))
+    {
+        return FactAt(valueFacts, valueIndex);
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    if (instr.Opcode() == MirOp.Param)
+    {
+        return FactAt(paramFacts, (u32[0 max])instr.Immediate() + 1);
+    }
+
+    if (instr.Opcode() == MirOp.LoadGlobal)
+    {
+        return FactAt(globalFacts, (u32[0 max])instr.Immediate());
+    }
+
+    if (instr.Opcode() == MirOp.Call || instr.Opcode() == MirOp.TailCall)
+    {
+        return FactAt(functionReturnFacts, (u32[0 max])instr.Immediate());
+    }
+
+    return FactAt(valueFacts, valueIndex);
+}
+
+internal fn MemoryStatus EmitLlvmRangeAttribute(MirType type, ValueFacts facts, mut borrow OwnedAscii sink)
+{
+    if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(" range(");
+    try EmitLlvmTypeName(type, sink);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendI64(facts.IntegerRangeLower());
+    try sink.AppendConstAscii(", ");
+    try sink.AppendI64(facts.IntegerRangeUpperExclusive());
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal struct FunctionEffectFacts
+{
+    bool IsLaw;
+    bool LawMayReadMemory;
+    bool IsFinite;
+    bool IsNoRecurse;
+
+    FunctionEffectFacts()
+    {
+        self.IsLaw = false;
+        self.LawMayReadMemory = false;
+        self.IsFinite = false;
+        self.IsNoRecurse = false;
+    }
+}
+
+internal fn FunctionEffectFacts NoFunctionEffectFacts()
+{
+    stack mut FunctionEffectFacts facts = new();
+    return facts;
+}
+
+internal fn FunctionEffectFacts FunctionEffectFactsAt(borrow IrTable<FunctionEffectFacts> facts, u32[0 max] functionId)
+{
+    if (functionId == 0 || !facts.Contains(functionId))
+    {
+        return NoFunctionEffectFacts();
+    }
+
+    return facts.Get(functionId);
+}
+
+internal fn MemoryStatus EmitLlvmFunctionEffectAttributes(FunctionEffectFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.IsLaw)
+    {
+        if (facts.LawMayReadMemory)
+        {
+            try sink.AppendConstAscii(" memory(read)");
+        }
+        else
+        {
+            try sink.AppendConstAscii(" memory(none)");
+        }
+
+        try sink.AppendConstAscii(" nosync nofree");
+    }
+
+    if (facts.IsFinite)
+    {
+        try sink.AppendConstAscii(" willreturn mustprogress");
+    }
+
+    if (facts.IsNoRecurse)
+    {
+        try sink.AppendConstAscii(" norecurse");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallSiteEffectAttributes(borrow IrTable<FunctionEffectFacts> functionEffectFacts, u32[0 max] calleeId, mut borrow OwnedAscii sink)
+{
+    return EmitLlvmFunctionEffectAttributes(FunctionEffectFactsAt(functionEffectFacts, calleeId), sink);
+}
+
+internal struct FunctionLinkageFacts
+{
+    bool IsInternal;
+
+    FunctionLinkageFacts()
+    {
+        self.IsInternal = false;
+    }
+}
+
+internal fn FunctionLinkageFacts FunctionLinkageFactsAt(borrow IrTable<FunctionLinkageFacts> facts, u32[0 max] functionId)
+{
+    stack mut FunctionLinkageFacts empty = new();
+    if (functionId != 0 && facts.Contains(functionId))
+    {
+        return facts.Get(functionId);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmDefinitionLinkage(FunctionLinkageFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.IsInternal)
+    {
+        try sink.AppendConstAscii(" internal dso_local");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct FunctionCallingConventionFacts
+{
+    bool HasFfiAbi;
+    Compiler.TargetFacts.StarkFfiAbi FfiAbi;
+
+    FunctionCallingConventionFacts()
+    {
+        self.HasFfiAbi = false;
+        self.FfiAbi = Compiler.TargetFacts.StarkFfiAbi.C;
+    }
+}
+
+internal fn void SetFfiCallingConvention(mut borrow FunctionCallingConventionFacts facts, Compiler.TargetFacts.StarkFfiAbi abi)
+{
+    facts.HasFfiAbi = true;
+    facts.FfiAbi = abi;
+}
+
+internal fn FunctionCallingConventionFacts FunctionCallingConventionFactsAt(borrow IrTable<FunctionCallingConventionFacts> facts, u32[0 max] functionId)
+{
+    stack mut FunctionCallingConventionFacts empty = new();
+    if (functionId != 0 && facts.Contains(functionId))
+    {
+        return facts.Get(functionId);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmDefinitionCallingConvention(bool isTailCallable, FunctionCallingConventionFacts facts, mut borrow OwnedAscii sink)
+{
+    if (isTailCallable)
+    {
+        try sink.AppendConstAscii(" tailcc");
+        return MemoryStatus.Ok;
+    }
+
+    if (facts.HasFfiAbi)
+    {
+        stack ascii convention = Compiler.TargetFacts.FfiAbiLlvmCallingConventionName(facts.FfiAbi);
+        if (System.Text.AsciiLength(convention) > 0)
+        {
+            try sink.AppendConstAscii(" ");
+            try sink.AppendAscii(convention);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallCallingConvention(
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    u32[0 max] functionId,
+    mut borrow OwnedAscii sink)
+{
+    if (FunctionIdIsTailCallable(funcTailFlags, functionId))
+    {
+        try sink.AppendConstAscii("tailcc ");
+        return MemoryStatus.Ok;
+    }
+
+    stack FunctionCallingConventionFacts facts = FunctionCallingConventionFactsAt(functionCallingConventionFacts, functionId);
+    if (facts.HasFfiAbi)
+    {
+        stack ascii convention = Compiler.TargetFacts.FfiAbiLlvmCallingConventionName(facts.FfiAbi);
+        if (System.Text.AsciiLength(convention) > 0)
+        {
+            try sink.AppendAscii(convention);
+            try sink.AppendConstAscii(" ");
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct ParamAbiFacts
+{
+    bool IsPointer;
+    // 0 = none, 1 = captures(none), 2 = ret read-provenance,
+    // 3 = ret provenance, 4 = address read-provenance, 5 = address provenance.
+    u32[0 max] CaptureKind;
+    bool ReadOnly;
+    bool WriteOnly;
+    bool Writable;
+    bool DeadOnReturn;
+    u32[0 max] InitializesBytes;
+
+    ParamAbiFacts()
+    {
+        self.IsPointer = false;
+        self.CaptureKind = 0;
+        self.ReadOnly = false;
+        self.WriteOnly = false;
+        self.Writable = false;
+        self.DeadOnReturn = false;
+        self.InitializesBytes = 0;
+    }
+}
+
+internal fn ParamAbiFacts AbiFactAt(borrow IrTable<ParamAbiFacts> facts, u32[0 max] index)
+{
+    stack mut ParamAbiFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmCaptureAttribute(ParamAbiFacts facts, mut borrow OwnedAscii sink)
+{
+    switch (facts.CaptureKind)
+    {
+        case 1:
+            try sink.AppendConstAscii(" captures(none)");
+        case 2:
+            try sink.AppendConstAscii(" captures(ret: address, read_provenance)");
+        case 3:
+            try sink.AppendConstAscii(" captures(ret: address, provenance)");
+        case 4:
+            try sink.AppendConstAscii(" captures(address, read_provenance)");
+        case 5:
+            try sink.AppendConstAscii(" captures(address, provenance)");
+        default:
+            try sink.AppendConstAscii("");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmParamAbiAttributes(ParamAbiFacts facts, mut borrow OwnedAscii sink)
+{
+    try EmitLlvmCaptureAttribute(facts, sink);
+    if (facts.ReadOnly)
+    {
+        try sink.AppendConstAscii(" readonly");
+    }
+
+    if (facts.WriteOnly)
+    {
+        try sink.AppendConstAscii(" writeonly");
+    }
+
+    if (facts.Writable)
+    {
+        try sink.AppendConstAscii(" writable");
+    }
+
+    if (facts.InitializesBytes > 0)
+    {
+        try sink.AppendConstAscii(" initializes((0, ");
+        try sink.AppendU64((u64[0 max])facts.InitializesBytes);
+        try sink.AppendConstAscii("))");
+    }
+
+    if (facts.DeadOnReturn)
+    {
+        try sink.AppendConstAscii(" dead_on_return");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct DistinctStoragePair
+{
+    u32[0 max] LeftParam;
+    u32[0 max] RightParam;
+
+    DistinctStoragePair()
+    {
+        self.LeftParam = 0;
+        self.RightParam = 0;
+    }
+}
+
+internal fn DistinctStoragePair MakeDistinctStoragePair(u32[0 max] leftParam, u32[0 max] rightParam)
+{
+    stack mut DistinctStoragePair pair = new();
+    if (leftParam <= rightParam)
+    {
+        pair.LeftParam = leftParam;
+        pair.RightParam = rightParam;
+    }
+    else
+    {
+        pair.LeftParam = rightParam;
+        pair.RightParam = leftParam;
+    }
+
+    return pair;
+}
+
+internal fn bool DistinctStoragePairExists(borrow IrTable<DistinctStoragePair> facts, u32[0 max] leftParam, u32[0 max] rightParam)
+{
+    stack DistinctStoragePair canonical = MakeDistinctStoragePair(leftParam, rightParam);
+    stack u64[0 2 ** 63 - 1] total = facts.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack DistinctStoragePair pair = facts.Get(i);
+        if (pair.LeftParam == canonical.LeftParam && pair.RightParam == canonical.RightParam)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool AddDistinctStoragePairIfAbsent(mut borrow IrTable<DistinctStoragePair> facts, u32[0 max] leftParam, u32[0 max] rightParam)
+{
+    if (leftParam == rightParam)
+    {
+        return true;
+    }
+
+    if (DistinctStoragePairExists(facts, leftParam, rightParam))
+    {
+        return true;
+    }
+
+    return facts.Add(MakeDistinctStoragePair(leftParam, rightParam)) != 0;
+}
+
+internal fn bool AddDistinctStoragePairIfPointerParams(
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] leftParam,
+    u32[0 max] rightParam)
+{
+    if (!AbiFactAt(paramAbiFacts, leftParam + 1).IsPointer
+        || !AbiFactAt(paramAbiFacts, rightParam + 1).IsPointer)
+    {
+        return true;
+    }
+
+    return AddDistinctStoragePairIfAbsent(facts, leftParam, rightParam);
+}
+
+internal struct FunctionCallContractFacts
+{
+    u32[0 max] ParamCount;
+    ParamAbiFacts Param0;
+    ParamAbiFacts Param1;
+    ParamAbiFacts Param2;
+    ParamAbiFacts Param3;
+    u32[0 max] DistinctCount;
+    DistinctStoragePair Distinct0;
+    DistinctStoragePair Distinct1;
+    DistinctStoragePair Distinct2;
+    DistinctStoragePair Distinct3;
+    DistinctStoragePair Distinct4;
+    DistinctStoragePair Distinct5;
+
+    FunctionCallContractFacts()
+    {
+        self.ParamCount = 0;
+        self.Param0 = new();
+        self.Param1 = new();
+        self.Param2 = new();
+        self.Param3 = new();
+        self.DistinctCount = 0;
+        self.Distinct0 = new();
+        self.Distinct1 = new();
+        self.Distinct2 = new();
+        self.Distinct3 = new();
+        self.Distinct4 = new();
+        self.Distinct5 = new();
+    }
+}
+
+internal fn ParamAbiFacts FunctionCallContractParamAbi(FunctionCallContractFacts facts, u32[0 max] paramIndex)
+{
+    switch (paramIndex)
+    {
+        case 0:
+            return facts.Param0;
+        case 1:
+            return facts.Param1;
+        case 2:
+            return facts.Param2;
+        case 3:
+            return facts.Param3;
+        default:
+            stack mut ParamAbiFacts empty = new();
+            return empty;
+    }
+}
+
+internal fn DistinctStoragePair FunctionCallContractDistinctPair(FunctionCallContractFacts facts, u32[0 max] pairIndex)
+{
+    switch (pairIndex)
+    {
+        case 0:
+            return facts.Distinct0;
+        case 1:
+            return facts.Distinct1;
+        case 2:
+            return facts.Distinct2;
+        case 3:
+            return facts.Distinct3;
+        case 4:
+            return facts.Distinct4;
+        case 5:
+            return facts.Distinct5;
+        default:
+            stack mut DistinctStoragePair empty = new();
+            return empty;
+    }
+}
+
+internal fn FunctionCallContractFacts FunctionCallContractFactsAt(borrow IrTable<FunctionCallContractFacts> facts, u32[0 max] functionId)
+{
+    stack mut FunctionCallContractFacts empty = new();
+    if (functionId != 0 && facts.Contains(functionId))
+    {
+        return facts.Get(functionId);
+    }
+
+    return empty;
+}
+
+internal struct LlvmRangeMetadata
+{
+    MirType Type;
+    i64[min max] Lower;
+    i64[min max] UpperExclusive;
+
+    LlvmRangeMetadata()
+    {
+        self.Type = MirType.I64;
+        self.Lower = 0;
+        self.UpperExclusive = 0;
+    }
+}
+
+internal fn LlvmRangeMetadata MakeLlvmRangeMetadata(MirType type, ValueFacts facts)
+{
+    stack mut LlvmRangeMetadata metadata = new();
+    metadata.Type = type;
+    metadata.Lower = facts.IntegerRangeLower();
+    metadata.UpperExclusive = facts.IntegerRangeUpperExclusive();
+    return metadata;
+}
+
+internal fn bool LlvmRangeMetadataEquals(LlvmRangeMetadata metadata, MirType type, ValueFacts facts)
+{
+    return metadata.Type == type
+        && metadata.Lower == facts.IntegerRangeLower()
+        && metadata.UpperExclusive == facts.IntegerRangeUpperExclusive();
+}
+
+internal fn MemoryStatus GetOrAddLlvmRangeMetadata(mut borrow IrTable<LlvmRangeMetadata> ranges, MirType type, ValueFacts facts, out u32[0 max] metadataId)
+{
+    metadataId = 0;
+    if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack LlvmRangeMetadata metadata = ranges.Get(i);
+        if (LlvmRangeMetadataEquals(metadata, type, facts))
+        {
+            metadataId = i - 1;
+            return MemoryStatus.Ok;
+        }
+
+        i = i + 1;
+    }
+
+    stack u32[0 max] added = ranges.Add(MakeLlvmRangeMetadata(type, facts));
+    if (added == 0)
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    metadataId = added - 1;
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmRangeMetadataAttachment(MirType type, ValueFacts facts, mut borrow IrTable<LlvmRangeMetadata> ranges, mut borrow OwnedAscii sink)
+{
+    if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] metadataId = 0;
+    try GetOrAddLlvmRangeMetadata(ranges, type, facts, metadataId);
+    try sink.AppendConstAscii(", !range !");
+    try sink.AppendU64((u64[0 max])metadataId);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmRangeMetadataDefinitions(borrow IrTable<LlvmRangeMetadata> ranges, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack LlvmRangeMetadata metadata = ranges.Get(i);
+        try sink.AppendConstAscii("!");
+        try sink.AppendU64((u64[0 max])(i - 1));
+        try sink.AppendConstAscii(" = !{");
+        try EmitLlvmTypeName(metadata.Type, sink);
+        try sink.AppendConstAscii(" ");
+        try sink.AppendI64(metadata.Lower);
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmTypeName(metadata.Type, sink);
+        try sink.AppendConstAscii(" ");
+        try sink.AppendI64(metadata.UpperExclusive);
+        try sink.AppendConstAscii("}\n");
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool FunctionIdIsTailCallable(borrow IrTable<u32[0 max]> funcTailFlags, u32[0 max] functionId)
+{
+    if (functionId == 0 || !funcTailFlags.Contains(functionId))
+    {
+        return false;
+    }
+
+    return funcTailFlags.Get(functionId) != 0;
+}
+
+internal fn MemoryStatus EmitLlvmSeparateStorageAssume(borrow DistinctStoragePair pair, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p");
+    try sink.AppendU64((u64[0 max])pair.LeftParam);
+    try sink.AppendConstAscii(", ptr %p");
+    try sink.AppendU64((u64[0 max])pair.RightParam);
+    try sink.AppendConstAscii(")]\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmSeparateStorageAssumes(borrow IrTable<DistinctStoragePair> facts, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] total = facts.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack DistinctStoragePair pair = facts.Get(i);
+        try EmitLlvmSeparateStorageAssume(pair, sink);
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
+}

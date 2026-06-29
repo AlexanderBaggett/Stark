@@ -1,0 +1,186 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Ir
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.FfiAbiHelpers
+import Compiler.Binding.CLayoutAggregates
+import System.Memory
+module Compiler.Binding.CAbiBoundaries
+
+public enum CAbiAggregateBoundaryKind
+{
+    Return,
+    Parameter,
+}
+
+public struct CAbiAggregateBoundaryTable
+{
+    internal dynamic CAbiAggregateBoundaryKind Kinds;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] TypeNameTokens;
+    internal dynamic u32[0 max] ParamIndices;
+    internal dynamic CAbiAggregateCarrierFacts Facts;
+
+    CAbiAggregateBoundaryTable()
+    {
+        self.Kinds = new();
+        self.FunctionNameTokens = new();
+        self.TypeNameTokens = new();
+        self.ParamIndices = new();
+        self.Facts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow CAbiAggregateBoundaryTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law CAbiAggregateBoundaryKind KindAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiAggregateBoundaryKind kind = CAbiAggregateBoundaryKind.Return;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeNameTokenAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeNameTokens.Length)
+        {
+            token = self.TypeNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamIndexAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] paramIndex = 0;
+        if (index < self.ParamIndices.Length)
+        {
+            paramIndex = self.ParamIndices[index];
+        }
+
+        return paramIndex;
+    }
+
+    public law CAbiAggregateCarrierFacts FactsAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiAggregateCarrierFacts facts = new();
+        if (index < self.Facts.Length)
+        {
+            facts = self.Facts[index];
+        }
+
+        return facts;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow CAbiAggregateBoundaryTable self,
+        CAbiAggregateBoundaryKind kind,
+        u32[0 max] functionNameToken,
+        u32[0 max] typeNameToken,
+        u32[0 max] paramIndex,
+        CAbiAggregateCarrierFacts facts)
+    {
+        if (!self.Kinds.TryReserve(1)
+            || !self.FunctionNameTokens.TryReserve(1)
+            || !self.TypeNameTokens.TryReserve(1)
+            || !self.ParamIndices.TryReserve(1)
+            || !self.Facts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.FunctionNameTokens[self.FunctionNameTokens.Length] = functionNameToken;
+        init self.TypeNameTokens[self.TypeNameTokens.Length] = typeNameToken;
+        init self.ParamIndices[self.ParamIndices.Length] = paramIndex;
+        init self.Facts[self.Facts.Length] = facts;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public fn BindResult<CAbiAggregateBoundaryTable> BuildCAbiAggregateBoundaryTable(ascii source, borrow TokenStream stream, borrow DeclarationList decls)
+    where overlap(source, stream), overlap(source, decls), overlap(stream, decls)
+{
+    stack mut CAbiAggregateBoundaryTable boundaries = new();
+    stack mut CLayoutAggregateTable aggregates = new();
+    switch (BuildCLayoutAggregateTable(source, stream, decls))
+    {
+        case BindResult<CLayoutAggregateTable>.Err(var aggregateError):
+            return BindResult<CAbiAggregateBoundaryTable>.Err(BindError.OutOfMemory);
+        case BindResult<CLayoutAggregateTable>.Ok(var table):
+            aggregates = table;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (IsCAbiFfiFunction(source, stream, item))
+        {
+            stack mut FunctionSignature signature = new();
+            stack mut bool parsedSignature = false;
+            switch (ParseFunctionSignature(stream, item.KeywordToken))
+            {
+                case ParseResult<FunctionSignature>.Err(var sigError):
+                    parsedSignature = false;
+                case ParseResult<FunctionSignature>.Ok(var parsed):
+                    signature = parsed;
+                    parsedSignature = true;
+            }
+
+            if (parsedSignature)
+            {
+                stack u32[0 max] returnHead = signature.ReturnType();
+                stack u32[0 max] returnAggregate = LookupCLayoutAggregateByTypeToken(aggregates, source, stream, returnHead);
+                if (returnAggregate != 0)
+                {
+                    stack CAbiAggregateCarrierFacts returnFacts = aggregates.FactsAt((u64[0 2 ** 63 - 1])(returnAggregate - 1));
+                    switch (boundaries.Append(CAbiAggregateBoundaryKind.Return, signature.Name(), returnHead, 0, returnFacts))
+                    {
+                        case System.Memory.MemoryStatus.Err(var returnAppendError):
+                            return BindResult<CAbiAggregateBoundaryTable>.Err(BindError.OutOfMemory);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+                for willexit (stack mut u64[0 2 ** 63 - 1] p = 0; p < paramCount; p += 1)
+                {
+                    stack u32[0 max] paramHead = signature.ParamTypeAt(p);
+                    stack u32[0 max] paramAggregate = LookupCLayoutAggregateByTypeToken(aggregates, source, stream, paramHead);
+                    if (paramAggregate != 0)
+                    {
+                        stack CAbiAggregateCarrierFacts paramFacts = aggregates.FactsAt((u64[0 2 ** 63 - 1])(paramAggregate - 1));
+                        switch (boundaries.Append(CAbiAggregateBoundaryKind.Parameter, signature.Name(), paramHead, (u32[0 max])p, paramFacts))
+                        {
+                            case System.Memory.MemoryStatus.Err(var paramAppendError):
+                                return BindResult<CAbiAggregateBoundaryTable>.Err(BindError.OutOfMemory);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return BindResult<CAbiAggregateBoundaryTable>.Ok(boundaries);
+}

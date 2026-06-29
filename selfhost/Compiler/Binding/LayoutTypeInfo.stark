@@ -1,0 +1,545 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Declarations
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.LayoutHelpers
+module Compiler.Binding.LayoutTypeInfo
+
+internal struct LayoutTypeInfo
+{
+    bool Known;
+    u32[0 max] SizeBytes;
+    u32[0 max] AlignBytes;
+
+    LayoutTypeInfo()
+    {
+        self.Known = false;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+    }
+}
+
+internal finite law LayoutTypeInfo KnownLayoutTypeInfo(u32[0 max] sizeBytes, u32[0 max] alignBytes)
+{
+    stack mut LayoutTypeInfo info = new();
+    info.Known = true;
+    info.SizeBytes = sizeBytes;
+    info.AlignBytes = alignBytes;
+    return info;
+}
+
+internal finite law LayoutTypeInfo UnknownLayoutTypeInfo()
+{
+    stack LayoutTypeInfo info = new();
+    return info;
+}
+
+internal finite law u32[0 max] LayoutEffectiveFieldAlignment(u32[0 max] naturalAlign, u32[0 max] packBytes)
+{
+    if (packBytes != 0 && packBytes < naturalAlign)
+    {
+        return packBytes;
+    }
+
+    return naturalAlign;
+}
+
+internal fn LayoutTypeInfo LayoutSystemCAliasTypeInfo(ascii source, borrow TokenStream stream, u32[0 max] headToken)
+{
+    if (TokenTextEquals(source, stream, headToken, "c_char")
+        || TokenTextEquals(source, stream, headToken, "c_schar")
+        || TokenTextEquals(source, stream, headToken, "c_uchar"))
+    {
+        return KnownLayoutTypeInfo(1, 1);
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "c_short")
+        || TokenTextEquals(source, stream, headToken, "c_ushort"))
+    {
+        return KnownLayoutTypeInfo(2, 2);
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "c_int")
+        || TokenTextEquals(source, stream, headToken, "c_uint"))
+    {
+        return KnownLayoutTypeInfo(4, 4);
+    }
+
+    if (TokenTextEquals(source, stream, headToken, "c_long")
+        || TokenTextEquals(source, stream, headToken, "c_ulong")
+        || TokenTextEquals(source, stream, headToken, "c_longlong")
+        || TokenTextEquals(source, stream, headToken, "c_ulonglong")
+        || TokenTextEquals(source, stream, headToken, "c_size_t")
+        || TokenTextEquals(source, stream, headToken, "c_ptrdiff_t"))
+    {
+        return KnownLayoutTypeInfo(8, 8);
+    }
+
+    return UnknownLayoutTypeInfo();
+}
+
+internal fn LayoutTypeInfo LayoutScalarTypeInfo(ascii source, borrow TokenStream stream, u32[0 max] typeHead, u32[0 max] typePrimary)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimary);
+    if (kind == TokenKind.Bool)
+    {
+        return KnownLayoutTypeInfo(1, 1);
+    }
+
+    if (kind == TokenKind.Rawptr || kind == TokenKind.Rawmutptr || kind == TokenKind.Fnptr)
+    {
+        return KnownLayoutTypeInfo(8, 8);
+    }
+
+    if (kind == TokenKind.FloatType)
+    {
+        if (TokenTextEquals(source, stream, typePrimary, "f32"))
+        {
+            return KnownLayoutTypeInfo(4, 4);
+        }
+
+        if (TokenTextEquals(source, stream, typePrimary, "f64"))
+        {
+            return KnownLayoutTypeInfo(8, 8);
+        }
+    }
+
+    if (kind == TokenKind.IntegerType)
+    {
+        if (TokenTextEquals(source, stream, typePrimary, "i8") || TokenTextEquals(source, stream, typePrimary, "u8"))
+        {
+            return KnownLayoutTypeInfo(1, 1);
+        }
+
+        if (TokenTextEquals(source, stream, typePrimary, "i16") || TokenTextEquals(source, stream, typePrimary, "u16"))
+        {
+            return KnownLayoutTypeInfo(2, 2);
+        }
+
+        if (TokenTextEquals(source, stream, typePrimary, "i32") || TokenTextEquals(source, stream, typePrimary, "u32"))
+        {
+            return KnownLayoutTypeInfo(4, 4);
+        }
+
+        if (TokenTextEquals(source, stream, typePrimary, "i64") || TokenTextEquals(source, stream, typePrimary, "u64"))
+        {
+            return KnownLayoutTypeInfo(8, 8);
+        }
+    }
+
+    if (LayoutNameIsSystemCAlias(source, stream, typeHead))
+    {
+        return LayoutSystemCAliasTypeInfo(source, stream, typeHead);
+    }
+
+    return UnknownLayoutTypeInfo();
+}
+
+internal fn bool LayoutTypeSpanFixedArrayMultiplier(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out u32[0 max] multiplier)
+{
+    multiplier = 1;
+    stack mut u64[0 max] rawMultiplier = 1;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    stack mut bool consumedIntegerRange = false;
+    stack mut TokenKind previousTopLevel = TokenKind.EndOfFile;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = LayoutMatchingCloseToken(stream, scan);
+            if (close <= scan || close >= endExclusive)
+            {
+                return false;
+            }
+
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.RBrack)
+            {
+                return false;
+            }
+
+            if (previousTopLevel == TokenKind.IntegerType && !consumedIntegerRange)
+            {
+                consumedIntegerRange = true;
+            }
+            else
+            {
+                stack mut u64[0 max] extent = 0;
+                if ((u32[0 max])(scan + 2) != close
+                    || !LayoutTryParseU64Literal(source, stream, (u32[0 max])(scan + 1), extent))
+                {
+                    return false;
+                }
+
+                if (extent > (u64[0 max])4294967295)
+                {
+                    return false;
+                }
+
+                if (extent == 0)
+                {
+                    rawMultiplier = 0;
+                }
+                else if (rawMultiplier > (u64[0 max])4294967295 / extent)
+                {
+                    return false;
+                }
+                else
+                {
+                    rawMultiplier = rawMultiplier * extent;
+                }
+            }
+
+            scan = close;
+        }
+        else
+        {
+            if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+                || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+                || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+        }
+
+        if (depth == 0 && kind != TokenKind.LBrack && kind != TokenKind.RBrack)
+        {
+            previousTopLevel = kind;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    multiplier = (u32[0 max])rawMultiplier;
+    return true;
+}
+
+internal finite law LayoutTypeInfo LayoutApplyArrayMultiplier(LayoutTypeInfo elementInfo, u32[0 max] multiplier)
+{
+    if (!elementInfo.Known)
+    {
+        return elementInfo;
+    }
+
+    if (multiplier == 1)
+    {
+        return elementInfo;
+    }
+
+    if (multiplier != 0 && elementInfo.SizeBytes > (u32[0 max])4294967295 / multiplier)
+    {
+        return UnknownLayoutTypeInfo();
+    }
+
+    return KnownLayoutTypeInfo((u32[0 max])(elementInfo.SizeBytes * multiplier), elementInfo.AlignBytes);
+}
+
+internal fn bool LayoutTryReadFieldOffset(
+    DeclItem item,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] fieldNameToken,
+    out u32[0 max] offsetBytes)
+{
+    offsetBytes = 0;
+    stack mut u32[0 max] index = item.KeywordToken;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile
+        && stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        index = (u32[0 max])(index + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    index = (u32[0 max])(index + 1);
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        stack u32[0 max] memberStart = index;
+        stack u32[0 max] memberEnd = LayoutSkipDeclarationBody(stream, memberStart);
+        stack u32[0 max] cursor = LayoutSkipMemberModifiers(stream, memberStart);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])memberEnd) == TokenKind.Semi
+            && !LayoutTokenStartsMemberDeclaration(stream.KindAt((u64[0 2 ** 63 - 1])cursor)))
+        {
+            stack u32[0 max] nameToken = LayoutBoundedLastIdentifier(stream, cursor, memberEnd);
+            if (BindingTokenTextEqualsToken(source, stream, nameToken, fieldNameToken))
+            {
+                stack mut u32[0 max] scan = memberStart;
+                while willexit (scan < cursor && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+                {
+                    stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+                    if (attrEnd <= scan)
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] argToken = LayoutAttributeArgumentToken(source, stream, scan, attrEnd, "FieldOffset");
+                    if (LayoutTryParseU32Literal(source, stream, argToken, offsetBytes))
+                    {
+                        return true;
+                    }
+
+                    scan = (u32[0 max])(attrEnd + 1);
+                }
+
+                return false;
+            }
+        }
+
+        index = (u32[0 max])(memberEnd + 1);
+    }
+
+    return false;
+}
+
+internal fn LayoutTypeInfo LayoutTypeInfoForSpan(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    u32[0 max] typeHead,
+    u32[0 max] typePrimary,
+    u32[0 max] depth)
+{
+    if (depth > 32)
+    {
+        return UnknownLayoutTypeInfo();
+    }
+
+    stack mut u32[0 max] multiplier = 1;
+    if (!LayoutTypeSpanFixedArrayMultiplier(source, stream, typeStart, typeEnd, multiplier))
+    {
+        return UnknownLayoutTypeInfo();
+    }
+
+    stack LayoutTypeInfo scalar = LayoutScalarTypeInfo(source, stream, typeHead, typePrimary);
+    if (scalar.Known)
+    {
+        return LayoutApplyArrayMultiplier(scalar, multiplier);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typePrimary) == TokenKind.Identifier
+        && typeHead != 0
+        && !LayoutTypeSpanHasTopLevelGenericArguments(stream, typeHead, typeEnd))
+    {
+        stack mut DeclItem item = new();
+        if (LayoutTryReadDataDeclarationItem(decls, table, source, stream, typeHead, item))
+        {
+            stack LayoutTypeInfo aggregate = LayoutControlledAggregateInfo(decls, table, source, stream, item, (u32[0 max])(depth + 1));
+            return LayoutApplyArrayMultiplier(aggregate, multiplier);
+        }
+    }
+
+    return UnknownLayoutTypeInfo();
+}
+
+internal fn LayoutTypeInfo LayoutControlledAggregateInfo(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] depth)
+{
+    if (depth > 32)
+    {
+        return UnknownLayoutTypeInfo();
+    }
+
+    stack LayoutControlKind layoutKind = LayoutDeclarationLayoutKind(item, source, stream);
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, item.KeywordToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return UnknownLayoutTypeInfo();
+        case ParseResult<FieldList>.Ok(var parsed):
+            fields = parsed;
+    }
+
+    stack mut u32[0 max] sizeBytes = 0;
+    stack mut u32[0 max] maxAlign = 1;
+    if (layoutKind == LayoutControlKind.Auto || layoutKind == LayoutControlKind.C)
+    {
+        stack mut u32[0 max] packBytes = 0;
+        if (layoutKind == LayoutControlKind.C)
+        {
+            packBytes = LayoutDeclarationAttributeU32Value(item, source, stream, "Pack");
+        }
+
+        stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+        {
+            stack LayoutTypeInfo fieldInfo = LayoutTypeInfoForSpan(
+                decls,
+                table,
+                source,
+                stream,
+                fields.TypeStartAt(field),
+                fields.TypeEndAt(field),
+                fields.TypeHeadAt(field),
+                fields.TypePrimaryAt(field),
+                (u32[0 max])(depth + 1));
+            if (!fieldInfo.Known)
+            {
+                return UnknownLayoutTypeInfo();
+            }
+
+            stack u32[0 max] effectiveAlign = LayoutEffectiveFieldAlignment(fieldInfo.AlignBytes, packBytes);
+            sizeBytes = AlignUp(sizeBytes, effectiveAlign);
+            if (effectiveAlign > maxAlign)
+            {
+                maxAlign = effectiveAlign;
+            }
+
+            if (fieldInfo.SizeBytes > (u32[0 max])4294967295 - sizeBytes)
+            {
+                return UnknownLayoutTypeInfo();
+            }
+
+            sizeBytes = (u32[0 max])(sizeBytes + fieldInfo.SizeBytes);
+        }
+    }
+    else if (layoutKind == LayoutControlKind.Explicit)
+    {
+        stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+        {
+            stack LayoutTypeInfo fieldInfo = LayoutTypeInfoForSpan(
+                decls,
+                table,
+                source,
+                stream,
+                fields.TypeStartAt(field),
+                fields.TypeEndAt(field),
+                fields.TypeHeadAt(field),
+                fields.TypePrimaryAt(field),
+                (u32[0 max])(depth + 1));
+            stack mut u32[0 max] fieldOffset = 0;
+            if (!fieldInfo.Known
+                || !LayoutTryReadFieldOffset(item, source, stream, fields.NameTokenAt(field), fieldOffset)
+                || fieldInfo.SizeBytes > (u32[0 max])4294967295 - fieldOffset)
+            {
+                return UnknownLayoutTypeInfo();
+            }
+
+            stack u32[0 max] fieldEnd = (u32[0 max])(fieldOffset + fieldInfo.SizeBytes);
+            if (fieldEnd > sizeBytes)
+            {
+                sizeBytes = fieldEnd;
+            }
+
+            if (fieldInfo.AlignBytes > maxAlign)
+            {
+                maxAlign = fieldInfo.AlignBytes;
+            }
+        }
+    }
+
+    stack u32[0 max] alignBytes = LayoutDeclarationAttributeU32Value(item, source, stream, "Align");
+    if (alignBytes > maxAlign)
+    {
+        maxAlign = alignBytes;
+    }
+
+    return KnownLayoutTypeInfo(AlignUp(sizeBytes, maxAlign), maxAlign);
+}
+
+internal fn bool LayoutFieldIsMisaligned(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] structNameToken,
+    u32[0 max] fieldNameToken)
+{
+    stack mut DeclItem item = new();
+    if (!LayoutTryReadDataDeclarationItem(decls, table, source, stream, structNameToken, item))
+    {
+        return false;
+    }
+
+    stack LayoutControlKind layoutKind = LayoutDeclarationLayoutKind(item, source, stream);
+    if (layoutKind == LayoutControlKind.Auto)
+    {
+        return false;
+    }
+
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, item.KeywordToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return false;
+        case ParseResult<FieldList>.Ok(var parsed):
+            fields = parsed;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    stack u32[0 max] packBytes = LayoutDeclarationAttributeU32Value(item, source, stream, "Pack");
+    stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+    {
+        stack LayoutTypeInfo fieldInfo = LayoutTypeInfoForSpan(
+            decls,
+            table,
+            source,
+            stream,
+            fields.TypeStartAt(field),
+            fields.TypeEndAt(field),
+            fields.TypeHeadAt(field),
+            fields.TypePrimaryAt(field),
+            0);
+        if (!fieldInfo.Known)
+        {
+            return false;
+        }
+
+        if (layoutKind == LayoutControlKind.C)
+        {
+            offset = AlignUp(offset, LayoutEffectiveFieldAlignment(fieldInfo.AlignBytes, packBytes));
+        }
+        else if (!LayoutTryReadFieldOffset(item, source, stream, fields.NameTokenAt(field), offset))
+        {
+            return false;
+        }
+
+        if (BindingTokenTextEqualsToken(source, stream, fields.NameTokenAt(field), fieldNameToken))
+        {
+            return fieldInfo.AlignBytes > 1 && offset % fieldInfo.AlignBytes != 0;
+        }
+
+        if (layoutKind == LayoutControlKind.C)
+        {
+            if (fieldInfo.SizeBytes > (u32[0 max])4294967295 - offset)
+            {
+                return false;
+            }
+
+            offset = (u32[0 max])(offset + fieldInfo.SizeBytes);
+        }
+    }
+
+    return false;
+}

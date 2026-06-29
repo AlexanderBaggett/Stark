@@ -1,0 +1,463 @@
+import Compiler.AsmFacts
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.LlvmModules
+import Compiler.Mir.PackageImage
+import System.Memory
+import System.Text
+import System.Runtime.Buffer
+import System.IO
+import System.IO.File
+import System.FileSystem
+import System.Process
+module Compiler.Mir.TestSupport
+
+// === LLVM IR and package-image test support ===
+// These helpers intentionally own filesystem, temp-directory, and subprocess work so the
+// MIR production modules can stay focused on fact-preserving lowering and serialization.
+
+internal fn bool WriteAsciiFile(ascii path, borrow OwnedAscii text)
+{
+    switch (System.IO.File.WriteAllBytes(path, text.AsSlice()))
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var writeError):
+            return false;
+    }
+}
+
+internal fn void AppendBufferToAscii(borrow DynamicByteBuffer src, mut borrow OwnedAscii dst)
+{
+    stack i8[min max][] bytes = src.ReadSlice();
+    stack u64[0 2 ** 63 - 1] len = src.Readable();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < len)
+    {
+        stack i8[min max] b = bytes[i];
+        stack System.Memory.MemoryStatus w = dst.AppendByte(b);
+        i = i + 1;
+    }
+}
+
+internal fn bool ReadAsciiFileEquals(ascii path, borrow OwnedAscii expected)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            stack mut OwnedAscii readback = new();
+            AppendBufferToAscii(contents, readback);
+            return System.Text.OwnedAscii.Equals(expected, readback);
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+// Builds `<fresh temp dir>/<filename>` into `outPath` (filename should lead with `/`).
+internal fn bool MakeTempPath(mut borrow OwnedAscii outPath, const ascii filename)
+{
+    switch (System.FileSystem.CreateTempDirectory("mir"))
+    {
+        case System.IO.IOResult<OwnedAscii>.Ok(var dir):
+            stack mut OwnedAscii dirPath = dir;
+            stack System.Memory.MemoryStatus appendDir = outPath.AppendAscii(dirPath.View());
+            stack System.Memory.MemoryStatus appendName = outPath.AppendConstAscii(filename);
+            return appendDir == System.Memory.MemoryStatus.Ok
+                && appendName == System.Memory.MemoryStatus.Ok;
+        case System.IO.IOResult<OwnedAscii>.Err(var dirError):
+            return false;
+    }
+}
+
+internal fn bool MakeTempDir(mut borrow OwnedAscii outDir)
+{
+    switch (System.FileSystem.CreateTempDirectory("mirobj"))
+    {
+        case System.IO.IOResult<OwnedAscii>.Ok(var dir):
+            stack mut OwnedAscii dirPath = dir;
+            stack System.Memory.MemoryStatus appendDir = outDir.AppendAscii(dirPath.View());
+            return appendDir == System.Memory.MemoryStatus.Ok;
+        case System.IO.IOResult<OwnedAscii>.Err(var dirError):
+            return false;
+    }
+}
+
+// Emits the module as LLVM IR text, writes it to a temp `.ll` file, reads it back, and
+// reports whether the on-disk text matches the emitted text exactly.
+public fn bool LlvmModuleFileRoundTrips(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs)
+{
+    stack mut OwnedAscii text = new();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmModule(instrs, blocks, funcs, text);
+
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/module.ll"))
+    {
+        return false;
+    }
+
+    if (!WriteAsciiFile(path.View(), text))
+    {
+        return false;
+    }
+
+    return ReadAsciiFileEquals(path.View(), text);
+}
+
+// True when `path` names a non-empty file (used to detect that clang wrote an object).
+internal fn bool NonEmptyFileExists(ascii path)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            return contents.Readable() > 0;
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+internal fn bool RunClangCapture(mut borrow System.Process.ProcessCommand command, ascii objPath)
+{
+    unsafe
+    {
+        stack mut bool clangRan = false;
+        stack mut bool clangUnavailable = false;
+        switch (System.Process.RunCapture(command))
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var ranOutput):
+                clangRan = true;
+            case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
+                clangUnavailable = true;
+        }
+
+        if (clangUnavailable)
+        {
+            return true;
+        }
+
+        if (clangRan)
+        {
+            return NonEmptyFileExists(objPath);
+        }
+
+        return true;
+    }
+}
+
+internal fn bool RunClang(ascii llPath, ascii objPath)
+{
+    switch (System.Process.Command("clang"))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var cmd):
+            stack mut System.Process.ProcessCommand command = cmd;
+            stack System.Process.ProcessStatus s1 = command.AddArgument("-c");
+            stack System.Process.ProcessStatus s2 = command.AddArgument(llPath);
+            stack System.Process.ProcessStatus s3 = command.AddArgument("-o");
+            stack System.Process.ProcessStatus s4 = command.AddArgument(objPath);
+            if (s1 != System.Process.ProcessStatus.Ok
+                || s2 != System.Process.ProcessStatus.Ok
+                || s3 != System.Process.ProcessStatus.Ok
+                || s4 != System.Process.ProcessStatus.Ok)
+            {
+                return false;
+            }
+
+            return RunClangCapture(command, objPath);
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var cmdError):
+            return true;
+    }
+}
+
+// Emits the module's LLVM IR, writes it to a `.ll` file, and runs `clang -c` to produce
+// an object. Returns true when an object was produced OR the toolchain is unavailable;
+// false only when clang ran but produced no object.
+public fn bool CompileEmittedLlvmProducesObject(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs)
+{
+    stack mut OwnedAscii dir = new();
+    if (!MakeTempDir(dir))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii llPath = new();
+    stack System.Memory.MemoryStatus la = llPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus lb = llPath.AppendConstAscii("/module.ll");
+    stack mut OwnedAscii objPath = new();
+    stack System.Memory.MemoryStatus oa = objPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus ob = objPath.AppendConstAscii("/module.o");
+    if (la != System.Memory.MemoryStatus.Ok
+        || lb != System.Memory.MemoryStatus.Ok
+        || oa != System.Memory.MemoryStatus.Ok
+        || ob != System.Memory.MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmModule(instrs, blocks, funcs, text);
+    if (emitStatus != System.Memory.MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    if (!WriteAsciiFile(llPath.View(), text))
+    {
+        return false;
+    }
+
+    return RunClang(llPath.View(), objPath.View());
+}
+
+// Writes already-emitted LLVM text to a temp `.ll` and runs `clang -c` on it.
+public fn bool ClangVerifiesLlvmText(borrow OwnedAscii text)
+{
+    stack mut OwnedAscii dir = new();
+    if (!MakeTempDir(dir))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii llPath = new();
+    stack System.Memory.MemoryStatus la = llPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus lb = llPath.AppendConstAscii("/unit.ll");
+    stack mut OwnedAscii objPath = new();
+    stack System.Memory.MemoryStatus oa = objPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus ob = objPath.AppendConstAscii("/unit.o");
+    if (la != System.Memory.MemoryStatus.Ok
+        || lb != System.Memory.MemoryStatus.Ok
+        || oa != System.Memory.MemoryStatus.Ok
+        || ob != System.Memory.MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    if (!WriteAsciiFile(llPath.View(), text))
+    {
+        return false;
+    }
+
+    return RunClang(llPath.View(), objPath.View());
+}
+
+internal inline finite law bool AsmTextRangeEquals(AsmTextRange left, AsmTextRange right)
+{
+    return left.Start() == right.Start()
+        && left.Length() == right.Length();
+}
+
+internal fn bool AsmMetadataTablesEqual(borrow AsmMetadataTable left, borrow AsmMetadataTable right)
+{
+    if (left.TextByteCount() != right.TextByteCount()
+        || left.InputCount() != right.InputCount()
+        || left.OutputCount() != right.OutputCount()
+        || left.ClobberCount() != right.ClobberCount()
+        || left.FunctionCount() != right.FunctionCount())
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] textIndex = 0;
+    while willexit (textIndex < left.TextByteCount())
+    {
+        if (left.TextByteAt(textIndex) != right.TextByteAt(textIndex))
+        {
+            return false;
+        }
+
+        textIndex = textIndex + 1;
+    }
+
+    stack mut u32[0 max] inputIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])inputIndex <= left.InputCount())
+    {
+        stack AsmInputOperand leftInput = left.InputAt(inputIndex);
+        stack AsmInputOperand rightInput = right.InputAt(inputIndex);
+        if (!AsmTextRangeEquals(leftInput.Register(), rightInput.Register())
+            || !AsmTextRangeEquals(leftInput.Value(), rightInput.Value()))
+        {
+            return false;
+        }
+
+        inputIndex = inputIndex + 1;
+    }
+
+    stack mut u32[0 max] outputIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])outputIndex <= left.OutputCount())
+    {
+        stack AsmOutputOperand leftOutput = left.OutputAt(outputIndex);
+        stack AsmOutputOperand rightOutput = right.OutputAt(outputIndex);
+        if (!AsmTextRangeEquals(leftOutput.Register(), rightOutput.Register())
+            || !AsmTextRangeEquals(leftOutput.Value(), rightOutput.Value())
+            || leftOutput.BindsReturn() != rightOutput.BindsReturn())
+        {
+            return false;
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack mut u32[0 max] clobberIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])clobberIndex <= left.ClobberCount())
+    {
+        if (!AsmTextRangeEquals(left.ClobberAt(clobberIndex), right.ClobberAt(clobberIndex)))
+        {
+            return false;
+        }
+
+        clobberIndex = clobberIndex + 1;
+    }
+
+    stack mut u32[0 max] functionIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionIndex <= left.FunctionCount())
+    {
+        stack AsmFunctionMetadata leftFunction = left.FunctionAt(AsmFunctionIdOf(functionIndex));
+        stack AsmFunctionMetadata rightFunction = right.FunctionAt(AsmFunctionIdOf(functionIndex));
+        stack MirFuncId leftMirFunction = leftFunction.Function();
+        stack MirFuncId rightMirFunction = rightFunction.Function();
+        if (!leftMirFunction.Equals(rightMirFunction))
+        {
+            return false;
+        }
+
+        if (leftFunction.Architecture() != rightFunction.Architecture())
+        {
+            return false;
+        }
+
+        stack AsmTextRange leftTemplate = leftFunction.Template();
+        stack AsmTextRange rightTemplate = rightFunction.Template();
+        if (!AsmTextRangeEquals(leftTemplate, rightTemplate))
+        {
+            return false;
+        }
+
+        if (leftFunction.FirstInput() != rightFunction.FirstInput()
+            || leftFunction.InputCount() != rightFunction.InputCount()
+            || leftFunction.FirstOutput() != rightFunction.FirstOutput()
+            || leftFunction.OutputCount() != rightFunction.OutputCount()
+            || leftFunction.FirstClobber() != rightFunction.FirstClobber()
+            || leftFunction.ClobberCount() != rightFunction.ClobberCount())
+        {
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    return true;
+}
+
+// Writes a serialized module to a temp file, reads it back, and reports whether the
+// section counts survive the on-disk round-trip.
+public fn bool PackageImageFileRoundTrips(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/image.starkpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageFile(path.View(), instrs, blocks, funcs, globals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack bool ok = LoadPackageImageFile(path.View(), bi, bb, bf, bg);
+    return ok
+        && bi.Count() == instrs.Count()
+        && bb.Count() == blocks.Count()
+        && bf.Count() == funcs.Count()
+        && bg.Count() == globals.Count();
+}
+
+public fn bool PackageImageWithAsmFileRoundTrips(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/image-with-asm.starkpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageWithAsmFile(path.View(), instrs, blocks, funcs, globals, asmMetadata))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut AsmMetadataTable restoredAsm = new();
+    stack bool ok = LoadPackageImageWithAsmFile(path.View(), bi, bb, bf, bg, restoredAsm);
+    return ok
+        && bi.Count() == instrs.Count()
+        && bb.Count() == blocks.Count()
+        && bf.Count() == funcs.Count()
+        && bg.Count() == globals.Count()
+        && AsmMetadataTablesEqual(asmMetadata, restoredAsm);
+}
+
+public fn bool PackageImageBufferInspectsThroughFile(
+    borrow IrTable<u8[0 max]> image,
+    borrow OwnedAscii expectedText,
+    borrow OwnedAscii expectedJson)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/inspect.mirpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageBufferFile(path.View(), image))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    if (!RenderPackageImageInspectionFile(path.View(), PackageImageInspectionFormat.Text, text))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii json = new();
+    if (!RenderPackageImageInspectionFile(path.View(), PackageImageInspectionFormat.Json, json))
+    {
+        return false;
+    }
+
+    return System.Text.OwnedAscii.Equals(expectedText, text)
+        && System.Text.OwnedAscii.Equals(expectedJson, json);
+}
+
+public fn bool PackageImageBufferInspectionFailsThroughFile(
+    borrow IrTable<u8[0 max]> image,
+    PackageImageInspectionFormat format)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/invalid.mirpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageBufferFile(path.View(), image))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii sink = new();
+    if (RenderPackageImageInspectionFile(path.View(), format, sink))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii empty = new();
+    return System.Text.OwnedAscii.Equals(sink, empty);
+}

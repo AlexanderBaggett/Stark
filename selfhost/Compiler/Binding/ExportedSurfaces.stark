@@ -1,0 +1,590 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.DeclarationPrelude
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.TypeResolution
+import Compiler.Binding.LayoutHelpers
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.TypedModuleSymbols
+import System.Memory
+module Compiler.Binding.ExportedSurfaces
+
+internal finite law u32[0 max] VisibilityRank(TypedModuleSymbolVisibility visibility)
+{
+    switch (visibility)
+    {
+        case TypedModuleSymbolVisibility.ModulePrivate:
+            return 0;
+        case TypedModuleSymbolVisibility.Internal:
+            return 1;
+        case TypedModuleSymbolVisibility.Public:
+            return 2;
+        case TypedModuleSymbolVisibility.Export:
+            return 3;
+    }
+}
+
+internal fn u32[0 max] MemberVisibilityModifierToken(borrow TokenStream stream, u32[0 max] memberStart, u32[0 max] memberKeyword)
+{
+    stack mut u32[0 max] scan = memberStart;
+    while willexit (scan < memberKeyword)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Export || kind == TokenKind.Public || kind == TokenKind.Internal)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = AttributeEndToken(stream, scan);
+            if (close <= scan)
+            {
+                return 0;
+            }
+
+            scan = close;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn TypedModuleSymbolVisibility VisibilityFromModifierToken(borrow TokenStream stream, u32[0 max] token)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if (kind == TokenKind.Export)
+    {
+        return TypedModuleSymbolVisibility.Export;
+    }
+
+    if (kind == TokenKind.Public)
+    {
+        return TypedModuleSymbolVisibility.Public;
+    }
+
+    if (kind == TokenKind.Internal)
+    {
+        return TypedModuleSymbolVisibility.Internal;
+    }
+
+    return TypedModuleSymbolVisibility.ModulePrivate;
+}
+
+internal fn System.Memory.MemoryStatus AppendExportedSurfaceInvalid(mut borrow BindDiagnosticList diags, u32[0 max] token)
+{
+    switch (diags.Append(BindDiagnosticCode.ExportedSurfaceInvalid, token))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendAbiBoundaryEnumType(mut borrow BindDiagnosticList diags, u32[0 max] token)
+{
+    switch (diags.Append(BindDiagnosticCode.AbiBoundaryEnumType, token))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn bool RecordHeaderTypeDependsOnEnum(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] depth)
+{
+    if (item.Kind != DeclarationKind.Record || item.NameToken == 0 || depth > 32)
+    {
+        return false;
+    }
+
+    stack u32[0 max] open = RecordHeaderOpenToken(stream, item.NameToken, item.EndToken);
+    if (open == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] close = MatchingMemberCloseToken(stream, open);
+    if (close <= open)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] segStart = (u32[0 max])(open + 1);
+    stack mut u32[0 max] scan = segStart;
+    stack mut u32[0 max] segmentDepth = 0;
+    while willexit (scan <= close)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            segmentDepth = (u32[0 max])(segmentDepth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (segmentDepth > 0)
+            {
+                segmentDepth = (u32[0 max])(segmentDepth - 1);
+            }
+        }
+
+        if (segmentDepth == 0 && (kind == TokenKind.Comma || kind == TokenKind.RParen))
+        {
+            stack u32[0 max] typeStart = LayoutSkipMemberModifiers(stream, segStart);
+            stack u32[0 max] nameToken = LastTypeHeadIdentifierInSpan(stream, typeStart, scan);
+            if (nameToken != 0
+                && TypeSpanDependsOnEnum(decls, table, source, stream, typeStart, nameToken, (u32[0 max])(depth + 1)))
+            {
+                return true;
+            }
+
+            segStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool DeclarationTypeDependsOnEnum(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    u32[0 max] depth)
+{
+    if (depth > 32)
+    {
+        return false;
+    }
+
+    if (item.Kind == DeclarationKind.Enum)
+    {
+        return true;
+    }
+
+    if (RecordHeaderTypeDependsOnEnum(decls, table, source, stream, item, (u32[0 max])(depth + 1)))
+    {
+        return true;
+    }
+
+    if (item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+    {
+        stack mut FieldList fields = new();
+        switch (ParseStructFields(stream, item.KeywordToken))
+        {
+            case ParseResult<FieldList>.Err(var fieldsError):
+                return false;
+            case ParseResult<FieldList>.Ok(var parsed):
+                fields = parsed;
+        }
+
+        stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+        {
+            if (TypeSpanDependsOnEnum(decls, table, source, stream, fields.TypeStartAt(field), fields.TypeEndAt(field), (u32[0 max])(depth + 1)))
+            {
+                return true;
+            }
+        }
+    }
+    else if (item.Kind == DeclarationKind.Alias)
+    {
+        stack mut u32[0 max] assign = item.KeywordToken;
+        while willexit (assign < item.EndToken
+            && stream.KindAt((u64[0 2 ** 63 - 1])assign) != TokenKind.Assign)
+        {
+            assign = (u32[0 max])(assign + 1);
+        }
+
+        if (assign < item.EndToken)
+        {
+            return TypeSpanDependsOnEnum(decls, table, source, stream, (u32[0 max])(assign + 1), item.EndToken, (u32[0 max])(depth + 1));
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TypeNameTokenDependsOnEnum(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] nameToken,
+    u32[0 max] depth)
+{
+    if (nameToken == 0)
+    {
+        return false;
+    }
+
+    stack mut DeclItem item = new();
+    stack mut DeclarationKind kind = DeclarationKind.Unknown;
+    if (!LayoutTryReadDeclarationItem(decls, table, source, stream, nameToken, item, kind))
+    {
+        return false;
+    }
+
+    return DeclarationTypeDependsOnEnum(decls, table, source, stream, item, depth);
+}
+
+internal fn bool TypeSpanDependsOnEnum(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] depth)
+{
+    if (depth > 32)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                if (TypeSpanDependsOnEnum(decls, table, source, stream, (u32[0 max])(index + 1), close, (u32[0 max])(depth + 1)))
+                {
+                    return true;
+                }
+
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier)
+        {
+            stack bool isQualifiedPart =
+                (index > start && stream.KindAt((u64[0 2 ** 63 - 1])(index - 1)) == TokenKind.Dot)
+                || stream.KindAt((u64[0 2 ** 63 - 1])(index + 1)) == TokenKind.Dot;
+            if (!isQualifiedPart && TypeNameTokenDependsOnEnum(decls, table, source, stream, index, (u32[0 max])(depth + 1)))
+            {
+                return true;
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionIsAbiBoundary(DeclItem item, borrow TokenStream stream)
+{
+    return DeclarationPreludeHasToken(stream, item, TokenKind.Export)
+        || DeclarationPreludeHasToken(stream, item, TokenKind.Ffi)
+        || DeclarationPreludeHasToken(stream, item, TokenKind.Asm);
+}
+
+internal fn bool MemberFunctionIsAbiBoundary(
+    TypedModuleSymbolVisibility memberVisibility,
+    borrow TokenStream stream,
+    u32[0 max] memberStart,
+    u32[0 max] fnKeyword)
+{
+    return memberVisibility == TypedModuleSymbolVisibility.Export
+        || MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Ffi)
+        || MemberPreludeHasToken(stream, memberStart, fnKeyword, TokenKind.Asm);
+}
+
+internal fn System.Memory.MemoryStatus CollectFunctionAbiEnumDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow FunctionSignature signature,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u32[0 max] returnStart = signature.ReturnTypeStartTokenAt();
+    stack u32[0 max] returnEnd = signature.ReturnTypeEndTokenAt();
+    if (returnStart < returnEnd
+        && stream.KindAt((u64[0 2 ** 63 - 1])signature.ReturnTypeTokenAt()) != TokenKind.Void
+        && TypeSpanDependsOnEnum(decls, table, source, stream, returnStart, returnEnd, 0))
+    {
+        switch (AppendAbiBoundaryEnumType(diags, returnStart))
+        {
+            case System.Memory.MemoryStatus.Err(var returnError):
+                return System.Memory.MemoryStatus.Err(returnError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+    {
+        stack u32[0 max] paramStart = signature.ParamTypeStartTokenAt(param);
+        stack u32[0 max] paramEnd = signature.ParamTypeEndTokenAt(param);
+        if (paramStart < paramEnd
+            && TypeSpanDependsOnEnum(decls, table, source, stream, paramStart, paramEnd, 0))
+        {
+            switch (AppendAbiBoundaryEnumType(diags, paramStart))
+            {
+                case System.Memory.MemoryStatus.Err(var paramError):
+                    return System.Memory.MemoryStatus.Err(paramError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectExportedSurfaceMemberDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    TypedModuleSymbolVisibility ownerVisibility,
+    u32[0 max] memberStart,
+    u32[0 max] memberEnd,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u32[0 max] cursor = LayoutSkipMemberModifiers(stream, memberStart);
+    stack u32[0 max] visibilityToken = MemberVisibilityModifierToken(stream, memberStart, cursor);
+    if (visibilityToken != 0
+        && VisibilityRank(VisibilityFromModifierToken(stream, visibilityToken)) > VisibilityRank(ownerVisibility))
+    {
+        switch (AppendExportedSurfaceInvalid(diags, visibilityToken))
+        {
+            case System.Memory.MemoryStatus.Err(var visibilityError):
+                return System.Memory.MemoryStatus.Err(visibilityError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.Fn
+        || stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.Finite
+        || stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.Law)
+    {
+        stack mut FunctionSignature signature = new();
+        switch (ParseFunctionSignature(stream, cursor))
+        {
+            case ParseResult<FunctionSignature>.Err(var signatureError):
+                return System.Memory.MemoryStatus.Ok;
+            case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                signature = parsedSignature;
+        }
+
+        stack TypedModuleSymbolVisibility memberVisibility = MemberVisibility(ownerVisibility, stream, memberStart, cursor);
+        if (MemberFunctionIsAbiBoundary(memberVisibility, stream, memberStart, cursor))
+        {
+            switch (CollectFunctionAbiEnumDiagnostics(decls, table, source, stream, signature, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var abiError):
+                    return System.Memory.MemoryStatus.Err(abiError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectExportedSurfaceRecordHeaderDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    TypedModuleSymbolVisibility ownerVisibility,
+    mut borrow BindDiagnosticList diags)
+{
+    if (item.Kind != DeclarationKind.Record || item.NameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] open = RecordHeaderOpenToken(stream, item.NameToken, item.EndToken);
+    if (open == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] close = MatchingMemberCloseToken(stream, open);
+    if (close <= open)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] segStart = (u32[0 max])(open + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = segStart;
+    while willexit (scan <= close)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.RParen))
+        {
+            if (segStart < scan)
+            {
+                switch (CollectExportedSurfaceMemberDiagnostics(decls, table, source, stream, item, ownerVisibility, segStart, scan, diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var headerError):
+                        return System.Memory.MemoryStatus.Err(headerError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectExportedSurfaceDeclarationDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item,
+    mut borrow BindDiagnosticList diags)
+{
+    if (item.Kind == DeclarationKind.Function)
+    {
+        if (FunctionIsAbiBoundary(item, stream))
+        {
+            stack mut FunctionSignature signature = new();
+            switch (ParseFunctionSignature(stream, item.KeywordToken))
+            {
+                case ParseResult<FunctionSignature>.Err(var signatureError):
+                    return System.Memory.MemoryStatus.Ok;
+                case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                    signature = parsedSignature;
+            }
+
+            return CollectFunctionAbiEnumDiagnostics(decls, table, source, stream, signature, diags);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (item.Kind != DeclarationKind.Struct
+        && item.Kind != DeclarationKind.Record
+        && item.Kind != DeclarationKind.Trait
+        && item.Kind != DeclarationKind.Doctrine)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack TypedModuleSymbolVisibility ownerVisibility = DeclarationVisibility(stream, item);
+    switch (CollectExportedSurfaceRecordHeaderDiagnostics(decls, table, source, stream, item, ownerVisibility, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var headerError):
+            return System.Memory.MemoryStatus.Err(headerError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut u32[0 max] open = item.KeywordToken;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.EndOfFile
+        && stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.LBrace)
+    {
+        open = (u32[0 max])(open + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.LBrace)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(open + 1);
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.RBrace)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] memberStart = scan;
+        stack u32[0 max] memberEnd = LayoutSkipDeclarationBody(stream, memberStart);
+        switch (CollectExportedSurfaceMemberDiagnostics(decls, table, source, stream, item, ownerVisibility, memberStart, memberEnd, diags))
+        {
+            case System.Memory.MemoryStatus.Err(var memberError):
+                return System.Memory.MemoryStatus.Err(memberError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        scan = (u32[0 max])(memberEnd + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectExportedSurfaceDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (CollectExportedSurfaceDeclarationDiagnostics(decls, table, source, stream, decls.ItemAt(index), diags))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

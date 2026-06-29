@@ -1,0 +1,178 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding
+import Compiler.Binding.CAbiBoundaries
+import Compiler.Mir.Model
+import System.Memory
+import System.Text
+module Compiler.Mir.LlvmText
+
+// Appends an LLVM integer type name (`i1`/`i32`/`i64`).
+internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
+{
+    switch (t)
+    {
+        case MirType.I1:
+            try sink.AppendConstAscii("i1");
+        case MirType.I8:
+            try sink.AppendConstAscii("i8");
+        case MirType.I16:
+            try sink.AppendConstAscii("i16");
+        case MirType.I32:
+            try sink.AppendConstAscii("i32");
+        case MirType.I64:
+            try sink.AppendConstAscii("i64");
+        case MirType.Ptr:
+            try sink.AppendConstAscii("ptr");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM block-label reference (`%bN`) for the block at 1-based `index`.
+internal fn MemoryStatus EmitLlvmBlockRef(mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    try sink.AppendConstAscii("%b");
+    try sink.AppendU64((u64[0 max])index);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmAbiCarrierKind(AbiCarrierKind kind, mut borrow OwnedAscii sink)
+{
+    switch (kind)
+    {
+        case AbiCarrierKind.I8:
+            try sink.AppendConstAscii("i8");
+        case AbiCarrierKind.I16:
+            try sink.AppendConstAscii("i16");
+        case AbiCarrierKind.I32:
+            try sink.AppendConstAscii("i32");
+        case AbiCarrierKind.I64:
+            try sink.AppendConstAscii("i64");
+        case AbiCarrierKind.F32:
+            try sink.AppendConstAscii("float");
+        case AbiCarrierKind.F64:
+            try sink.AppendConstAscii("double");
+        case AbiCarrierKind.Vector2F32:
+            try sink.AppendConstAscii("<2 x float>");
+        default:
+            try sink.AppendConstAscii("unknown");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitCAbiAggregateCarrierShape(CAbiAggregateCarrierFacts facts, bool isReturn, mut borrow OwnedAscii sink)
+{
+    if (facts.IsDirect())
+    {
+        try sink.AppendConstAscii("direct ");
+        if (isReturn && facts.ReturnCarrierIsLlvmStruct())
+        {
+            try sink.AppendConstAscii("{ ");
+        }
+
+        stack u32[0 max] count = facts.LlvmParameterCarrierCount();
+        stack mut u32[0 max] index = 0;
+        while willexit (index < count)
+        {
+            if (index > 0)
+            {
+                try sink.AppendConstAscii(", ");
+            }
+
+            try EmitLlvmAbiCarrierKind(facts.CarrierKindAt(index), sink);
+            index = (u32[0 max])(index + 1);
+        }
+
+        if (isReturn && facts.ReturnCarrierIsLlvmStruct())
+        {
+            try sink.AppendConstAscii(" }");
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    if (facts.IsIndirect())
+    {
+        try sink.AppendConstAscii("indirect");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("unsupported");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitTokenText(ascii source, borrow TokenStream stream, u32[0 max] token, mut borrow OwnedAscii sink)
+{
+    return sink.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token));
+}
+
+public fn MemoryStatus EmitCAbiAggregateBoundaryFacts(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut TokenStream stream = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        case LexResult<TokenStream>.Ok(var lexed):
+            stream = lexed;
+    }
+
+    stack mut u32[0 max] declStart = 0;
+    switch (Compiler.Parsing.ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (Compiler.Parsing.ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut CAbiAggregateBoundaryTable boundaries = new();
+    switch (BuildCAbiAggregateBoundaryTable(source, stream, decls))
+    {
+        case BindResult<CAbiAggregateBoundaryTable>.Err(var bindError):
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        case BindResult<CAbiAggregateBoundaryTable>.Ok(var built):
+            boundaries = built;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = boundaries.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack bool isReturn = boundaries.KindAt(index) == CAbiAggregateBoundaryKind.Return;
+        if (isReturn)
+        {
+            try sink.AppendConstAscii("return ");
+        }
+        else
+        {
+            try sink.AppendConstAscii("param ");
+        }
+
+        try EmitTokenText(source, stream, boundaries.FunctionNameTokenAt(index), sink);
+        if (!isReturn)
+        {
+            try sink.AppendConstAscii("#");
+            try sink.AppendU64((u64[0 max])boundaries.ParamIndexAt(index));
+        }
+
+        try sink.AppendConstAscii(" ");
+        try EmitTokenText(source, stream, boundaries.TypeNameTokenAt(index), sink);
+        try sink.AppendConstAscii(" ");
+        try EmitCAbiAggregateCarrierShape(boundaries.FactsAt(index), isReturn, sink);
+        try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}

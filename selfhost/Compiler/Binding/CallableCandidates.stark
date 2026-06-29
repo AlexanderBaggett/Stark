@@ -1,0 +1,497 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.TypedDeclarations
+import System.Memory
+module Compiler.Binding.CallableCandidates
+
+public enum CallableCandidateKind
+{
+    Declaration,
+    ScopeSymbol,
+}
+
+public struct CallableCandidateSetTable
+{
+    internal dynamic u32[0 max] CallNodes;
+    internal dynamic u32[0 max] CalleeNodes;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] ArgumentCounts;
+    internal dynamic u32[0 max] CandidateStartSlots;
+    internal dynamic u32[0 max] CandidateCounts;
+    internal dynamic CallableCandidateKind CandidateKinds;
+    internal dynamic u32[0 max] CandidateTargets;
+
+    CallableCandidateSetTable()
+    {
+        self.CallNodes = new();
+        self.CalleeNodes = new();
+        self.NameTokens = new();
+        self.ArgumentCounts = new();
+        self.CandidateStartSlots = new();
+        self.CandidateCounts = new();
+        self.CandidateKinds = new();
+        self.CandidateTargets = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow CallableCandidateSetTable self)
+    {
+        return self.CallNodes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TotalCandidateCount(borrow CallableCandidateSetTable self)
+    {
+        return self.CandidateTargets.Length;
+    }
+
+    public law u32[0 max] CallNodeAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.CallNodes.Length)
+        {
+            node = self.CallNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] CalleeNodeAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] node = 0;
+        if (index < self.CalleeNodes.Length)
+        {
+            node = self.CalleeNodes[index];
+        }
+
+        return node;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ArgumentCountAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ArgumentCounts.Length)
+        {
+            count = self.ArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] CandidateCountAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.CandidateCounts.Length)
+        {
+            count = self.CandidateCounts[index];
+        }
+
+        return count;
+    }
+
+    public law CallableCandidateKind CandidateKindAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] site, u32[0 max] candidate)
+    {
+        stack mut CallableCandidateKind kind = CallableCandidateKind.Declaration;
+        if (site < self.CandidateStartSlots.Length && candidate < self.CandidateCountAt(site))
+        {
+            stack u32[0 max] start = self.CandidateStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + candidate);
+                if (slot < self.CandidateKinds.Length)
+                {
+                    kind = self.CandidateKinds[slot];
+                }
+            }
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] CandidateTargetAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] site, u32[0 max] candidate)
+    {
+        stack mut u32[0 max] target = 0;
+        if (site < self.CandidateStartSlots.Length && candidate < self.CandidateCountAt(site))
+        {
+            stack u32[0 max] start = self.CandidateStartSlots[site];
+            if (start >= 1)
+            {
+                stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])((start - 1) + candidate);
+                if (slot < self.CandidateTargets.Length)
+                {
+                    target = self.CandidateTargets[slot];
+                }
+            }
+        }
+
+        return target;
+    }
+
+    public law u32[0 max] DeclarationCandidateCountAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] candidates = self.CandidateCountAt(site);
+        for willexit (stack mut u32[0 max] candidate = 0; candidate < candidates; candidate += 1)
+        {
+            if (self.CandidateKindAt(site, candidate) == CallableCandidateKind.Declaration)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ScopeSymbolCandidateCountAt(borrow CallableCandidateSetTable self, u64[0 2 ** 63 - 1] site)
+    {
+        stack mut u32[0 max] count = 0;
+        stack u32[0 max] candidates = self.CandidateCountAt(site);
+        for willexit (stack mut u32[0 max] candidate = 0; candidate < candidates; candidate += 1)
+        {
+            if (self.CandidateKindAt(site, candidate) == CallableCandidateKind.ScopeSymbol)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+        }
+
+        return count;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendSet(mut borrow CallableCandidateSetTable self, u32[0 max] callNode, u32[0 max] calleeNode, u32[0 max] nameToken, u32[0 max] argumentCount, out u32[0 max] siteIndex)
+    {
+        siteIndex = 0;
+        if (!self.CallNodes.TryReserve(1)
+            || !self.CalleeNodes.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.ArgumentCounts.TryReserve(1)
+            || !self.CandidateStartSlots.TryReserve(1)
+            || !self.CandidateCounts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        siteIndex = (u32[0 max])(self.CallNodes.Length + 1);
+        init self.CallNodes[self.CallNodes.Length] = callNode;
+        init self.CalleeNodes[self.CalleeNodes.Length] = calleeNode;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.ArgumentCounts[self.ArgumentCounts.Length] = argumentCount;
+        init self.CandidateStartSlots[self.CandidateStartSlots.Length] = (u32[0 max])(self.CandidateTargets.Length + 1);
+        init self.CandidateCounts[self.CandidateCounts.Length] = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendCandidate(mut borrow CallableCandidateSetTable self, u32[0 max] siteIndex, CallableCandidateKind kind, u32[0 max] target)
+    {
+        if (siteIndex == 0 || target == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.CandidateKinds.TryReserve(1)
+            || !self.CandidateTargets.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.CandidateKinds[self.CandidateKinds.Length] = kind;
+        init self.CandidateTargets[self.CandidateTargets.Length] = target;
+
+        stack u64[0 2 ** 63 - 1] siteSlot = (u64[0 2 ** 63 - 1])(siteIndex - 1);
+        if (siteSlot < self.CandidateCounts.Length)
+        {
+            self.CandidateCounts[siteSlot] = (u32[0 max])(self.CandidateCounts[siteSlot] + 1);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law bool TypeTokenIsCallableValue(borrow TokenStream stream, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    return kind == TokenKind.Fnptr || kind == TokenKind.Closure;
+}
+
+internal finite law TypedDeclarationFunctionKind FunctionKindFromFlags(bool finiteKind, bool lawKind)
+{
+    if (finiteKind && lawKind)
+    {
+        return TypedDeclarationFunctionKind.FiniteLaw;
+    }
+
+    if (finiteKind)
+    {
+        return TypedDeclarationFunctionKind.Finite;
+    }
+
+    if (lawKind)
+    {
+        return TypedDeclarationFunctionKind.Law;
+    }
+
+    return TypedDeclarationFunctionKind.Fn;
+}
+
+internal finite bool TryReadCallableSignatureKindAt(
+    borrow TokenStream stream,
+    u32[0 max] callableToken,
+    u32[0 max] endExclusive,
+    out TypedDeclarationFunctionKind functionKind)
+{
+    functionKind = TypedDeclarationFunctionKind.Fn;
+    stack TokenKind callableKind = stream.KindAt((u64[0 2 ** 63 - 1])callableToken);
+    if ((callableKind != TokenKind.Fnptr && callableKind != TokenKind.Closure)
+        || stream.KindAt((u64[0 2 ** 63 - 1])(callableToken + 1)) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack mut bool finiteKind = false;
+    stack mut bool lawKind = false;
+    stack mut u32[0 max] nestedDepth = 0;
+    stack mut TokenKind previousKind = TokenKind.EndOfFile;
+    stack mut u32[0 max] scan = (u32[0 max])(callableToken + 2);
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (nestedDepth == 0)
+        {
+            if (kind == TokenKind.Finite)
+            {
+                finiteKind = true;
+            }
+            else if (kind == TokenKind.Law)
+            {
+                lawKind = true;
+            }
+            else if (kind == TokenKind.LParen)
+            {
+                if (previousKind == TokenKind.Ffi || previousKind == TokenKind.Asm)
+                {
+                    nestedDepth = (u32[0 max])(nestedDepth + 1);
+                }
+                else
+                {
+                    functionKind = FunctionKindFromFlags(finiteKind, lawKind);
+                    return true;
+                }
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.EndOfFile)
+            {
+                functionKind = FunctionKindFromFlags(finiteKind, lawKind);
+                return true;
+            }
+            else if (kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+            {
+                nestedDepth = (u32[0 max])(nestedDepth + 1);
+            }
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            nestedDepth = (u32[0 max])(nestedDepth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            nestedDepth = (u32[0 max])(nestedDepth - 1);
+        }
+
+        previousKind = kind;
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite bool TryReadCallableTypeFunctionKind(
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    out TypedDeclarationFunctionKind functionKind)
+{
+    functionKind = TypedDeclarationFunctionKind.Fn;
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && (kind == TokenKind.Fnptr || kind == TokenKind.Closure))
+        {
+            return TryReadCallableSignatureKindAt(stream, scan, endExclusive, functionKind);
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite bool TryReadFunctionScopeCallableKind(
+    borrow TokenStream stream,
+    borrow FunctionScope scope,
+    u32[0 max] targetPlusOne,
+    out TypedDeclarationFunctionKind functionKind)
+{
+    functionKind = TypedDeclarationFunctionKind.Fn;
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    if (target >= scope.Count())
+    {
+        return false;
+    }
+
+    return TryReadCallableTypeFunctionKind(
+        stream,
+        scope.TypeStartTokenAt(target),
+        scope.TypeEndTokenAt(target),
+        functionKind);
+}
+
+internal fn System.Memory.MemoryStatus AppendCallableDeclarationCandidatesByName(
+    mut borrow CallableCandidateSetTable sets,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] siteIndex,
+    u32[0 max] nameToken)
+{
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (table.KindAt(index) == DeclarationKind.Function
+            && BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), nameToken))
+        {
+            switch (sets.AppendCandidate(siteIndex, CallableCandidateKind.Declaration, (u32[0 max])(index + 1)))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendCallableValueCandidateIfPresent(
+    mut borrow CallableCandidateSetTable sets,
+    borrow TokenStream stream,
+    borrow FunctionScope scope,
+    u32[0 max] siteIndex,
+    u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    stack mut TypedDeclarationFunctionKind functionKind = TypedDeclarationFunctionKind.Fn;
+    if (target < scope.Count()
+        && TryReadCallableTypeFunctionKind(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target), functionKind))
+    {
+        return sets.AppendCandidate(siteIndex, CallableCandidateKind.ScopeSymbol, targetPlusOne);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<CallableCandidateSetTable> BuildCallableCandidateSets(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body)
+{
+    stack mut CallableCandidateSetTable sets = new();
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] callNode = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(callNode) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+            if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
+            {
+                stack u32[0 max] nameToken = body.ExprTokenAt(calleeNode);
+                stack mut u32[0 max] siteIndex = 0;
+                switch (sets.AppendSet(callNode, calleeNode, nameToken, body.ExprCallArgCountAt(callNode), siteIndex))
+                {
+                    case System.Memory.MemoryStatus.Err(var setError):
+                        return BindResult<CallableCandidateSetTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+                if (refIndexPlusOne == 0)
+                {
+                    switch (AppendCallableDeclarationCandidatesByName(sets, table, source, stream, siteIndex, nameToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var fallbackError):
+                            return BindResult<CallableCandidateSetTable>.Err(BindError.OutOfMemory);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+                else
+                {
+                    stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+                    stack ReferenceKind kind = refs.KindAt(refIndex);
+                    if (kind == ReferenceKind.Declaration)
+                    {
+                        switch (AppendCallableDeclarationCandidatesByName(sets, table, source, stream, siteIndex, nameToken))
+                        {
+                            case System.Memory.MemoryStatus.Err(var declarationError):
+                                return BindResult<CallableCandidateSetTable>.Err(BindError.OutOfMemory);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+                    else if (kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+                    {
+                        switch (AppendCallableValueCandidateIfPresent(sets, stream, scope, siteIndex, refs.TargetAt(refIndex)))
+                        {
+                            case System.Memory.MemoryStatus.Err(var scopeError):
+                                return BindResult<CallableCandidateSetTable>.Err(BindError.OutOfMemory);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return BindResult<CallableCandidateSetTable>.Ok(sets);
+}

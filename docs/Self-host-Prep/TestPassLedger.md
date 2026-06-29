@@ -11,6 +11,406 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-29 Selfhost Typing Enum Layout Helper Splits
+
+- `Compiler.Typing.TypedEnumLayoutGenerics` now owns enum-layout generic context tables, generic argument segment scans, generic parameter ordinal scans, and comptime integer argument readers.
+- `Compiler.Typing.TypedEnumLayoutAttributes` now owns layout-control attribute parsing, pack/align lookup, field-offset lookup, and declaration-member skipping helpers.
+- `Compiler.Typing.TypedEnumLayoutArithmetic` now owns scalar size/alignment arithmetic, alignment rounding, misalignment checks, and enum tag-width selection.
+- `TypedEnumLayouts` and `TypedCtfeQueries` import the focused helper module so enum layout construction and CTFE query folding share the same generic comptime value path.
+- `Compiler.Typing` re-exports the new enum-layout helper modules to preserve facade access for internal self-host callers.
+- The moved comptime value reader now walks generic parent contexts iteratively, eliminating the previous mutual-recursion warnings in the helper module.
+- Focused typing verification:
+  - `Compiler.Typing.TypedEnumLayoutAttributes` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedEnumLayoutArithmetic` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedEnumLayoutGenerics` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing.TypedEnumLayouts` host-test inspect through `lower-mir`: passed with 0 errors and 7 existing bounded enum-layout recursion warnings.
+  - `Compiler.Typing.TypedCtfeQueries` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Typing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- Dependency guard verification:
+  `scripts/check-selfhost-typing-dependencies.sh` passed.
+- Whitespace verification:
+  `git diff --check` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Source Module Lowering Split
+
+- `Compiler.Mir.SourceModuleLowering` now owns module/function source orchestration, AST module emission, package-image-with-asm table building, and the function-effect fact prepass used by LLVM attributes.
+- `Compiler.Mir` re-exports `Compiler.Mir.SourceModuleLowering`, preserving the existing facade API for moved public entry points.
+- `Compiler.Mir` now keeps the phase-boundary verifier, FFI probe, and legacy smoke wrappers while source module lowering lives behind the facade.
+- Focused MIR verification:
+  - `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - A tiny host-test inspect fixture importing `Compiler.Mir` and referencing moved public APIs through the facade passed through `lower-mir` with 0 diagnostics.
+- Dependency guard verification:
+  `scripts/check-selfhost-mir-dependencies.sh` passed.
+- Whitespace verification:
+  `git diff --check` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Source Switch And Loop Splits
+
+- `Compiler.Mir.SourceSwitchLowering` now owns switch shape probes, switch arm parsers, switch assignment lowering, terminal/local switch block lowerers, and switch LLVM emit wrappers.
+- `Compiler.Mir.SourceLoopLowering` now owns counting and accumulator loop smoke wrappers, while/for shape probes, loop block lowerers, and loop LLVM emit wrappers.
+- `Compiler.Mir.SourceExpressionLowering` now owns the shared first-comparison token scan used by root expression lowering and loop smoke wrappers.
+- `Compiler.Mir` re-exports the new source-lowering modules so existing facade callers keep the same names.
+- Focused MIR source-lowering verification:
+  - `Compiler.Mir.SourceSwitchLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceExpressionLowering` host-test inspect through `lower-mir`: passed with 0 errors and 15 localized recursion warnings.
+  - `Compiler.Mir.SourceLoopLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- Focused behavior verification attempt:
+  `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesTerminalBooleanSwitchFromAst --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst --filter CompilesLocalSwitchStatementMultipleScalarAssignmentsThenReturnFromAst --filter CompilesLocalSwitchStatementMixedScalarAssignmentsThenTerminalIfFromAst --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveTerminalBooleanSwitch --filter PackageTablesPreserveLocalSwitchStatementAssignmentThenReturn`
+  in `tests-stark/selfhost.Ir` timed out after 300 seconds with no output.
+- Dependency guard verification:
+  `scripts/check-selfhost-mir-dependencies.sh` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Source Function Context And If Splits
+
+- `Compiler.Mir.SourceFunctionContext` now owns source function signatures, parameter ABI facts, distinct storage contracts, call validation, tail-call target checks, and `LoweredBody`.
+- `Compiler.Mir.SourceExpressionLowering` now owns the token-stream primary/fold helpers used by the legacy if smoke wrappers.
+- `Compiler.Mir.SourceLocalLowering` now owns the shared brace matcher used by if, switch, and loop source-lowering shapes.
+- `Compiler.Mir.SourceIfLowering` now owns legacy if wrappers, if arm parsers, source if-shape probes, if block lowerers, module if emitters, and the public if-expression wrapper.
+- `Compiler.Mir` re-exports the new source-lowering modules so existing facade callers keep the same names.
+- Focused MIR source-lowering verification:
+  - `Compiler.Mir.SourceFunctionContext` host-test inspect through `lower-mir`: passed with 0 errors and localized recursion warnings.
+  - `Compiler.Mir.SourceExpressionLowering` host-test inspect through `lower-mir`: passed with 0 errors and 15 recursion warnings.
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and localized recursion warnings.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- Focused behavior verification:
+  `../../stark test --filter LowersIfExpressionToBranchingLlvm --filter CompilesReturnIfExpressionFromAst --filter ReturnIfExpressionPreservesBranchRangeFacts --filter CompilesBooleanReturnIfExpressionFromAst --filter BooleanReturnIfExpressionPreservesBranchRangeFacts --filter CompilesReturnedLocalIfExpressionFromAst --filter ReturnedLocalIfExpressionPreservesBranchRangeFacts --filter CompilesLocalIfExpressionInitializerThenReturnFromAst --filter CompilesBooleanValuedIfExpression`
+  in `tests-stark/selfhost.Ir` passed.
+- Dependency guard verification:
+  `scripts/check-selfhost-mir-dependencies.sh` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Source Expression And Local Splits
+
+- `Compiler.Mir.SourceExpressions` now owns expression nodes, expression parser helpers, and source expression type inference.
+- `Compiler.Mir.SourceExpressionLowering` now owns expression-to-MIR lowering helpers and the single-expression LLVM wrapper.
+- `Compiler.Mir.SourceLocalLowering` now owns self-host local scanner helpers, known byte extent/alignment helpers, and arena dynamic local reserve lowering.
+- `Compiler.Mir` re-exports the new source-lowering modules so existing facade callers keep the same names.
+- Focused MIR source-lowering verification:
+  - `Compiler.Mir.SourceExpressions` host-test inspect through `lower-mir`: passed with 0 errors and localized recursion warnings.
+  - `Compiler.Mir.SourceExpressionLowering` host-test inspect through `lower-mir`: passed with 0 errors and 15 recursion warnings.
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 errors and 18 pre-existing recursion warnings.
+- Dependency guard verification:
+  `scripts/check-selfhost-mir-dependencies.sh` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Source Probe Splits
+
+- `Compiler.Mir.SourceSymbols` now owns source token span, parameter-name, and local-binding helper logic.
+- `Compiler.Mir.SourceRangeFacts` now owns integer range endpoint parsing and source range-fact readers.
+- `Compiler.Mir.SourceSemanticProbes` now owns token-stream name resolution, declaration uniqueness, call-arity, and boolean-condition probe helpers.
+- `Compiler.Mir` re-exports the source helper modules and imports concrete typing modules directly to avoid colliding with typing's `ExpressionClassification.ExprType`.
+- Focused MIR source-helper verification:
+  - `Compiler.Mir.SourceSymbols` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `Compiler.Mir.SourceRangeFacts` host-test inspect through `lower-mir`: passed with 0 errors and localized recursion warnings.
+  - `Compiler.Mir.SourceSemanticProbes` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 errors and pre-existing recursion warnings.
+- Dependency guard verification:
+  `scripts/check-selfhost-mir-dependencies.sh` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Test Support Split
+
+- `Compiler.Mir.TestSupport` now owns clang LLVM verification, temporary-file helpers, package-image file round-trip helpers, and assembly metadata table comparison.
+- `Compiler.Mir.PackageImage` keeps production package-image read, write, load, and inspect APIs without the test-only round-trip helpers.
+- `Compiler.Mir` re-exports the test-support module while keeping `CompileModuleSourceProducesObject` in the facade because it depends on the root AST compile path.
+- Added `scripts/check-selfhost-mir-dependencies.sh` to reject frontend, LLVM, package-image, assembly metadata, and test-support imports from MIR foundation modules.
+- Focused MIR verification:
+  - `Compiler.Mir.TestSupport` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `Compiler.Mir.PackageImage` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 errors and pre-existing recursion warnings.
+- Dependency guard verification:
+  `scripts/check-selfhost-mir-dependencies.sh` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Pipeline Split
+
+- `Compiler.Typing.TypedPipeline` now owns the public `BuildTyped*` orchestration
+  entrypoints for typing tables while the focused typing modules keep their
+  append and dependency builders.
+- `Compiler.Typing` re-exports the pipeline module, and the MIR enum-layout
+  helper now calls the concrete pipeline entrypoint instead of reaching through
+  the enum-layout data module.
+- `scripts/check-selfhost-typing-dependencies.sh` now rejects Binding, MIR, SSA,
+  IR, LLVM, and vendor LLVM imports from selfhost Typing modules.
+- Focused typing pipeline verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedFunctionSignaturesCaptureGenericCallableAndMemberFacts --filter TypedGlobalDeclarationsCaptureStorageBindingAndBackendFacts --filter TypedStructFieldsCaptureBackendTypeFacts --filter TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts --filter TypedEnumLayoutsResolveGenericAggregatePayloadLayouts --filter TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts --filter TypedStorageSelectorsCaptureDeclarationFacts --filter TypedLiteralExpressionsCaptureScalarFacts --filter TypedIdentifierExpressionsResolveValueAndDeclarationTargets --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedMemberExpressionsCaptureMethodCandidateFacts --filter TypedIndexExpressionsCaptureElementSliceAndReceiverFacts --filter TypedConversionExpressionsCaptureTargetOperandAndResultFacts --filter TypedAssignmentExpressionsCaptureTargetValueAndOperatorFacts --filter TypedReturnExpressionsCaptureExpectedAndActualFacts`
+  in `tests-stark/selfhost.Typing` passed.
+- Focused artifact-rendering verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedArtifactRenderersShowBackendTypeFacts`
+  in `tests-stark/selfhost.Artifacts` passed.
+- Dependency guard verification:
+  `scripts/check-selfhost-typing-dependencies.sh` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Generic Helper Split
+
+- `Compiler.Typing.TypedGenerics` now owns generic-open detection, generic
+  parameter-list matching, comptime generic-argument classification, and generic
+  parameter/argument counters.
+- `Compiler.Typing.TypedSignatures`, fields, enum payload/layout, locals, calls,
+  members, and the typing facade now import or re-export the split generic
+  helper module while preserving the existing helper names for callers.
+- Focused typing verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedFunctionSignaturesCaptureGenericCallableAndMemberFacts --filter TypedStructFieldsCaptureBackendTypeFacts --filter TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts --filter TypedEnumLayoutsResolveGenericAggregatePayloadLayouts --filter TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedMemberExpressionsCaptureMethodCandidateFacts`
+  in `tests-stark/selfhost.Typing` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Dynamic Fact Split
+
+- `Compiler.Typing.TypedDynamicFacts` now owns dyn/dynamic token aliases, dynamic
+  layout size/alignment facts, and dynamic call binding cost.
+- `Compiler.Typing.TypedSignatures`, globals, enum layouts, calls, and the
+  typing facade now import or re-export the split dynamic fact module.
+- No associated-type consumers were found in the current selfhost Typing source,
+  so the associated-type portion remains blocked on a real consumer surface.
+- Focused typing verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedFunctionSignaturesCaptureGenericCallableAndMemberFacts --filter TypedGlobalDeclarationsCaptureStorageBindingAndBackendFacts --filter TypedStructFieldsCaptureBackendTypeFacts --filter TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedIndexExpressionsCaptureElementSliceAndReceiverFacts`
+  in `tests-stark/selfhost.Typing` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Type Compatibility Split
+
+- `Compiler.Typing.TypedTypeCompatibility` now owns call type-fact equality,
+  argument bind permissibility, signedness helpers, and overload argument binding
+  cost.
+- `Compiler.Typing.TypedCalls` now imports the compatibility module for overload
+  viability and scoring while keeping call-expression orchestration local.
+- Focused call-compatibility verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedCallExpressionsCaptureDirectFunctionFacts --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedCallExpressionsReportAmbiguousAndNoMatchOverloads --filter TypedCallExpressionsResolveMethodCalls --filter TypedCallExpressionsReportAmbiguousAndNoMatchMethods --filter TypedCallExpressionsCaptureCallableValueFacts`
+  in `tests-stark/selfhost.Typing` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Ownership Arena And Dead-On-Return Split
+
+- `Compiler.Binding.OwnershipArena` now owns arena-backed value tracking,
+  arena escape diagnostics, and arena-retention call diagnostics.
+- `Compiler.Binding.OwnershipDeadOnReturn` now owns dead-on-return signature,
+  callable-type, direct-call, and callback-call diagnostics.
+- `Compiler.Binding` now keeps ownership validation orchestration while the
+  concrete ownership checks live in focused modules.
+- The arena accept fixture now makes its helper callee `finite` so it isolates
+  arena behavior instead of also testing finite-call obligations.
+- Focused arena verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter Arena`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused dead-on-return verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter DeadOnReturn`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused combined ownership verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter Arena --filter DeadOnReturn --filter PackedFieldSafeBorrow --filter MoveSemantics --filter BorrowLiveness --filter Initialization`
+  in `tests-stark/selfhost.Binding` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Ownership Borrow Split
+
+- `Compiler.Binding.OwnershipBorrow` now owns packed-field safe-borrow
+  validation and straight-line borrow-liveness validation.
+- `Compiler.Binding.LayoutTypeInfo` now owns the layout size/alignment helpers
+  needed by packed-field safe-borrow checks.
+- `Compiler.Binding` remains the facade and orchestration surface for these
+  validation modules.
+- Focused ownership-borrow verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter PackedFieldSafeBorrow --filter MoveSemantics --filter BorrowLiveness`
+  in `tests-stark/selfhost.Binding` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Ownership Initialization And Move Split
+
+- `Compiler.Binding.OwnershipInitialization` now owns local, `out`, and `init`
+  initialization validation.
+- `Compiler.Binding.OwnershipMove` now owns straight-line move-after-move
+  validation.
+- `Compiler.Binding.OwnershipHelpers` supplies shared ownership helpers for the
+  split ownership modules while `Compiler.Binding` keeps the unsplit borrow
+  liveness helpers local.
+- Borrow-liveness fixtures now avoid using `alias` as a local name because
+  `alias` is a declaration keyword.
+- Focused initialization verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter Initialization`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused move and borrow-liveness verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter MoveSemantics --filter BorrowLiveness`
+  in `tests-stark/selfhost.Binding` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Destructor And Constructor Split
+
+- `Compiler.Binding.DestructorValidation` now owns destructor shape, drop
+  validity, destructor effect summaries, and destructor memory-effect diagnostics.
+- `Compiler.Binding.ConstructorValidation` now owns constructor field
+  initialization validation and constructor switch assignment-join coverage.
+- `Compiler.Binding.Scopes` now owns the shared body identifier scanner used by
+  destructor and constructor function-scope construction.
+- `Compiler.Binding.FunctionEffects` now owns dynamic-storage mutation call
+  classification for law and destructor validation.
+- Focused destructor verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter DropValidityRejectsDuplicateDestructorBlocks --filter DropValidityRejectsReadonlySelfMutation --filter DropValidityWarnsWhenMutDropDoesNotMutateSelf --filter DropValidityTreatsSelfMethodCallAsMutation --filter DropValidityRejectsReturnStatement --filter DropValidityRejectsDestructorLocalStorageAllocation --filter DropValidityRejectsDestructorDynamicStorageAllocation --filter DropValidityRejectsDestructorDynamicStorageMutation --filter DropValidityRejectsDestructorTransitiveAllocationCall --filter DropValidityRejectsDestructorTransitiveDynamicMutationCall --filter DropValidityRejectsDestructorTransitiveMethodEffects --filter DropValidityRejectsDestructorImplicitLocalDropEffects`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused constructor verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter ConstructorInitialization`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused shared initialization-switch verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter InitializationAllowsLocalReadAfterExhaustiveBoolSwitchAssignment --filter InitializationRejectsLocalReadAfterGuardedBoolSwitchAssignment --filter InitializationAllowsOutReturnAfterExhaustiveIntegerRangeSwitchAssignment --filter InitializationRejectsOutReturnAfterPartialIntegerRangeSwitchAssignment`
+  in `tests-stark/selfhost.Binding` passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Validation Split
+
+- `Compiler.Binding.SignatureHelpers` now owns shared function-signature
+  parameter helpers used by binding validation modules.
+- `Compiler.Binding.AssemblyBinding` now owns assembly architecture, register,
+  operand, return-binding, and clobber diagnostics.
+- `Compiler.Binding.ExportedSurfaces` now owns exported-surface visibility and
+  ABI-boundary enum diagnostics.
+- `Compiler.Binding.ControlFlowValidation` now owns return value and
+  break/continue control-flow diagnostics.
+- Focused assembly verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter ValidAsmDeclarationBindsCleanly --filter AsmDiagnosticsRejectUnknownArchitectureAndRegister --filter AsmDiagnosticsRequireValidOperandBindings --filter AsmDiagnosticsRejectDuplicateAndOverlappingClobbers`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused exported-surface verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter ExportedSurfacesRejectMembersMoreVisibleThanOwners --filter ExportedSurfacesAllowPublicInheritanceAndExplicitExportMembersOnExportTypes --filter ExportedSurfacesRejectEnumTypesAtAbiBoundaries --filter ExportedSurfacesRejectTransitiveEnumAggregateTypesAtAbiBoundaries`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused return/control-flow verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter FlagsValueReturnedFromVoid --filter FlagsMissingReturnValue --filter AcceptsWellFormedReturns --filter FlagsBreakOutsideLoop --filter FlagsContinueOutsideLoop --filter AcceptsBreakInsideLoop --filter ContinueInSwitchWithoutLoopIsFlagged`
+  in `tests-stark/selfhost.Binding` passed.
+
+---
+
+## 2026-06-29 Selfhost MIR LLVM Emission Split
+
+- `Compiler.Mir.LlvmFacts` now owns function effects, call contracts, ABI facts,
+  range metadata, and separate-storage assume emission helpers.
+- `Compiler.Mir.LlvmInstructions`, `Compiler.Mir.LlvmBlocks`,
+  `Compiler.Mir.LlvmControlFlow`, `Compiler.Mir.LlvmFunctions`, and
+  `Compiler.Mir.LlvmModules` now own LLVM instruction, block, direct-switch,
+  function, module, and global emission helpers.
+- Focused LLVM emission verification:
+  `../../stark test --target arm64-apple-macosx26.0.0 --filter EmitsLlvmTypedI32Function --filter EmitsLlvmTypedI32ExtendedArithmeticFunction --filter EmitsLlvmTypedI32CallFunction --filter EmitsLlvmTypedFunctionWithParameterTypesAndFacts --filter MirNullPointerConstantRoundTripsFactsAndTypedLlvm --filter EmitsLlvmPhiNode --filter EmitsLlvmGlobalLoad --filter EmitsLlvmTypedGlobalLoadStore --filter EmitsLlvmDirectSwitchForDenseComparisonChain --filter EmitsLlvmGlobals --filter EmitsLlvmModuleWithGlobals --filter EmitsLlvmModuleWithTwoFunctions --filter VerifiedModuleEmissionGatesMalformedFunctions --filter CompilesTailBecomeFromAst --filter CompileFunctionArenaDynamicReserveEmitsGrowCopyHelper --filter CompileFunctionArenaDynamicTryReserveEmitsFallibleGrowCopyHelper --filter CompileModuleWithMultipleArenaFunctionsEmitsValidSinglePreamble`
+  in `tests-stark/selfhost.Ir` passed.
+
+---
+
+## 2026-06-29 Selfhost Binding Trait-Conformance Split
+
+- `Compiler.Binding.TraitConformance` now owns typed trait conformance rows,
+  declaration-base conformance collection, and generic `where` constraint
+  conformance collection.
+- `Compiler.Binding` continues to re-export the trait-conformance module
+  through the facade.
+- Focused trait-conformance verification:
+  `../../stark test --filter TypedTraitConformancesCaptureDirectDeclarationBases --filter TypedTraitConformancesCaptureGenericWhereBounds --filter GenericUseSiteFactsCaptureTraitBaseArguments --filter TypedGenericInstantiationPlansCaptureTraitBaseTargets`
+  in `tests-stark/selfhost.Binding` passed.
+
+---
+
+## 2026-06-29 Selfhost Binding Function-Effects Split
+
+- `Compiler.Binding.FunctionEffects` now owns typed function effect summary
+  rows, backend optimization flags, body-shape analysis, no-recurse detection,
+  and runtime recursion edge helpers.
+- `Compiler.Binding` continues to re-export the function-effects module through
+  the facade.
+- The law dynamic allocation binding fixture now uses the canonical `law fn`
+  spelling for dynamic-return law functions.
+- Focused function-effects verification:
+  `../../stark test --filter TypedFunctionEffectSummariesCaptureDeclarationBackendFacts --filter TypedFunctionEffectSummariesCaptureNoRecurseFacts --filter TypedFunctionEffectSummariesCaptureBodyShape --filter MutualRuntimeRecursionIsWarning --filter FiniteMutualRuntimeRecursionIsError`
+  in `tests-stark/selfhost.Binding` passed.
+- Focused law and memory-effect verification:
+  `../../stark test --filter LawBodyFlagsDynamicStorageAllocation --filter LawBodyFlagsDynamicStorageMutation --filter LawEffectsFlagGlobalStateReadsButNotConstReads --filter FlagsArenaAllocationInLawFunctions --filter TypedFunctionEffectSummariesCaptureOtherMemoryFacts`
+  in `tests-stark/selfhost.Binding` passed.
+
+---
+
+## 2026-06-28 Selfhost MIR Module Decomposition
+
+- `Compiler.Mir` now re-exports `Compiler.Mir.Model` and `Compiler.Mir.Builder`.
+- `Compiler.Mir.Model` owns the core MIR op, type, instruction, block,
+  function, and global records.
+- `Compiler.Mir.Builder` owns the core instruction, call, tail-call, phi,
+  block, function, and global helper functions.
+- `Compiler.Mir.LlvmText` owns shared LLVM type, ABI-carrier, and C ABI
+  boundary text helpers.
+- `Compiler.Mir.EnumLayout` owns enum layout facts, enum ABI summaries, and
+  enum LLVM storage/value helpers.
+- `Compiler.Mir.TextRendering` owns the MIR instruction stream disassembler.
+- `Compiler.Mir.PackageCodec` owns byte primitives, fixed-record MIR section
+  serializers, enum-layout fact section serialization, and assembly metadata
+  section serialization.
+- `Compiler.Mir.PackageImage` owns package-image validation, section-directory
+  reading, inspection summaries, image serialization/deserialization, byte-buffer
+  bridging, and package-image file IO helpers.
+- `Compiler.Mir.Facts` owns pure integer/range helpers, MIR value-range
+  propagation, branch-param refinement, and returned-value range validation.
+- Focused core verification:
+  `../../stark test --filter MirEmitsSequentialValueIds --filter MirBinaryInstructionReferencesOperandsByHandle --filter MirReturnBlockRecordsReturnedValue --filter MirCondBlockRecordsConditionAndTargets --filter MirFunctionRecordsEntryAndRanges --filter MirFunctionOwnershipTracksRanges --filter MirCallRecordsCallee --filter MirParamRecordsIndex --filter EmitsLlvmCallInstruction --filter EmitsLlvmTailCallTerminator`
+  in `tests-stark/selfhost.Ir` passed.
+- Focused global/package verification:
+  `../../stark test --filter MirLoadGlobalRecordsTarget --filter MirStoreGlobalRecordsTargetAndValue --filter MirGlobalRecordsInitialValue --filter EmitsLlvmGlobalLoad --filter EmitsLlvmGlobalStore --filter EmitsLlvmTypedGlobalLoadStore --filter EmitsLlvmGlobals --filter EmitsLlvmModuleWithGlobals --filter BinaryRoundTripsGlobals --filter BinaryRoundTripsPackageImage`
+  in `tests-stark/selfhost.Ir` passed.
+- Focused enum layout/storage verification:
+  `../../stark test --filter IrFactEnumLayoutDescriptorPreservesPackageBoundaryContract --filter MirEnumLayoutFactsPreserveTypedRows --filter MirEnumLayoutFactsBuildAbiSummaryAndCarrier --filter MirEnumLayoutFactsEmitLlvmStorageTypeFromRows --filter MirEnumLayoutFactsComputeLlvmFieldIndicesFromRows --filter MirEnumLayoutFactsEmitLlvmValueOpsFromRows --filter SectionedPackageImageRoundTripsEnumLayoutFacts`
+  in `tests-stark/selfhost.Ir` passed.
+- Focused C ABI boundary verification:
+  `../../stark test --filter EmitsCAbiAggregateBoundaryFactsForRaylibShapes`
+  in `tests-stark/selfhost.CAbiAggregate` passed.
+- Focused MIR text-rendering verification:
+  `../../stark test --filter EmitsMirTextForArithmetic --filter EmitsMirTextForControlAndMemory --filter EmitsMirTextForPhi --filter PackageTablesPreserveLocalPrefixedTerminalIf`
+  in `tests-stark/selfhost.Ir` passed.
+- Focused package-codec verification:
+  `../../stark test --filter ByteBufferRoundTripsU32 --filter ByteBufferRoundTripsU32Max --filter ByteBufferRoundTripsI64 --filter BinaryRoundTripsInstructionStream --filter BinaryRoundTripsBlocks --filter BinaryRoundTripsIndependentLoopBackedgeFlag --filter BinaryRoundTripsFunctions --filter BinaryRoundTripsGlobals --filter BinaryRoundTripsArenaAllocInstruction --filter BinaryRoundTripsArenaDynamicInstructions --filter BinaryRoundTripsFourArgumentCall --filter BinaryRoundTripsFourArgumentTailCall --filter BinaryRoundTripsPackageImage --filter SectionedPackageImageRoundTripsEnumLayoutFacts --filter AsmMetadataBinaryRoundTrips`
+  in `tests-stark/selfhost.Ir` passed.
+- Focused package-image verification:
+  `../../stark test --filter PackageImageRoundTripsThroughFile --filter PackageImageInspectsThroughFile --filter PackageImageBridgesToByteBuffer --filter BinaryRoundTripsPackageImage --filter SectionedPackageImageRoundTripsAndInspects --filter SectionedPackageImageRoundTripsEnumLayoutFacts --filter LogicalPackageImageValidatesHeaderFacts --filter LogicalPackageImageInspectsTextHeaderFacts --filter LogicalPackageImageInspectsJsonHeaderFacts --filter LogicalPackageImageInspectsProfileAndTargetHeaderFacts --filter LogicalPackageImageDoesNotDeserializeAsMir --filter LogicalPackageImageRejectsBadPackageFactStringIndex --filter LogicalPackageImageRejectsInvalidUtf8StringTable --filter SectionedPackageImageRejectsUnknownRequiredSection --filter PackageImageRejectsBadMagic --filter PackageImageRejectsTruncatedHeaderAndInspectionStaysEmpty --filter MalformedPackageImageFileInspectionFails --filter PackageImageValidationReportsFailureKinds --filter PackageImageRejectsMissingSections --filter PackageImageWithAsmRejectsMissingAsmSection --filter InspectsPackageImage --filter InspectsPackageImageJson --filter PackageImageWithAsmRoundTripsMetadata --filter SectionedPackageImageWithAsmRoundTripsMetadata --filter PackageImageWithAsmInspectsThroughFile --filter PackageImageWithAsmRoundTripsThroughFile --filter ModulePackageImageWithAsmBuilderRoundTrips`
+  in `tests-stark/selfhost.Ir` passed.
+- Focused MIR facts verification:
+  `../../stark test --filter BuildMirValueRangeFactsImportsTypedCallReturnFacts --filter BuildMirValueRangeFactsImportsPointerCallReturnBackendFacts --filter BuildMirValueRangeFactsDerivesConstantsArithmeticAndPhi --filter BuildMirValueRangeFactsPreservesCompactIntegerWidths --filter BuildMirValueRangeFactsDerivesExactExtendedIntegerOps --filter MirExplicitWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm --filter MirCompactWrappingAndSaturatingArithmeticRoundTripsFactsAndTypedLlvm --filter MirNullPointerConstantRoundTripsFactsAndTypedLlvm --filter ReturnIfExpressionPreservesBranchRangeFacts`
+  in `tests-stark/selfhost.Ir` passed.
+- Observed order-dependent failure:
+  `../../stark test --filter CompileModuleBranchReturnRangeUsesComparisonProof --filter ReturnIfExpressionPreservesBranchRangeFacts`
+  passes the first test and then fails `ReturnIfExpressionPreservesBranchRangeFacts`
+  with exit 139; `ReturnIfExpressionPreservesBranchRangeFacts` passes alone and
+  passes with the pure MIR facts filters above. This was not counted as a facts
+  split failure.
+
+---
+
 ## 2026-06-27 Selfhost Compact MIR Integer Widths
 
 - MIR now carries `i8` and `i16` scalar widths through typed values, globals,
@@ -1978,4 +2378,269 @@ comments explaining which platform is required.
     in `tests-stark/selfhost.Ir`: passed.
   - `../../stark test --filter CompilesTerminalIntegerSwitchFromAst --filter CompilesSignedCaseTerminalIntegerSwitchFromAst --filter CompilesBooleanTerminalIntegerSwitchFromAst --filter TerminalIntegerSwitchRejectsUnsupportedShapes --filter PackageTablesPreserveTerminalIntegerSwitch --filter PackageTablesPreserveSignedCaseTerminalIntegerSwitch --filter PackageTablesPreserveBooleanTerminalIntegerSwitch`
     in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-28 Selfhost Binding Decomposition Slice
+
+- Split `Compiler.Binding` into focused source modules while keeping
+  `Compiler.Binding` as the facade re-export surface.
+- Recorded the current target binding module map:
+  `Compiler.Binding.Diagnostics`, `Declarations`, `Scopes`, `References`,
+  `TypeResolution`, `GenericUseSites`, and `ModuleResolution` now own the first
+  extracted data and helper slices; typed symbols, generic-instantiation,
+  callable resolution, validation, ownership, C ABI, assembly, and pipeline
+  slices remain in the facade until their listed tasks are moved.
+- Moved bind result and diagnostic types into `Compiler.Binding.Diagnostics`.
+- Moved raw declaration table construction and lookup helpers into
+  `Compiler.Binding.Declarations`.
+- Moved function scope and lexical value-reference helpers into
+  `Compiler.Binding.Scopes`.
+- Moved unresolved value-reference collection into
+  `Compiler.Binding.References`.
+- Moved type-reference resolution and unresolved type-span scans into
+  `Compiler.Binding.TypeResolution`.
+- Moved generic use-site syntax facts into `Compiler.Binding.GenericUseSites`
+  and fixed nested generic arguments so child argument rows no longer pollute
+  the parent use-site argument slot.
+- Moved module resolver, import-resolution tables, module-origin facts, and
+  import/source/package resolution helpers into
+  `Compiler.Binding.ModuleResolution`.
+- Moved typed module symbol visibility, origin, and qualified-name facts into
+  `Compiler.Binding.TypedModuleSymbols`.
+- Moved typed declaration symbol construction, value/type anchor facts, and
+  declaration-level backend flags into `Compiler.Binding.TypedDeclarations`.
+- Moved typed member and method symbol construction, field/variant payload
+  facts, and member-level backend flags into `Compiler.Binding.TypedMembers`.
+- Moved typed local and parameter symbol construction into
+  `Compiler.Binding.TypedLocals`.
+- Moved typed generic parameter symbol construction into
+  `Compiler.Binding.TypedGenerics`.
+- Moved typed generic-instantiation plan construction into
+  `Compiler.Binding.TypedGenericInstantiations`.
+- Moved shared expression type helpers and reference-index lookup into focused
+  helper modules used by later validation and candidate-resolution code.
+- Moved callable and receiver candidate construction into
+  `Compiler.Binding.CallableCandidates` and `Compiler.Binding.ReceiverCandidates`.
+- Normalized receiver method-kind validation through declaration-name lookup so
+  law/finite checks parse the owning type body from the declaration token.
+- Moved shared declaration-prelude, token, attribute, C-family FFI ABI, and
+  receiver member token scanners into small binding helper modules.
+- Corrected selfhost declaration name scanning so `const` declarations use the
+  same typed variable-name scan as storage-class globals.
+- Updated typed generic-instantiation fixtures to use complete source units with
+  explicit `module` headers, matching the typed module-symbol path.
+- Narrow verification:
+  - `../../stark test --filter BuildsAndLooksUpDeclarations --filter DetectsDuplicateDeclaration --filter StaticDeclarationsUseDeclaredVariableName --filter BuildsFunctionScopeWithParamsAndLocals --filter DetectsDuplicateParameter --filter ResolvesBodyReferences --filter FlagsUnboundReference --filter ResolvesReferencesByKind --filter ResolvesShadowedReferenceToInnermostLocal --filter ProbeSiblingBlockShadowTarget --filter DetectsSameBlockLocalRedefinition --filter AllowsShadowingLocalInNestedBlock --filter AllowsSameNameLocalsInSiblingBlocks`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter ResolvesSignatureTypes --filter FlagsUnresolvedSignatureTypes --filter FlagsUnresolvedLocalType --filter ResolvedLocalTypeBindsCleanly --filter GenericFunctionLocalTypeParameterIsNotUnresolved --filter FlagsUnresolvedForEachElementType --filter GenericFunctionTypeParameterIsNotUnresolved --filter FlagsUnresolvedNestedGenericArgumentTypes --filter NestedGenericParameterArgumentsAreNotUnresolved --filter FlagsUnresolvedWhereConstraint --filter FlagsUnresolvedNestedWhereConstraintType --filter ResolvedWhereConstraintBindsCleanly --filter FlagsUnresolvedStructAndEnumWhereConstraints --filter ResolvedStructAndEnumWhereConstraintsBindCleanly --filter FlagsUnresolvedFieldType --filter ResolvedFieldTypesBindCleanly --filter GenericParameterFieldTypeIsNotUnresolved --filter MultiDeclaratorUndefinedFieldTypeFlaggedOnce --filter BaseTraitGenericIsNotMistakenForFieldGenericParam --filter ComptimeParameterTypeIsNotMistakenForGenericParam --filter GenericUseSiteFactsCaptureNestedTypeAndComptimeArguments --filter GenericUseSiteFactsClassifySignedIntegerValueArgument --filter GenericUseSiteFactsCaptureTraitBaseArguments`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter GenericUseSiteFactsCaptureNestedTypeAndComptimeArguments --filter GenericUseSiteFactsClassifySignedIntegerValueArgument --filter GenericUseSiteFactsCaptureTraitBaseArguments --filter TypedGenericInstantiationPlansResolveDeclarationTargetsAndOpenArguments --filter TypedGenericInstantiationPlansDetectTargetArityMismatches --filter TypedGenericInstantiationPlansCaptureTraitBaseTargets --filter TypedTraitConformancesCaptureDirectDeclarationBases --filter TypedTraitConformancesCaptureGenericWhereBounds`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter TypedModuleSymbolsCaptureModuleAndVisibilityFacts --filter TypedModuleSymbolsPreserveQualifiedNames --filter ModuleResolverAddsNamedSourceModule --filter ModuleResolverResolvesSourceAndPackageImports --filter ModuleResolverPrefersSourceModuleOverPackageModule --filter ModuleResolverReportsMissingModuleDeclaration --filter ModuleResolverReportsMissingImport --filter ModuleResolverReportsDuplicateSourceAndAmbiguousImport`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter TypedModuleSymbolsCaptureModuleAndVisibilityFacts --filter TypedModuleSymbolsPreserveQualifiedNames --filter TypedDeclarationSymbolsCaptureFunctionBackendFacts --filter TypedDeclarationSymbolsCaptureValueAndAliasTypeAnchors --filter ValidLinkNameOnImportedFfiHasNoDiagnostic --filter LinkNameOnOrdinaryFunctionIsInvalid --filter LinkNameRequiresNonEmptyStringArgument --filter DuplicateLinkNameAttributesAreRejected --filter CAbiAggregateBoundaryFactsClassifyRaylibShapes --filter CAbiAggregateBoundaryFactsMarkLargeAggregatesIndirect`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter TypedMemberSymbolsCaptureFieldsRecordFieldsAndMethodFacts --filter TypedMemberSymbolsCaptureEnumVariantsAndAssociatedAliases --filter TypedLocalSymbolsCaptureTopLevelParametersLocalsAndPatternBindings --filter TypedLocalSymbolsCaptureMemberMethodOwnersAndParameterFacts --filter TypedGenericParameterSymbolsCaptureDeclarationGenerics --filter TypedGenericParameterSymbolsCaptureFunctionAndMethodGenerics --filter ExportedSurfacesRejectMembersMoreVisibleThanOwners --filter ExportedSurfacesAllowPublicInheritanceAndExplicitExportMembersOnExportTypes`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter TypedLocalSymbolsCaptureTopLevelParametersLocalsAndPatternBindings --filter TypedLocalSymbolsCaptureMemberMethodOwnersAndParameterFacts`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter TypedGenericParameterSymbolsCaptureDeclarationGenerics --filter TypedGenericParameterSymbolsCaptureFunctionAndMethodGenerics`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter TypedGenericInstantiationPlansResolveDeclarationTargetsAndOpenArguments --filter TypedGenericInstantiationPlansDetectTargetArityMismatches --filter TypedGenericInstantiationPlansCaptureTraitBaseTargets`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter CallableCandidateSetsCaptureDirectFunctionAndCallbackCalls --filter CallableCandidateSetsKeepSameNameFunctionDeclarations --filter ReceiverCandidateSetsCaptureFieldAndInstanceMethodMembers --filter ReceiverCandidateSetsCaptureStaticMethodMembers`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter FunctionKindFlagsLawCallingPlainFunction --filter FunctionKindFlagsLawCallingPlainCallableValue --filter FunctionKindAllowsFiniteLawCallingFiniteLawCallableValue --filter FunctionKindFlagsLawCallingPlainReceiverMethod`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-28 Binding Copyability And Layout Validation Split
+
+- Moved copyability fact construction, `Copyable` assertions, and `where Copyable(...)` call validation into `Compiler.Binding.Copyability`.
+- Moved shared layout scanners into `Compiler.Binding.LayoutHelpers` and layout-control/query validation into `Compiler.Binding.LayoutValidation`.
+- Kept `Compiler.Binding` as the facade re-export surface for the moved helpers and validation functions.
+- Narrow verification:
+  - `../../stark test --filter CopyabilityFactsClassifyStructuralTypes --filter CopyableAssertionsAcceptPlainEnumsStructsRecordsAndViews --filter CopyableAssertionsRejectOwningFieldsAndDestructors --filter CopyableLawPredicatesAcceptCopyableValuesAndForwardedBounds --filter CopyableLawPredicatesRejectOwningValuesAndMissingForwardedBounds --filter MoveSemanticsDoNotMoveCopyableValuesThroughByValueCalls --filter MoveSemanticsDoNotMoveCopyableAssignments`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --filter LayoutControlRejectsInvalidAttributeShapes --filter LayoutControlRejectsMisplacedFieldOffsets --filter LayoutControlAcceptsNestedControlledStructFields --filter LayoutQueriesRejectNonConcreteLocalTargets --filter LayoutQueriesRejectFieldFactsOnNonStructTargets --filter LayoutQueriesRejectOutOfRangeFieldIndices --filter LayoutQueriesAllowConcreteStructAndOpenGenericFacts --filter LayoutQueriesRejectEnumFactsOnNonEnumTargets --filter LayoutQueriesRejectOutOfRangeEnumIndices --filter LayoutQueriesAllowConcreteEnumAndOpenGenericFacts --filter PackedFieldSafeBorrowRejectsMisalignedCallArguments --filter PackedFieldSafeBorrowRejectsBorrowReturnsAndLocals --filter PackedFieldSafeBorrowAllowsValueReadsAndRawPointers --filter CAbiAggregateBoundaryFactsClassifyRaylibShapes --filter CAbiAggregateBoundaryFactsMarkLargeAggregatesIndirect`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Binding C ABI Layout Split
+
+- Moved C layout aggregate classification into `Compiler.Binding.CLayoutAggregates`.
+- Moved C ABI aggregate boundary collection into `Compiler.Binding.CAbiBoundaries`.
+- Kept `Compiler.Binding` as the facade re-export surface and updated `Compiler.Mir.LlvmText` to import the concrete boundary module.
+- Preserved zero-copy source/token text flow by adding explicit overlap contracts to token/layout helpers.
+- Narrow verification:
+  - `../../stark test --filter CAbiAggregateBoundaryFactsClassifyRaylibShapes --filter CAbiAggregateBoundaryFactsMarkLargeAggregatesIndirect --filter LayoutControlAcceptsNestedControlledStructFields --filter PackedFieldSafeBorrowRejectsMisalignedCallArguments --filter PackedFieldSafeBorrowAllowsValueReadsAndRawPointers`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Expression And Signature Split
+
+- Moved coarse expression classification into `Compiler.Typing.ExpressionClassification`.
+- Moved typed function signature tables and type-slot scanners into `Compiler.Typing.TypedSignatures`.
+- Kept `Compiler.Typing` as the facade re-export surface for the moved typing modules.
+- Updated same-package callers to use imported facade names after public types moved into submodules.
+- Preserved effect facts by tightening `TypedSignatureTokenTextEquals` helpers to `finite law`.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedFunctionSignaturesCaptureScalarRangeAndPointerFacts --filter TypedFunctionSignaturesCaptureGenericCallableAndMemberFacts --filter ClassifiesParameterTypes --filter ClassifiesExpressionShapes --filter IntegerConditionIsANonBooleanError --filter ComparisonAndLogicalConditionsAreBoolean --filter IdentifierConditionIsNotFlagged`
+    in `tests-stark/selfhost.Typing`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Globals, Storage Selectors, And Fields Split
+
+- Moved global declaration tables, storage facts, and global builders into `Compiler.Typing.TypedGlobals`.
+- Moved explicit storage selector tables and builders into `Compiler.Typing.StorageSelectors`.
+- Moved struct, record, and record-header field tables/builders into `Compiler.Typing.TypedFields`.
+- Kept `Compiler.Typing` as the facade re-export surface for the moved typing modules.
+- Fixed top-level parsing so semicolon-terminated globals with aggregate initializers continue to the following declarations.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter AggregateInitializerGlobalDoesNotStopDeclarationList`
+    in `tests-stark/selfhost.Parsing`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedGlobalDeclarationsCaptureStorageBindingAndBackendFacts --filter TypedGlobalDeclarationsCaptureConstArraysAndStaticScalars --filter TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts --filter TypedLocalDeclarationsCaptureMemberLoopAndCallableFacts --filter TypedStorageSelectorsCaptureDeclarationFacts --filter TypedStorageSelectorsCaptureArenaNewFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedStructFieldsCaptureBackendTypeFacts --filter TypedRecordFieldsCaptureHeaderAndBodyFacts --filter TypedEnumPayloadsCaptureTupleNamedAndFromFacts --filter TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts --filter TypedEnumLayoutsCaptureCompactTagsAndScalarPayloadOffsets --filter TypedEnumLayoutsResolveNamedAggregatePayloadLayouts --filter TypedEnumLayoutsResolveGenericAggregatePayloadLayouts --filter TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Enum, Local, And Literal Split
+
+- Moved enum payload tables, builders, and variant-role facts into `Compiler.Typing.TypedEnumPayloads`.
+- Moved enum layout tables, query folding, and layout builders into `Compiler.Typing.TypedEnumLayouts`.
+- Moved declaration-name lookup shared by typing modules into `Compiler.Typing.TypedDeclarationLookup`.
+- Moved local declaration tables, builders, and storage/type facts into `Compiler.Typing.TypedLocals`.
+- Moved literal expression tables, builders, and scalar/text fact derivation into `Compiler.Typing.TypedLiterals`.
+- Kept `Compiler.Typing` as the facade re-export surface for moved typing modules.
+- Updated MIR enum layout/package codec imports so enum payload and layout facts continue through package image and LLVM storage lowering.
+- Fixed attributed struct-field parsing so field attributes such as `FieldOffset` do not enter typed field type spans.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedEnumPayloadsCaptureTupleNamedAndFromFacts --filter TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts --filter TypedEnumLayoutsCaptureCompactTagsAndScalarPayloadOffsets --filter TypedEnumLayoutsCaptureRolesFunnelsArraysAndUnknownPayloads --filter TypedEnumLayoutsResolveNamedAggregatePayloadLayouts --filter TypedEnumLayoutsResolveGenericAggregatePayloadLayouts --filter TypedEnumLayoutsPreserveControlledAggregatePayloadLayouts --filter TypedEnumLayoutQueriesExposeCtfeFoldConstants --filter TypedEnumLayoutSystemCompilerQueriesFoldToTypedConstants`
+    in `tests-stark/selfhost.Typing`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts --filter TypedLocalDeclarationsCaptureMemberLoopAndCallableFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedLiteralExpressionsCaptureScalarFacts --filter TypedLiteralExpressionsCaptureTextFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Identifier Split And Call Dependency Preservation
+
+- Moved identifier expression tables, visible-symbol lookup, and identifier builders into `Compiler.Typing.TypedIdentifiers`.
+- Kept `Compiler.Typing` as the facade re-export surface for moved identifier facts.
+- Replaced the call/member dependency wrapper return with out-parameter tables so dynamic call and member facts survive dependency refinement.
+- Copied signature-slot facts through locals before assigning call fact structs so positive overload resolution keeps parameter facts.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedIdentifierExpressionsResolveValueAndDeclarationTargets --filter TypedIdentifierExpressionsRespectLexicalShadowing --filter TypedCallExpressionsCaptureDirectFunctionFacts --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedCallExpressionsReportAmbiguousAndNoMatchOverloads --filter TypedCallExpressionsResolveMethodCalls --filter TypedCallExpressionsReportAmbiguousAndNoMatchMethods --filter TypedCallExpressionsCaptureCallableValueFacts --filter TypedMemberExpressionsCaptureFieldChainsAndReceiverFacts --filter TypedMemberExpressionsCaptureMethodCandidateFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedIndexExpressionsCaptureElementSliceAndReceiverFacts --filter TypedConversionExpressionsCaptureTargetOperandAndResultFacts --filter TypedAssignmentExpressionsCaptureTargetValueAndOperatorFacts --filter TypedReturnExpressionsCaptureExpectedAndActualFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Expression Fact Module Split
+
+- Moved call tables and call argument/overload facts into `Compiler.Typing.TypedCallFacts` and `Compiler.Typing.TypedCalls`.
+- Moved member tables, receiver facts, and method-candidate logic into `Compiler.Typing.TypedMemberFacts` and `Compiler.Typing.TypedMembers`.
+- Moved the call/member refinement loop into `Compiler.Typing.TypedCallMemberDependencies`.
+- Moved indexing, conversion, assignment, and return expression facts into `TypedIndexing`, `TypedConversions`, `TypedAssignments`, and `TypedReturns`.
+- Reduced `Compiler.Typing` to a re-export-only facade for the split typing modules.
+- Kept literal-to-type fact propagation shared through `TypedMemberFactsFromLiteral` so conversion and assignment facts use the same backend type data.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedCallExpressionsCaptureDirectFunctionFacts --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedCallExpressionsReportAmbiguousAndNoMatchOverloads --filter TypedCallExpressionsResolveMethodCalls --filter TypedCallExpressionsReportAmbiguousAndNoMatchMethods --filter TypedCallExpressionsCaptureCallableValueFacts --filter TypedMemberExpressionsCaptureFieldChainsAndReceiverFacts --filter TypedMemberExpressionsCaptureMethodCandidateFacts --filter TypedIndexExpressionsCaptureElementSliceAndReceiverFacts --filter TypedConversionExpressionsCaptureTargetOperandAndResultFacts --filter TypedAssignmentExpressionsCaptureTargetValueAndOperatorFacts --filter TypedReturnExpressionsCaptureExpectedAndActualFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Binding Semantic Validation Split
+
+- Moved finite/runtime recursion diagnostics into `Compiler.Binding.RecursionValidation`.
+- Moved `become` tail-call ABI and effect diagnostics into `Compiler.Binding.BecomeValidation`.
+- Moved law signature/body/effect diagnostics into `Compiler.Binding.LawValidation`.
+- Moved callable and receiver function-kind obligation diagnostics into `Compiler.Binding.FunctionKindValidation`.
+- Moved the shared long-lived declaration classifier into `Compiler.Binding.FunctionEffects`.
+- Suppressed output-parameter initialization cascades for invalid law `out`/`init` parameters while preserving local initialization checks.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter FunctionKindFlagsLawCallingPlainFunction --filter FunctionKindFlagsFiniteCallingPlainFunction --filter FunctionKindFlagsFiniteLawCallingMismatchedKinds --filter FunctionKindFlagsLawCallingPlainCallableValue --filter FunctionKindAllowsFiniteLawCallingFiniteLawCallableValue --filter FunctionKindFlagsLawCallingPlainReceiverMethod --filter LawBodyFlagsOutAndInitParameters --filter LawBodyFlagsOutAndInitReturnTypes --filter LawBodyFlagsHeapAndStaticLocalStorage --filter LawBodyFlagsWritesThroughBorrowedParametersAndGlobals --filter LawBodyAllowsPureLocalMutation --filter LawBodyFlagsDynamicStorageAllocation --filter LawBodyFlagsDynamicStorageMutation --filter LawEffectsFlagGlobalStateReadsButNotConstReads --filter DirectRuntimeRecursionCollectsWarningCode --filter DirectRuntimeRecursionIsWarning --filter MutualRuntimeRecursionIsWarning --filter TailBecomeRuntimeRecursionDoesNotWarn --filter FiniteDirectRuntimeRecursionIsError --filter FiniteMutualRuntimeRecursionIsError --filter TailBecomeFiniteRuntimeRecursionDoesNotError --filter FlagsBecomeOutsideTailFunction --filter FlagsBecomeRequiresDirectCall --filter FlagsBecomeTargetNotTailCallable --filter FlagsBecomeEffectMismatch --filter FlagsBecomeAbiArityMismatch --filter FlagsBecomeAbiTypeMismatch --filter AcceptsBecomeAbiMatchingGenericShape --filter FlagsBecomeAbiGenericArgumentMismatch`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Binding Pipeline And Inline Layout Split
+
+- Moved associated alias member construction into `Compiler.Binding.AssociatedTypes`.
+- Moved link-name, recursive inline-layout, enum, and expression diagnostics into focused validation modules.
+- Moved `BindCompilationUnit` orchestration into `Compiler.Binding.BindingPipeline` and kept `Compiler.Binding` as the facade.
+- Reworked recursive inline-layout detection to return cycle anchors directly and to follow named aggregate chains without copying declaration records out of the lookup loop.
+- Preserved inline-storage semantics by stopping traversal through raw pointers, dynamic storage, slices, borrows, and other non-inline type forms before using parser head tokens.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter RecursiveInlineLayout`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter LinkName --filter DuplicateEnumVariant --filter NonBoolean`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter BindCompilationUnitCollectsEveryDiagnosticKind --filter TypedMemberSymbolsCaptureEnumVariantsAndAssociatedAliases`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Binding Thread-Safety Predicate Split
+
+- Added `Compiler.Binding.ThreadSafety` for shared law-predicate tables, where-clause scanning, and single-identifier predicate helpers.
+- Rewired `Compiler.Binding.Copyability` to use the shared thread-safety predicate helpers with the `Copyable` law name.
+- Kept `Compiler.Binding` as the facade re-export surface for the new thread-safety module.
+- Left full `Transferable` and `Shareable` fact derivation open because those facts are not yet present in the self-host binder.
+- Narrow verification:
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter CopyabilityFactsClassifyStructuralTypes --filter CopyableLawPredicatesAcceptCopyableValuesAndForwardedBounds --filter CopyableLawPredicatesRejectOwningValuesAndMissingForwardedBounds`
+    in `tests-stark/selfhost.Binding`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter CopyableAssertionsAcceptPlainEnumsStructsRecordsAndViews --filter CopyableAssertionsRejectOwningFieldsAndDestructors --filter MoveSemanticsDoNotMoveCopyableValuesThroughByValueCalls --filter MoveSemanticsDoNotMoveCopyableAssignments --filter BindCompilationUnitCollectsEveryDiagnosticKind`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Binding Dependency Direction Guard
+
+- Moved shared layout attribute parsing, layout-control queries, C layout marker queries, and data-declaration lookup helpers into `Compiler.Binding.LayoutHelpers`.
+- Removed validation-module imports from `LayoutTypeInfo`, `CLayoutAggregates`, and `ConstructorValidation`.
+- Added `scripts/check-selfhost-binding-dependencies.sh` to reject Binding data-module imports of validation, ownership, C ABI, assembly, or pipeline modules.
+- Kept the dependency guard outside the Stark Binding test binary so file-system APIs do not inflate the selfhost Binding compile surface.
+- Narrow verification:
+  - `scripts/check-selfhost-binding-dependencies.sh`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter LayoutControlAcceptsNestedControlledStructFields --filter LayoutQueriesAllowConcreteStructAndOpenGenericFacts --filter LayoutQueriesAllowConcreteEnumAndOpenGenericFacts --filter CAbiAggregateBoundaryFactsClassifyRaylibShapes --filter CAbiAggregateBoundaryFactsMarkLargeAggregatesIndirect --filter CopyabilityFactsClassifyStructuralTypes --filter CopyableLawPredicatesAcceptCopyableValuesAndForwardedBounds --filter CopyableLawPredicatesRejectOwningValuesAndMissingForwardedBounds`
+    in `tests-stark/selfhost.Binding`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Typing Type Resolution And CTFE Query Split
+
+- Added `Compiler.Typing.TypedTypeResolution` for the typed type-kind vocabulary, type flags, type-span scanners, and source type-classification helpers.
+- Kept `Compiler.Typing.TypedSignatures` focused on signature table storage and signature-row construction while re-exporting the type-resolution vocabulary for narrow imports.
+- Added `Compiler.Typing.TypedCtfeQueries` for enum-layout `System.Compiler` query-call folding.
+- Kept raw enum layout rows and layout-table lookup helpers in `Compiler.Typing.TypedEnumLayouts`.
+- Narrow verification:
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedFunctionSignaturesCaptureGenericCallableAndMemberFacts --filter TypedGlobalDeclarationsCaptureStorageBindingAndBackendFacts --filter TypedStructFieldsCaptureBackendTypeFacts --filter TypedEnumPayloadsCaptureDynamicGenericAndRoleCollisionFacts --filter TypedEnumLayoutsResolveGenericAggregatePayloadLayouts --filter TypedLocalDeclarationsCaptureStorageTypeAndInitializerFacts --filter TypedStorageSelectorsCaptureDeclarationFacts --filter TypedLiteralExpressionsCaptureScalarFacts --filter TypedIdentifierExpressionsResolveValueAndDeclarationTargets --filter TypedCallExpressionsResolveDirectFunctionOverloads --filter TypedMemberExpressionsCaptureMethodCandidateFacts --filter TypedIndexExpressionsCaptureElementSliceAndReceiverFacts --filter TypedConversionExpressionsCaptureTargetOperandAndResultFacts --filter TypedAssignmentExpressionsCaptureTargetValueAndOperatorFacts --filter TypedReturnExpressionsCaptureExpectedAndActualFacts`
+    in `tests-stark/selfhost.Typing`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedArtifactRenderersShowBackendTypeFacts`
+    in `tests-stark/selfhost.Artifacts`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter TypedEnumLayoutQueriesExposeCtfeFoldConstants --filter TypedEnumLayoutSystemCompilerQueriesFoldToTypedConstants`
+    in `tests-stark/selfhost.Typing`: passed.
+- No broad test sweep was run.
+
+## 2026-06-29 Binding Thread-Safety Fact Split
+
+- Added `Transferable` and `Shareable` fact derivation to `Compiler.Binding.ThreadSafety`.
+- Added structural, intrinsic atomic, grant, deny, and conditional grant coverage to the selfhost Binding tests.
+- Reworked fact derivation to return compact flags instead of recursive out-parameter state propagation.
+- Narrow verification:
+  - `scripts/check-selfhost-binding-dependencies.sh`: passed.
+  - `ThreadSafety.stark` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `.stark/cache/thread_safety_smoke/thread-safety-smoke`: compiled and exited 0.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter ThreadSafetyFactsClassifyStructuralTypes`
+    in `tests-stark/selfhost.Binding`: not completed because the project test fan-out was too heavy for a narrow check.
+- No broad test sweep was run.
+
+## 2026-06-29 MIR Assembly Metadata Split
+
+- Moved source assembly metadata decoding, register validation, and metadata-table population into `Compiler.Mir.AssemblyMetadata`.
+- Kept `Compiler.Mir` as the facade re-export for `CollectAsmMetadataFromSignature` and `CollectFirstAsmFunctionMetadata`.
+- Preserved package-image assembly metadata consumers without changing the table or serialization model.
+- Narrow verification:
+  - `Compiler.Mir.AssemblyMetadata` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 errors and pre-existing recursion warnings.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter AsmSignatureMetadataSurvivesParserBridge --filter AsmMetadataRejectsInvalidInputRegisterBeforeAppendingRows --filter AsmMetadataRejectsInvalidOutputRegisterBeforeAppendingRows --filter AsmMetadataRejectsInvalidClobberRegisterBeforeAppendingRows --filter AsmMetadataBinaryRoundTrips --filter PackageImageWithAsmRoundTripsMetadata --filter ModulePackageTablesWithAsmPreserveFunctionIdsAndCalls`
+    in `tests-stark/selfhost.Ir`: stopped after about 4.5 minutes because the filtered project compile fanned out heavily.
 - No broad test sweep was run.

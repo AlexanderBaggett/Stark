@@ -1,0 +1,660 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.LayoutHelpers
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.OwnershipHelpers
+import System.Text
+import System.Memory
+module Compiler.Binding.OwnershipArena
+
+struct ArenaSymbolFacts
+{
+    dynamic u32[0 max] ArenaBackedSymbols;
+    dynamic u32[0 max] ArenaRootSymbols;
+
+    ArenaSymbolFacts()
+    {
+        self.ArenaBackedSymbols = new();
+        self.ArenaRootSymbols = new();
+    }
+
+    law bool IsArenaBacked(borrow ArenaSymbolFacts self, u32[0 max] symbolIndexPlusOne)
+    {
+        if (symbolIndexPlusOne == 0)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < self.ArenaBackedSymbols.Length; index += 1)
+        {
+            if (self.ArenaBackedSymbols[index] == symbolIndexPlusOne)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    law bool IsArenaRoot(borrow ArenaSymbolFacts self, u32[0 max] symbolIndexPlusOne)
+    {
+        if (symbolIndexPlusOne == 0)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < self.ArenaRootSymbols.Length; index += 1)
+        {
+            if (self.ArenaRootSymbols[index] == symbolIndexPlusOne)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn System.Memory.MemoryStatus MarkArenaRoot(mut borrow ArenaSymbolFacts self, u32[0 max] symbolIndexPlusOne)
+    {
+        if (symbolIndexPlusOne == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.IsArenaRoot(symbolIndexPlusOne))
+        {
+            if (!self.ArenaRootSymbols.TryReserve(1))
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            }
+
+            init self.ArenaRootSymbols[self.ArenaRootSymbols.Length] = symbolIndexPlusOne;
+        }
+
+        return self.MarkArenaBacked(symbolIndexPlusOne);
+    }
+
+    fn System.Memory.MemoryStatus MarkArenaBacked(mut borrow ArenaSymbolFacts self, u32[0 max] symbolIndexPlusOne)
+    {
+        if (symbolIndexPlusOne == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.IsArenaBacked(symbolIndexPlusOne))
+        {
+            if (!self.ArenaBackedSymbols.TryReserve(1))
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            }
+
+            init self.ArenaBackedSymbols[self.ArenaBackedSymbols.Length] = symbolIndexPlusOne;
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn bool TypeSpanMayRetainArenaBorrow(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    return TypeSpanHasTopLevelToken(stream, start, endExclusive, TokenKind.Storeborrow);
+}
+
+internal fn bool TypeSpanCanReturnBorrowedArena(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    return TypeSpanHasTopLevelToken(stream, start, endExclusive, TokenKind.Retborrow);
+}
+
+internal fn TokenKind LocalStorageKindForSymbol(borrow FunctionScope scope, borrow StatementList body, borrow TokenStream stream, u32[0 max] symbolIndexPlusOne)
+{
+    if (symbolIndexPlusOne == 0)
+    {
+        return TokenKind.EndOfFile;
+    }
+
+    stack u64[0 2 ** 63 - 1] symbolIndex = (u64[0 2 ** 63 - 1])(symbolIndexPlusOne - 1);
+    if (symbolIndex >= scope.Count() || scope.KindAt(symbolIndex) != SymbolKind.Local)
+    {
+        return TokenKind.EndOfFile;
+    }
+
+    stack u32[0 max] stmtIndex = scope.StmtIndexAt(symbolIndex);
+    stack StatementItem item = body.ItemAt((u64[0 2 ** 63 - 1])stmtIndex);
+    if (item.Kind != StatementKind.Local)
+    {
+        return TokenKind.EndOfFile;
+    }
+
+    return stream.KindAt((u64[0 2 ** 63 - 1])item.StartToken);
+}
+
+internal fn u32[0 max] LocalSymbolRootForExpression(borrow ReferenceTable refs, borrow StatementList body, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return 0;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
+        if (refIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+            if (refs.KindAt(refIndex) == ReferenceKind.Local)
+            {
+                return refs.TargetAt(refIndex);
+            }
+        }
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
+    {
+        return LocalSymbolRootForExpression(refs, body, body.ExprLeftAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return LocalSymbolRootForExpression(refs, body, body.ExprRightAt(node));
+    }
+
+    return 0;
+}
+
+internal fn bool ExpressionRootIsLongLivedStorage(borrow DeclarationTable table, borrow ReferenceTable refs, borrow FunctionScope scope, borrow StatementList body, borrow TokenStream stream, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
+        if (refIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+            if (refs.KindAt(refIndex) == ReferenceKind.Declaration)
+            {
+                return DeclarationRootIsLongLived(table, refs.TargetAt(refIndex));
+            }
+            else if (refs.KindAt(refIndex) == ReferenceKind.Local)
+            {
+                stack TokenKind storage = LocalStorageKindForSymbol(scope, body, stream, refs.TargetAt(refIndex));
+                return storage == TokenKind.Heap || storage == TokenKind.Static;
+            }
+        }
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
+    {
+        return ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, body.ExprLeftAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, body.ExprRightAt(node));
+    }
+
+    return false;
+}
+
+internal fn bool CallCalleeNameEquals(ascii source, borrow StatementList body, borrow TokenStream stream, u32[0 max] callNode, ascii name)
+{
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack ascii calleeName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])body.ExprTokenAt(calleeNode));
+    return System.Text.Equals(calleeName, name);
+}
+
+internal fn bool ExpressionIsArenaDerived(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ArenaSymbolFacts facts,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    borrow TokenStream stream,
+    u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
+        if (refIndexPlusOne != 0)
+        {
+            stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+            if (refs.KindAt(refIndex) == ReferenceKind.Local)
+            {
+                return facts.IsArenaBacked(refs.TargetAt(refIndex));
+            }
+        }
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Unary)
+    {
+        return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Assign)
+    {
+        return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Binary)
+    {
+        return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node))
+            || ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Conditional)
+    {
+        return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node))
+            || ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprAuxAt(node));
+    }
+    else if (kind == Compiler.Parsing.ExprKind.New)
+    {
+        if (NewExpressionUsesArenaSelector(body, stream, node))
+        {
+            return true;
+        }
+
+        stack u32[0 max] argCount = body.ExprCallArgCountAt(node);
+        for willexit (stack mut u32[0 max] arg = 0; arg < argCount; arg = (u32[0 max])(arg + 1))
+        {
+            if (ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprCallArgAt(node, arg)))
+            {
+                return true;
+            }
+        }
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        if (CallCalleeNameEquals(source, body, stream, node, "slice")
+            && body.ExprCallArgCountAt(node) > 0
+            && ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprCallArgAt(node, 0)))
+        {
+            return true;
+        }
+
+        stack u32[0 max] calleeNode = body.ExprLeftAt(node);
+        if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+            if (refIndexPlusOne != 0)
+            {
+                stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+                if (refs.KindAt(refIndex) == ReferenceKind.Declaration)
+                {
+                    stack mut FunctionSignature callee = new();
+                    if (TryParseFunctionSignatureFromTable(table, stream, refs.TargetAt(refIndex), callee))
+                    {
+                        stack u64[0 2 ** 63 - 1] tableIndex = (u64[0 2 ** 63 - 1])(refs.TargetAt(refIndex) - 1);
+                        stack u32[0 max] calleeKeyword = table.KeywordTokenAt(tableIndex);
+                        if (calleeKeyword != 0
+                            && TypeSpanCanReturnBorrowedArena(stream, (u32[0 max])(calleeKeyword + 1), callee.Name()))
+                        {
+                            stack u64[0 2 ** 63 - 1] paramCount = callee.ParamCount();
+                            for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+                            {
+                                if ((u32[0 max])param < body.ExprCallArgCountAt(node)
+                                    && TypeSpanIsMemoryBackedParameter(stream, callee.ParamStartTokenAt(param), callee.ParamNameAt(param))
+                                    && ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprCallArgAt(node, (u32[0 max])param)))
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus AppendArenaEscape(mut borrow BindDiagnosticList diags, u32[0 max] token)
+{
+    return diags.Append(BindDiagnosticCode.ArenaValueEscapes, token);
+}
+
+internal fn System.Memory.MemoryStatus CheckArenaRetainingArgument(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ArenaSymbolFacts facts,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    borrow TokenStream stream,
+    u32[0 max] callNode,
+    u32[0 max] argIndex,
+    mut borrow BindDiagnosticList diags)
+{
+    if (argIndex >= body.ExprCallArgCountAt(callNode))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] argNode = body.ExprCallArgAt(callNode, argIndex);
+    if (ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, argNode))
+    {
+        switch (diags.Append(BindDiagnosticCode.ArenaValueRetainedByCallee, body.ExprTokenAt(argNode)))
+        {
+            case System.Memory.MemoryStatus.Err(var retainError):
+                return System.Memory.MemoryStatus.Err(retainError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDirectArenaRetainingCallDiagnostics(
+    borrow FunctionSignature callee,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ArenaSymbolFacts facts,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    borrow TokenStream stream,
+    u32[0 max] callNode,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] paramCount = callee.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+    {
+        if (TypeSpanMayRetainArenaBorrow(stream, callee.ParamStartTokenAt(param), callee.ParamNameAt(param)))
+        {
+            switch (CheckArenaRetainingArgument(table, source, facts, refs, scope, body, stream, callNode, (u32[0 max])param, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var directError):
+                    return System.Memory.MemoryStatus.Err(directError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectCallbackArenaRetainingCallDiagnostics(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ArenaSymbolFacts facts,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    borrow TokenStream stream,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    u32[0 max] callNode,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] callableLParen = 0;
+    stack mut u32[0 max] callableRParen = 0;
+    if (!TryFindCallableParamList(stream, typeStart, typeEnd, callableLParen, callableRParen))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] paramCount = CallableParamCount(stream, callableLParen, callableRParen);
+    for willexit (stack mut u32[0 max] param = 0; param < paramCount; param = (u32[0 max])(param + 1))
+    {
+        stack mut u32[0 max] paramStart = 0;
+        stack mut u32[0 max] paramEnd = 0;
+        if (TryCallableParamSpan(stream, callableLParen, callableRParen, param, paramStart, paramEnd)
+            && TypeSpanMayRetainArenaBorrow(stream, paramStart, paramEnd))
+        {
+            switch (CheckArenaRetainingArgument(table, source, facts, refs, scope, body, stream, callNode, param, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var callbackError):
+                    return System.Memory.MemoryStatus.Err(callbackError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectArenaExpressionEffects(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    ascii source,
+    mut borrow ArenaSymbolFacts facts,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow StatementList body,
+    borrow TokenStream stream,
+    u32[0 max] node,
+    mut borrow BindDiagnosticList diags)
+{
+    if (node == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Assign)
+    {
+        stack u32[0 max] target = body.ExprLeftAt(node);
+        stack u32[0 max] value = body.ExprRightAt(node);
+        if (ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, value))
+        {
+            if (ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, target))
+            {
+                switch (AppendArenaEscape(diags, body.ExprTokenAt(target)))
+                {
+                    case System.Memory.MemoryStatus.Err(var storeError):
+                        return System.Memory.MemoryStatus.Err(storeError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                stack u32[0 max] rootLocal = LocalSymbolRootForExpression(refs, body, target);
+                if (rootLocal != 0)
+                {
+                    switch (facts.MarkArenaBacked(rootLocal))
+                    {
+                        case System.Memory.MemoryStatus.Err(var markError):
+                            return System.Memory.MemoryStatus.Err(markError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Call)
+    {
+        stack u32[0 max] calleeNode = body.ExprLeftAt(node);
+        if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
+        {
+            stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+            if (refIndexPlusOne != 0)
+            {
+                stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+                if (refs.KindAt(refIndex) == ReferenceKind.Declaration)
+                {
+                    stack mut FunctionSignature callee = new();
+                    if (TryParseFunctionSignatureFromTable(table, stream, refs.TargetAt(refIndex), callee))
+                    {
+                        switch (CollectDirectArenaRetainingCallDiagnostics(callee, table, source, facts, refs, scope, body, stream, node, diags))
+                        {
+                            case System.Memory.MemoryStatus.Err(var directError):
+                                return System.Memory.MemoryStatus.Err(directError);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+                }
+                else if (refs.KindAt(refIndex) == ReferenceKind.Parameter)
+                {
+                    stack u32[0 max] target = refs.TargetAt(refIndex);
+                    if (target != 0 && scope.KindAt((u64[0 2 ** 63 - 1])(target - 1)) == SymbolKind.Parameter)
+                    {
+                        stack u64[0 2 ** 63 - 1] paramIndex = (u64[0 2 ** 63 - 1])(target - 1);
+                        if (paramIndex < signature.ParamCount())
+                        {
+                            switch (CollectCallbackArenaRetainingCallDiagnostics(table, source, facts, refs, scope, body, stream, signature.ParamStartTokenAt(paramIndex), signature.ParamNameAt(paramIndex), node, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var callbackError):
+                                    return System.Memory.MemoryStatus.Err(callbackError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    switch (CollectArenaExpressionEffects(signature, table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node), diags))
+    {
+        case System.Memory.MemoryStatus.Err(var leftError):
+            return System.Memory.MemoryStatus.Err(leftError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectArenaExpressionEffects(signature, table, source, facts, refs, scope, body, stream, body.ExprRightAt(node), diags))
+    {
+        case System.Memory.MemoryStatus.Err(var rightError):
+            return System.Memory.MemoryStatus.Err(rightError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectArenaExpressionEffects(signature, table, source, facts, refs, scope, body, stream, body.ExprAuxAt(node), diags))
+    {
+        case System.Memory.MemoryStatus.Err(var auxError):
+            return System.Memory.MemoryStatus.Err(auxError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u32[0 max] argCount = body.ExprCallArgCountAt(node);
+    for willexit (stack mut u32[0 max] arg = 0; arg < argCount; arg = (u32[0 max])(arg + 1))
+    {
+        switch (CollectArenaExpressionEffects(signature, table, source, facts, refs, scope, body, stream, body.ExprCallArgAt(node, arg), diags))
+        {
+            case System.Memory.MemoryStatus.Err(var argError):
+                return System.Memory.MemoryStatus.Err(argError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectArenaDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut ArenaSymbolFacts facts = new();
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        stack u32[0 max] root = body.ExprRootAt(index);
+        stack mut TokenKind storage = TokenKind.EndOfFile;
+        if (item.Kind == StatementKind.Local)
+        {
+            storage = stream.KindAt((u64[0 2 ** 63 - 1])item.StartToken);
+        }
+
+        if (signature.LawKind())
+        {
+            if (storage == TokenKind.Arena)
+            {
+                switch (diags.Append(BindDiagnosticCode.ArenaAllocationInLaw, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var localLawError):
+                        return System.Memory.MemoryStatus.Err(localLawError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            if (ExpressionContainsArenaSelectorNew(body, stream, root))
+            {
+                switch (diags.Append(BindDiagnosticCode.ArenaAllocationInLaw, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var selectorLawError):
+                        return System.Memory.MemoryStatus.Err(selectorLawError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        if (item.Kind == StatementKind.Local)
+        {
+            stack u32[0 max] localSymbol = SymbolIndexPlusOneForStatement(scope, (u32[0 max])index);
+            if (storage == TokenKind.Arena)
+            {
+                switch (facts.MarkArenaRoot(localSymbol))
+                {
+                    case System.Memory.MemoryStatus.Err(var rootError):
+                        return System.Memory.MemoryStatus.Err(rootError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (root != 0 && ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, root))
+            {
+                if (storage == TokenKind.Heap || storage == TokenKind.Static)
+                {
+                    switch (AppendArenaEscape(diags, item.NameToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var storageError):
+                            return System.Memory.MemoryStatus.Err(storageError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+                else
+                {
+                    switch (facts.MarkArenaBacked(localSymbol))
+                    {
+                        case System.Memory.MemoryStatus.Err(var backedError):
+                            return System.Memory.MemoryStatus.Err(backedError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+
+        if (item.Kind == StatementKind.Return && root != 0
+            && ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, root))
+        {
+            switch (AppendArenaEscape(diags, body.ExprTokenAt(root)))
+            {
+                case System.Memory.MemoryStatus.Err(var returnError):
+                    return System.Memory.MemoryStatus.Err(returnError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        switch (CollectArenaExpressionEffects(signature, table, source, facts, refs, scope, body, stream, root, diags))
+        {
+            case System.Memory.MemoryStatus.Err(var effectError):
+                return System.Memory.MemoryStatus.Err(effectError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

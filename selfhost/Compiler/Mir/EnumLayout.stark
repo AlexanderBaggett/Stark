@@ -1,0 +1,1353 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing
+import Compiler.Typing.TypedEnumPayloads
+import Compiler.Typing.TypedEnumLayouts
+import Compiler.Typing.TypedPipeline
+import Compiler.Mir.Model
+import Compiler.Mir.LlvmText
+import System.Memory
+import System.Text
+module Compiler.Mir.EnumLayout
+
+public enum MirEnumLayoutFactRowKind
+{
+    Variant,
+    Payload,
+    Unknown,
+}
+
+public struct MirEnumLayoutFact
+{
+    MirEnumLayoutFactRowKind RowKindValue;
+    TypeId OwnerTypeValue;
+    u32[0 max] OwnerNameTokenValue;
+    u32[0 max] VariantOrdinalValue;
+    u32[0 max] VariantNameTokenValue;
+    u32[0 max] VariantTagValue;
+    u32[0 max] PayloadCountValue;
+    u32[0 max] PayloadOrdinalValue;
+    u32[0 max] PayloadNameTokenValue;
+    Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind PayloadKindValue;
+    Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole VariantRoleValue;
+    bool ErrorFunnelValue;
+    bool UsesNamedPayloadsValue;
+    u32[0 max] StorageFieldOrdinalValue;
+    u64[0 max] OffsetBytesValue;
+    u64[0 max] SizeBytesValue;
+    u64[0 max] AlignmentBytesValue;
+    bool MisalignedValue;
+    TypedSignatureTypeKind TypeKindValue;
+    u32[0 max] TypeHeadTokenValue;
+    u32[0 max] TypePrimaryTokenValue;
+    u32[0 max] BitWidthValue;
+    u32[0 max] TypeFlagsValue;
+    bool ConcreteLayoutValue;
+
+    MirEnumLayoutFact()
+    {
+        self.RowKindValue = MirEnumLayoutFactRowKind.Unknown;
+        self.OwnerTypeValue = TypeIdOf(0);
+        self.OwnerNameTokenValue = 0;
+        self.VariantOrdinalValue = 0;
+        self.VariantNameTokenValue = 0;
+        self.VariantTagValue = 0;
+        self.PayloadCountValue = 0;
+        self.PayloadOrdinalValue = 0;
+        self.PayloadNameTokenValue = 0;
+        self.PayloadKindValue = Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind.Unknown;
+        self.VariantRoleValue = Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole.None;
+        self.ErrorFunnelValue = false;
+        self.UsesNamedPayloadsValue = false;
+        self.StorageFieldOrdinalValue = 0;
+        self.OffsetBytesValue = 0;
+        self.SizeBytesValue = 0;
+        self.AlignmentBytesValue = 0;
+        self.MisalignedValue = false;
+        self.TypeKindValue = TypedSignatureTypeKind.Unknown;
+        self.TypeHeadTokenValue = 0;
+        self.TypePrimaryTokenValue = 0;
+        self.BitWidthValue = 0;
+        self.TypeFlagsValue = 0;
+        self.ConcreteLayoutValue = false;
+    }
+
+    public inline finite law MirEnumLayoutFactRowKind RowKind(borrow MirEnumLayoutFact self)
+    {
+        return self.RowKindValue;
+    }
+
+    public inline finite law TypeId OwnerType(borrow MirEnumLayoutFact self)
+    {
+        return self.OwnerTypeValue;
+    }
+
+    public inline finite law u32[0 max] OwnerNameToken(borrow MirEnumLayoutFact self)
+    {
+        return self.OwnerNameTokenValue;
+    }
+
+    public inline finite law u32[0 max] VariantOrdinal(borrow MirEnumLayoutFact self)
+    {
+        return self.VariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] VariantNameToken(borrow MirEnumLayoutFact self)
+    {
+        return self.VariantNameTokenValue;
+    }
+
+    public inline finite law u32[0 max] VariantTag(borrow MirEnumLayoutFact self)
+    {
+        return self.VariantTagValue;
+    }
+
+    public inline finite law u32[0 max] PayloadCount(borrow MirEnumLayoutFact self)
+    {
+        return self.PayloadCountValue;
+    }
+
+    public inline finite law u32[0 max] PayloadOrdinal(borrow MirEnumLayoutFact self)
+    {
+        return self.PayloadOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] PayloadNameToken(borrow MirEnumLayoutFact self)
+    {
+        return self.PayloadNameTokenValue;
+    }
+
+    public inline finite law Compiler.Typing.TypedEnumPayloads.TypedEnumPayloadKind PayloadKind(borrow MirEnumLayoutFact self)
+    {
+        return self.PayloadKindValue;
+    }
+
+    public inline finite law Compiler.Typing.TypedEnumPayloads.TypedEnumVariantRole VariantRole(borrow MirEnumLayoutFact self)
+    {
+        return self.VariantRoleValue;
+    }
+
+    public inline finite law bool IsErrorFunnel(borrow MirEnumLayoutFact self)
+    {
+        return self.ErrorFunnelValue;
+    }
+
+    public inline finite law bool UsesNamedPayloads(borrow MirEnumLayoutFact self)
+    {
+        return self.UsesNamedPayloadsValue;
+    }
+
+    public inline finite law u32[0 max] StorageFieldOrdinal(borrow MirEnumLayoutFact self)
+    {
+        return self.StorageFieldOrdinalValue;
+    }
+
+    public inline finite law u64[0 max] OffsetBytes(borrow MirEnumLayoutFact self)
+    {
+        return self.OffsetBytesValue;
+    }
+
+    public inline finite law u64[0 max] SizeBytes(borrow MirEnumLayoutFact self)
+    {
+        return self.SizeBytesValue;
+    }
+
+    public inline finite law u64[0 max] AlignmentBytes(borrow MirEnumLayoutFact self)
+    {
+        return self.AlignmentBytesValue;
+    }
+
+    public inline finite law bool IsMisaligned(borrow MirEnumLayoutFact self)
+    {
+        return self.MisalignedValue;
+    }
+
+    public inline finite law TypedSignatureTypeKind TypeKind(borrow MirEnumLayoutFact self)
+    {
+        return self.TypeKindValue;
+    }
+
+    public inline finite law u32[0 max] TypeHeadToken(borrow MirEnumLayoutFact self)
+    {
+        return self.TypeHeadTokenValue;
+    }
+
+    public inline finite law u32[0 max] TypePrimaryToken(borrow MirEnumLayoutFact self)
+    {
+        return self.TypePrimaryTokenValue;
+    }
+
+    public inline finite law u32[0 max] BitWidth(borrow MirEnumLayoutFact self)
+    {
+        return self.BitWidthValue;
+    }
+
+    public inline finite law u32[0 max] TypeFlags(borrow MirEnumLayoutFact self)
+    {
+        return self.TypeFlagsValue;
+    }
+
+    public inline finite law bool HasConcreteLayout(borrow MirEnumLayoutFact self)
+    {
+        return self.ConcreteLayoutValue;
+    }
+}
+
+public struct MirEnumAbiLayoutFacts
+{
+    bool HasFactsValue;
+    TypeId OwnerTypeValue;
+    u32[0 max] OwnerNameTokenValue;
+    u32[0 max] VariantCountValue;
+    u32[0 max] PayloadFieldCountValue;
+    u64[0 max] TagOffsetBytesValue;
+    u64[0 max] TagSizeBytesValue;
+    u64[0 max] TagAlignmentBytesValue;
+    bool TagMisalignedValue;
+    u64[0 max] SizeBytesValue;
+    u64[0 max] AlignmentBytesValue;
+    bool ConcreteLayoutValue;
+    bool MisalignedStorageValue;
+
+    MirEnumAbiLayoutFacts()
+    {
+        self.HasFactsValue = false;
+        self.OwnerTypeValue = TypeIdOf(0);
+        self.OwnerNameTokenValue = 0;
+        self.VariantCountValue = 0;
+        self.PayloadFieldCountValue = 0;
+        self.TagOffsetBytesValue = 0;
+        self.TagSizeBytesValue = 0;
+        self.TagAlignmentBytesValue = 0;
+        self.TagMisalignedValue = false;
+        self.SizeBytesValue = 0;
+        self.AlignmentBytesValue = 0;
+        self.ConcreteLayoutValue = false;
+        self.MisalignedStorageValue = false;
+    }
+
+    public inline finite law bool Present(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.HasFactsValue;
+    }
+
+    public inline finite law TypeId OwnerType(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.OwnerTypeValue;
+    }
+
+    public inline finite law u32[0 max] OwnerNameToken(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.OwnerNameTokenValue;
+    }
+
+    public inline finite law u32[0 max] VariantCount(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.VariantCountValue;
+    }
+
+    public inline finite law u32[0 max] PayloadFieldCount(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.PayloadFieldCountValue;
+    }
+
+    public inline finite law u64[0 max] TagOffsetBytes(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.TagOffsetBytesValue;
+    }
+
+    public inline finite law u64[0 max] TagSizeBytes(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.TagSizeBytesValue;
+    }
+
+    public inline finite law u64[0 max] TagAlignmentBytes(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.TagAlignmentBytesValue;
+    }
+
+    public inline finite law bool TagIsMisaligned(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.TagMisalignedValue;
+    }
+
+    public inline finite law u64[0 max] SizeBytes(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.SizeBytesValue;
+    }
+
+    public inline finite law u64[0 max] AlignmentBytes(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.AlignmentBytesValue;
+    }
+
+    public inline finite law bool HasConcreteLayout(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.ConcreteLayoutValue;
+    }
+
+    public inline finite law bool HasMisalignedStorage(borrow MirEnumAbiLayoutFacts self)
+    {
+        return self.MisalignedStorageValue;
+    }
+}
+
+internal enum MirEnumAbiStorageKind
+{
+    Integer,
+    Sse,
+    Unknown,
+}
+
+internal struct MirEnumAbiSlotAccumulator
+{
+    bool Any;
+    bool AnyInteger;
+    u32[0 max] SseCount;
+    u64[0 max] FirstOffset;
+    u64[0 max] FirstSize;
+    u64[0 max] SecondOffset;
+    u64[0 max] SecondSize;
+
+    MirEnumAbiSlotAccumulator()
+    {
+        self.Any = false;
+        self.AnyInteger = false;
+        self.SseCount = 0;
+        self.FirstOffset = 0;
+        self.FirstSize = 0;
+        self.SecondOffset = 0;
+        self.SecondSize = 0;
+    }
+
+    internal fn bool Observe(
+        mut borrow MirEnumAbiSlotAccumulator self,
+        u64[0 max] slotStart,
+        u64[0 max] slotSize,
+        u64[0 max] unitOffset,
+        u64[0 max] unitSize,
+        MirEnumAbiStorageKind kind)
+    {
+        if (unitSize == 0)
+        {
+            return true;
+        }
+
+        stack u64[0 max] slotEnd = slotStart + slotSize;
+        stack u64[0 max] unitEnd = unitOffset + unitSize;
+        if (unitOffset < slotEnd && unitEnd > slotStart)
+        {
+            self.Any = true;
+            if (unitOffset < slotStart || unitEnd > slotEnd)
+            {
+                return false;
+            }
+
+            if (kind == MirEnumAbiStorageKind.Integer)
+            {
+                self.AnyInteger = true;
+            }
+            else if (kind == MirEnumAbiStorageKind.Sse)
+            {
+                if (self.SseCount == 0)
+                {
+                    self.FirstOffset = unitOffset;
+                    self.FirstSize = unitSize;
+                }
+                else if (self.SseCount == 1)
+                {
+                    self.SecondOffset = unitOffset;
+                    self.SecondSize = unitSize;
+                }
+
+                self.SseCount = self.SseCount + 1;
+            }
+        }
+
+        return true;
+    }
+
+    internal finite law AbiCarrierKind Carrier(borrow MirEnumAbiSlotAccumulator self, u64[0 max] slotStart, u64[0 max] slotSize)
+    {
+        if (!self.Any || self.AnyInteger)
+        {
+            return MirEnumAbiIntegerCarrierForSize(slotSize);
+        }
+
+        if (self.SseCount == 1)
+        {
+            if (self.FirstOffset == slotStart && self.FirstSize == 4)
+            {
+                return AbiCarrierKind.F32;
+            }
+
+            if (self.FirstOffset == slotStart && self.FirstSize == 8)
+            {
+                return AbiCarrierKind.F64;
+            }
+        }
+
+        if (self.SseCount == 2
+            && self.FirstOffset == slotStart
+            && self.SecondOffset == slotStart + 4
+            && self.FirstSize == 4
+            && self.SecondSize == 4)
+        {
+            return AbiCarrierKind.Vector2F32;
+        }
+
+        return AbiCarrierKind.None;
+    }
+}
+
+internal inline finite law u64[0 max] MirEnumAbiIndirectThresholdBytes()
+{
+    return 16;
+}
+
+internal inline finite law bool MirEnumAbiFitsU32(u64[0 max] value)
+{
+    return value <= 4294967295;
+}
+
+internal finite law u64[0 max] MirEnumAbiAlignUp(u64[0 max] value, u64[0 max] alignment)
+{
+    if (alignment <= 1)
+    {
+        return value;
+    }
+
+    stack u64[0 max] remainder = value % alignment;
+    if (remainder == 0)
+    {
+        return value;
+    }
+
+    return value + alignment - remainder;
+}
+
+internal finite law AbiCarrierKind MirEnumAbiIntegerCarrierForSize(u64[0 max] sizeBytes)
+{
+    if (sizeBytes <= 1)
+    {
+        return AbiCarrierKind.I8;
+    }
+
+    if (sizeBytes <= 2)
+    {
+        return AbiCarrierKind.I16;
+    }
+
+    if (sizeBytes <= 4)
+    {
+        return AbiCarrierKind.I32;
+    }
+
+    if (sizeBytes <= 8)
+    {
+        return AbiCarrierKind.I64;
+    }
+
+    return AbiCarrierKind.None;
+}
+
+internal finite law MirEnumAbiStorageKind MirEnumAbiStorageKindForFact(MirEnumLayoutFact fact)
+{
+    if (fact.TypeKind() == TypedSignatureTypeKind.Float
+        && (fact.SizeBytes() == 4 || fact.SizeBytes() == 8))
+    {
+        return MirEnumAbiStorageKind.Sse;
+    }
+
+    if (fact.TypeKind() != TypedSignatureTypeKind.Unknown)
+    {
+        return MirEnumAbiStorageKind.Integer;
+    }
+
+    return MirEnumAbiStorageKind.Unknown;
+}
+
+public fn bool TryBuildMirEnumAbiLayoutFacts(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    out MirEnumAbiLayoutFacts layout)
+{
+    layout = new();
+    stack mut bool tagSeen = false;
+    stack mut bool concrete = true;
+    stack mut bool misaligned = false;
+    stack mut bool tagMisaligned = false;
+    stack mut u32[0 max] ownerNameToken = 0;
+    stack mut u32[0 max] variantCount = 0;
+    stack mut u32[0 max] payloadFieldCount = 0;
+    stack mut u64[0 max] tagOffset = 0;
+    stack mut u64[0 max] tagSize = 0;
+    stack mut u64[0 max] tagAlignment = 0;
+    stack mut u64[0 max] maxEnd = 0;
+    stack mut u64[0 max] maxAlignment = 1;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType)
+            && (fact.RowKind() == MirEnumLayoutFactRowKind.Variant || fact.RowKind() == MirEnumLayoutFactRowKind.Payload))
+        {
+            if (ownerNameToken == 0)
+            {
+                ownerNameToken = fact.OwnerNameToken();
+            }
+
+            if (!fact.HasConcreteLayout())
+            {
+                concrete = false;
+            }
+
+            if (fact.IsMisaligned())
+            {
+                misaligned = true;
+            }
+
+            stack u64[0 max] end = fact.OffsetBytes() + fact.SizeBytes();
+            if (end > maxEnd)
+            {
+                maxEnd = end;
+            }
+
+            if (fact.AlignmentBytes() > maxAlignment)
+            {
+                maxAlignment = fact.AlignmentBytes();
+            }
+
+            if (fact.RowKind() == MirEnumLayoutFactRowKind.Variant)
+            {
+                variantCount = variantCount + 1;
+                if (!tagSeen)
+                {
+                    tagSeen = true;
+                    tagOffset = fact.OffsetBytes();
+                    tagSize = fact.SizeBytes();
+                    tagAlignment = fact.AlignmentBytes();
+                    tagMisaligned = fact.IsMisaligned();
+                }
+                else if (tagOffset != fact.OffsetBytes()
+                    || tagSize != fact.SizeBytes()
+                    || tagAlignment != fact.AlignmentBytes())
+                {
+                    concrete = false;
+                }
+            }
+            else
+            {
+                payloadFieldCount = payloadFieldCount + 1;
+            }
+        }
+    }
+
+    if (!tagSeen || variantCount == 0 || tagSize == 0 || tagAlignment == 0 || maxEnd == 0)
+    {
+        return false;
+    }
+
+    stack mut MirEnumAbiLayoutFacts built = new();
+    built.HasFactsValue = true;
+    built.OwnerTypeValue = ownerType;
+    built.OwnerNameTokenValue = ownerNameToken;
+    built.VariantCountValue = variantCount;
+    built.PayloadFieldCountValue = payloadFieldCount;
+    built.TagOffsetBytesValue = tagOffset;
+    built.TagSizeBytesValue = tagSize;
+    built.TagAlignmentBytesValue = tagAlignment;
+    built.TagMisalignedValue = tagMisaligned;
+    built.SizeBytesValue = MirEnumAbiAlignUp(maxEnd, maxAlignment);
+    built.AlignmentBytesValue = maxAlignment;
+    built.ConcreteLayoutValue = concrete;
+    built.MisalignedStorageValue = misaligned;
+    layout = built;
+    return true;
+}
+
+public finite law bool MirEnumAbiRequiresIndirectParameter(MirEnumAbiLayoutFacts layout)
+{
+    return layout.Present()
+        && layout.HasConcreteLayout()
+        && layout.SizeBytes() > MirEnumAbiIndirectThresholdBytes();
+}
+
+public finite law bool MirEnumAbiRequiresIndirectReturn(MirEnumAbiLayoutFacts layout)
+{
+    return MirEnumAbiRequiresIndirectParameter(layout);
+}
+
+internal fn AbiCarrierKind MirEnumAbiSlotCarrierForFacts(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    MirEnumAbiLayoutFacts layout,
+    u64[0 max] slotStart,
+    u64[0 max] slotSize)
+{
+    stack mut MirEnumAbiSlotAccumulator accumulator = new();
+    if (!accumulator.Observe(
+        slotStart,
+        slotSize,
+        layout.TagOffsetBytes(),
+        layout.TagSizeBytes(),
+        MirEnumAbiStorageKind.Integer))
+    {
+        return AbiCarrierKind.None;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType) && fact.RowKind() == MirEnumLayoutFactRowKind.Payload)
+        {
+            if (!accumulator.Observe(
+                slotStart,
+                slotSize,
+                fact.OffsetBytes(),
+                fact.SizeBytes(),
+                MirEnumAbiStorageKindForFact(fact)))
+            {
+                return AbiCarrierKind.None;
+            }
+        }
+    }
+
+    return accumulator.Carrier(slotStart, slotSize);
+}
+
+public fn bool TryBuildMirEnumCAbiCarrierFacts(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    out CAbiAggregateCarrierFacts carrierFacts)
+{
+    carrierFacts = new();
+    stack mut MirEnumAbiLayoutFacts layout = new();
+    if (!TryBuildMirEnumAbiLayoutFacts(facts, ownerType, layout))
+    {
+        return false;
+    }
+
+    if (!layout.HasConcreteLayout()
+        || !MirEnumAbiFitsU32(layout.SizeBytes())
+        || !MirEnumAbiFitsU32(layout.AlignmentBytes()))
+    {
+        carrierFacts.SetUnsupported();
+        return true;
+    }
+
+    if (layout.HasMisalignedStorage() || layout.SizeBytes() > MirEnumAbiIndirectThresholdBytes())
+    {
+        carrierFacts.SetIndirect((u32[0 max])layout.SizeBytes(), (u32[0 max])layout.AlignmentBytes());
+        return true;
+    }
+
+    stack mut u32[0 max] carrierCount = 0;
+    stack mut AbiCarrierKind carrier0 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier1 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier2 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier3 = AbiCarrierKind.None;
+    stack mut u64[0 max] slotStart = 0;
+    while willexit (slotStart < layout.SizeBytes())
+    {
+        stack mut u64[0 max] slotSize = 8;
+        if (layout.SizeBytes() - slotStart < 8)
+        {
+            slotSize = layout.SizeBytes() - slotStart;
+        }
+
+        stack AbiCarrierKind carrier = MirEnumAbiSlotCarrierForFacts(facts, ownerType, layout, slotStart, slotSize);
+        if (carrier == AbiCarrierKind.None)
+        {
+            carrierFacts.SetUnsupported();
+            return true;
+        }
+
+        switch (carrierCount)
+        {
+            case 0:
+                carrier0 = carrier;
+            case 1:
+                carrier1 = carrier;
+            case 2:
+                carrier2 = carrier;
+            case 3:
+                carrier3 = carrier;
+            default:
+                carrierFacts.SetUnsupported();
+                return true;
+        }
+
+        carrierCount = carrierCount + 1;
+        slotStart = slotStart + 8;
+    }
+
+    carrierFacts.SetDirect(
+        (u32[0 max])layout.SizeBytes(),
+        (u32[0 max])layout.AlignmentBytes(),
+        carrierCount,
+        carrier0,
+        carrier1,
+        carrier2,
+        carrier3);
+    return true;
+}
+
+internal fn MemoryStatus EmitLlvmByteStorageType(u64[0 max] sizeBytes, mut borrow OwnedAscii sink)
+{
+    if (sizeBytes <= 1)
+    {
+        try sink.AppendConstAscii("i8");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("[");
+    try sink.AppendU64(sizeBytes);
+    try sink.AppendConstAscii(" x i8]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmIntegerStorageType(u32[0 max] bitWidth, u64[0 max] sizeBytes, mut borrow OwnedAscii sink)
+{
+    if (bitWidth == 0)
+    {
+        return EmitLlvmByteStorageType(sizeBytes, sink);
+    }
+
+    try sink.AppendConstAscii("i");
+    try sink.AppendU64((u64[0 max])bitWidth);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmEnumFactStorageType(MirEnumLayoutFact fact, mut borrow OwnedAscii sink)
+{
+    switch (fact.TypeKind())
+    {
+        case TypedSignatureTypeKind.Bool:
+            try sink.AppendConstAscii("i1");
+        case TypedSignatureTypeKind.Integer:
+            try EmitLlvmIntegerStorageType(fact.BitWidth(), fact.SizeBytes(), sink);
+        case TypedSignatureTypeKind.Float:
+            if (fact.SizeBytes() == 2)
+            {
+                try sink.AppendConstAscii("half");
+            }
+            else if (fact.SizeBytes() == 4)
+            {
+                try sink.AppendConstAscii("float");
+            }
+            else if (fact.SizeBytes() == 8)
+            {
+                try sink.AppendConstAscii("double");
+            }
+            else
+            {
+                try EmitLlvmByteStorageType(fact.SizeBytes(), sink);
+            }
+        case TypedSignatureTypeKind.RawPointer:
+            if (fact.SizeBytes() == 8)
+            {
+                try sink.AppendConstAscii("ptr");
+            }
+            else
+            {
+                try EmitLlvmByteStorageType(fact.SizeBytes(), sink);
+            }
+        case TypedSignatureTypeKind.FunctionPointer:
+            if (fact.SizeBytes() == 8)
+            {
+                try sink.AppendConstAscii("ptr");
+            }
+            else
+            {
+                try EmitLlvmByteStorageType(fact.SizeBytes(), sink);
+            }
+        default:
+            try EmitLlvmByteStorageType(fact.SizeBytes(), sink);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct MirEnumStorageEmitState
+{
+    u64[0 max] Cursor;
+    bool EmittedField;
+
+    MirEnumStorageEmitState()
+    {
+        self.Cursor = 0;
+        self.EmittedField = false;
+    }
+
+    internal inline finite law u64[0 max] CursorBytes(borrow MirEnumStorageEmitState self)
+    {
+        return self.Cursor;
+    }
+
+    internal inline finite law bool HasEmittedField(borrow MirEnumStorageEmitState self)
+    {
+        return self.EmittedField;
+    }
+}
+
+internal fn MemoryStatus EmitLlvmEnumStorageField(
+    MirEnumLayoutFact fact,
+    mut borrow MirEnumStorageEmitState state,
+    mut borrow OwnedAscii sink)
+{
+    if (fact.OffsetBytes() < state.Cursor)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (fact.OffsetBytes() > state.Cursor)
+    {
+        if (state.EmittedField)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        try EmitLlvmByteStorageType(fact.OffsetBytes() - state.Cursor, sink);
+        state.Cursor = fact.OffsetBytes();
+        state.EmittedField = true;
+    }
+
+    if (state.EmittedField)
+    {
+        try sink.AppendConstAscii(", ");
+    }
+
+    try EmitLlvmEnumFactStorageType(fact, sink);
+    state.Cursor = fact.OffsetBytes() + fact.SizeBytes();
+    state.EmittedField = true;
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmEnumStorageType(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    mut borrow OwnedAscii sink)
+{
+    stack mut MirEnumAbiLayoutFacts layout = new();
+    if (!TryBuildMirEnumAbiLayoutFacts(facts, ownerType, layout) || !layout.HasConcreteLayout())
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("{ ");
+    stack mut MirEnumStorageEmitState emitState = new();
+    stack mut bool emittedTag = false;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (!emittedTag
+            && factOwner.Equals(ownerType)
+            && fact.RowKind() == MirEnumLayoutFactRowKind.Variant)
+        {
+            try EmitLlvmEnumStorageField(fact, emitState, sink);
+            emittedTag = true;
+        }
+    }
+
+    if (!emittedTag)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType) && fact.RowKind() == MirEnumLayoutFactRowKind.Payload)
+        {
+            try EmitLlvmEnumStorageField(fact, emitState, sink);
+        }
+    }
+
+    if (emitState.CursorBytes() > layout.SizeBytes())
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (emitState.CursorBytes() < layout.SizeBytes())
+    {
+        if (emitState.HasEmittedField())
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        try EmitLlvmByteStorageType(layout.SizeBytes() - emitState.CursorBytes(), sink);
+    }
+
+    try sink.AppendConstAscii(" }");
+    return MemoryStatus.Ok;
+}
+
+public fn bool TryGetMirEnumVariantFact(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    out MirEnumLayoutFact variantFact)
+{
+    variantFact = new();
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType)
+            && fact.RowKind() == MirEnumLayoutFactRowKind.Variant
+            && fact.VariantOrdinal() == variantOrdinal
+            && fact.HasConcreteLayout())
+        {
+            variantFact = fact;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+public fn bool TryGetMirEnumPayloadFact(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    out MirEnumLayoutFact payloadFact)
+{
+    payloadFact = new();
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType)
+            && fact.RowKind() == MirEnumLayoutFactRowKind.Payload
+            && fact.VariantOrdinal() == variantOrdinal
+            && fact.PayloadOrdinal() == payloadOrdinal
+            && fact.HasConcreteLayout())
+        {
+            payloadFact = fact;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal finite law bool MirEnumLayoutFactTargetsSameField(MirEnumLayoutFact fact, MirEnumLayoutFact target)
+{
+    stack TypeId factOwner = fact.OwnerType();
+    stack TypeId targetOwner = target.OwnerType();
+    if (!factOwner.Equals(targetOwner) || fact.RowKind() != target.RowKind())
+    {
+        return false;
+    }
+
+    if (fact.RowKind() == MirEnumLayoutFactRowKind.Variant)
+    {
+        return true;
+    }
+
+    if (fact.RowKind() == MirEnumLayoutFactRowKind.Payload)
+    {
+        return fact.VariantOrdinal() == target.VariantOrdinal()
+            && fact.PayloadOrdinal() == target.PayloadOrdinal();
+    }
+
+    return false;
+}
+
+public fn bool TryGetLlvmEnumFactFieldIndex(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    MirEnumLayoutFact target,
+    out u32[0 max] llvmFieldIndex)
+{
+    llvmFieldIndex = 0;
+    stack TypeId targetOwner = target.OwnerType();
+    if (!targetOwner.Equals(ownerType)
+        || (target.RowKind() != MirEnumLayoutFactRowKind.Variant && target.RowKind() != MirEnumLayoutFactRowKind.Payload)
+        || !target.HasConcreteLayout())
+    {
+        return false;
+    }
+
+    stack mut MirEnumAbiLayoutFacts layout = new();
+    if (!TryBuildMirEnumAbiLayoutFacts(facts, ownerType, layout) || !layout.HasConcreteLayout())
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] cursorBytes = 0;
+    stack mut u32[0 max] fieldIndex = 0;
+    stack mut bool emittedTag = false;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (!emittedTag
+            && factOwner.Equals(ownerType)
+            && fact.RowKind() == MirEnumLayoutFactRowKind.Variant)
+        {
+            if (fact.OffsetBytes() < cursorBytes)
+            {
+                return false;
+            }
+
+            if (fact.OffsetBytes() > cursorBytes)
+            {
+                fieldIndex = (u32[0 max])(fieldIndex + 1);
+                cursorBytes = fact.OffsetBytes();
+            }
+
+            if (target.RowKind() == MirEnumLayoutFactRowKind.Variant)
+            {
+                llvmFieldIndex = fieldIndex;
+                return true;
+            }
+
+            cursorBytes = fact.OffsetBytes() + fact.SizeBytes();
+            fieldIndex = (u32[0 max])(fieldIndex + 1);
+            emittedTag = true;
+        }
+    }
+
+    if (!emittedTag)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType) && fact.RowKind() == MirEnumLayoutFactRowKind.Payload)
+        {
+            if (fact.OffsetBytes() < cursorBytes)
+            {
+                return false;
+            }
+
+            if (fact.OffsetBytes() > cursorBytes)
+            {
+                fieldIndex = (u32[0 max])(fieldIndex + 1);
+                cursorBytes = fact.OffsetBytes();
+            }
+
+            if (MirEnumLayoutFactTargetsSameField(fact, target))
+            {
+                llvmFieldIndex = fieldIndex;
+                return true;
+            }
+
+            cursorBytes = fact.OffsetBytes() + fact.SizeBytes();
+            fieldIndex = (u32[0 max])(fieldIndex + 1);
+        }
+    }
+
+    return false;
+}
+
+public fn bool TryGetLlvmEnumTagFieldIndex(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    out u32[0 max] llvmFieldIndex)
+{
+    llvmFieldIndex = 0;
+    stack u64[0 2 ** 63 - 1] count = facts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack MirEnumLayoutFact fact = facts.Get((u32[0 max])(index + 1));
+        stack TypeId factOwner = fact.OwnerType();
+        if (factOwner.Equals(ownerType)
+            && fact.RowKind() == MirEnumLayoutFactRowKind.Variant
+            && fact.HasConcreteLayout())
+        {
+            return TryGetLlvmEnumFactFieldIndex(facts, ownerType, fact, llvmFieldIndex);
+        }
+    }
+
+    return false;
+}
+
+public fn bool TryGetLlvmEnumPayloadFieldIndex(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    out u32[0 max] llvmFieldIndex)
+{
+    llvmFieldIndex = 0;
+    stack mut MirEnumLayoutFact payloadFact = new();
+    if (!TryGetMirEnumPayloadFact(facts, ownerType, variantOrdinal, payloadOrdinal, payloadFact))
+    {
+        return false;
+    }
+
+    return TryGetLlvmEnumFactFieldIndex(facts, ownerType, payloadFact, llvmFieldIndex);
+}
+
+internal fn MemoryStatus EmitLlvmEnumStorageTypeOperand(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    const ascii valueName,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmEnumStorageType(facts, ownerType, sink);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendConstAscii(valueName);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmEnumVariantTagConstructor(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    const ascii resultName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut MirEnumLayoutFact variantFact = new();
+    if (!TryGetMirEnumVariantFact(facts, ownerType, variantOrdinal, variantFact))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u32[0 max] fieldIndex = 0;
+    if (!TryGetLlvmEnumFactFieldIndex(facts, ownerType, variantFact, fieldIndex))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("  ");
+    try sink.AppendConstAscii(resultName);
+    try sink.AppendConstAscii(" = insertvalue ");
+    try EmitLlvmEnumStorageType(facts, ownerType, sink);
+    try sink.AppendConstAscii(" zeroinitializer, ");
+    try EmitLlvmEnumFactStorageType(variantFact, sink);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendU64((u64[0 max])variantFact.VariantTag());
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])fieldIndex);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmEnumPayloadInsert(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    const ascii resultName,
+    const ascii sourceValueName,
+    const ascii payloadValueName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut MirEnumLayoutFact payloadFact = new();
+    if (!TryGetMirEnumPayloadFact(facts, ownerType, variantOrdinal, payloadOrdinal, payloadFact))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u32[0 max] fieldIndex = 0;
+    if (!TryGetLlvmEnumFactFieldIndex(facts, ownerType, payloadFact, fieldIndex))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("  ");
+    try sink.AppendConstAscii(resultName);
+    try sink.AppendConstAscii(" = insertvalue ");
+    try EmitLlvmEnumStorageTypeOperand(facts, ownerType, sourceValueName, sink);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmEnumFactStorageType(payloadFact, sink);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendConstAscii(payloadValueName);
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])fieldIndex);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmEnumValueLoad(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    const ascii resultName,
+    const ascii sourcePtrName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut MirEnumAbiLayoutFacts layout = new();
+    if (!TryBuildMirEnumAbiLayoutFacts(facts, ownerType, layout) || !layout.HasConcreteLayout())
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("  ");
+    try sink.AppendConstAscii(resultName);
+    try sink.AppendConstAscii(" = load ");
+    try EmitLlvmEnumStorageType(facts, ownerType, sink);
+    try sink.AppendConstAscii(", ptr ");
+    try sink.AppendConstAscii(sourcePtrName);
+    try sink.AppendConstAscii(", align ");
+    try sink.AppendU64(layout.AlignmentBytes());
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmEnumValueStore(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    const ascii valueName,
+    const ascii targetPtrName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut MirEnumAbiLayoutFacts layout = new();
+    if (!TryBuildMirEnumAbiLayoutFacts(facts, ownerType, layout) || !layout.HasConcreteLayout())
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("  store ");
+    try EmitLlvmEnumStorageTypeOperand(facts, ownerType, valueName, sink);
+    try sink.AppendConstAscii(", ptr ");
+    try sink.AppendConstAscii(targetPtrName);
+    try sink.AppendConstAscii(", align ");
+    try sink.AppendU64(layout.AlignmentBytes());
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmEnumTagRead(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    const ascii resultName,
+    const ascii enumValueName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] fieldIndex = 0;
+    if (!TryGetLlvmEnumTagFieldIndex(facts, ownerType, fieldIndex))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("  ");
+    try sink.AppendConstAscii(resultName);
+    try sink.AppendConstAscii(" = extractvalue ");
+    try EmitLlvmEnumStorageTypeOperand(facts, ownerType, enumValueName, sink);
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])fieldIndex);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromTyped(Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutRowKind kind)
+{
+    switch (kind)
+    {
+        case Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutRowKind.Variant:
+            return MirEnumLayoutFactRowKind.Variant;
+        case Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutRowKind.Payload:
+            return MirEnumLayoutFactRowKind.Payload;
+        default:
+            return MirEnumLayoutFactRowKind.Unknown;
+    }
+}
+
+internal fn MirEnumLayoutFact MirEnumLayoutFactFromTypedRow(
+    borrow Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable layouts,
+    u64[0 2 ** 63 - 1] index)
+{
+    stack mut MirEnumLayoutFact fact = new();
+    fact.RowKindValue = MirEnumLayoutFactRowKindFromTyped(layouts.RowKindAt(index));
+    fact.OwnerTypeValue = TypeIdOf((u32[0 max])(layouts.OwnerDeclarationIndexAt(index) + 1));
+    fact.OwnerNameTokenValue = layouts.OwnerNameTokenAt(index);
+    fact.VariantOrdinalValue = layouts.VariantOrdinalAt(index);
+    fact.VariantNameTokenValue = layouts.VariantNameTokenAt(index);
+    fact.VariantTagValue = layouts.VariantTagAt(index);
+    fact.PayloadCountValue = layouts.PayloadCountAt(index);
+    fact.PayloadOrdinalValue = layouts.PayloadOrdinalAt(index);
+    fact.PayloadNameTokenValue = layouts.PayloadNameTokenAt(index);
+    fact.PayloadKindValue = layouts.PayloadKindAt(index);
+    fact.VariantRoleValue = layouts.VariantRoleAt(index);
+    fact.ErrorFunnelValue = layouts.IsErrorFunnelAt(index);
+    fact.UsesNamedPayloadsValue = layouts.UsesNamedPayloadsAt(index);
+    fact.StorageFieldOrdinalValue = layouts.StorageFieldOrdinalAt(index);
+    fact.OffsetBytesValue = layouts.OffsetBytesAt(index);
+    fact.SizeBytesValue = layouts.SizeBytesAt(index);
+    fact.AlignmentBytesValue = layouts.AlignmentBytesAt(index);
+    fact.MisalignedValue = layouts.IsMisalignedAt(index);
+    fact.TypeKindValue = layouts.TypeKindAt(index);
+    fact.TypeHeadTokenValue = layouts.TypeHeadTokenAt(index);
+    fact.TypePrimaryTokenValue = layouts.TypePrimaryTokenAt(index);
+    fact.BitWidthValue = layouts.BitWidthAt(index);
+    fact.TypeFlagsValue = layouts.TypeFlagsAt(index);
+    fact.ConcreteLayoutValue = layouts.HasConcreteLayoutAt(index);
+    return fact;
+}
+
+public fn bool BuildMirEnumLayoutFactsFromTypedLayouts(
+    borrow Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable layouts,
+    mut borrow IrTable<MirEnumLayoutFact> facts)
+{
+    stack u64[0 2 ** 63 - 1] count = layouts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (facts.Add(MirEnumLayoutFactFromTypedRow(layouts, index)) == 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+public fn bool BuildMirEnumLayoutFactsForSource(ascii source, out TokenStream stream, out IrTable<MirEnumLayoutFact> facts)
+{
+    stream = new();
+    facts = new();
+
+    stack mut TokenStream parsedStream = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var lexed):
+            parsedStream = lexed;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (Compiler.Parsing.ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    stack mut Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable typedLayouts = new();
+    switch (Compiler.Typing.TypedPipeline.BuildTypedEnumLayouts(source, parsedStream, declarations))
+    {
+        case ParseResult<Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<Compiler.Typing.TypedEnumLayouts.TypedEnumLayoutTable>.Ok(var builtLayouts):
+            typedLayouts = builtLayouts;
+    }
+
+    stack mut IrTable<MirEnumLayoutFact> builtFacts = new();
+    if (!BuildMirEnumLayoutFactsFromTypedLayouts(typedLayouts, builtFacts))
+    {
+        return false;
+    }
+
+    facts = builtFacts;
+    stream = parsedStream;
+    return true;
+}

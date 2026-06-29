@@ -1,0 +1,3141 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.PackageCodec
+import System.Memory
+import System.Text
+import System.Runtime.Buffer
+import System.IO
+import System.IO.File
+module Compiler.Mir.PackageImage
+
+// === Combined package image (#32) ===
+// A package image concatenates the four section streams behind a fixed 20-byte
+// header: a magic u32 then the 1-based byte offset of each section
+// (instructions, blocks, functions, globals). Sections therefore start at byte 21.
+// `InspectPackageImage` reads only the header + per-section counts (an `inspect-pkg`
+// summary) without materializing the IR.
+
+// The magic identifying a MIR package image ("MIR1" little-endian-ish constant).
+internal fn u32[0 max] MirImageMagic()
+{
+    return 826757197;
+}
+
+// The magic identifying a MIR package image with assembly metadata ("MIR2").
+internal fn u32[0 max] MirImageWithAsmMagic()
+{
+    return 844253517;
+}
+
+internal inline finite law u32[0 max] FourCc(u8[0 max] a, u8[0 max] b, u8[0 max] c, u8[0 max] d)
+{
+    return (u32[0 max])a
+        + (u32[0 max])b * 256
+        + (u32[0 max])c * 65536
+        + (u32[0 max])d * 16777216;
+}
+
+internal fn u32[0 max] SectionedPackageImageVersion()
+{
+    return 2;
+}
+
+internal fn u32[0 max] SectionFlagsRequired()
+{
+    return 1;
+}
+
+internal fn u32[0 max] SectionEncodingRaw()
+{
+    return 0;
+}
+
+internal fn u32[0 max] SectionEncodingBrotliUtf8Json()
+{
+    return 1;
+}
+
+internal fn u32[0 max] PackageImageNullStringIndex()
+{
+    return 4294967295;
+}
+
+internal fn u32[0 max] PackageSectionStringTable()
+{
+    return FourCc(83, 84, 82, 83); // STRS
+}
+
+internal fn u32[0 max] PackageSectionPackageFacts()
+{
+    return FourCc(80, 73, 78, 70); // PINF
+}
+
+internal fn u32[0 max] PackageSectionManifest()
+{
+    return FourCc(77, 65, 78, 70); // MANF
+}
+
+internal fn u32[0 max] PackageSectionInstructions()
+{
+    return FourCc(77, 73, 78, 83); // MINS
+}
+
+internal fn u32[0 max] PackageSectionBlocks()
+{
+    return FourCc(77, 66, 76, 75); // MBLK
+}
+
+internal fn u32[0 max] PackageSectionFunctions()
+{
+    return FourCc(77, 70, 85, 78); // MFUN
+}
+
+internal fn u32[0 max] PackageSectionGlobals()
+{
+    return FourCc(77, 71, 76, 66); // MGLB
+}
+
+internal fn u32[0 max] PackageSectionAsmMetadata()
+{
+    return FourCc(77, 65, 83, 77); // MASM
+}
+
+internal fn u32[0 max] PackageSectionEnumLayoutFacts()
+{
+    return FourCc(77, 69, 76, 70); // MELF
+}
+
+public enum PackageImageInspectionFormat
+{
+    Text,
+    Json,
+}
+
+public enum PackageImageValidationStatus
+{
+    Ok,
+    TruncatedHeader,
+    UnsupportedFormat,
+    MalformedSectionDirectory,
+    TruncatedSection,
+}
+
+public finite law ascii PackageImageValidationStatusName(PackageImageValidationStatus status)
+{
+    switch (status)
+    {
+        case PackageImageValidationStatus.Ok:
+            return "ok";
+        case PackageImageValidationStatus.TruncatedHeader:
+            return "truncated-header";
+        case PackageImageValidationStatus.UnsupportedFormat:
+            return "unsupported-format";
+        case PackageImageValidationStatus.MalformedSectionDirectory:
+            return "malformed-section-directory";
+        case PackageImageValidationStatus.TruncatedSection:
+            return "truncated-section";
+    }
+}
+
+internal struct PackageImageSummary
+{
+    bool IsLogical;
+    bool IsSectioned;
+    bool HasAsm;
+    u32[0 max] StringTableOffset;
+    u64[0 max] StringTableLength;
+    u32[0 max] RootModuleStringIndex;
+    u32[0 max] LibraryFileNameStringIndex;
+    u32[0 max] BuildProfileStringIndex;
+    u32[0 max] TargetTripleStringIndex;
+    u32[0 max] TargetDataLayoutStringIndex;
+    u32[0 max] TargetCpuStringIndex;
+    u32[0 max] RelocationModelStringIndex;
+    u32[0 max] CodeModelStringIndex;
+    u32[0 max] FeatureStringIndexOffset;
+    u32[0 max] CDataModelKindStringIndex;
+    bool CCharIsSigned;
+    u32[0 max] CPointerBitWidth;
+    u32[0 max] CLongBitWidth;
+    u32[0 max] CSizeTBitWidth;
+    u32[0 max] CPtrDiffTBitWidth;
+    u32[0 max] AggregatePointerSizeBytes;
+    u32[0 max] AggregatePointerAlignmentBytes;
+    u32[0 max] InstructionCount;
+    u32[0 max] BlockCount;
+    u32[0 max] FunctionCount;
+    u32[0 max] GlobalCount;
+    u32[0 max] AsmFunctionCount;
+    u32[0 max] EnumLayoutFactCount;
+    u32[0 max] SectionCount;
+    u32[0 max] StringCount;
+    u32[0 max] TargetFeatureCount;
+    bool HasBuildProfile;
+    bool HasTarget;
+    bool HasCDataModel;
+    bool HasAggregateLayout;
+    bool HasEnumLayoutFacts;
+
+    PackageImageSummary()
+    {
+        self.IsLogical = false;
+        self.IsSectioned = false;
+        self.HasAsm = false;
+        self.StringTableOffset = 0;
+        self.StringTableLength = 0;
+        self.RootModuleStringIndex = PackageImageNullStringIndex();
+        self.LibraryFileNameStringIndex = PackageImageNullStringIndex();
+        self.BuildProfileStringIndex = PackageImageNullStringIndex();
+        self.TargetTripleStringIndex = PackageImageNullStringIndex();
+        self.TargetDataLayoutStringIndex = PackageImageNullStringIndex();
+        self.TargetCpuStringIndex = PackageImageNullStringIndex();
+        self.RelocationModelStringIndex = PackageImageNullStringIndex();
+        self.CodeModelStringIndex = PackageImageNullStringIndex();
+        self.FeatureStringIndexOffset = 0;
+        self.CDataModelKindStringIndex = PackageImageNullStringIndex();
+        self.CCharIsSigned = false;
+        self.CPointerBitWidth = 0;
+        self.CLongBitWidth = 0;
+        self.CSizeTBitWidth = 0;
+        self.CPtrDiffTBitWidth = 0;
+        self.AggregatePointerSizeBytes = 0;
+        self.AggregatePointerAlignmentBytes = 0;
+        self.InstructionCount = 0;
+        self.BlockCount = 0;
+        self.FunctionCount = 0;
+        self.GlobalCount = 0;
+        self.AsmFunctionCount = 0;
+        self.EnumLayoutFactCount = 0;
+        self.SectionCount = 0;
+        self.StringCount = 0;
+        self.TargetFeatureCount = 0;
+        self.HasBuildProfile = false;
+        self.HasTarget = false;
+        self.HasCDataModel = false;
+        self.HasAggregateLayout = false;
+        self.HasEnumLayoutFacts = false;
+    }
+}
+
+internal struct LogicalPackageFactsHeader
+{
+    u32[0 max] RootModuleStringIndex;
+    u32[0 max] LibraryFileNameStringIndex;
+    u32[0 max] BuildProfileStringIndex;
+    u32[0 max] TargetTripleStringIndex;
+    u32[0 max] TargetDataLayoutStringIndex;
+    u32[0 max] TargetCpuStringIndex;
+    u32[0 max] RelocationModelStringIndex;
+    u32[0 max] CodeModelStringIndex;
+    u32[0 max] FeatureStringIndexOffset;
+    u32[0 max] TargetFeatureCount;
+    u32[0 max] CDataModelKindStringIndex;
+    bool CCharIsSigned;
+    u32[0 max] CPointerBitWidth;
+    u32[0 max] CLongBitWidth;
+    u32[0 max] CSizeTBitWidth;
+    u32[0 max] CPtrDiffTBitWidth;
+    u32[0 max] AggregatePointerSizeBytes;
+    u32[0 max] AggregatePointerAlignmentBytes;
+    bool HasBuildProfile;
+    bool HasTarget;
+    bool HasCDataModel;
+    bool HasAggregateLayout;
+
+    LogicalPackageFactsHeader()
+    {
+        self.RootModuleStringIndex = PackageImageNullStringIndex();
+        self.LibraryFileNameStringIndex = PackageImageNullStringIndex();
+        self.BuildProfileStringIndex = PackageImageNullStringIndex();
+        self.TargetTripleStringIndex = PackageImageNullStringIndex();
+        self.TargetDataLayoutStringIndex = PackageImageNullStringIndex();
+        self.TargetCpuStringIndex = PackageImageNullStringIndex();
+        self.RelocationModelStringIndex = PackageImageNullStringIndex();
+        self.CodeModelStringIndex = PackageImageNullStringIndex();
+        self.FeatureStringIndexOffset = 0;
+        self.TargetFeatureCount = 0;
+        self.CDataModelKindStringIndex = PackageImageNullStringIndex();
+        self.CCharIsSigned = false;
+        self.CPointerBitWidth = 0;
+        self.CLongBitWidth = 0;
+        self.CSizeTBitWidth = 0;
+        self.CPtrDiffTBitWidth = 0;
+        self.AggregatePointerSizeBytes = 0;
+        self.AggregatePointerAlignmentBytes = 0;
+        self.HasBuildProfile = false;
+        self.HasTarget = false;
+        self.HasCDataModel = false;
+        self.HasAggregateLayout = false;
+    }
+}
+
+internal fn PackageImageSummary PackageImageSummaryOf(
+    bool isSectioned,
+    bool hasAsm,
+    u32[0 max] instructionCount,
+    u32[0 max] blockCount,
+    u32[0 max] functionCount,
+    u32[0 max] globalCount,
+    u32[0 max] asmFunctionCount)
+{
+    stack mut PackageImageSummary summary = new();
+    summary.IsSectioned = isSectioned;
+    summary.HasAsm = hasAsm;
+    summary.InstructionCount = instructionCount;
+    summary.BlockCount = blockCount;
+    summary.FunctionCount = functionCount;
+    summary.GlobalCount = globalCount;
+    summary.AsmFunctionCount = asmFunctionCount;
+    return summary;
+}
+
+internal fn PackageImageSummary LogicalPackageImageSummaryOf(
+    u32[0 max] sectionCount,
+    u32[0 max] stringCount,
+    u32[0 max] stringTableOffset,
+    u64[0 max] stringTableLength,
+    LogicalPackageFactsHeader facts)
+{
+    stack mut PackageImageSummary summary = new();
+    summary.IsLogical = true;
+    summary.IsSectioned = true;
+    summary.StringTableOffset = stringTableOffset;
+    summary.StringTableLength = stringTableLength;
+    summary.RootModuleStringIndex = facts.RootModuleStringIndex;
+    summary.LibraryFileNameStringIndex = facts.LibraryFileNameStringIndex;
+    summary.BuildProfileStringIndex = facts.BuildProfileStringIndex;
+    summary.TargetTripleStringIndex = facts.TargetTripleStringIndex;
+    summary.TargetDataLayoutStringIndex = facts.TargetDataLayoutStringIndex;
+    summary.TargetCpuStringIndex = facts.TargetCpuStringIndex;
+    summary.RelocationModelStringIndex = facts.RelocationModelStringIndex;
+    summary.CodeModelStringIndex = facts.CodeModelStringIndex;
+    summary.FeatureStringIndexOffset = facts.FeatureStringIndexOffset;
+    summary.CDataModelKindStringIndex = facts.CDataModelKindStringIndex;
+    summary.CCharIsSigned = facts.CCharIsSigned;
+    summary.CPointerBitWidth = facts.CPointerBitWidth;
+    summary.CLongBitWidth = facts.CLongBitWidth;
+    summary.CSizeTBitWidth = facts.CSizeTBitWidth;
+    summary.CPtrDiffTBitWidth = facts.CPtrDiffTBitWidth;
+    summary.AggregatePointerSizeBytes = facts.AggregatePointerSizeBytes;
+    summary.AggregatePointerAlignmentBytes = facts.AggregatePointerAlignmentBytes;
+    summary.SectionCount = sectionCount;
+    summary.StringCount = stringCount;
+    summary.TargetFeatureCount = facts.TargetFeatureCount;
+    summary.HasBuildProfile = facts.HasBuildProfile;
+    summary.HasTarget = facts.HasTarget;
+    summary.HasCDataModel = facts.HasCDataModel;
+    summary.HasAggregateLayout = facts.HasAggregateLayout;
+    return summary;
+}
+
+// Appends every byte of `src` to `dst`.
+internal fn void AppendBytes(mut borrow IrTable<u8[0 max]> dst, borrow IrTable<u8[0 max]> src)
+{
+    stack u64[0 2 ** 63 - 1] count = src.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack u8[0 max] b = src.Get(i);
+        stack u32[0 max] w = dst.Add(b);
+        i = i + 1;
+    }
+}
+
+internal fn void WriteStarkPackageImageMagic(mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u32[0 max] wroteS = buf.Add(83);
+    stack u32[0 max] wroteT = buf.Add(84);
+    stack u32[0 max] wroteA = buf.Add(65);
+    stack u32[0 max] wroteR = buf.Add(82);
+    stack u32[0 max] wroteK = buf.Add(75);
+    stack u32[0 max] wroteP = buf.Add(80);
+    stack u32[0 max] wroteSecondK = buf.Add(75);
+    stack u32[0 max] wroteG = buf.Add(71);
+}
+
+internal fn bool HasStarkPackageImageMagic(borrow IrTable<u8[0 max]> buf)
+{
+    return CanReadImageBytes(buf, 1, 8)
+        && buf.Get(1) == 83
+        && buf.Get(2) == 84
+        && buf.Get(3) == 65
+        && buf.Get(4) == 82
+        && buf.Get(5) == 75
+        && buf.Get(6) == 80
+        && buf.Get(7) == 75
+        && buf.Get(8) == 71;
+}
+
+internal fn void WritePackageSectionDirectoryEntry(
+    mut borrow IrTable<u8[0 max]> buf,
+    u32[0 max] sectionId,
+    u32[0 max] flags,
+    u64[0 max] offset,
+    u64[0 max] length,
+    u32[0 max] encoding)
+{
+    WriteU32(buf, sectionId);
+    WriteU32(buf, flags);
+    WriteU64(buf, offset);
+    WriteU64(buf, length);
+    WriteU32(buf, encoding);
+    WriteU32(buf, 0);
+}
+
+internal inline finite law bool SectionEndsAtOffset(u32[0 max] offset, u64[0 max] byteCount, u32[0 max] nextOffset)
+{
+    return (u64[0 max])offset + byteCount == (u64[0 max])nextOffset;
+}
+
+internal inline finite law bool SectionEndsAtImageEnd(borrow IrTable<u8[0 max]> buf, u32[0 max] offset, u64[0 max] byteCount)
+{
+    return (u64[0 max])offset + byteCount == (u64[0 max])buf.Count() + 1;
+}
+
+internal inline finite law bool SectionEndFitsImage(borrow IrTable<u8[0 max]> buf, u64[0 max] offset, u64[0 max] length)
+{
+    stack u64[0 max] total = (u64[0 max])buf.Count();
+    return offset <= total && length <= total - offset;
+}
+
+internal fn PackageImageValidationStatus ValidateSectionRange(
+    borrow IrTable<u8[0 max]> buf,
+    u64[0 max] dataOffset,
+    u64[0 max] offset,
+    u64[0 max] length)
+{
+    if (offset < dataOffset)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!SectionEndFitsImage(buf, offset, length))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (offset >= (u64[0 max])(2 ** 32 - 1))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateFixedRecordSectionHasLength(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u64[0 max] length,
+    u32[0 max] recordSize)
+{
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, offset, recordSize, rowCount, byteCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (byteCount != length)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateAsmMetadataSectionHasLength(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u64[0 max] length,
+    out u32[0 max] functionCount)
+{
+    functionCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    stack mut u32[0 max] localFunctionCount = 0;
+    if (!TryReadAsmMetadataSectionSizeAndFunctionCount(buf, offset, byteCount, localFunctionCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (byteCount != length)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    functionCount = localFunctionCount;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] instrOffset,
+    out u32[0 max] blockOffset,
+    out u32[0 max] funcOffset,
+    out u32[0 max] globalOffset,
+    out u32[0 max] asmOffset,
+    out u32[0 max] asmFunctionCount,
+    out bool hasAsm,
+    out u32[0 max] enumLayoutOffset,
+    out u32[0 max] enumLayoutFactCount,
+    out bool hasEnumLayoutFacts)
+{
+    instrOffset = 0;
+    blockOffset = 0;
+    funcOffset = 0;
+    globalOffset = 0;
+    asmOffset = 0;
+    asmFunctionCount = 0;
+    hasAsm = false;
+    enumLayoutOffset = 0;
+    enumLayoutFactCount = 0;
+    hasEnumLayoutFacts = false;
+
+    if (!CanReadImageBytes(buf, 1, 24))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return PackageImageValidationStatus.UnsupportedFormat;
+    }
+
+    stack u32[0 max] version = ReadU32(buf, 9);
+    if (version != SectionedPackageImageVersion())
+    {
+        return PackageImageValidationStatus.UnsupportedFormat;
+    }
+
+    stack u32[0 max] sectionCount = ReadU32(buf, 13);
+    stack u64[0 max] directoryLength = ReadU64(buf, 17);
+    stack u64[0 max] expectedDirectoryLength = (u64[0 max])sectionCount * 32;
+    if (directoryLength != expectedDirectoryLength)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack u64[0 max] dataOffset = 24 + directoryLength;
+    if (dataOffset > (u64[0 max])buf.Count())
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack mut bool foundInstr = false;
+    stack mut bool foundBlock = false;
+    stack mut bool foundFunc = false;
+    stack mut bool foundGlobal = false;
+    stack mut bool foundAsm = false;
+    stack mut bool foundEnumLayoutFacts = false;
+    stack mut u64[0 max] previousSectionEnd = dataOffset;
+    stack mut u32[0 max] index = 0;
+    while willexit (index < sectionCount)
+    {
+        stack u64[0 max] entryOffset = 24 + (u64[0 max])index * 32;
+        if (entryOffset >= (u64[0 max])(2 ** 32 - 1)
+            || !CanReadImageBytes(buf, (u32[0 max])(entryOffset + 1), 32))
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        stack u32[0 max] entryStart = (u32[0 max])(entryOffset + 1);
+        stack u32[0 max] sectionId = ReadU32(buf, entryStart);
+        stack u32[0 max] flags = ReadU32(buf, entryStart + 4);
+        stack u64[0 max] offset = ReadU64(buf, entryStart + 8);
+        stack u64[0 max] length = ReadU64(buf, entryStart + 16);
+        stack u32[0 max] encoding = ReadU32(buf, entryStart + 24);
+        stack u32[0 max] reserved = ReadU32(buf, entryStart + 28);
+        if (reserved != 0 || (flags != 0 && flags != SectionFlagsRequired()))
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        stack PackageImageValidationStatus rangeStatus = ValidateSectionRange(buf, dataOffset, offset, length);
+        if (rangeStatus != PackageImageValidationStatus.Ok)
+        {
+            return rangeStatus;
+        }
+
+        if (offset < previousSectionEnd)
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        previousSectionEnd = offset + length;
+
+        if (sectionId == PackageSectionInstructions())
+        {
+            if (foundInstr || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack PackageImageValidationStatus payloadStatus = ValidateFixedRecordSectionHasLength(buf, payloadOffset, length, 26);
+            if (payloadStatus != PackageImageValidationStatus.Ok)
+            {
+                return payloadStatus;
+            }
+
+            foundInstr = true;
+            instrOffset = payloadOffset;
+        }
+        else if (sectionId == PackageSectionBlocks())
+        {
+            if (foundBlock || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack PackageImageValidationStatus payloadStatus = ValidateFixedRecordSectionHasLength(buf, payloadOffset, length, MirBlockRecordSize());
+            if (payloadStatus != PackageImageValidationStatus.Ok)
+            {
+                return payloadStatus;
+            }
+
+            foundBlock = true;
+            blockOffset = payloadOffset;
+        }
+        else if (sectionId == PackageSectionFunctions())
+        {
+            if (foundFunc || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack PackageImageValidationStatus payloadStatus = ValidateFixedRecordSectionHasLength(buf, payloadOffset, length, 20);
+            if (payloadStatus != PackageImageValidationStatus.Ok)
+            {
+                return payloadStatus;
+            }
+
+            foundFunc = true;
+            funcOffset = payloadOffset;
+        }
+        else if (sectionId == PackageSectionGlobals())
+        {
+            if (foundGlobal || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack PackageImageValidationStatus payloadStatus = ValidateFixedRecordSectionHasLength(buf, payloadOffset, length, MirGlobalRecordSize());
+            if (payloadStatus != PackageImageValidationStatus.Ok)
+            {
+                return payloadStatus;
+            }
+
+            foundGlobal = true;
+            globalOffset = payloadOffset;
+        }
+        else if (sectionId == PackageSectionAsmMetadata())
+        {
+            if (foundAsm || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack mut u32[0 max] localAsmFunctionCount = 0;
+            stack PackageImageValidationStatus payloadStatus = ValidateAsmMetadataSectionHasLength(buf, payloadOffset, length, localAsmFunctionCount);
+            if (payloadStatus != PackageImageValidationStatus.Ok)
+            {
+                return payloadStatus;
+            }
+
+            foundAsm = true;
+            asmOffset = payloadOffset;
+            asmFunctionCount = localAsmFunctionCount;
+        }
+        else if (sectionId == PackageSectionEnumLayoutFacts())
+        {
+            if (foundEnumLayoutFacts || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack mut u32[0 max] localEnumLayoutFactCount = 0;
+            stack mut u64[0 max] localEnumLayoutByteCount = 0;
+            if (!TryReadFixedRecordSectionSize(
+                buf,
+                payloadOffset,
+                MirEnumLayoutFactRecordSize(),
+                localEnumLayoutFactCount,
+                localEnumLayoutByteCount))
+            {
+                return PackageImageValidationStatus.TruncatedSection;
+            }
+
+            if (localEnumLayoutByteCount != length)
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            foundEnumLayoutFacts = true;
+            enumLayoutOffset = payloadOffset;
+            enumLayoutFactCount = localEnumLayoutFactCount;
+        }
+        else if (flags == SectionFlagsRequired())
+        {
+            return PackageImageValidationStatus.UnsupportedFormat;
+        }
+
+        index = index + 1;
+    }
+
+    if (!foundInstr || !foundBlock || !foundFunc || !foundGlobal)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    hasAsm = foundAsm;
+    hasEnumLayoutFacts = foundEnumLayoutFacts;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectory(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] instrOffset,
+    out u32[0 max] blockOffset,
+    out u32[0 max] funcOffset,
+    out u32[0 max] globalOffset,
+    out u32[0 max] asmOffset,
+    out u32[0 max] asmFunctionCount,
+    out bool hasAsm)
+{
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    return ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+        buf,
+        instrOffset,
+        blockOffset,
+        funcOffset,
+        globalOffset,
+        asmOffset,
+        asmFunctionCount,
+        hasAsm,
+        enumLayoutOffset,
+        enumLayoutFactCount,
+        hasEnumLayoutFacts);
+}
+
+internal fn PackageImageValidationStatus ReadLogicalPackageImageDirectory(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] stringOffset,
+    out u64[0 max] stringLength,
+    out u32[0 max] factsOffset,
+    out u64[0 max] factsLength,
+    out u32[0 max] manifestOffset,
+    out u64[0 max] manifestLength,
+    out u32[0 max] sectionCount)
+{
+    stringOffset = 0;
+    stringLength = 0;
+    factsOffset = 0;
+    factsLength = 0;
+    manifestOffset = 0;
+    manifestLength = 0;
+    sectionCount = 0;
+
+    if (!CanReadImageBytes(buf, 1, 24))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return PackageImageValidationStatus.UnsupportedFormat;
+    }
+
+    stack u32[0 max] version = ReadU32(buf, 9);
+    if (version != SectionedPackageImageVersion())
+    {
+        return PackageImageValidationStatus.UnsupportedFormat;
+    }
+
+    stack u32[0 max] localSectionCount = ReadU32(buf, 13);
+    stack u64[0 max] directoryLength = ReadU64(buf, 17);
+    stack u64[0 max] expectedDirectoryLength = (u64[0 max])localSectionCount * 32;
+    if (directoryLength != expectedDirectoryLength)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack u64[0 max] dataOffset = 24 + directoryLength;
+    if (dataOffset > (u64[0 max])buf.Count())
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack mut bool foundStrings = false;
+    stack mut bool foundFacts = false;
+    stack mut bool foundManifest = false;
+    stack mut u64[0 max] previousSectionEnd = dataOffset;
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localSectionCount)
+    {
+        stack u64[0 max] entryOffset = 24 + (u64[0 max])index * 32;
+        if (entryOffset >= (u64[0 max])(2 ** 32 - 1)
+            || !CanReadImageBytes(buf, (u32[0 max])(entryOffset + 1), 32))
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        stack u32[0 max] entryStart = (u32[0 max])(entryOffset + 1);
+        stack u32[0 max] sectionId = ReadU32(buf, entryStart);
+        stack u32[0 max] flags = ReadU32(buf, entryStart + 4);
+        stack u64[0 max] offset = ReadU64(buf, entryStart + 8);
+        stack u64[0 max] length = ReadU64(buf, entryStart + 16);
+        stack u32[0 max] encoding = ReadU32(buf, entryStart + 24);
+        stack u32[0 max] reserved = ReadU32(buf, entryStart + 28);
+        if (reserved != 0 || (flags != 0 && flags != SectionFlagsRequired()))
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        stack PackageImageValidationStatus rangeStatus = ValidateSectionRange(buf, dataOffset, offset, length);
+        if (rangeStatus != PackageImageValidationStatus.Ok)
+        {
+            return rangeStatus;
+        }
+
+        if (offset < previousSectionEnd)
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        previousSectionEnd = offset + length;
+
+        if (sectionId == PackageSectionStringTable())
+        {
+            if (foundStrings || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            foundStrings = true;
+            stringOffset = (u32[0 max])(offset + 1);
+            stringLength = length;
+        }
+        else if (sectionId == PackageSectionPackageFacts())
+        {
+            if (foundFacts || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            foundFacts = true;
+            factsOffset = (u32[0 max])(offset + 1);
+            factsLength = length;
+        }
+        else if (sectionId == PackageSectionManifest())
+        {
+            if (foundManifest || flags != SectionFlagsRequired() || encoding != SectionEncodingBrotliUtf8Json() || length == 0)
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            foundManifest = true;
+            manifestOffset = (u32[0 max])(offset + 1);
+            manifestLength = length;
+        }
+        else if (flags == SectionFlagsRequired())
+        {
+            return PackageImageValidationStatus.UnsupportedFormat;
+        }
+
+        index = index + 1;
+    }
+
+    if (!foundStrings || !foundFacts || !foundManifest)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    sectionCount = localSectionCount;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal inline finite law bool IsUtf8ContinuationByte(u32[0 max] value)
+{
+    return value >= 128 && value <= 191;
+}
+
+internal fn bool ValidateUtf8ImageBytes(
+    borrow IrTable<u8[0 max]> buf,
+    u64[0 max] start,
+    u32[0 max] byteLength)
+{
+    stack u64[0 max] end = start + (u64[0 max])byteLength;
+    stack mut u64[0 max] cursor = start;
+    while willexit (cursor < end)
+    {
+        if (cursor > (u64[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack u32[0 max] first = (u32[0 max])buf.Get((u32[0 max])cursor);
+        if (first <= 127)
+        {
+            cursor = cursor + 1;
+        }
+        else if (first >= 194 && first <= 223)
+        {
+            if (cursor + 1 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            if (!IsUtf8ContinuationByte(second))
+            {
+                return false;
+            }
+
+            cursor = cursor + 2;
+        }
+        else if (first == 224)
+        {
+            if (cursor + 2 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            stack u32[0 max] third = (u32[0 max])buf.Get((u32[0 max])(cursor + 2));
+            if (second < 160 || second > 191 || !IsUtf8ContinuationByte(third))
+            {
+                return false;
+            }
+
+            cursor = cursor + 3;
+        }
+        else if ((first >= 225 && first <= 236) || (first >= 238 && first <= 239))
+        {
+            if (cursor + 2 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            stack u32[0 max] third = (u32[0 max])buf.Get((u32[0 max])(cursor + 2));
+            if (!IsUtf8ContinuationByte(second) || !IsUtf8ContinuationByte(third))
+            {
+                return false;
+            }
+
+            cursor = cursor + 3;
+        }
+        else if (first == 237)
+        {
+            if (cursor + 2 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            stack u32[0 max] third = (u32[0 max])buf.Get((u32[0 max])(cursor + 2));
+            if (second < 128 || second > 159 || !IsUtf8ContinuationByte(third))
+            {
+                return false;
+            }
+
+            cursor = cursor + 3;
+        }
+        else if (first == 240)
+        {
+            if (cursor + 3 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            stack u32[0 max] third = (u32[0 max])buf.Get((u32[0 max])(cursor + 2));
+            stack u32[0 max] fourth = (u32[0 max])buf.Get((u32[0 max])(cursor + 3));
+            if (second < 144 || second > 191
+                || !IsUtf8ContinuationByte(third)
+                || !IsUtf8ContinuationByte(fourth))
+            {
+                return false;
+            }
+
+            cursor = cursor + 4;
+        }
+        else if (first >= 241 && first <= 243)
+        {
+            if (cursor + 3 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            stack u32[0 max] third = (u32[0 max])buf.Get((u32[0 max])(cursor + 2));
+            stack u32[0 max] fourth = (u32[0 max])buf.Get((u32[0 max])(cursor + 3));
+            if (!IsUtf8ContinuationByte(second)
+                || !IsUtf8ContinuationByte(third)
+                || !IsUtf8ContinuationByte(fourth))
+            {
+                return false;
+            }
+
+            cursor = cursor + 4;
+        }
+        else if (first == 244)
+        {
+            if (cursor + 3 >= end)
+            {
+                return false;
+            }
+
+            stack u32[0 max] second = (u32[0 max])buf.Get((u32[0 max])(cursor + 1));
+            stack u32[0 max] third = (u32[0 max])buf.Get((u32[0 max])(cursor + 2));
+            stack u32[0 max] fourth = (u32[0 max])buf.Get((u32[0 max])(cursor + 3));
+            if (second < 128 || second > 143
+                || !IsUtf8ContinuationByte(third)
+                || !IsUtf8ContinuationByte(fourth))
+            {
+                return false;
+            }
+
+            cursor = cursor + 4;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal fn PackageImageValidationStatus ValidateLogicalStringTableSection(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u64[0 max] length,
+    out u32[0 max] stringCount)
+{
+    stringCount = 0;
+    if (length < 4 || !SectionLastByteFitsU32(offset, length))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u64[0 max] sectionEnd = (u64[0 max])offset + length;
+    stack mut u64[0 max] cursor = (u64[0 max])offset;
+    stack u32[0 max] localStringCount = ReadU32(buf, (u32[0 max])cursor);
+    cursor = cursor + 4;
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localStringCount)
+    {
+        if (cursor + 4 > sectionEnd || cursor > (u64[0 max])(2 ** 32 - 1))
+        {
+            return PackageImageValidationStatus.TruncatedSection;
+        }
+
+        stack u32[0 max] byteLength = ReadU32(buf, (u32[0 max])cursor);
+        cursor = cursor + 4;
+        if ((u64[0 max])byteLength > sectionEnd - cursor)
+        {
+            return PackageImageValidationStatus.TruncatedSection;
+        }
+
+        if (!ValidateUtf8ImageBytes(buf, cursor, byteLength))
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        cursor = cursor + (u64[0 max])byteLength;
+        index = index + 1;
+    }
+
+    if (cursor != sectionEnd)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stringCount = localStringCount;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal inline finite law bool LogicalStringIndexIsPresent(u32[0 max] index)
+{
+    return index != 4294967295;
+}
+
+internal inline finite law bool LogicalStringIndexIsValid(u32[0 max] index, u32[0 max] stringCount, bool required)
+{
+    if (!LogicalStringIndexIsPresent(index))
+    {
+        return !required;
+    }
+
+    return index < stringCount;
+}
+
+internal fn PackageImageValidationStatus ReadLogicalStringIndex(
+    borrow IrTable<u8[0 max]> buf,
+    u64[0 max] sectionEnd,
+    u64[0 max] cursor,
+    u32[0 max] stringCount,
+    bool required,
+    out u32[0 max] index,
+    out u64[0 max] nextCursor)
+{
+    index = PackageImageNullStringIndex();
+    nextCursor = cursor;
+    if (cursor + 4 > sectionEnd || cursor > (u64[0 max])(2 ** 32 - 1))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u32[0 max] localIndex = ReadU32(buf, (u32[0 max])cursor);
+    nextCursor = cursor + 4;
+    if (!LogicalStringIndexIsValid(localIndex, stringCount, required))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    index = localIndex;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ReadLogicalU32Field(
+    borrow IrTable<u8[0 max]> buf,
+    u64[0 max] sectionEnd,
+    u64[0 max] cursor,
+    out u32[0 max] value,
+    out u64[0 max] nextCursor)
+{
+    value = 0;
+    nextCursor = cursor;
+    if (cursor + 4 > sectionEnd || cursor > (u64[0 max])(2 ** 32 - 1))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    value = ReadU32(buf, (u32[0 max])cursor);
+    nextCursor = cursor + 4;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateLogicalPackageFactsSection(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u64[0 max] length,
+    u32[0 max] stringCount,
+    out LogicalPackageFactsHeader facts)
+{
+    facts = new();
+    if (length < 44 || !SectionLastByteFitsU32(offset, length))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u64[0 max] sectionEnd = (u64[0 max])offset + length;
+    stack mut u64[0 max] cursor = (u64[0 max])offset;
+    stack mut u64[0 max] nextCursor = cursor;
+    stack mut u32[0 max] rootIndex = 0;
+    stack mut u32[0 max] libraryIndex = 0;
+    stack mut u32[0 max] buildProfileIndex = 0;
+    stack mut u32[0 max] targetTripleIndex = 0;
+    stack mut u32[0 max] targetDataLayoutIndex = 0;
+    stack mut u32[0 max] targetCpuIndex = 0;
+    stack mut u32[0 max] relocationModelIndex = 0;
+    stack mut u32[0 max] codeModelIndex = 0;
+    stack mut u32[0 max] featureStringIndexOffset = 0;
+    stack mut u32[0 max] cDataModelKindIndex = 0;
+    stack mut u32[0 max] charIsSigned = 0;
+    stack mut u32[0 max] pointerBitWidth = 0;
+    stack mut u32[0 max] longBitWidth = 0;
+    stack mut u32[0 max] sizeTBitWidth = 0;
+    stack mut u32[0 max] ptrDiffTBitWidth = 0;
+    stack mut u32[0 max] pointerSizeBytes = 0;
+    stack mut u32[0 max] pointerAlignmentBytes = 0;
+    stack mut bool localHasCDataModel = false;
+    stack mut bool localHasAggregateLayout = false;
+
+    stack PackageImageValidationStatus rootStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, true, rootIndex, nextCursor);
+    cursor = nextCursor;
+    if (rootStatus != PackageImageValidationStatus.Ok)
+    {
+        return rootStatus;
+    }
+
+    stack PackageImageValidationStatus libraryStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, true, libraryIndex, nextCursor);
+    cursor = nextCursor;
+    if (libraryStatus != PackageImageValidationStatus.Ok)
+    {
+        return libraryStatus;
+    }
+
+    stack PackageImageValidationStatus profileStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, false, buildProfileIndex, nextCursor);
+    cursor = nextCursor;
+    if (profileStatus != PackageImageValidationStatus.Ok)
+    {
+        return profileStatus;
+    }
+
+    stack PackageImageValidationStatus targetStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, false, targetTripleIndex, nextCursor);
+    cursor = nextCursor;
+    if (targetStatus != PackageImageValidationStatus.Ok)
+    {
+        return targetStatus;
+    }
+
+    stack PackageImageValidationStatus dataLayoutStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, false, targetDataLayoutIndex, nextCursor);
+    cursor = nextCursor;
+    if (dataLayoutStatus != PackageImageValidationStatus.Ok)
+    {
+        return dataLayoutStatus;
+    }
+
+    stack PackageImageValidationStatus cpuStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, false, targetCpuIndex, nextCursor);
+    cursor = nextCursor;
+    if (cpuStatus != PackageImageValidationStatus.Ok)
+    {
+        return cpuStatus;
+    }
+
+    stack PackageImageValidationStatus relocationStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, false, relocationModelIndex, nextCursor);
+    cursor = nextCursor;
+    if (relocationStatus != PackageImageValidationStatus.Ok)
+    {
+        return relocationStatus;
+    }
+
+    stack PackageImageValidationStatus codeModelStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, false, codeModelIndex, nextCursor);
+    cursor = nextCursor;
+    if (codeModelStatus != PackageImageValidationStatus.Ok)
+    {
+        return codeModelStatus;
+    }
+
+    stack mut u32[0 max] featureCount = 0;
+    stack PackageImageValidationStatus featureCountStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, featureCount, nextCursor);
+    cursor = nextCursor;
+    if (featureCountStatus != PackageImageValidationStatus.Ok)
+    {
+        return featureCountStatus;
+    }
+
+    featureStringIndexOffset = (u32[0 max])cursor;
+    stack mut u32[0 max] featureIndex = 0;
+    while willexit (featureIndex < featureCount)
+    {
+        stack mut u32[0 max] featureStringIndex = 0;
+        stack PackageImageValidationStatus featureStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, true, featureStringIndex, nextCursor);
+        cursor = nextCursor;
+        if (featureStatus != PackageImageValidationStatus.Ok)
+        {
+            return featureStatus;
+        }
+
+        featureIndex = featureIndex + 1;
+    }
+
+    stack mut u32[0 max] cDataModelPresence = 0;
+    stack PackageImageValidationStatus cDataModelStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, cDataModelPresence, nextCursor);
+    cursor = nextCursor;
+    if (cDataModelStatus != PackageImageValidationStatus.Ok)
+    {
+        return cDataModelStatus;
+    }
+
+    if (cDataModelPresence == 1)
+    {
+        stack PackageImageValidationStatus cDataModelKindStatus = ReadLogicalStringIndex(buf, sectionEnd, cursor, stringCount, true, cDataModelKindIndex, nextCursor);
+        cursor = nextCursor;
+        if (cDataModelKindStatus != PackageImageValidationStatus.Ok)
+        {
+            return cDataModelKindStatus;
+        }
+
+        stack PackageImageValidationStatus charStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, charIsSigned, nextCursor);
+        cursor = nextCursor;
+        if (charStatus != PackageImageValidationStatus.Ok)
+        {
+            return charStatus;
+        }
+
+        stack PackageImageValidationStatus pointerStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, pointerBitWidth, nextCursor);
+        cursor = nextCursor;
+        if (pointerStatus != PackageImageValidationStatus.Ok)
+        {
+            return pointerStatus;
+        }
+
+        stack PackageImageValidationStatus longStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, longBitWidth, nextCursor);
+        cursor = nextCursor;
+        if (longStatus != PackageImageValidationStatus.Ok)
+        {
+            return longStatus;
+        }
+
+        stack PackageImageValidationStatus sizeTStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, sizeTBitWidth, nextCursor);
+        cursor = nextCursor;
+        if (sizeTStatus != PackageImageValidationStatus.Ok)
+        {
+            return sizeTStatus;
+        }
+
+        stack PackageImageValidationStatus ptrDiffStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, ptrDiffTBitWidth, nextCursor);
+        cursor = nextCursor;
+        if (ptrDiffStatus != PackageImageValidationStatus.Ok)
+        {
+            return ptrDiffStatus;
+        }
+
+        if (charIsSigned > 1)
+        {
+            return PackageImageValidationStatus.MalformedSectionDirectory;
+        }
+
+        localHasCDataModel = true;
+    }
+    else if (cDataModelPresence != 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack mut u32[0 max] aggregateLayoutPresence = 0;
+    stack PackageImageValidationStatus aggregateStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, aggregateLayoutPresence, nextCursor);
+    cursor = nextCursor;
+    if (aggregateStatus != PackageImageValidationStatus.Ok)
+    {
+        return aggregateStatus;
+    }
+
+    if (aggregateLayoutPresence == 1)
+    {
+        stack PackageImageValidationStatus pointerSizeStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, pointerSizeBytes, nextCursor);
+        cursor = nextCursor;
+        if (pointerSizeStatus != PackageImageValidationStatus.Ok)
+        {
+            return pointerSizeStatus;
+        }
+
+        stack PackageImageValidationStatus pointerAlignStatus = ReadLogicalU32Field(buf, sectionEnd, cursor, pointerAlignmentBytes, nextCursor);
+        cursor = nextCursor;
+        if (pointerAlignStatus != PackageImageValidationStatus.Ok)
+        {
+            return pointerAlignStatus;
+        }
+
+        localHasAggregateLayout = true;
+    }
+    else if (aggregateLayoutPresence != 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (cursor != sectionEnd)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack bool localHasBuildProfile = LogicalStringIndexIsPresent(buildProfileIndex);
+    stack bool localHasTarget = LogicalStringIndexIsPresent(targetTripleIndex);
+    if (!localHasTarget
+        && (LogicalStringIndexIsPresent(targetDataLayoutIndex)
+            || LogicalStringIndexIsPresent(targetCpuIndex)
+            || LogicalStringIndexIsPresent(relocationModelIndex)
+            || LogicalStringIndexIsPresent(codeModelIndex)
+            || featureCount != 0
+            || localHasCDataModel
+            || localHasAggregateLayout))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (localHasTarget && !LogicalStringIndexIsPresent(relocationModelIndex))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    facts.RootModuleStringIndex = rootIndex;
+    facts.LibraryFileNameStringIndex = libraryIndex;
+    facts.BuildProfileStringIndex = buildProfileIndex;
+    facts.TargetTripleStringIndex = targetTripleIndex;
+    facts.TargetDataLayoutStringIndex = targetDataLayoutIndex;
+    facts.TargetCpuStringIndex = targetCpuIndex;
+    facts.RelocationModelStringIndex = relocationModelIndex;
+    facts.CodeModelStringIndex = codeModelIndex;
+    facts.FeatureStringIndexOffset = featureStringIndexOffset;
+    facts.TargetFeatureCount = featureCount;
+    facts.CDataModelKindStringIndex = cDataModelKindIndex;
+    facts.CCharIsSigned = charIsSigned == 1;
+    facts.CPointerBitWidth = pointerBitWidth;
+    facts.CLongBitWidth = longBitWidth;
+    facts.CSizeTBitWidth = sizeTBitWidth;
+    facts.CPtrDiffTBitWidth = ptrDiffTBitWidth;
+    facts.AggregatePointerSizeBytes = pointerSizeBytes;
+    facts.AggregatePointerAlignmentBytes = pointerAlignmentBytes;
+    facts.HasBuildProfile = localHasBuildProfile;
+    facts.HasTarget = localHasTarget;
+    facts.HasCDataModel = localHasCDataModel;
+    facts.HasAggregateLayout = localHasAggregateLayout;
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateLogicalPackageImage(borrow IrTable<u8[0 max]> buf)
+{
+    stack mut u32[0 max] stringOffset = 0;
+    stack mut u64[0 max] stringLength = 0;
+    stack mut u32[0 max] factsOffset = 0;
+    stack mut u64[0 max] factsLength = 0;
+    stack mut u32[0 max] manifestOffset = 0;
+    stack mut u64[0 max] manifestLength = 0;
+    stack mut u32[0 max] sectionCount = 0;
+    stack PackageImageValidationStatus directoryStatus = ReadLogicalPackageImageDirectory(
+        buf,
+        stringOffset,
+        stringLength,
+        factsOffset,
+        factsLength,
+        manifestOffset,
+        manifestLength,
+        sectionCount);
+    if (directoryStatus != PackageImageValidationStatus.Ok)
+    {
+        return directoryStatus;
+    }
+
+    stack mut u32[0 max] stringCount = 0;
+    stack PackageImageValidationStatus stringStatus = ValidateLogicalStringTableSection(buf, stringOffset, stringLength, stringCount);
+    if (stringStatus != PackageImageValidationStatus.Ok)
+    {
+        return stringStatus;
+    }
+
+    stack mut LogicalPackageFactsHeader facts = new();
+    return ValidateLogicalPackageFactsSection(
+        buf,
+        factsOffset,
+        factsLength,
+        stringCount,
+        facts);
+}
+
+internal fn PackageImageValidationStatus ValidateSectionedPackageImage(borrow IrTable<u8[0 max]> buf)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    return ReadSectionedPackageImageDirectory(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount, hasAsm);
+}
+
+internal fn PackageImageValidationStatus ValidateFixedRecordSectionEndsAtOffset(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u32[0 max] recordSize,
+    u32[0 max] nextOffset)
+{
+    if (offset == 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, 4))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u32[0 max] rowCount = ReadU32(buf, offset);
+    stack u64[0 max] byteCount = 4 + (u64[0 max])rowCount * (u64[0 max])recordSize;
+    if (!SectionLastByteFitsU32(offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (!SectionEndsAtOffset(offset, byteCount, nextOffset))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateFixedRecordSectionEndsAtImageEnd(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u32[0 max] recordSize)
+{
+    if (offset == 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, 4))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u32[0 max] rowCount = ReadU32(buf, offset);
+    stack u64[0 max] byteCount = 4 + (u64[0 max])rowCount * (u64[0 max])recordSize;
+    if (!SectionLastByteFitsU32(offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (!SectionEndsAtImageEnd(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateAsmMetadataSectionEndsAtImageEnd(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset)
+{
+    if (offset == 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, 4))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack mut u64[0 max] byteCount = 0;
+    stack mut u32[0 max] functionCount = 0;
+    if (!TryReadAsmMetadataSectionSizeAndFunctionCount(buf, offset, byteCount, functionCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (!SectionEndsAtImageEnd(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateMirPackageImage(borrow IrTable<u8[0 max]> buf)
+{
+    if (!CanReadImageBytes(buf, 1, 20))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    stack u32[0 max] instrOffset = ReadU32(buf, 5);
+    stack u32[0 max] blockOffset = ReadU32(buf, 9);
+    stack u32[0 max] funcOffset = ReadU32(buf, 13);
+    stack u32[0 max] globalOffset = ReadU32(buf, 17);
+    if (instrOffset != 21)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack PackageImageValidationStatus instrStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, instrOffset, 26, blockOffset);
+    if (instrStatus != PackageImageValidationStatus.Ok)
+    {
+        return instrStatus;
+    }
+
+    stack PackageImageValidationStatus blockStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, blockOffset, MirBlockRecordSize(), funcOffset);
+    if (blockStatus != PackageImageValidationStatus.Ok)
+    {
+        return blockStatus;
+    }
+
+    stack PackageImageValidationStatus funcStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, funcOffset, 20, globalOffset);
+    if (funcStatus != PackageImageValidationStatus.Ok)
+    {
+        return funcStatus;
+    }
+
+    return ValidateFixedRecordSectionEndsAtImageEnd(buf, globalOffset, MirGlobalRecordSize());
+}
+
+internal fn PackageImageValidationStatus ValidateMirPackageImageWithAsm(borrow IrTable<u8[0 max]> buf)
+{
+    if (!CanReadImageBytes(buf, 1, 24))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    stack u32[0 max] instrOffset = ReadU32(buf, 5);
+    stack u32[0 max] blockOffset = ReadU32(buf, 9);
+    stack u32[0 max] funcOffset = ReadU32(buf, 13);
+    stack u32[0 max] globalOffset = ReadU32(buf, 17);
+    stack u32[0 max] asmOffset = ReadU32(buf, 21);
+    if (instrOffset != 25)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack PackageImageValidationStatus instrStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, instrOffset, 26, blockOffset);
+    if (instrStatus != PackageImageValidationStatus.Ok)
+    {
+        return instrStatus;
+    }
+
+    stack PackageImageValidationStatus blockStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, blockOffset, MirBlockRecordSize(), funcOffset);
+    if (blockStatus != PackageImageValidationStatus.Ok)
+    {
+        return blockStatus;
+    }
+
+    stack PackageImageValidationStatus funcStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, funcOffset, 20, globalOffset);
+    if (funcStatus != PackageImageValidationStatus.Ok)
+    {
+        return funcStatus;
+    }
+
+    stack PackageImageValidationStatus globalStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, globalOffset, MirGlobalRecordSize(), asmOffset);
+    if (globalStatus != PackageImageValidationStatus.Ok)
+    {
+        return globalStatus;
+    }
+
+    return ValidateAsmMetadataSectionEndsAtImageEnd(buf, asmOffset);
+}
+
+public fn PackageImageValidationStatus ValidatePackageImage(borrow IrTable<u8[0 max]> buf)
+{
+    if (!CanReadImageBytes(buf, 1, 4))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack PackageImageValidationStatus mirStatus = ValidateSectionedPackageImage(buf);
+        if (mirStatus == PackageImageValidationStatus.Ok)
+        {
+            return PackageImageValidationStatus.Ok;
+        }
+
+        stack PackageImageValidationStatus logicalStatus = ValidateLogicalPackageImage(buf);
+        if (logicalStatus == PackageImageValidationStatus.Ok)
+        {
+            return PackageImageValidationStatus.Ok;
+        }
+
+        if (mirStatus == PackageImageValidationStatus.UnsupportedFormat
+            && logicalStatus != PackageImageValidationStatus.UnsupportedFormat)
+        {
+            return logicalStatus;
+        }
+
+        return mirStatus;
+    }
+
+    stack u32[0 max] magic = ReadU32(buf, 1);
+    if (magic == MirImageMagic())
+    {
+        return ValidateMirPackageImage(buf);
+    }
+
+    if (magic == MirImageWithAsmMagic())
+    {
+        return ValidateMirPackageImageWithAsm(buf);
+    }
+
+    return PackageImageValidationStatus.UnsupportedFormat;
+}
+
+internal fn bool TryReadMirImageHeader(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] instrOffset,
+    out u32[0 max] blockOffset,
+    out u32[0 max] funcOffset,
+    out u32[0 max] globalOffset)
+{
+    instrOffset = 0;
+    blockOffset = 0;
+    funcOffset = 0;
+    globalOffset = 0;
+
+    stack mut u32[0 max] magic = 0;
+    stack mut u32[0 max] localInstrOffset = 0;
+    stack mut u32[0 max] localBlockOffset = 0;
+    stack mut u32[0 max] localFuncOffset = 0;
+    stack mut u32[0 max] localGlobalOffset = 0;
+    if (!TryReadU32FromImage(buf, 1, magic) || magic != MirImageMagic())
+    {
+        return false;
+    }
+
+    if (!TryReadU32FromImage(buf, 5, localInstrOffset)
+        || !TryReadU32FromImage(buf, 9, localBlockOffset)
+        || !TryReadU32FromImage(buf, 13, localFuncOffset)
+        || !TryReadU32FromImage(buf, 17, localGlobalOffset))
+    {
+        return false;
+    }
+
+    if (localInstrOffset != 21)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, localInstrOffset, 26, rowCount, byteCount)
+        || !SectionEndsAtOffset(localInstrOffset, byteCount, localBlockOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localBlockOffset, MirBlockRecordSize(), rowCount, byteCount)
+        || !SectionEndsAtOffset(localBlockOffset, byteCount, localFuncOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localFuncOffset, 20, rowCount, byteCount)
+        || !SectionEndsAtOffset(localFuncOffset, byteCount, localGlobalOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localGlobalOffset, MirGlobalRecordSize(), rowCount, byteCount)
+        || !SectionEndsAtImageEnd(buf, localGlobalOffset, byteCount))
+    {
+        return false;
+    }
+
+    instrOffset = localInstrOffset;
+    blockOffset = localBlockOffset;
+    funcOffset = localFuncOffset;
+    globalOffset = localGlobalOffset;
+    return true;
+}
+
+internal fn bool TryReadMirImageWithAsmHeader(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] instrOffset,
+    out u32[0 max] blockOffset,
+    out u32[0 max] funcOffset,
+    out u32[0 max] globalOffset,
+    out u32[0 max] asmOffset,
+    out u32[0 max] asmFunctionCount)
+{
+    instrOffset = 0;
+    blockOffset = 0;
+    funcOffset = 0;
+    globalOffset = 0;
+    asmOffset = 0;
+    asmFunctionCount = 0;
+
+    stack mut u32[0 max] magic = 0;
+    stack mut u32[0 max] localInstrOffset = 0;
+    stack mut u32[0 max] localBlockOffset = 0;
+    stack mut u32[0 max] localFuncOffset = 0;
+    stack mut u32[0 max] localGlobalOffset = 0;
+    stack mut u32[0 max] localAsmOffset = 0;
+    stack mut u32[0 max] localAsmFunctionCount = 0;
+    if (!TryReadU32FromImage(buf, 1, magic) || magic != MirImageWithAsmMagic())
+    {
+        return false;
+    }
+
+    if (!TryReadU32FromImage(buf, 5, localInstrOffset)
+        || !TryReadU32FromImage(buf, 9, localBlockOffset)
+        || !TryReadU32FromImage(buf, 13, localFuncOffset)
+        || !TryReadU32FromImage(buf, 17, localGlobalOffset)
+        || !TryReadU32FromImage(buf, 21, localAsmOffset))
+    {
+        return false;
+    }
+
+    if (localInstrOffset != 25)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, localInstrOffset, 26, rowCount, byteCount)
+        || !SectionEndsAtOffset(localInstrOffset, byteCount, localBlockOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localBlockOffset, MirBlockRecordSize(), rowCount, byteCount)
+        || !SectionEndsAtOffset(localBlockOffset, byteCount, localFuncOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localFuncOffset, 20, rowCount, byteCount)
+        || !SectionEndsAtOffset(localFuncOffset, byteCount, localGlobalOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localGlobalOffset, MirGlobalRecordSize(), rowCount, byteCount)
+        || !SectionEndsAtOffset(localGlobalOffset, byteCount, localAsmOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadAsmMetadataSectionSizeAndFunctionCount(buf, localAsmOffset, byteCount, localAsmFunctionCount)
+        || !SectionEndsAtImageEnd(buf, localAsmOffset, byteCount))
+    {
+        return false;
+    }
+
+    instrOffset = localInstrOffset;
+    blockOffset = localBlockOffset;
+    funcOffset = localFuncOffset;
+    globalOffset = localGlobalOffset;
+    asmOffset = localAsmOffset;
+    asmFunctionCount = localAsmFunctionCount;
+    return true;
+}
+
+internal fn bool TryReadLogicalPackageImageSummary(borrow IrTable<u8[0 max]> buf, out PackageImageSummary summary)
+{
+    summary = new();
+    stack mut u32[0 max] stringOffset = 0;
+    stack mut u64[0 max] stringLength = 0;
+    stack mut u32[0 max] factsOffset = 0;
+    stack mut u64[0 max] factsLength = 0;
+    stack mut u32[0 max] manifestOffset = 0;
+    stack mut u64[0 max] manifestLength = 0;
+    stack mut u32[0 max] sectionCount = 0;
+    if (ReadLogicalPackageImageDirectory(
+        buf,
+        stringOffset,
+        stringLength,
+        factsOffset,
+        factsLength,
+        manifestOffset,
+        manifestLength,
+        sectionCount) != PackageImageValidationStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] stringCount = 0;
+    if (ValidateLogicalStringTableSection(buf, stringOffset, stringLength, stringCount) != PackageImageValidationStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFactsHeader facts = new();
+    if (ValidateLogicalPackageFactsSection(
+        buf,
+        factsOffset,
+        factsLength,
+        stringCount,
+        facts) != PackageImageValidationStatus.Ok)
+    {
+        return false;
+    }
+
+    summary = LogicalPackageImageSummaryOf(
+        sectionCount,
+        stringCount,
+        stringOffset,
+        stringLength,
+        facts);
+    return true;
+}
+
+internal fn bool TryReadPackageImageSummary(borrow IrTable<u8[0 max]> buf, out PackageImageSummary summary)
+{
+    summary = new();
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack mut u32[0 max] instrOffset = 0;
+        stack mut u32[0 max] blockOffset = 0;
+        stack mut u32[0 max] funcOffset = 0;
+        stack mut u32[0 max] globalOffset = 0;
+        stack mut u32[0 max] asmOffset = 0;
+        stack mut u32[0 max] asmFunctionCount = 0;
+        stack mut bool hasAsm = false;
+        stack mut u32[0 max] enumLayoutOffset = 0;
+        stack mut u32[0 max] enumLayoutFactCount = 0;
+        stack mut bool hasEnumLayoutFacts = false;
+        stack PackageImageValidationStatus mirStatus = ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+            buf,
+            instrOffset,
+            blockOffset,
+            funcOffset,
+            globalOffset,
+            asmOffset,
+            asmFunctionCount,
+            hasAsm,
+            enumLayoutOffset,
+            enumLayoutFactCount,
+            hasEnumLayoutFacts);
+        if (mirStatus != PackageImageValidationStatus.Ok)
+        {
+            return TryReadLogicalPackageImageSummary(buf, summary);
+        }
+
+        summary = PackageImageSummaryOf(
+            true,
+            hasAsm,
+            ReadU32(buf, instrOffset),
+            ReadU32(buf, blockOffset),
+            ReadU32(buf, funcOffset),
+            ReadU32(buf, globalOffset),
+            asmFunctionCount);
+        summary.HasEnumLayoutFacts = hasEnumLayoutFacts;
+        summary.EnumLayoutFactCount = enumLayoutFactCount;
+        return true;
+    }
+
+    stack mut u32[0 max] magic = 0;
+    if (!TryReadU32FromImage(buf, 1, magic))
+    {
+        return false;
+    }
+
+    if (magic == MirImageMagic())
+    {
+        stack mut u32[0 max] instrOffset = 0;
+        stack mut u32[0 max] blockOffset = 0;
+        stack mut u32[0 max] funcOffset = 0;
+        stack mut u32[0 max] globalOffset = 0;
+        if (!TryReadMirImageHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset))
+        {
+            return false;
+        }
+
+        summary = PackageImageSummaryOf(
+            false,
+            false,
+            ReadU32(buf, instrOffset),
+            ReadU32(buf, blockOffset),
+            ReadU32(buf, funcOffset),
+            ReadU32(buf, globalOffset),
+            0);
+        return true;
+    }
+
+    if (magic != MirImageWithAsmMagic())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    if (!TryReadMirImageWithAsmHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount))
+    {
+        return false;
+    }
+
+    summary = PackageImageSummaryOf(
+        false,
+        true,
+        ReadU32(buf, instrOffset),
+        ReadU32(buf, blockOffset),
+        ReadU32(buf, funcOffset),
+        ReadU32(buf, globalOffset),
+        asmFunctionCount);
+    return true;
+}
+
+internal inline finite law i8[min max] ImageByteAsI8(u8[0 max] value)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide <= 127)
+    {
+        return (i8[min max])wide;
+    }
+
+    return (i8[min max])((i16[min max])wide - 256);
+}
+
+internal inline finite law i8[min max] JsonHexDigit(u8[0 15] value)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide < 10)
+    {
+        return (i8[min max])((u16[0 max])48 + (u16[0 max])wide);
+    }
+
+    return (i8[min max])((u16[0 max])87 + (u16[0 max])wide);
+}
+
+internal fn bool TryFindLogicalStringTableEntry(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u64[0 max] length,
+    u32[0 max] stringIndex,
+    out u32[0 max] entryOffset,
+    out u32[0 max] entryLength)
+{
+    entryOffset = 0;
+    entryLength = 0;
+    if (!LogicalStringIndexIsPresent(stringIndex)
+        || length < 4
+        || !SectionLastByteFitsU32(offset, length))
+    {
+        return false;
+    }
+
+    stack u64[0 max] sectionEnd = (u64[0 max])offset + length;
+    stack mut u64[0 max] cursor = (u64[0 max])offset;
+    stack u32[0 max] localStringCount = ReadU32(buf, (u32[0 max])cursor);
+    if (stringIndex >= localStringCount)
+    {
+        return false;
+    }
+
+    cursor = cursor + 4;
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localStringCount)
+    {
+        if (cursor + 4 > sectionEnd || cursor > (u64[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack u32[0 max] byteLength = ReadU32(buf, (u32[0 max])cursor);
+        cursor = cursor + 4;
+        if ((u64[0 max])byteLength > sectionEnd - cursor)
+        {
+            return false;
+        }
+
+        if (index == stringIndex)
+        {
+            entryOffset = (u32[0 max])cursor;
+            entryLength = byteLength;
+            return true;
+        }
+
+        cursor = cursor + (u64[0 max])byteLength;
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus AppendLogicalStringTableEntry(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] entryOffset = 0;
+    stack mut u32[0 max] entryLength = 0;
+    if (!TryFindLogicalStringTableEntry(
+        buf,
+        summary.StringTableOffset,
+        summary.StringTableLength,
+        stringIndex,
+        entryOffset,
+        entryLength))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack u64[0 max] end = (u64[0 max])entryOffset + (u64[0 max])entryLength;
+    stack mut u64[0 max] cursor = (u64[0 max])entryOffset;
+    while willexit (cursor < end)
+    {
+        stack u8[0 max] value = buf.Get((u32[0 max])cursor);
+        try sink.AppendByte(ImageByteAsI8(value));
+        cursor = cursor + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendJsonEscapedImageByte(u8[0 max] value, mut borrow OwnedAscii sink)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide == 34 || wide == 92)
+    {
+        try sink.AppendByte(92);
+        try sink.AppendByte(ImageByteAsI8(value));
+        return MemoryStatus.Ok;
+    }
+
+    if (wide == 10)
+    {
+        return sink.AppendConstAscii("\\n");
+    }
+
+    if (wide == 13)
+    {
+        return sink.AppendConstAscii("\\r");
+    }
+
+    if (wide == 9)
+    {
+        return sink.AppendConstAscii("\\t");
+    }
+
+    if (wide == 8)
+    {
+        return sink.AppendConstAscii("\\b");
+    }
+
+    if (wide == 12)
+    {
+        return sink.AppendConstAscii("\\f");
+    }
+
+    if (wide < 32)
+    {
+        try sink.AppendConstAscii("\\u00");
+        try sink.AppendByte(JsonHexDigit((u8[0 15])(wide / 16)));
+        try sink.AppendByte(JsonHexDigit((u8[0 15])(wide % 16)));
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendByte(ImageByteAsI8(value));
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalStringTableEntryJson(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] entryOffset = 0;
+    stack mut u32[0 max] entryLength = 0;
+    if (!TryFindLogicalStringTableEntry(
+        buf,
+        summary.StringTableOffset,
+        summary.StringTableLength,
+        stringIndex,
+        entryOffset,
+        entryLength))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendByte(34);
+    stack u64[0 max] end = (u64[0 max])entryOffset + (u64[0 max])entryLength;
+    stack mut u64[0 max] cursor = (u64[0 max])entryOffset;
+    while willexit (cursor < end)
+    {
+        stack u8[0 max] value = buf.Get((u32[0 max])cursor);
+        try AppendJsonEscapedImageByte(value, sink);
+        cursor = cursor + 1;
+    }
+
+    try sink.AppendByte(34);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalStringTableEntryJsonNullable(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii sink)
+{
+    if (!LogicalStringIndexIsPresent(stringIndex))
+    {
+        return sink.AppendConstAscii("null");
+    }
+
+    return AppendLogicalStringTableEntryJson(buf, summary, stringIndex, sink);
+}
+
+internal fn bool TryReadLogicalTargetFeatureStringIndex(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    u32[0 max] featureIndex,
+    out u32[0 max] stringIndex)
+{
+    stringIndex = PackageImageNullStringIndex();
+    if (featureIndex >= summary.TargetFeatureCount || summary.FeatureStringIndexOffset == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 max] cursor = (u64[0 max])summary.FeatureStringIndexOffset + (u64[0 max])featureIndex * 4;
+    if (cursor > (u64[0 max])(2 ** 32 - 1)
+        || !CanReadImageBytes(buf, (u32[0 max])cursor, 4))
+    {
+        return false;
+    }
+
+    stringIndex = ReadU32(buf, (u32[0 max])cursor);
+    return true;
+}
+
+internal fn MemoryStatus AppendLogicalTargetFeatureListText(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("[");
+    stack mut u32[0 max] featureIndex = 0;
+    while willexit (featureIndex < summary.TargetFeatureCount)
+    {
+        if (featureIndex > 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        stack mut u32[0 max] stringIndex = 0;
+        if (!TryReadLogicalTargetFeatureStringIndex(buf, summary, featureIndex, stringIndex))
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        try AppendLogicalStringTableEntry(buf, summary, stringIndex, sink);
+        featureIndex = featureIndex + 1;
+    }
+
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalTargetFeatureListJson(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("[");
+    stack mut u32[0 max] featureIndex = 0;
+    while willexit (featureIndex < summary.TargetFeatureCount)
+    {
+        if (featureIndex > 0)
+        {
+            try sink.AppendConstAscii(",");
+        }
+
+        stack mut u32[0 max] stringIndex = 0;
+        if (!TryReadLogicalTargetFeatureStringIndex(buf, summary, featureIndex, stringIndex))
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        try AppendLogicalStringTableEntryJson(buf, summary, stringIndex, sink);
+        featureIndex = featureIndex + 1;
+    }
+
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendJsonBool(bool value, mut borrow OwnedAscii sink)
+{
+    if (value)
+    {
+        return sink.AppendConstAscii("true");
+    }
+
+    return sink.AppendConstAscii("false");
+}
+
+internal fn MemoryStatus AppendPackageImageSummaryText(PackageImageSummary summary, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("package: ");
+    if (summary.IsLogical)
+    {
+        try sink.AppendConstAscii("STARKPKG, logical image, ");
+        try sink.AppendU64((u64[0 max])summary.SectionCount);
+        try sink.AppendConstAscii(" sections, ");
+        try sink.AppendU64((u64[0 max])summary.StringCount);
+        try sink.AppendConstAscii(" strings, ");
+        try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+        try sink.AppendConstAscii(" target features\n");
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsSectioned)
+    {
+        try sink.AppendConstAscii("STARKPKG, ");
+    }
+
+    try sink.AppendU64((u64[0 max])summary.InstructionCount);
+    try sink.AppendConstAscii(" instructions, ");
+    try sink.AppendU64((u64[0 max])summary.BlockCount);
+    try sink.AppendConstAscii(" blocks, ");
+    try sink.AppendU64((u64[0 max])summary.FunctionCount);
+    try sink.AppendConstAscii(" functions, ");
+    try sink.AppendU64((u64[0 max])summary.GlobalCount);
+    try sink.AppendConstAscii(" globals");
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.AsmFunctionCount);
+        try sink.AppendConstAscii(" asm functions");
+    }
+
+    if (summary.HasEnumLayoutFacts)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.EnumLayoutFactCount);
+        try sink.AppendConstAscii(" enum layout facts");
+    }
+
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalPackageImageSummaryText(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("package: STARKPKG, logical image, root ");
+    try AppendLogicalStringTableEntry(buf, summary, summary.RootModuleStringIndex, sink);
+    try sink.AppendConstAscii(", library ");
+    try AppendLogicalStringTableEntry(buf, summary, summary.LibraryFileNameStringIndex, sink);
+    if (summary.HasBuildProfile)
+    {
+        try sink.AppendConstAscii(", profile ");
+        try AppendLogicalStringTableEntry(buf, summary, summary.BuildProfileStringIndex, sink);
+    }
+
+    if (summary.HasTarget)
+    {
+        try sink.AppendConstAscii(", target ");
+        try AppendLogicalStringTableEntry(buf, summary, summary.TargetTripleStringIndex, sink);
+        if (LogicalStringIndexIsPresent(summary.TargetDataLayoutStringIndex))
+        {
+            try sink.AppendConstAscii(", data-layout ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.TargetDataLayoutStringIndex, sink);
+        }
+
+        if (LogicalStringIndexIsPresent(summary.TargetCpuStringIndex))
+        {
+            try sink.AppendConstAscii(", cpu ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.TargetCpuStringIndex, sink);
+        }
+
+        if (LogicalStringIndexIsPresent(summary.RelocationModelStringIndex))
+        {
+            try sink.AppendConstAscii(", relocation ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.RelocationModelStringIndex, sink);
+        }
+
+        if (LogicalStringIndexIsPresent(summary.CodeModelStringIndex))
+        {
+            try sink.AppendConstAscii(", code-model ");
+            try AppendLogicalStringTableEntry(buf, summary, summary.CodeModelStringIndex, sink);
+        }
+
+        if (summary.TargetFeatureCount > 0)
+        {
+            try sink.AppendConstAscii(", features ");
+            try AppendLogicalTargetFeatureListText(buf, summary, sink);
+        }
+    }
+
+    if (summary.HasCDataModel)
+    {
+        try sink.AppendConstAscii(", c-data-model ");
+        try AppendLogicalStringTableEntry(buf, summary, summary.CDataModelKindStringIndex, sink);
+        try sink.AppendConstAscii(" char-signed=");
+        try AppendJsonBool(summary.CCharIsSigned, sink);
+        try sink.AppendConstAscii(" pointer=");
+        try sink.AppendU64((u64[0 max])summary.CPointerBitWidth);
+        try sink.AppendConstAscii(" long=");
+        try sink.AppendU64((u64[0 max])summary.CLongBitWidth);
+        try sink.AppendConstAscii(" size_t=");
+        try sink.AppendU64((u64[0 max])summary.CSizeTBitWidth);
+        try sink.AppendConstAscii(" ptrdiff_t=");
+        try sink.AppendU64((u64[0 max])summary.CPtrDiffTBitWidth);
+    }
+
+    if (summary.HasAggregateLayout)
+    {
+        try sink.AppendConstAscii(", aggregate-layout pointer-size=");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerSizeBytes);
+        try sink.AppendConstAscii(" pointer-align=");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerAlignmentBytes);
+    }
+
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])summary.SectionCount);
+    try sink.AppendConstAscii(" sections, ");
+    try sink.AppendU64((u64[0 max])summary.StringCount);
+    try sink.AppendConstAscii(" strings, ");
+    try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+    try sink.AppendConstAscii(" target features\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendPackageImageSummaryJson(PackageImageSummary summary, mut borrow OwnedAscii sink)
+{
+    if (summary.IsLogical)
+    {
+        try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"logical\",\"sections\":");
+        try sink.AppendU64((u64[0 max])summary.SectionCount);
+        try sink.AppendConstAscii(",\"strings\":");
+        try sink.AppendU64((u64[0 max])summary.StringCount);
+        try sink.AppendConstAscii(",\"targetFeatures\":");
+        try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+        try sink.AppendConstAscii(",\"hasBuildProfile\":");
+        try AppendJsonBool(summary.HasBuildProfile, sink);
+        try sink.AppendConstAscii(",\"hasTarget\":");
+        try AppendJsonBool(summary.HasTarget, sink);
+        try sink.AppendConstAscii(",\"hasCDataModel\":");
+        try AppendJsonBool(summary.HasCDataModel, sink);
+        try sink.AppendConstAscii(",\"hasAggregateLayout\":");
+        try AppendJsonBool(summary.HasAggregateLayout, sink);
+        try sink.AppendConstAscii("}\n");
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsSectioned)
+    {
+        if (summary.HasAsm)
+        {
+            try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"MIR2\",\"instructions\":");
+        }
+        else
+        {
+            try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":");
+        }
+    }
+    else if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii("{\"format\":\"MIR2\",\"instructions\":");
+    }
+    else
+    {
+        try sink.AppendConstAscii("{\"format\":\"MIR1\",\"instructions\":");
+    }
+
+    try sink.AppendU64((u64[0 max])summary.InstructionCount);
+    try sink.AppendConstAscii(",\"blocks\":");
+    try sink.AppendU64((u64[0 max])summary.BlockCount);
+    try sink.AppendConstAscii(",\"functions\":");
+    try sink.AppendU64((u64[0 max])summary.FunctionCount);
+    try sink.AppendConstAscii(",\"globals\":");
+    try sink.AppendU64((u64[0 max])summary.GlobalCount);
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii(",\"asmFunctions\":");
+        try sink.AppendU64((u64[0 max])summary.AsmFunctionCount);
+    }
+
+    if (summary.HasEnumLayoutFacts)
+    {
+        try sink.AppendConstAscii(",\"enumLayoutFacts\":");
+        try sink.AppendU64((u64[0 max])summary.EnumLayoutFactCount);
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendLogicalPackageImageSummaryJson(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageSummary summary,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("{\"format\":\"STARKPKG\",\"payload\":\"logical\",\"rootModule\":");
+    try AppendLogicalStringTableEntryJson(buf, summary, summary.RootModuleStringIndex, sink);
+    try sink.AppendConstAscii(",\"libraryFileName\":");
+    try AppendLogicalStringTableEntryJson(buf, summary, summary.LibraryFileNameStringIndex, sink);
+    try sink.AppendConstAscii(",\"buildProfile\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.BuildProfileStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetTriple\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.TargetTripleStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetDataLayout\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.TargetDataLayoutStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetCpu\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.TargetCpuStringIndex, sink);
+    try sink.AppendConstAscii(",\"relocationModel\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.RelocationModelStringIndex, sink);
+    try sink.AppendConstAscii(",\"codeModel\":");
+    try AppendLogicalStringTableEntryJsonNullable(buf, summary, summary.CodeModelStringIndex, sink);
+    try sink.AppendConstAscii(",\"targetFeatureNames\":");
+    try AppendLogicalTargetFeatureListJson(buf, summary, sink);
+    try sink.AppendConstAscii(",\"cDataModel\":");
+    if (summary.HasCDataModel)
+    {
+        try sink.AppendConstAscii("{\"kind\":");
+        try AppendLogicalStringTableEntryJson(buf, summary, summary.CDataModelKindStringIndex, sink);
+        try sink.AppendConstAscii(",\"charIsSigned\":");
+        try AppendJsonBool(summary.CCharIsSigned, sink);
+        try sink.AppendConstAscii(",\"pointerBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CPointerBitWidth);
+        try sink.AppendConstAscii(",\"longBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CLongBitWidth);
+        try sink.AppendConstAscii(",\"sizeTBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CSizeTBitWidth);
+        try sink.AppendConstAscii(",\"ptrDiffTBitWidth\":");
+        try sink.AppendU64((u64[0 max])summary.CPtrDiffTBitWidth);
+        try sink.AppendConstAscii("}");
+    }
+    else
+    {
+        try sink.AppendConstAscii("null");
+    }
+
+    try sink.AppendConstAscii(",\"aggregateLayout\":");
+    if (summary.HasAggregateLayout)
+    {
+        try sink.AppendConstAscii("{\"pointerSizeBytes\":");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerSizeBytes);
+        try sink.AppendConstAscii(",\"pointerAlignmentBytes\":");
+        try sink.AppendU64((u64[0 max])summary.AggregatePointerAlignmentBytes);
+        try sink.AppendConstAscii("}");
+    }
+    else
+    {
+        try sink.AppendConstAscii("null");
+    }
+
+    try sink.AppendConstAscii(",\"sections\":");
+    try sink.AppendU64((u64[0 max])summary.SectionCount);
+    try sink.AppendConstAscii(",\"strings\":");
+    try sink.AppendU64((u64[0 max])summary.StringCount);
+    try sink.AppendConstAscii(",\"targetFeatures\":");
+    try sink.AppendU64((u64[0 max])summary.TargetFeatureCount);
+    try sink.AppendConstAscii(",\"hasBuildProfile\":");
+    try AppendJsonBool(summary.HasBuildProfile, sink);
+    try sink.AppendConstAscii(",\"hasTarget\":");
+    try AppendJsonBool(summary.HasTarget, sink);
+    try sink.AppendConstAscii(",\"hasCDataModel\":");
+    try AppendJsonBool(summary.HasCDataModel, sink);
+    try sink.AppendConstAscii(",\"hasAggregateLayout\":");
+    try AppendJsonBool(summary.HasAggregateLayout, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+public fn bool PackageImageIsValid(borrow IrTable<u8[0 max]> buf)
+{
+    return ValidatePackageImage(buf) == PackageImageValidationStatus.Ok;
+}
+
+public fn bool RenderPackageImageInspection(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageInspectionFormat format,
+    mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return false;
+    }
+
+    switch (format)
+    {
+        case PackageImageInspectionFormat.Text:
+            if (summary.IsLogical)
+            {
+                return AppendLogicalPackageImageSummaryText(buf, summary, sink) == MemoryStatus.Ok;
+            }
+
+            return AppendPackageImageSummaryText(summary, sink) == MemoryStatus.Ok;
+        case PackageImageInspectionFormat.Json:
+            if (summary.IsLogical)
+            {
+                return AppendLogicalPackageImageSummaryJson(buf, summary, sink) == MemoryStatus.Ok;
+            }
+
+            return AppendPackageImageSummaryJson(summary, sink) == MemoryStatus.Ok;
+    }
+}
+
+// Serializes a whole MIR module (instructions/blocks/functions/globals) into one
+// package image in `buf`.
+public fn void SerializePackageImage(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+
+    // Header is 20 bytes (magic + 4 offsets), so the first section starts at byte 21.
+    stack u32[0 max] instrOffset = 21;
+    stack u32[0 max] blockOffset = instrOffset + (u32[0 max])instrBuf.Count();
+    stack u32[0 max] funcOffset = blockOffset + (u32[0 max])blockBuf.Count();
+    stack u32[0 max] globalOffset = funcOffset + (u32[0 max])funcBuf.Count();
+
+    WriteU32(buf, MirImageMagic());
+    WriteU32(buf, instrOffset);
+    WriteU32(buf, blockOffset);
+    WriteU32(buf, funcOffset);
+    WriteU32(buf, globalOffset);
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+}
+
+// Serializes a whole MIR module plus assembly metadata into a five-section image.
+// This is the package-image shape imported packages need for source assembly
+// declarations: consumers can reconstruct the declaration without original source.
+public fn void SerializePackageImageWithAsm(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+
+    // Header is 24 bytes (magic + 5 offsets), so the first section starts at byte 25.
+    stack u32[0 max] instrOffset = 25;
+    stack u32[0 max] blockOffset = instrOffset + (u32[0 max])instrBuf.Count();
+    stack u32[0 max] funcOffset = blockOffset + (u32[0 max])blockBuf.Count();
+    stack u32[0 max] globalOffset = funcOffset + (u32[0 max])funcBuf.Count();
+    stack u32[0 max] asmOffset = globalOffset + (u32[0 max])globalBuf.Count();
+
+    WriteU32(buf, MirImageWithAsmMagic());
+    WriteU32(buf, instrOffset);
+    WriteU32(buf, blockOffset);
+    WriteU32(buf, funcOffset);
+    WriteU32(buf, globalOffset);
+    WriteU32(buf, asmOffset);
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+}
+
+// Serializes a MIR module into the durable STARKPKG v2 section-directory
+// container. Offsets in the directory are 0-based file byte offsets to match the
+// host compiler format; the in-memory IrTable reader converts them to 1-based
+// table indices when loading.
+public fn void SerializeSectionedPackageImage(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+
+    stack u32[0 max] sectionCount = 4;
+    stack u64[0 max] directoryLength = (u64[0 max])sectionCount * 32;
+    stack u64[0 max] instrOffset = 24 + directoryLength;
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, directoryLength);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithAsm(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+
+    stack u32[0 max] sectionCount = 5;
+    stack u64[0 max] directoryLength = (u64[0 max])sectionCount * 32;
+    stack u64[0 max] instrOffset = 24 + directoryLength;
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] asmOffset = globalOffset + (u64[0 max])globalBuf.Count();
+
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, directoryLength);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionAsmMetadata(), SectionFlagsRequired(), asmOffset, (u64[0 max])asmBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithEnumLayoutFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> enumLayoutBuf = new();
+    SerializeEnumLayoutFacts(enumLayoutFacts, enumLayoutBuf);
+
+    stack u32[0 max] sectionCount = 5;
+    stack u64[0 max] directoryLength = (u64[0 max])sectionCount * 32;
+    stack u64[0 max] instrOffset = 24 + directoryLength;
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] enumLayoutOffset = globalOffset + (u64[0 max])globalBuf.Count();
+
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, directoryLength);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionEnumLayoutFacts(), SectionFlagsRequired(), enumLayoutOffset, (u64[0 max])enumLayoutBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, enumLayoutBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithAsmAndEnumLayoutFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+    stack mut IrTable<u8[0 max]> enumLayoutBuf = new();
+    SerializeEnumLayoutFacts(enumLayoutFacts, enumLayoutBuf);
+
+    stack u32[0 max] sectionCount = 6;
+    stack u64[0 max] directoryLength = (u64[0 max])sectionCount * 32;
+    stack u64[0 max] instrOffset = 24 + directoryLength;
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] asmOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] enumLayoutOffset = asmOffset + (u64[0 max])asmBuf.Count();
+
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, directoryLength);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionAsmMetadata(), SectionFlagsRequired(), asmOffset, (u64[0 max])asmBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionEnumLayoutFacts(), SectionFlagsRequired(), enumLayoutOffset, (u64[0 max])enumLayoutBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+    AppendBytes(buf, enumLayoutBuf);
+}
+
+public fn bool DeserializePackageImageEnumLayoutFacts(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirEnumLayoutFact> outFacts)
+{
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    if (ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+        buf,
+        instrOffset,
+        blockOffset,
+        funcOffset,
+        globalOffset,
+        asmOffset,
+        asmFunctionCount,
+        hasAsm,
+        enumLayoutOffset,
+        enumLayoutFactCount,
+        hasEnumLayoutFacts) != PackageImageValidationStatus.Ok
+        || !hasEnumLayoutFacts)
+    {
+        return false;
+    }
+
+    return DeserializeEnumLayoutFactsAt(buf, enumLayoutOffset, outFacts);
+}
+
+// Reads a package image into the four out-tables. Returns false (touching nothing)
+// when the magic or section directory is malformed.
+public fn bool DeserializePackageImage(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirInstruction> outInstrs, mut borrow IrTable<MirBlock> outBlocks, mut borrow IrTable<MirFunction> outFuncs, mut borrow IrTable<MirGlobal> outGlobals)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack mut u32[0 max] asmOffset = 0;
+        stack mut u32[0 max] asmFunctionCount = 0;
+        stack mut bool hasAsm = false;
+        if (ReadSectionedPackageImageDirectory(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount, hasAsm) != PackageImageValidationStatus.Ok
+            || hasAsm)
+        {
+            return false;
+        }
+
+        DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+        DeserializeBlocksAt(buf, blockOffset, outBlocks);
+        DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+        DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+        return true;
+    }
+
+    if (!TryReadMirImageHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset))
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    return true;
+}
+
+public fn bool DeserializePackageImageWithAsm(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow AsmMetadataTable outAsmMetadata)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack mut bool hasAsm = false;
+        if (ReadSectionedPackageImageDirectory(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount, hasAsm) != PackageImageValidationStatus.Ok
+            || !hasAsm)
+        {
+            return false;
+        }
+
+        DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+        DeserializeBlocksAt(buf, blockOffset, outBlocks);
+        DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+        DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+        return DeserializeAsmMetadataAtUnchecked(buf, asmOffset, outAsmMetadata);
+    }
+
+    if (!TryReadMirImageWithAsmHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount))
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    return DeserializeAsmMetadataAtUnchecked(buf, asmOffset, outAsmMetadata);
+}
+
+// Emits an `inspect-pkg` one-line summary of a package image, reading only the header
+// and each section's count (no IR materialized). Empty when the magic is wrong.
+public fn MemoryStatus InspectPackageImage(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsLogical)
+    {
+        return AppendLogicalPackageImageSummaryText(buf, summary, sink);
+    }
+
+    return AppendPackageImageSummaryText(summary, sink);
+}
+
+// Emits a deterministic JSON summary view of the same validated binary image counts
+// used by the text inspector. Empty when the image is not recognized or malformed.
+public fn MemoryStatus InspectPackageImageJson(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (summary.IsLogical)
+    {
+        return AppendLogicalPackageImageSummaryJson(buf, summary, sink);
+    }
+
+    return AppendPackageImageSummaryJson(summary, sink);
+}
+
+// === Bridge to the stdlib byte buffer (toward on-disk package images, #32) ===
+// `System.IO.File.WriteAllBytes`/`ReadAllBytes` consume/produce a
+// `System.Runtime.Buffer.DynamicByteBuffer`, so a package image (an `IrTable<u8>`)
+// converts to/from that type. Bytes are u8 here and i8 in the buffer; the modular
+// cast preserves the bit pattern. With these, persisting an image is a thin wrapper:
+// `SerializePackageImage` -> `ImageToByteBuffer` -> `File.WriteAllBytes`, and the
+// reverse for loading.
+
+// Copies every byte of the image `src` into the byte buffer `dst`.
+public fn bool ImageToByteBuffer(borrow IrTable<u8[0 max]> src, mut borrow DynamicByteBuffer dst)
+{
+    stack u64[0 2 ** 63 - 1] count = src.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack u8[0 max] b = src.Get(i);
+        stack System.Memory.MemoryStatus ws = dst.WriteByte((i8[min max])b);
+        if (ws != System.Memory.MemoryStatus.Ok)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Copies the readable bytes of `src` into the image `dst`.
+public fn bool ImageFromByteBuffer(borrow DynamicByteBuffer src, mut borrow IrTable<u8[0 max]> dst)
+{
+    stack i8[min max][] bytes = src.ReadSlice();
+    stack u64[0 2 ** 63 - 1] len = src.Readable();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < len)
+    {
+        stack i8[min max] sb = bytes[i];
+        stack u32[0 max] w = dst.Add((u8[0 max])sb);
+        if (w == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// === On-disk package image (#32, end-to-end file round-trip) ===
+// Serializes a module to a package image, writes it to a temp file via System.IO.File,
+// reads it back, and deserializes — exercising the full on-disk path. All filesystem +
+// dynamic-buffer work stays in this module (a [Fact] only builds inputs + checks the
+// bool). Switch arms are all non-empty (the empty `case Ok:` arm crashes host lower-mir
+// for cross-package stdlib-enum switches).
+
+internal fn bool WriteImageFile(ascii path, borrow DynamicByteBuffer dbuf)
+{
+    switch (System.IO.File.WriteAllBytes(path, dbuf))
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var writeError):
+            return false;
+    }
+}
+
+internal fn bool ReadImageFile(ascii path, mut borrow IrTable<u8[0 max]> outBuf)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            return ImageFromByteBuffer(contents, outBuf);
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+public fn bool WritePackageImageBufferFile(ascii path, borrow IrTable<u8[0 max]> image)
+{
+    stack mut DynamicByteBuffer dbuf = new();
+    if (!ImageToByteBuffer(image, dbuf))
+    {
+        return false;
+    }
+
+    return WriteImageFile(path, dbuf);
+}
+
+public fn bool ReadPackageImageBufferFile(ascii path, mut borrow IrTable<u8[0 max]> outImage)
+{
+    return ReadImageFile(path, outImage);
+}
+
+public fn bool WritePackageImageFile(
+    ascii path,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, image);
+    return WritePackageImageBufferFile(path, image);
+}
+
+public fn bool WritePackageImageWithAsmFile(
+    ascii path,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, image);
+    return WritePackageImageBufferFile(path, image);
+}
+
+public fn bool LoadPackageImageFile(
+    ascii path,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadPackageImageBufferFile(path, image))
+    {
+        return false;
+    }
+
+    return DeserializePackageImage(image, outInstrs, outBlocks, outFuncs, outGlobals);
+}
+
+public fn bool LoadPackageImageWithAsmFile(
+    ascii path,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow AsmMetadataTable outAsmMetadata)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadPackageImageBufferFile(path, image))
+    {
+        return false;
+    }
+
+    return DeserializePackageImageWithAsm(image, outInstrs, outBlocks, outFuncs, outGlobals, outAsmMetadata);
+}
+
+public fn bool InspectPackageImageFile(ascii path, mut borrow OwnedAscii sink)
+{
+    return RenderPackageImageInspectionFile(path, PackageImageInspectionFormat.Text, sink);
+}
+
+public fn bool InspectPackageImageFileJson(ascii path, mut borrow OwnedAscii sink)
+{
+    return RenderPackageImageInspectionFile(path, PackageImageInspectionFormat.Json, sink);
+}
+
+public fn bool RenderPackageImageInspectionFile(ascii path, PackageImageInspectionFormat format, mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadImageFile(path, image))
+    {
+        return false;
+    }
+
+    return RenderPackageImageInspection(image, format, sink);
+}

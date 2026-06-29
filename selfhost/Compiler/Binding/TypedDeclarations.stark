@@ -1,0 +1,1054 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.GenericUseSites
+import Compiler.Binding.DeclarationPrelude
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.FfiAbiHelpers
+import Compiler.Binding.TypedModuleSymbols
+import System.Memory
+module Compiler.Binding.TypedDeclarations
+
+public enum TypedDeclarationSymbolClass
+{
+    Type,
+    Function,
+    Value,
+    Alias,
+    Unknown,
+}
+
+public enum TypedDeclarationFunctionKind
+{
+    Fn,
+    Finite,
+    Law,
+    FiniteLaw,
+}
+
+public enum TypedDeclarationStorageKind
+{
+    None,
+    Const,
+    Static,
+    Heap,
+    Stack,
+    Register,
+    Arena,
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagExternal()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagUnsafe()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagFfi()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagAsm()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagVarargs()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagTailCallable()
+{
+    return 32;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagInline()
+{
+    return 64;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagNoInline()
+{
+    return 128;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagInlineHint()
+{
+    return 256;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagHot()
+{
+    return 512;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagCold()
+{
+    return 1024;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagStrictFp()
+{
+    return 2048;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagLinkName()
+{
+    return 4096;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagCAbi()
+{
+    return 8192;
+}
+
+internal inline finite law u32[0 max] TypedDeclFlagMutableStorage()
+{
+    return 16384;
+}
+
+internal inline finite law bool TypedDeclFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+public struct TypedDeclarationSymbolTable
+{
+    internal dynamic u32[0 max] ModuleSymbolIndices;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic u32[0 max] DeclIndices;
+    internal dynamic DeclarationKind DeclarationKinds;
+    internal dynamic TypedDeclarationSymbolClass Classes;
+    internal dynamic TypedModuleSymbolVisibility Visibilities;
+    internal dynamic TypedDeclarationFunctionKind FunctionKinds;
+    internal dynamic TypedDeclarationStorageKind StorageKinds;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] ParamCounts;
+    internal dynamic u32[0 max] LinkNameValueTokens;
+    internal dynamic u32[0 max] AbiNameTokens;
+    internal dynamic u32[0 max] AsmArchitectureTokens;
+    internal dynamic u32[0 max] AsmInputCounts;
+    internal dynamic u32[0 max] AsmOutputCounts;
+    internal dynamic u32[0 max] AsmClobberCounts;
+    internal dynamic u32[0 max] Flags;
+
+    TypedDeclarationSymbolTable()
+    {
+        self.ModuleSymbolIndices = new();
+        self.NameTokens = new();
+        self.KeywordTokens = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.DeclIndices = new();
+        self.DeclarationKinds = new();
+        self.Classes = new();
+        self.Visibilities = new();
+        self.FunctionKinds = new();
+        self.StorageKinds = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.ParamCounts = new();
+        self.LinkNameValueTokens = new();
+        self.AbiNameTokens = new();
+        self.AsmArchitectureTokens = new();
+        self.AsmInputCounts = new();
+        self.AsmOutputCounts = new();
+        self.AsmClobberCounts = new();
+        self.Flags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedDeclarationSymbolTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] ModuleSymbolIndexPlusOneAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.ModuleSymbolIndices.Length)
+        {
+            value = self.ModuleSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] KeywordTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            token = self.KeywordTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] DeclIndexAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] declIndex = 0;
+        if (index < self.DeclIndices.Length)
+        {
+            declIndex = self.DeclIndices[index];
+        }
+
+        return declIndex;
+    }
+
+    public law DeclarationKind DeclarationKindAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut DeclarationKind kind = DeclarationKind.Unknown;
+        if (index < self.DeclarationKinds.Length)
+        {
+            kind = self.DeclarationKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedDeclarationSymbolClass ClassAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedDeclarationSymbolClass class = TypedDeclarationSymbolClass.Unknown;
+        if (index < self.Classes.Length)
+        {
+            class = self.Classes[index];
+        }
+
+        return class;
+    }
+
+    public law TypedModuleSymbolVisibility VisibilityAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedModuleSymbolVisibility visibility = TypedModuleSymbolVisibility.ModulePrivate;
+        if (index < self.Visibilities.Length)
+        {
+            visibility = self.Visibilities[index];
+        }
+
+        return visibility;
+    }
+
+    public law TypedDeclarationFunctionKind FunctionKindAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedDeclarationFunctionKind kind = TypedDeclarationFunctionKind.Fn;
+        if (index < self.FunctionKinds.Length)
+        {
+            kind = self.FunctionKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedDeclarationStorageKind StorageKindAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedDeclarationStorageKind kind = TypedDeclarationStorageKind.None;
+        if (index < self.StorageKinds.Length)
+        {
+            kind = self.StorageKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamCountAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ParamCounts.Length)
+        {
+            count = self.ParamCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] LinkNameValueTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.LinkNameValueTokens.Length)
+        {
+            token = self.LinkNameValueTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AbiNameTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AbiNameTokens.Length)
+        {
+            token = self.AbiNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmArchitectureTokenAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmArchitectureTokens.Length)
+        {
+            token = self.AsmArchitectureTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmInputCountAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AsmInputCounts.Length)
+        {
+            count = self.AsmInputCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] AsmOutputCountAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AsmOutputCounts.Length)
+        {
+            count = self.AsmOutputCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] AsmClobberCountAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AsmClobberCounts.Length)
+        {
+            count = self.AsmClobberCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] FlagsAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.Flags.Length)
+        {
+            flags = self.Flags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool IsExternalAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagExternal());
+    }
+
+    public law bool IsUnsafeAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagUnsafe());
+    }
+
+    public law bool IsFfiAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagFfi());
+    }
+
+    public law bool IsAsmAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagAsm());
+    }
+
+    public law bool IsVarargsAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagVarargs());
+    }
+
+    public law bool IsTailCallableAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagTailCallable());
+    }
+
+    public law bool IsInlineAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagInline());
+    }
+
+    public law bool IsNoInlineAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagNoInline());
+    }
+
+    public law bool IsInlineHintAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagInlineHint());
+    }
+
+    public law bool IsHotAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagHot());
+    }
+
+    public law bool IsColdAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagCold());
+    }
+
+    public law bool IsStrictFpAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagStrictFp());
+    }
+
+    public law bool HasLinkNameAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagLinkName());
+    }
+
+    public law bool IsCAbiAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagCAbi());
+    }
+
+    public law bool IsMutableStorageAt(borrow TypedDeclarationSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedDeclFlagMutableStorage());
+    }
+
+    public law u32[0 max] FunctionCount(borrow TypedDeclarationSymbolTable self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.ClassAt(index) == TypedDeclarationSymbolClass.Function)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public law u32[0 max] ExportCount(borrow TypedDeclarationSymbolTable self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.VisibilityAt(index) == TypedModuleSymbolVisibility.Export)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public law u32[0 max] FfiCount(borrow TypedDeclarationSymbolTable self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.IsFfiAt(index))
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedDeclarationSymbolTable self,
+        u32[0 max] moduleSymbolIndexPlusOne,
+        DeclItem item,
+        u32[0 max] declIndex,
+        TypedDeclarationSymbolClass class,
+        TypedModuleSymbolVisibility visibility,
+        TypedDeclarationFunctionKind functionKind,
+        TypedDeclarationStorageKind storageKind,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken,
+        u32[0 max] paramCount,
+        u32[0 max] linkNameValueToken,
+        u32[0 max] abiNameToken,
+        u32[0 max] asmArchitectureToken,
+        u32[0 max] asmInputCount,
+        u32[0 max] asmOutputCount,
+        u32[0 max] asmClobberCount,
+        u32[0 max] flags)
+    {
+        if (!self.ModuleSymbolIndices.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.DeclIndices.TryReserve(1)
+            || !self.DeclarationKinds.TryReserve(1)
+            || !self.Classes.TryReserve(1)
+            || !self.Visibilities.TryReserve(1)
+            || !self.FunctionKinds.TryReserve(1)
+            || !self.StorageKinds.TryReserve(1)
+            || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
+            || !self.ParamCounts.TryReserve(1)
+            || !self.LinkNameValueTokens.TryReserve(1)
+            || !self.AbiNameTokens.TryReserve(1)
+            || !self.AsmArchitectureTokens.TryReserve(1)
+            || !self.AsmInputCounts.TryReserve(1)
+            || !self.AsmOutputCounts.TryReserve(1)
+            || !self.AsmClobberCounts.TryReserve(1)
+            || !self.Flags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.ModuleSymbolIndices[self.ModuleSymbolIndices.Length] = moduleSymbolIndexPlusOne;
+        init self.NameTokens[self.NameTokens.Length] = item.NameToken;
+        init self.KeywordTokens[self.KeywordTokens.Length] = item.KeywordToken;
+        init self.StartTokens[self.StartTokens.Length] = item.StartToken;
+        init self.EndTokens[self.EndTokens.Length] = item.EndToken;
+        init self.DeclIndices[self.DeclIndices.Length] = declIndex;
+        init self.DeclarationKinds[self.DeclarationKinds.Length] = item.Kind;
+        init self.Classes[self.Classes.Length] = class;
+        init self.Visibilities[self.Visibilities.Length] = visibility;
+        init self.FunctionKinds[self.FunctionKinds.Length] = functionKind;
+        init self.StorageKinds[self.StorageKinds.Length] = storageKind;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        init self.ParamCounts[self.ParamCounts.Length] = paramCount;
+        init self.LinkNameValueTokens[self.LinkNameValueTokens.Length] = linkNameValueToken;
+        init self.AbiNameTokens[self.AbiNameTokens.Length] = abiNameToken;
+        init self.AsmArchitectureTokens[self.AsmArchitectureTokens.Length] = asmArchitectureToken;
+        init self.AsmInputCounts[self.AsmInputCounts.Length] = asmInputCount;
+        init self.AsmOutputCounts[self.AsmOutputCounts.Length] = asmOutputCount;
+        init self.AsmClobberCounts[self.AsmClobberCounts.Length] = asmClobberCount;
+        init self.Flags[self.Flags.Length] = flags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law TypedDeclarationSymbolClass DeclarationSymbolClass(DeclarationKind kind)
+{
+    switch (kind)
+    {
+        case DeclarationKind.Struct:
+            return TypedDeclarationSymbolClass.Type;
+        case DeclarationKind.Record:
+            return TypedDeclarationSymbolClass.Type;
+        case DeclarationKind.Enum:
+            return TypedDeclarationSymbolClass.Type;
+        case DeclarationKind.Trait:
+            return TypedDeclarationSymbolClass.Type;
+        case DeclarationKind.Doctrine:
+            return TypedDeclarationSymbolClass.Type;
+        case DeclarationKind.Function:
+            return TypedDeclarationSymbolClass.Function;
+        case DeclarationKind.Const:
+            return TypedDeclarationSymbolClass.Value;
+        case DeclarationKind.Static:
+            return TypedDeclarationSymbolClass.Value;
+        case DeclarationKind.GlobalVariable:
+            return TypedDeclarationSymbolClass.Value;
+        case DeclarationKind.Alias:
+            return TypedDeclarationSymbolClass.Alias;
+        case DeclarationKind.Unknown:
+            return TypedDeclarationSymbolClass.Unknown;
+    }
+}
+
+internal finite law TypedDeclarationStorageKind DeclarationStorageKind(borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind == DeclarationKind.Const)
+    {
+        return TypedDeclarationStorageKind.Const;
+    }
+
+    if (item.Kind == DeclarationKind.Static)
+    {
+        return TypedDeclarationStorageKind.Static;
+    }
+
+    if (item.Kind == DeclarationKind.GlobalVariable)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])item.KeywordToken);
+        switch (kind)
+        {
+            case TokenKind.Heap:
+                return TypedDeclarationStorageKind.Heap;
+            case TokenKind.Stack:
+                return TypedDeclarationStorageKind.Stack;
+            case TokenKind.Register:
+                return TypedDeclarationStorageKind.Register;
+            case TokenKind.Arena:
+                return TypedDeclarationStorageKind.Arena;
+            default:
+                return TypedDeclarationStorageKind.None;
+        }
+    }
+
+    return TypedDeclarationStorageKind.None;
+}
+
+internal finite law TypedDeclarationFunctionKind DeclarationFunctionKind(borrow FunctionSignature signature)
+{
+    if (signature.FiniteKind() && signature.LawKind())
+    {
+        return TypedDeclarationFunctionKind.FiniteLaw;
+    }
+
+    if (signature.FiniteKind())
+    {
+        return TypedDeclarationFunctionKind.Finite;
+    }
+
+    if (signature.LawKind())
+    {
+        return TypedDeclarationFunctionKind.Law;
+    }
+
+    return TypedDeclarationFunctionKind.Fn;
+}
+
+internal finite law u32[0 max] FirstTypeTokenInSpan(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] token = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && token == 0 && IsTypeStartToken(kind))
+        {
+            token = scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return token;
+}
+
+internal finite law u32[0 max] LastTypeHeadIdentifierInSpan(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] token = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            token = scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return token;
+}
+
+internal finite law u32[0 max] AliasAssignToken(borrow TokenStream stream, DeclItem item)
+{
+    stack mut u32[0 max] scan = item.KeywordToken;
+    while willexit (scan <= item.EndToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Assign)
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] FfiAbiNameToken(borrow TokenStream stream, DeclItem item)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Ffi)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen
+                && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier)
+            {
+                return (u32[0 max])(scan + 2);
+            }
+
+            return 0;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] LinkNameValueTokenForDeclaration(ascii source, borrow TokenStream stream, DeclItem item)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return 0;
+        }
+
+        if (IsLinkNameAttribute(source, stream, scan))
+        {
+            return LinkNameValueToken(stream, scan, attrEnd);
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return 0;
+}
+
+internal finite law bool DeclarationStorageIsMutable(borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind != DeclarationKind.Static && item.Kind != DeclarationKind.GlobalVariable)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(item.KeywordToken + 1);
+    while willexit (scan < item.NameToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Mut)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] DeclarationBaseFlags(ascii source, borrow TokenStream stream, DeclItem item)
+{
+    stack mut u32[0 max] flags = 0;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])item.EndToken) == TokenKind.Semi)
+    {
+        flags = flags | TypedDeclFlagExternal();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Unsafe))
+    {
+        flags = flags | TypedDeclFlagUnsafe();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Ffi))
+    {
+        flags = flags | TypedDeclFlagFfi();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Asm))
+    {
+        flags = flags | TypedDeclFlagAsm();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Varargs))
+    {
+        flags = flags | TypedDeclFlagVarargs();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Inline))
+    {
+        flags = flags | TypedDeclFlagInline();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Noinline))
+    {
+        flags = flags | TypedDeclFlagNoInline();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Inlinehint))
+    {
+        flags = flags | TypedDeclFlagInlineHint();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Hot))
+    {
+        flags = flags | TypedDeclFlagHot();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Cold))
+    {
+        flags = flags | TypedDeclFlagCold();
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Strictfp))
+    {
+        flags = flags | TypedDeclFlagStrictFp();
+    }
+
+    if (LinkNameValueTokenForDeclaration(source, stream, item) != 0)
+    {
+        flags = flags | TypedDeclFlagLinkName();
+    }
+
+    if (IsCAbiFfiFunction(source, stream, item))
+    {
+        flags = flags | TypedDeclFlagCAbi();
+    }
+
+    if (DeclarationStorageIsMutable(stream, item))
+    {
+        flags = flags | TypedDeclFlagMutableStorage();
+    }
+
+    return flags;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedDeclarationSymbol(
+    mut borrow TypedDeclarationSymbolTable declarations,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedModuleSymbolTable moduleSymbols,
+    borrow DeclarationList decls,
+    u64[0 2 ** 63 - 1] moduleSymbolIndex)
+{
+    stack u32[0 max] declIndex = moduleSymbols.DeclIndexAt(moduleSymbolIndex);
+    stack DeclItem item = decls.ItemAt((u64[0 2 ** 63 - 1])declIndex);
+    stack TypedDeclarationSymbolClass class = DeclarationSymbolClass(item.Kind);
+    stack TypedModuleSymbolVisibility visibility = moduleSymbols.VisibilityAt(moduleSymbolIndex);
+    stack mut TypedDeclarationFunctionKind functionKind = TypedDeclarationFunctionKind.Fn;
+    stack TypedDeclarationStorageKind storageKind = DeclarationStorageKind(stream, item);
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] typeStartToken = 0;
+    stack mut u32[0 max] typeEndToken = 0;
+    stack mut u32[0 max] paramCount = 0;
+    stack u32[0 max] linkNameValueToken = LinkNameValueTokenForDeclaration(source, stream, item);
+    stack u32[0 max] abiNameToken = FfiAbiNameToken(stream, item);
+    stack mut u32[0 max] asmArchitectureToken = 0;
+    stack mut u32[0 max] asmInputCount = 0;
+    stack mut u32[0 max] asmOutputCount = 0;
+    stack mut u32[0 max] asmClobberCount = 0;
+    stack mut u32[0 max] flags = DeclarationBaseFlags(source, stream, item);
+
+    if (class == TypedDeclarationSymbolClass.Type)
+    {
+        typeHeadToken = item.NameToken;
+        typePrimaryToken = item.NameToken;
+        typeStartToken = item.NameToken;
+        typeEndToken = (u32[0 max])(item.NameToken + 1);
+    }
+    else if (item.Kind == DeclarationKind.Function)
+    {
+        stack mut FunctionSignature signature = new();
+        switch (ParseFunctionSignature(stream, item.KeywordToken))
+        {
+            case ParseResult<FunctionSignature>.Err(var signatureError):
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+                signature = parsedSignature;
+        }
+
+        functionKind = DeclarationFunctionKind(signature);
+        typeHeadToken = signature.ReturnType();
+        typePrimaryToken = signature.ReturnTypeTokenAt();
+        typeStartToken = signature.ReturnTypeStartTokenAt();
+        typeEndToken = signature.ReturnTypeEndTokenAt();
+        paramCount = (u32[0 max])signature.ParamCount();
+        if (signature.TailCallable())
+        {
+            flags = flags | TypedDeclFlagTailCallable();
+        }
+
+        if (signature.HasAsm())
+        {
+            asmArchitectureToken = signature.AsmArchitectureToken();
+            asmInputCount = signature.AsmInputCount();
+            asmOutputCount = signature.AsmOutputCount();
+            asmClobberCount = signature.AsmClobberCount();
+        }
+    }
+    else if (class == TypedDeclarationSymbolClass.Value && item.NameToken != 0)
+    {
+        typeStartToken = FindVariableTypeTokenForBinding(stream, (u32[0 max])(item.KeywordToken + 1));
+        if (typeStartToken != 0 && typeStartToken < item.NameToken)
+        {
+            typePrimaryToken = typeStartToken;
+            typeEndToken = item.NameToken;
+            typeHeadToken = LastTypeHeadIdentifierInSpan(stream, typeStartToken, item.NameToken);
+        }
+    }
+    else if (item.Kind == DeclarationKind.Alias)
+    {
+        stack u32[0 max] assign = AliasAssignToken(stream, item);
+        if (assign != 0 && assign < item.EndToken)
+        {
+            typeStartToken = (u32[0 max])(assign + 1);
+            typeEndToken = item.EndToken;
+            typePrimaryToken = FirstTypeTokenInSpan(stream, typeStartToken, typeEndToken);
+            typeHeadToken = LastTypeHeadIdentifierInSpan(stream, typeStartToken, typeEndToken);
+        }
+    }
+
+    return declarations.Append(
+        (u32[0 max])(moduleSymbolIndex + 1),
+        item,
+        declIndex,
+        class,
+        visibility,
+        functionKind,
+        storageKind,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        paramCount,
+        linkNameValueToken,
+        abiNameToken,
+        asmArchitectureToken,
+        asmInputCount,
+        asmOutputCount,
+        asmClobberCount,
+        flags);
+}
+
+public fn BindResult<TypedDeclarationSymbolTable> BuildTypedDeclarationSymbols(
+    ascii source,
+    borrow TokenStream stream,
+    borrow DeclarationList decls,
+    borrow TypedModuleSymbolTable moduleSymbols)
+{
+    stack mut TypedDeclarationSymbolTable declarations = new();
+    stack u64[0 2 ** 63 - 1] count = moduleSymbols.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (AppendTypedDeclarationSymbol(declarations, source, stream, moduleSymbols, decls, index))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return BindResult<TypedDeclarationSymbolTable>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return BindResult<TypedDeclarationSymbolTable>.Ok(declarations);
+}

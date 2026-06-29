@@ -1,0 +1,940 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.TypeResolution
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.ReceiverTokenHelpers
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.LayoutHelpers
+import System.Memory
+module Compiler.Binding.LayoutValidation
+
+internal fn System.Memory.MemoryStatus CollectLayoutDeclarationAttributeDiagnostics(
+    DeclItem item,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags,
+    out LayoutControlKind layoutKind)
+    where overlap(source, stream)
+{
+    layoutKind = LayoutControlKind.Auto;
+    stack mut LayoutControlKind resolvedLayoutKind = LayoutControlKind.Auto;
+    stack mut u32[0 max] structLayoutCount = 0;
+    stack mut u32[0 max] packCount = 0;
+    stack mut u32[0 max] alignCount = 0;
+    stack mut bool hasPack = false;
+    stack mut bool hasAlign = false;
+    stack mut u32[0 max] firstPackToken = 0;
+    stack mut u32[0 max] firstAlignToken = 0;
+
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] structLayoutHere = LayoutAttributeNameCount(source, stream, scan, attrEnd, "StructLayout");
+        if (structLayoutHere > 0)
+        {
+            structLayoutCount = (u32[0 max])(structLayoutCount + structLayoutHere);
+            stack u32[0 max] nameToken = LayoutAttributeNameToken(source, stream, scan, attrEnd, "StructLayout");
+            if (structLayoutCount > 1)
+            {
+                switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, nameToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var duplicateLayoutError):
+                        return System.Memory.MemoryStatus.Err(duplicateLayoutError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                stack u32[0 max] argToken = LayoutAttributeArgumentToken(source, stream, scan, attrEnd, "StructLayout");
+                resolvedLayoutKind = LayoutKindFromArgument(source, stream, argToken);
+                layoutKind = resolvedLayoutKind;
+                if (resolvedLayoutKind == LayoutControlKind.Auto)
+                {
+                    switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, nameToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var invalidLayoutError):
+                            return System.Memory.MemoryStatus.Err(invalidLayoutError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+
+        stack u32[0 max] packHere = LayoutAttributeNameCount(source, stream, scan, attrEnd, "Pack");
+        if (packHere > 0)
+        {
+            hasPack = true;
+            packCount = (u32[0 max])(packCount + packHere);
+            stack u32[0 max] packToken = LayoutAttributeNameToken(source, stream, scan, attrEnd, "Pack");
+            if (firstPackToken == 0)
+            {
+                firstPackToken = packToken;
+            }
+
+            if (packCount > 1)
+            {
+                switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, packToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var duplicatePackError):
+                        return System.Memory.MemoryStatus.Err(duplicatePackError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            if (!LayoutAttributeHasPowerOfTwoLiteral(source, stream, LayoutAttributeArgumentToken(source, stream, scan, attrEnd, "Pack")))
+            {
+                switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, packToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var invalidPackError):
+                        return System.Memory.MemoryStatus.Err(invalidPackError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        stack u32[0 max] alignHere = LayoutAttributeNameCount(source, stream, scan, attrEnd, "Align");
+        if (alignHere > 0)
+        {
+            hasAlign = true;
+            alignCount = (u32[0 max])(alignCount + alignHere);
+            stack u32[0 max] alignToken = LayoutAttributeNameToken(source, stream, scan, attrEnd, "Align");
+            if (firstAlignToken == 0)
+            {
+                firstAlignToken = alignToken;
+            }
+
+            if (alignCount > 1)
+            {
+                switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, alignToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var duplicateAlignError):
+                        return System.Memory.MemoryStatus.Err(duplicateAlignError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            if (!LayoutAttributeHasPowerOfTwoLiteral(source, stream, LayoutAttributeArgumentToken(source, stream, scan, attrEnd, "Align")))
+            {
+                switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, alignToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var invalidAlignError):
+                        return System.Memory.MemoryStatus.Err(invalidAlignError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    layoutKind = resolvedLayoutKind;
+    if (hasPack && resolvedLayoutKind != LayoutControlKind.C)
+    {
+        switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, firstPackToken))
+        {
+            case System.Memory.MemoryStatus.Err(var packContextError):
+                return System.Memory.MemoryStatus.Err(packContextError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    if (hasAlign && resolvedLayoutKind != LayoutControlKind.C && resolvedLayoutKind != LayoutControlKind.Explicit)
+    {
+        switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, firstAlignToken))
+        {
+            case System.Memory.MemoryStatus.Err(var alignContextError):
+                return System.Memory.MemoryStatus.Err(alignContextError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal enum LayoutStructuralFactKind
+{
+    None,
+    TypeLayout,
+    FieldLayout,
+    EnumTagLayout,
+    EnumVariantLayout,
+    EnumPayloadLayout,
+}
+
+internal fn LayoutStructuralFactKind LayoutStructuralFactKindAt(ascii source, borrow TokenStream stream, u32[0 max] factToken)
+    where overlap(source, stream)
+{
+    if (TokenTextEquals(source, stream, factToken, "TypeSize")
+        || TokenTextEquals(source, stream, factToken, "TypeAlign")
+        || TokenTextEquals(source, stream, factToken, "TypeIsZeroSized"))
+    {
+        return LayoutStructuralFactKind.TypeLayout;
+    }
+
+    if (TokenTextEquals(source, stream, factToken, "FieldOffset")
+        || TokenTextEquals(source, stream, factToken, "FieldSize")
+        || TokenTextEquals(source, stream, factToken, "FieldAlign")
+        || TokenTextEquals(source, stream, factToken, "FieldIsMisaligned"))
+    {
+        return LayoutStructuralFactKind.FieldLayout;
+    }
+
+    if (TokenTextEquals(source, stream, factToken, "EnumTagOffset")
+        || TokenTextEquals(source, stream, factToken, "EnumTagSize")
+        || TokenTextEquals(source, stream, factToken, "EnumTagAlign")
+        || TokenTextEquals(source, stream, factToken, "EnumTagIsMisaligned"))
+    {
+        return LayoutStructuralFactKind.EnumTagLayout;
+    }
+
+    if (TokenTextEquals(source, stream, factToken, "EnumVariantTag")
+        || TokenTextEquals(source, stream, factToken, "EnumVariantPayloadCount"))
+    {
+        return LayoutStructuralFactKind.EnumVariantLayout;
+    }
+
+    if (TokenTextEquals(source, stream, factToken, "EnumVariantPayloadOffset")
+        || TokenTextEquals(source, stream, factToken, "EnumVariantPayloadSize")
+        || TokenTextEquals(source, stream, factToken, "EnumVariantPayloadAlign")
+        || TokenTextEquals(source, stream, factToken, "EnumVariantPayloadIsMisaligned"))
+    {
+        return LayoutStructuralFactKind.EnumPayloadLayout;
+    }
+
+    return LayoutStructuralFactKind.None;
+}
+
+internal fn bool LayoutStructuralFactHasSystemCompilerPrefix(ascii source, borrow TokenStream stream, u32[0 max] factToken)
+    where overlap(source, stream)
+{
+    if (factToken < 4)
+    {
+        return false;
+    }
+
+    return stream.KindAt((u64[0 2 ** 63 - 1])(factToken - 1)) == TokenKind.Dot
+        && stream.KindAt((u64[0 2 ** 63 - 1])(factToken - 3)) == TokenKind.Dot
+        && TokenTextEquals(source, stream, (u32[0 max])(factToken - 2), "Compiler")
+        && TokenTextEquals(source, stream, (u32[0 max])(factToken - 4), "System");
+}
+
+internal fn bool LayoutTryStructuralFactGenericSegment(borrow TokenStream stream, u32[0 max] factToken, out u32[0 max] genericOpen, out u32[0 max] genericClose)
+{
+    genericOpen = 0;
+    genericClose = 0;
+    stack u32[0 max] open = (u32[0 max])(factToken + 1);
+    if (stream.KindAt((u64[0 2 ** 63 - 1])open) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack u32[0 max] close = LayoutMatchingCloseToken(stream, open);
+    if (close <= open
+        || stream.KindAt((u64[0 2 ** 63 - 1])(close + 1)) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    genericOpen = open;
+    genericClose = close;
+    return true;
+}
+
+internal fn bool LayoutFactArgumentSegment(
+    borrow TokenStream stream,
+    u32[0 max] genericOpen,
+    u32[0 max] genericClose,
+    u32[0 max] requestedIndex,
+    out u32[0 max] startToken,
+    out u32[0 max] endToken)
+{
+    startToken = 0;
+    endToken = 0;
+    if (genericClose <= genericOpen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] argumentIndex = 0;
+    stack mut u32[0 max] segmentStart = (u32[0 max])(genericOpen + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = segmentStart;
+    while willexit (scan <= genericClose)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (scan == genericClose || (depth == 0 && kind == TokenKind.Comma))
+        {
+            if (argumentIndex == requestedIndex)
+            {
+                startToken = segmentStart;
+                endToken = scan;
+                return segmentStart < scan;
+            }
+
+            argumentIndex = (u32[0 max])(argumentIndex + 1);
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+        else if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool LayoutTypeSpanHasTopLevelDot(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Dot)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn bool LayoutTryReadLocalFactTargetDeclaration(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStart,
+    u32[0 max] typeEnd,
+    out DeclItem item,
+    out DeclarationKind declarationKind)
+    where overlap(source, stream)
+{
+    item = new();
+    declarationKind = DeclarationKind.Unknown;
+    if (typeStart >= typeEnd || LayoutTypeSpanHasTopLevelDot(stream, typeStart, typeEnd))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeHead = LayoutBoundedLastIdentifier(stream, typeStart, typeEnd);
+    if (typeHead == 0)
+    {
+        return false;
+    }
+
+    return LayoutTryReadDeclarationItem(decls, table, source, stream, typeHead, item, declarationKind);
+}
+
+internal fn bool LayoutTryParseFactIndexArgument(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] startToken,
+    u32[0 max] endToken,
+    out u32[0 max] indexValue)
+    where overlap(source, stream)
+{
+    indexValue = 0;
+    if (startToken >= endToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] token = startToken;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Comptime)
+    {
+        token = (u32[0 max])(token + 1);
+    }
+
+    if (token < endToken && stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Plus)
+    {
+        token = (u32[0 max])(token + 1);
+    }
+
+    return (u32[0 max])(token + 1) == endToken
+        && LayoutTryParseU32Literal(source, stream, token, indexValue);
+}
+
+internal fn bool LayoutFactIndexArgumentIsNegativeLiteral(borrow TokenStream stream, u32[0 max] startToken, u32[0 max] endToken)
+{
+    if (startToken >= endToken)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] token = startToken;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Comptime)
+    {
+        token = (u32[0 max])(token + 1);
+    }
+
+    return (u32[0 max])(token + 2) == endToken
+        && stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Minus
+        && stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.IntegerLiteral;
+}
+
+internal fn bool LayoutTryFieldCount(DeclItem item, borrow TokenStream stream, out u32[0 max] fieldCount)
+{
+    fieldCount = 0;
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, item.KeywordToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return false;
+        case ParseResult<FieldList>.Ok(var parsed):
+            fields = parsed;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = fields.Count();
+    if (count > (u64[0 2 ** 63 - 1])4294967295)
+    {
+        return false;
+    }
+
+    fieldCount = (u32[0 max])count;
+    return true;
+}
+
+internal fn bool LayoutTryEnumVariantCount(DeclItem item, borrow TokenStream stream, out u32[0 max] variantCount)
+{
+    variantCount = 0;
+    stack mut VariantList variants = new();
+    switch (ParseEnumVariants(stream, item.KeywordToken))
+    {
+        case ParseResult<VariantList>.Err(var variantsError):
+            return false;
+        case ParseResult<VariantList>.Ok(var parsed):
+            variants = parsed;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = variants.Count();
+    if (count > (u64[0 2 ** 63 - 1])4294967295)
+    {
+        return false;
+    }
+
+    variantCount = (u32[0 max])count;
+    return true;
+}
+
+internal fn bool LayoutTryEnumVariantPayloadCount(
+    DeclItem item,
+    borrow TokenStream stream,
+    u32[0 max] requestedVariantIndex,
+    out u32[0 max] payloadCount)
+{
+    payloadCount = 0;
+    stack u32[0 max] bodyOpen = ReceiverBodyOpenToken(stream, item.NameToken);
+    if (bodyOpen == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] variantStart = (u32[0 max])(bodyOpen + 1);
+    stack mut u32[0 max] variantIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        while willexit (stream.KindAt((u64[0 2 ** 63 - 1])variantStart) == TokenKind.Comma)
+        {
+            variantStart = (u32[0 max])(variantStart + 1);
+        }
+
+        stack TokenKind startKind = stream.KindAt((u64[0 2 ** 63 - 1])variantStart);
+        if (startKind == TokenKind.EndOfFile || startKind == TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] scan = variantStart;
+        stack mut u32[0 max] depth = 0;
+        stack mut u32[0 max] nameToken = 0;
+        stack mut u32[0 max] delimiter = 0;
+        stack mut bool reachedBodyEnd = false;
+        while willexit (guard > 0)
+        {
+            guard = (u64[0 2 ** 63 - 1])(guard - 1);
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.EndOfFile)
+            {
+                delimiter = scan;
+                reachedBodyEnd = true;
+                break;
+            }
+
+            if (depth == 0 && (kind == TokenKind.Comma || kind == TokenKind.RBrace))
+            {
+                delimiter = scan;
+                reachedBodyEnd = kind == TokenKind.RBrace;
+                break;
+            }
+
+            if (kind == TokenKind.Identifier && depth == 0 && nameToken == 0)
+            {
+                nameToken = scan;
+            }
+
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+
+            scan = (u32[0 max])(scan + 1);
+        }
+
+        if (delimiter == 0)
+        {
+            delimiter = scan;
+        }
+
+        if (nameToken != 0)
+        {
+            if (variantIndex == requestedVariantIndex)
+            {
+                payloadCount = EnumVariantPayloadCount(stream, nameToken, delimiter);
+                return true;
+            }
+
+            variantIndex = (u32[0 max])(variantIndex + 1);
+        }
+
+        if (reachedBodyEnd)
+        {
+            return false;
+        }
+
+        variantStart = (u32[0 max])(delimiter + 1);
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus AppendLayoutQueryInvalid(mut borrow BindDiagnosticList diags, u32[0 max] token)
+{
+    switch (diags.Append(BindDiagnosticCode.LayoutQueryInvalid, token))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus ValidateLayoutStructuralFactCall(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] factToken,
+    LayoutStructuralFactKind factKind,
+    u32[0 max] genericOpen,
+    u32[0 max] genericClose,
+    mut borrow BindDiagnosticList diags)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] typeStart = 0;
+    stack mut u32[0 max] typeEnd = 0;
+    if (!LayoutFactArgumentSegment(stream, genericOpen, genericClose, 0, typeStart, typeEnd)
+        || GenericArgumentSegmentIsValue(stream, typeStart, typeEnd))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut DeclItem targetItem = new();
+    stack mut DeclarationKind targetKind = DeclarationKind.Unknown;
+    if (!LayoutTryReadLocalFactTargetDeclaration(decls, table, source, stream, typeStart, typeEnd, targetItem, targetKind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (factKind == LayoutStructuralFactKind.TypeLayout)
+    {
+        if (targetKind != DeclarationKind.Struct
+            && targetKind != DeclarationKind.Record
+            && targetKind != DeclarationKind.Enum)
+        {
+            return AppendLayoutQueryInvalid(diags, factToken);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (factKind == LayoutStructuralFactKind.FieldLayout)
+    {
+        if (targetKind != DeclarationKind.Struct && targetKind != DeclarationKind.Record)
+        {
+            return AppendLayoutQueryInvalid(diags, factToken);
+        }
+
+        stack mut u32[0 max] indexStart = 0;
+        stack mut u32[0 max] indexEnd = 0;
+        if (!LayoutFactArgumentSegment(stream, genericOpen, genericClose, 1, indexStart, indexEnd))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u32[0 max] fieldCount = 0;
+        if (!LayoutTryFieldCount(targetItem, stream, fieldCount))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (LayoutFactIndexArgumentIsNegativeLiteral(stream, indexStart, indexEnd))
+        {
+            return AppendLayoutQueryInvalid(diags, factToken);
+        }
+
+        stack mut u32[0 max] indexValue = 0;
+        if (LayoutTryParseFactIndexArgument(source, stream, indexStart, indexEnd, indexValue)
+            && indexValue >= fieldCount)
+        {
+            return AppendLayoutQueryInvalid(diags, factToken);
+        }
+    }
+
+    if (factKind == LayoutStructuralFactKind.EnumTagLayout
+        || factKind == LayoutStructuralFactKind.EnumVariantLayout
+        || factKind == LayoutStructuralFactKind.EnumPayloadLayout)
+    {
+        if (targetKind != DeclarationKind.Enum)
+        {
+            return AppendLayoutQueryInvalid(diags, factToken);
+        }
+
+        if (factKind == LayoutStructuralFactKind.EnumTagLayout)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u32[0 max] variantStart = 0;
+        stack mut u32[0 max] variantEnd = 0;
+        if (!LayoutFactArgumentSegment(stream, genericOpen, genericClose, 1, variantStart, variantEnd))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (LayoutFactIndexArgumentIsNegativeLiteral(stream, variantStart, variantEnd))
+        {
+            return AppendLayoutQueryInvalid(diags, factToken);
+        }
+
+        stack mut u32[0 max] variantCount = 0;
+        if (!LayoutTryEnumVariantCount(targetItem, stream, variantCount))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut bool variantIndexIsConcrete = false;
+        stack mut bool variantIndexInRange = false;
+        stack mut u32[0 max] variantIndex = 0;
+        if (LayoutTryParseFactIndexArgument(source, stream, variantStart, variantEnd, variantIndex))
+        {
+            variantIndexIsConcrete = true;
+            variantIndexInRange = variantIndex < variantCount;
+            if (!variantIndexInRange)
+            {
+                return AppendLayoutQueryInvalid(diags, factToken);
+            }
+        }
+
+        if (factKind == LayoutStructuralFactKind.EnumPayloadLayout)
+        {
+            stack mut u32[0 max] payloadStart = 0;
+            stack mut u32[0 max] payloadEnd = 0;
+            if (!LayoutFactArgumentSegment(stream, genericOpen, genericClose, 2, payloadStart, payloadEnd))
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (LayoutFactIndexArgumentIsNegativeLiteral(stream, payloadStart, payloadEnd))
+            {
+                return AppendLayoutQueryInvalid(diags, factToken);
+            }
+
+            stack mut u32[0 max] payloadIndex = 0;
+            if (variantIndexIsConcrete
+                && variantIndexInRange
+                && LayoutTryParseFactIndexArgument(source, stream, payloadStart, payloadEnd, payloadIndex))
+            {
+                stack mut u32[0 max] payloadCount = 0;
+                if (LayoutTryEnumVariantPayloadCount(targetItem, stream, variantIndex, payloadCount)
+                    && payloadIndex >= payloadCount)
+                {
+                    return AppendLayoutQueryInvalid(diags, factToken);
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal finite law u32[0 max] LayoutFunctionBodyOpenToken(borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    stack mut u32[0 max] scan = fnKeyword;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.LBrace)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.Semi)
+        {
+            return 0;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus CollectConcreteLayoutQueryDiagnostics(
+    u32[0 max] fnKeyword,
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+    where overlap(source, stream)
+{
+    stack u32[0 max] bodyOpen = LayoutFunctionBodyOpenToken(stream, fnKeyword);
+    if (bodyOpen == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyEnd = LayoutSkipDeclarationBody(stream, fnKeyword);
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < bodyEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier)
+        {
+            stack LayoutStructuralFactKind factKind = LayoutStructuralFactKindAt(source, stream, scan);
+            if (factKind != LayoutStructuralFactKind.None
+                && LayoutStructuralFactHasSystemCompilerPrefix(source, stream, scan))
+            {
+                stack mut u32[0 max] genericOpen = 0;
+                stack mut u32[0 max] genericClose = 0;
+                if (LayoutTryStructuralFactGenericSegment(stream, scan, genericOpen, genericClose))
+                {
+                    switch (ValidateLayoutStructuralFactCall(decls, table, source, stream, scan, factKind, genericOpen, genericClose, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var validateError):
+                            return System.Memory.MemoryStatus.Err(validateError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+
+                    scan = genericClose;
+                }
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectLayoutControlFieldDiagnostics(
+    borrow DeclarationList decls,
+    DeclItem item,
+    LayoutControlKind layoutKind,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+    where overlap(source, stream)
+{
+    stack mut u32[0 max] index = item.KeywordToken;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile
+        && stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        index = (u32[0 max])(index + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    index = (u32[0 max])(index + 1);
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.RBrace)
+        {
+            break;
+        }
+
+        stack u32[0 max] memberStart = index;
+        stack u32[0 max] memberEnd = LayoutSkipDeclarationBody(stream, memberStart);
+        stack u32[0 max] cursor = LayoutSkipMemberModifiers(stream, memberStart);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])memberEnd) == TokenKind.Semi
+            && !LayoutTokenStartsMemberDeclaration(stream.KindAt((u64[0 2 ** 63 - 1])cursor)))
+        {
+            stack u32[0 max] nameToken = LayoutBoundedLastIdentifier(stream, cursor, memberEnd);
+            if (nameToken != 0)
+            {
+                stack u32[0 max] typeHead = LayoutBoundedLastIdentifier(stream, cursor, nameToken);
+                stack u32[0 max] typePrimary = LayoutBoundedFirstTypeStart(stream, cursor, nameToken);
+                stack mut u32[0 max] fieldOffsetCount = 0;
+                stack mut u32[0 max] fieldOffsetToken = 0;
+                stack mut u32[0 max] scan = memberStart;
+                while willexit (scan < cursor && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+                {
+                    stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+                    if (attrEnd <= scan)
+                    {
+                        break;
+                    }
+
+                    stack u32[0 max] offsetHere = LayoutAttributeNameCount(source, stream, scan, attrEnd, "FieldOffset");
+                    if (offsetHere > 0)
+                    {
+                        fieldOffsetCount = (u32[0 max])(fieldOffsetCount + offsetHere);
+                        fieldOffsetToken = LayoutAttributeNameToken(source, stream, scan, attrEnd, "FieldOffset");
+                        if (fieldOffsetCount > 1)
+                        {
+                            switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, fieldOffsetToken))
+                            {
+                                case System.Memory.MemoryStatus.Err(var duplicateOffsetError):
+                                    return System.Memory.MemoryStatus.Err(duplicateOffsetError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+
+                        if (!LayoutAttributeHasNonNegativeIntegerLiteral(source, stream, LayoutAttributeArgumentToken(source, stream, scan, attrEnd, "FieldOffset")))
+                        {
+                            switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, fieldOffsetToken))
+                            {
+                                case System.Memory.MemoryStatus.Err(var invalidOffsetError):
+                                    return System.Memory.MemoryStatus.Err(invalidOffsetError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+
+                    scan = (u32[0 max])(attrEnd + 1);
+                }
+
+                if (layoutKind == LayoutControlKind.Explicit && fieldOffsetCount == 0)
+                {
+                    switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, nameToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var missingOffsetError):
+                            return System.Memory.MemoryStatus.Err(missingOffsetError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+                else if (layoutKind != LayoutControlKind.Explicit && fieldOffsetCount > 0)
+                {
+                    switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, fieldOffsetToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var misplacedOffsetError):
+                            return System.Memory.MemoryStatus.Err(misplacedOffsetError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                if (fieldOffsetCount > 0 && LayoutFieldDeclaratorCount(stream, cursor, memberEnd) != 1)
+                {
+                    switch (diags.Append(BindDiagnosticCode.LayoutControlInvalid, fieldOffsetToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var multiOffsetError):
+                            return System.Memory.MemoryStatus.Err(multiOffsetError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                if (layoutKind != LayoutControlKind.Auto
+                    && typePrimary != 0
+                    && !LayoutTypeSpanIsFfiSafe(decls, source, stream, cursor, nameToken, typeHead, typePrimary))
+                {
+                    switch (diags.Append(BindDiagnosticCode.FfiLayoutUnsafeField, typePrimary))
+                    {
+                        case System.Memory.MemoryStatus.Err(var unsafeFieldError):
+                            return System.Memory.MemoryStatus.Err(unsafeFieldError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+
+        index = (u32[0 max])(memberEnd + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectLayoutControlDiagnostics(
+    borrow DeclarationList decls,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+    where overlap(source, stream)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+        {
+            stack mut LayoutControlKind layoutKind = LayoutControlKind.Auto;
+            switch (CollectLayoutDeclarationAttributeDiagnostics(item, source, stream, diags, layoutKind))
+            {
+                case System.Memory.MemoryStatus.Err(var attributeError):
+                    return System.Memory.MemoryStatus.Err(attributeError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectLayoutControlFieldDiagnostics(decls, item, layoutKind, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var fieldError):
+                    return System.Memory.MemoryStatus.Err(fieldError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

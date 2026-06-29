@@ -504,6 +504,30 @@ fn bool SemicolonTerminatedDeclarationsParse()
 }
 
 [Fact]
+fn bool AggregateInitializerGlobalDoesNotStopDeclarationList()
+{
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsOk("const f64[4] Weights = { 1.0, 0.5, 0.25, 0.125 };\nstatic bool Ready = false;\nstatic mut i32[min max] Counter = 0;\nfn void Done() { }\n", decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 4)
+    {
+        return false;
+    }
+
+    stack DeclItem weights = decls.ItemAt(0);
+    stack DeclItem ready = decls.ItemAt(1);
+    stack DeclItem counter = decls.ItemAt(2);
+    stack DeclItem done = decls.ItemAt(3);
+    return weights.Kind == DeclarationKind.Const
+        && ready.Kind == DeclarationKind.Static
+        && counter.Kind == DeclarationKind.Static
+        && done.Kind == DeclarationKind.Function;
+}
+
+[Fact]
 fn bool DeclarationNamesAreExtracted()
 {
     stack ascii source = "public struct Widget { }\nfn i32 compute() { }\nconst Limit = 5;\n";

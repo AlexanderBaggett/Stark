@@ -1,0 +1,220 @@
+import Compiler.Lexing
+import Compiler.Parsing
+module Compiler.Typing.ExpressionClassification
+
+// Stage 1 self-hosted type checker expression-shape helpers. This slice types
+// expressions from literals and operators alone, enough to flag definite
+// non-boolean `if`/`while` conditions while leaving symbol-dependent nodes as
+// `Unknown` for later typed-expression passes.
+
+// The coarse type of an expression. `Unknown` covers anything whose type needs
+// symbol/declaration information not yet available (identifiers, calls, members,
+// indexing, assignments, and error nodes).
+public enum ExprType
+{
+    Int,
+    Float,
+    Bool,
+    Text,
+    Null,
+    Unknown,
+}
+
+// Maps a type-primary token (a built-in type token or a user-type identifier) to
+// its coarse `ExprType`: integer types -> Int, float types -> Float, `bool` ->
+// Bool, the `ascii`/`unicode` text types -> Text, and everything else (`void`, a
+// user-type identifier) -> Unknown.
+public fn ExprType MapTypeToken(borrow TokenStream stream, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.IntegerType)
+    {
+        return ExprType.Int;
+    }
+
+    if (kind == TokenKind.FloatType)
+    {
+        return ExprType.Float;
+    }
+
+    if (kind == TokenKind.Bool)
+    {
+        return ExprType.Bool;
+    }
+
+    if (kind == TokenKind.AsciiView
+        || kind == TokenKind.AsciiOwned
+        || kind == TokenKind.UnicodeView
+        || kind == TokenKind.UnicodeOwned)
+    {
+        return ExprType.Text;
+    }
+
+    return ExprType.Unknown;
+}
+
+// Classifies the type of expression node `node` in `body`'s shared expression
+// tree. Literals type by their form; comparison/logical operators type as `Bool`;
+// arithmetic types as its left operand's type (Float if that operand is Float,
+// otherwise Int); a `!` unary types as `Bool`; explicit conversions type as
+// their target; a ternary types as its then-branch; everything else (identifiers,
+// calls, members, indexing, assignment) is `Unknown`.
+public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+{
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.IntLiteral)
+    {
+        return ExprType.Int;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.FloatLiteral)
+    {
+        return ExprType.Float;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.StringLiteral || kind == Compiler.Parsing.ExprKind.CharacterLiteral)
+    {
+        return ExprType.Text;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.BoolLiteral)
+    {
+        return ExprType.Bool;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.NullLiteral)
+    {
+        return ExprType.Null;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Binary)
+    {
+        stack u32[0 max] opToken = body.ExprTokenAt(node);
+        stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])opToken);
+
+        // A shift (`<<`/`>>`) lexes as two adjacent `Lt`/`Gt` tokens, so its
+        // Binary node is anchored on a `Lt`/`Gt` that would otherwise look
+        // relational. Detect the adjacent pair so the shift is typed as an
+        // integer (arithmetic), not as a boolean comparison.
+        stack mut bool isShift = false;
+        if (op == TokenKind.Lt && stream.KindAt((u64[0 2 ** 63 - 1])(opToken + 1)) == TokenKind.Lt)
+        {
+            isShift = true;
+        }
+        else if (op == TokenKind.Gt && stream.KindAt((u64[0 2 ** 63 - 1])(opToken + 1)) == TokenKind.Gt)
+        {
+            isShift = true;
+        }
+
+        stack mut bool isBooleanOperator = false;
+        switch (op)
+        {
+            case TokenKind.EqEq:
+                isBooleanOperator = true;
+            case TokenKind.Neq:
+                isBooleanOperator = true;
+            case TokenKind.Lt:
+                isBooleanOperator = true;
+            case TokenKind.Gt:
+                isBooleanOperator = true;
+            case TokenKind.Lte:
+                isBooleanOperator = true;
+            case TokenKind.Gte:
+                isBooleanOperator = true;
+            case TokenKind.AndAnd:
+                isBooleanOperator = true;
+            case TokenKind.OrOr:
+                isBooleanOperator = true;
+            default:
+        }
+
+        if (!isShift && isBooleanOperator)
+        {
+            return ExprType.Bool;
+        }
+
+        // Arithmetic / bitwise / shift: result follows the left operand; an
+        // unknown operand keeps the result `Int` (the common arithmetic case).
+        stack ExprType left = ClassifyExprType(stream, body, body.ExprLeftAt(node));
+        if (left == ExprType.Float)
+        {
+            return ExprType.Float;
+        }
+
+        return ExprType.Int;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Unary)
+    {
+        stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
+        if (op == TokenKind.Bang)
+        {
+            return ExprType.Bool;
+        }
+
+        return ClassifyExprType(stream, body, body.ExprLeftAt(node));
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return MapTypeToken(stream, body.ExprLeftAt(node));
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conditional)
+    {
+        // `cond ? then : else` — the value type is the then-branch's type.
+        return ClassifyExprType(stream, body, body.ExprRightAt(node));
+    }
+
+    return ExprType.Unknown;
+}
+
+// Whether `type` is a definite non-boolean type (a known mismatch where a boolean
+// is required). `Unknown` is excluded so the conservative checker never flags an
+// expression whose type it cannot yet determine.
+public finite law bool IsDefiniteNonBoolean(ExprType type)
+{
+    switch (type)
+    {
+        case ExprType.Int:
+            return true;
+        case ExprType.Float:
+            return true;
+        case ExprType.Text:
+            return true;
+        case ExprType.Null:
+            return true;
+        case ExprType.Bool:
+            return false;
+        case ExprType.Unknown:
+            return false;
+    }
+}
+
+// Counts the `if`/`while` conditions in `body` whose type is a definite
+// non-boolean (e.g. `if (1 + 2)` / `while (3.0)`) — a basic type error. A
+// condition whose type is `Unknown` (e.g. an identifier `if (flag)`) is not
+// counted, since its type is not yet known.
+public fn u32[0 max] CountNonBooleanConditions(borrow TokenStream stream, borrow StatementList body)
+{
+    stack mut u32[0 max] errors = 0;
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.If || item.Kind == StatementKind.While)
+        {
+            stack u32[0 max] root = body.ExprRootAt(index);
+            if (root != 0)
+            {
+                stack ExprType conditionType = ClassifyExprType(stream, body, root);
+                if (IsDefiniteNonBoolean(conditionType))
+                {
+                    errors = (u32[0 max])(errors + 1);
+                }
+            }
+        }
+    }
+
+    return errors;
+}

@@ -1,0 +1,133 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.ExpressionTypeHelpers
+import System.Memory
+module Compiler.Binding.ExpressionValidation
+
+// Emits a `NonBooleanCondition` diagnostic (anchored at the condition's root
+// token) for each `if`/`while`/`for` whose condition has a definite non-boolean
+// type. A `for`'s condition is its statement expression (the middle clause), so
+// references to its header-bound loop variable resolve in the loop scope.
+internal fn System.Memory.MemoryStatus CollectNonBooleanConditions(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.If || item.Kind == StatementKind.While || item.Kind == StatementKind.For)
+        {
+            stack u32[0 max] root = body.ExprRootAt(index);
+            if (root != 0)
+            {
+                stack ExprType conditionType = TypedNodeType(table, source, refs, scope, stream, body, root);
+                if (IsDefiniteNonBoolean(conditionType))
+                {
+                    switch (diags.Append(BindDiagnosticCode.NonBooleanCondition, body.ExprTokenAt(root)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var condError):
+                            return System.Memory.MemoryStatus.Err(condError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits a `NonBooleanOperand` diagnostic for each operand of a logical operator
+// (`&&`, `||`, `!`) whose type is a definite non-boolean — the host requires
+// boolean operands for these — and a `NonBooleanCondition` for a ternary
+// `cond ? a : b` whose `cond` is a definite non-boolean (the host requires a
+// boolean conditional condition). Walks every node of the body's shared
+// expression tree; each diagnostic is anchored at the offending sub-expression.
+internal fn System.Memory.MemoryStatus CollectExpressionTypeErrors(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nodeCount; index += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])(index + 1);
+        stack ExprKind nodeKind = body.ExprKindAt(node);
+        if (nodeKind == Compiler.Parsing.ExprKind.Binary)
+        {
+            stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
+            if (op == TokenKind.AndAnd || op == TokenKind.OrOr)
+            {
+                switch (CheckBooleanOperand(table, source, refs, scope, stream, body, body.ExprLeftAt(node), diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var leftError):
+                        return System.Memory.MemoryStatus.Err(leftError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (CheckBooleanOperand(table, source, refs, scope, stream, body, body.ExprRightAt(node), diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var rightError):
+                        return System.Memory.MemoryStatus.Err(rightError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else if (nodeKind == Compiler.Parsing.ExprKind.Unary)
+        {
+            stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
+            if (op == TokenKind.Bang)
+            {
+                switch (CheckBooleanOperand(table, source, refs, scope, stream, body, body.ExprLeftAt(node), diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var unaryError):
+                        return System.Memory.MemoryStatus.Err(unaryError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else if (nodeKind == Compiler.Parsing.ExprKind.Conditional)
+        {
+            stack u32[0 max] conditionNode = body.ExprLeftAt(node);
+            if (conditionNode != 0)
+            {
+                stack ExprType conditionType = TypedNodeType(table, source, refs, scope, stream, body, conditionNode);
+                if (IsDefiniteNonBoolean(conditionType))
+                {
+                    switch (diags.Append(BindDiagnosticCode.NonBooleanCondition, body.ExprTokenAt(conditionNode)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var ternaryError):
+                            return System.Memory.MemoryStatus.Err(ternaryError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits a `NonBooleanOperand` diagnostic when `operand`'s type is a definite
+// non-boolean (anchored at the operand's token).
+internal fn System.Memory.MemoryStatus CheckBooleanOperand(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] operand, mut borrow BindDiagnosticList diags)
+{
+    if (operand == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack ExprType operandType = TypedNodeType(table, source, refs, scope, stream, body, operand);
+    if (IsDefiniteNonBoolean(operandType))
+    {
+        switch (diags.Append(BindDiagnosticCode.NonBooleanOperand, body.ExprTokenAt(operand)))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

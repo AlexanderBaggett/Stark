@@ -1,0 +1,456 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.Copyability
+import Compiler.Binding.OwnershipHelpers
+import System.Memory
+module Compiler.Binding.OwnershipMove
+
+internal struct StraightLineMovedTargetTable
+{
+    internal dynamic u32[0 max] Targets;
+    internal dynamic u32[0 max] MoveTokens;
+
+    StraightLineMovedTargetTable()
+    {
+        self.Targets = new();
+        self.MoveTokens = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow StraightLineMovedTargetTable self)
+    {
+        return self.Targets.Length;
+    }
+
+    internal law u32[0 max] TargetAt(borrow StraightLineMovedTargetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] target = 0;
+        if (index < self.Targets.Length)
+        {
+            target = self.Targets[index];
+        }
+
+        return target;
+    }
+
+    internal law u32[0 max] MoveTokenAt(borrow StraightLineMovedTargetTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.MoveTokens.Length)
+        {
+            token = self.MoveTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn u32[0 max] IndexPlusOneOf(borrow StraightLineMovedTargetTable self, u32[0 max] target)
+    {
+        if (target == 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        stack mut u64[0 2 ** 63 - 1] remaining = count;
+        while willexit (remaining > 0)
+        {
+            remaining = (u64[0 2 ** 63 - 1])(remaining - 1);
+            stack u64[0 2 ** 63 - 1] index = remaining;
+            if (self.TargetAt(index) == target)
+            {
+                if (self.MoveTokenAt(index) == 0)
+                {
+                    return 0;
+                }
+
+                return (u32[0 max])(index + 1);
+            }
+        }
+
+        return 0;
+    }
+
+    internal fn bool Contains(borrow StraightLineMovedTargetTable self, u32[0 max] target)
+    {
+        return self.IndexPlusOneOf(target) != 0;
+    }
+
+    internal fn System.Memory.MemoryStatus MarkMoved(mut borrow StraightLineMovedTargetTable self, u32[0 max] target, u32[0 max] moveToken)
+    {
+        if (target == 0 || self.Contains(target))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.Targets.TryReserve(1)
+            || !self.MoveTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Targets[self.Targets.Length] = target;
+        init self.MoveTokens[self.MoveTokens.Length] = moveToken;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus MarkAvailable(mut borrow StraightLineMovedTargetTable self, u32[0 max] target)
+    {
+        if (target == 0 || !self.Contains(target))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.Targets.TryReserve(1)
+            || !self.MoveTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Targets[self.Targets.Length] = target;
+        init self.MoveTokens[self.MoveTokens.Length] = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn bool ExpressionNodeIsDirectSimpleAssignmentTarget(borrow StatementList body, borrow TokenStream stream, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] candidate = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(candidate) == Compiler.Parsing.ExprKind.Assign
+            && body.ExprLeftAt(candidate) == node
+            && stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(candidate)) == TokenKind.Assign)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectStraightLineMovedTargetReadDiagnostics(
+    borrow ReferenceTable refs,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] statementPlusOne,
+    mut borrow StraightLineMovedTargetTable movedTargets,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] refIndex = 0; refIndex < refCount; refIndex += 1)
+    {
+        stack ReferenceKind kind = refs.KindAt(refIndex);
+        if ((kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+            && StatementIndexPlusOneForExprNode(body, refs.NodeAt(refIndex)) == statementPlusOne
+            && !ExpressionNodeIsDirectSimpleAssignmentTarget(body, stream, refs.NodeAt(refIndex)))
+        {
+            stack u32[0 max] target = refs.TargetAt(refIndex);
+            stack u32[0 max] movedIndexPlusOne = movedTargets.IndexPlusOneOf(target);
+            if (movedIndexPlusOne != 0)
+            {
+                switch (diags.Append(BindDiagnosticCode.MoveAfterMove, refs.NameTokenAt(refIndex)))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                switch (movedTargets.MarkAvailable(target))
+                {
+                    case System.Memory.MemoryStatus.Err(var availableError):
+                        return System.Memory.MemoryStatus.Err(availableError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus MarkStraightLineSimpleAssignmentsAvailable(
+    borrow ReferenceTable refs,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] statementPlusOne,
+    mut borrow StraightLineMovedTargetTable movedTargets)
+{
+    if (statementPlusOne == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(statementPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+    stack mut u64[0 2 ** 63 - 1] high = body.ExprNodeCount();
+    if ((u64[0 2 ** 63 - 1])(statement + 1) < body.Count())
+    {
+        high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])(low + 1); nodeIndex <= high; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Assign
+            && stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node)) == TokenKind.Assign)
+        {
+            stack u32[0 max] targetNode = body.ExprLeftAt(node);
+            stack mut u32[0 max] target = 0;
+            if (targetNode != 0
+                && body.ExprKindAt(targetNode) == Compiler.Parsing.ExprKind.Identifier
+                && TryScopeTargetForIdentifierNode(refs, body, targetNode, target))
+            {
+                switch (movedTargets.MarkAvailable(target))
+                {
+                    case System.Memory.MemoryStatus.Err(var availableError):
+                        return System.Memory.MemoryStatus.Err(availableError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus MarkStraightLineSourceMoveIfOwned(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    u32[0 max] sourceNode,
+    mut borrow StraightLineMovedTargetTable movedTargets)
+{
+    stack mut u32[0 max] sourceTarget = 0;
+    if (TryScopeTargetForIdentifierNode(refs, body, sourceNode, sourceTarget)
+        && !FunctionScopeSymbolTypeFormsSafeBorrow(stream, scope, sourceTarget)
+        && !FunctionScopeSymbolTypeIsCopyable(decls, table, source, stream, facts, scope, sourceTarget))
+    {
+        switch (movedTargets.MarkMoved(sourceTarget, body.ExprTokenAt(sourceNode)))
+        {
+            case System.Memory.MemoryStatus.Err(var moveError):
+                return System.Memory.MemoryStatus.Err(moveError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus MarkStraightLineAssignmentAndLocalMoves(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    u32[0 max] statementPlusOne,
+    mut borrow StraightLineMovedTargetTable movedTargets)
+{
+    if (statementPlusOne == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(statementPlusOne - 1);
+    stack StatementItem item = body.ItemAt(statement);
+    if (item.Kind == StatementKind.Local
+        && !TypeSpanFormsSafeBorrow(stream, item.TypeStartToken, item.TypeEndToken))
+    {
+        switch (MarkStraightLineSourceMoveIfOwned(
+            decls,
+            table,
+            source,
+            refs,
+            scope,
+            stream,
+            body,
+            facts,
+            body.ExprRootAt(statement),
+            movedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var localMoveError):
+                return System.Memory.MemoryStatus.Err(localMoveError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+    stack mut u64[0 2 ** 63 - 1] high = body.ExprNodeCount();
+    if ((u64[0 2 ** 63 - 1])(statement + 1) < body.Count())
+    {
+        high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])(low + 1); nodeIndex <= high; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Assign
+            && stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node)) == TokenKind.Assign)
+        {
+            stack u32[0 max] targetNode = body.ExprLeftAt(node);
+            stack mut u32[0 max] target = 0;
+            if (targetNode != 0
+                && body.ExprKindAt(targetNode) == Compiler.Parsing.ExprKind.Identifier
+                && TryScopeTargetForIdentifierNode(refs, body, targetNode, target)
+                && !FunctionScopeSymbolTypeFormsSafeBorrow(stream, scope, target))
+            {
+                switch (MarkStraightLineSourceMoveIfOwned(
+                    decls,
+                    table,
+                    source,
+                    refs,
+                    scope,
+                    stream,
+                    body,
+                    facts,
+                    body.ExprRightAt(node),
+                    movedTargets))
+                {
+                    case System.Memory.MemoryStatus.Err(var assignmentMoveError):
+                        return System.Memory.MemoryStatus.Err(assignmentMoveError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus MarkStraightLineDirectCallMoves(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    u32[0 max] statementPlusOne,
+    mut borrow StraightLineMovedTargetTable movedTargets)
+{
+    if (statementPlusOne == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] statement = (u64[0 2 ** 63 - 1])(statementPlusOne - 1);
+    stack u64[0 2 ** 63 - 1] low = (u64[0 2 ** 63 - 1])body.ExprStartAt(statement);
+    stack mut u64[0 2 ** 63 - 1] high = body.ExprNodeCount();
+    if ((u64[0 2 ** 63 - 1])(statement + 1) < body.Count())
+    {
+        high = (u64[0 2 ** 63 - 1])body.ExprStartAt((u64[0 2 ** 63 - 1])(statement + 1));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = (u64[0 2 ** 63 - 1])(low + 1); nodeIndex <= high; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call)
+        {
+            stack u32[0 max] calleeNode = body.ExprLeftAt(node);
+            stack mut u32[0 max] targetPlusOne = 0;
+            if (TryDirectFunctionCallTarget(table, source, refs, stream, body, calleeNode, targetPlusOne))
+            {
+                stack mut FunctionSignature callee = new();
+                if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+                {
+                    stack mut u32[0 max] argLimit = body.ExprCallArgCountAt(node);
+                    stack u32[0 max] paramCount = (u32[0 max])callee.ParamCount();
+                    if (argLimit > paramCount)
+                    {
+                        argLimit = paramCount;
+                    }
+
+                    for willexit (stack mut u32[0 max] arg = 0; arg < argLimit; arg = (u32[0 max])(arg + 1))
+                    {
+                        stack u32[0 max] argNode = body.ExprCallArgAt(node, arg);
+                        stack mut u32[0 max] argTarget = 0;
+                        if (TryScopeTargetForIdentifierNode(refs, body, argNode, argTarget)
+                            && !TypeSpanFormsSafeBorrow(
+                                stream,
+                                callee.ParamTypeStartTokenAt((u64[0 2 ** 63 - 1])arg),
+                                callee.ParamTypeEndTokenAt((u64[0 2 ** 63 - 1])arg))
+                            && !FunctionScopeSymbolTypeIsCopyable(decls, table, source, stream, facts, scope, argTarget))
+                        {
+                            switch (movedTargets.MarkMoved(argTarget, body.ExprTokenAt(argNode)))
+                            {
+                                case System.Memory.MemoryStatus.Err(var moveError):
+                                    return System.Memory.MemoryStatus.Err(moveError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectStraightLineMoveAfterMoveDiagnostics(
+    borrow DeclarationList decls,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow CopyabilityFactTable facts,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut StraightLineMovedTargetTable movedTargets = new();
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack u32[0 max] statementPlusOne = (u32[0 max])(statement + 1);
+        switch (CollectStraightLineMovedTargetReadDiagnostics(refs, stream, body, statementPlusOne, movedTargets, diags))
+        {
+            case System.Memory.MemoryStatus.Err(var readError):
+                return System.Memory.MemoryStatus.Err(readError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (MarkStraightLineSimpleAssignmentsAvailable(refs, stream, body, statementPlusOne, movedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var assignmentError):
+                return System.Memory.MemoryStatus.Err(assignmentError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (MarkStraightLineAssignmentAndLocalMoves(decls, table, source, refs, scope, stream, body, facts, statementPlusOne, movedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var assignmentMoveError):
+                return System.Memory.MemoryStatus.Err(assignmentMoveError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (MarkStraightLineDirectCallMoves(decls, table, source, refs, scope, stream, body, facts, statementPlusOne, movedTargets))
+        {
+            case System.Memory.MemoryStatus.Err(var moveError):
+                return System.Memory.MemoryStatus.Err(moveError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

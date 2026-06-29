@@ -1,0 +1,1019 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.GenericUseSites
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import System.Memory
+module Compiler.Binding.TypedGenerics
+
+public enum TypedGenericParameterKind
+{
+    Type,
+    ComptimeValue,
+    Unknown,
+}
+
+public enum TypedGenericOwnerKind
+{
+    Declaration,
+    MemberMethod,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagComptimeValue()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagHasType()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagIntegerType()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagFloatType()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagBoolType()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagTextType()
+{
+    return 32;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagNamedType()
+{
+    return 64;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagHasRangeBounds()
+{
+    return 128;
+}
+
+internal inline finite law u32[0 max] TypedGenericFlagHasConstraints()
+{
+    return 256;
+}
+
+public struct TypedGenericParameterSymbolTable
+{
+    internal dynamic u32[0 max] OwnerDeclarationSymbolIndices;
+    internal dynamic u32[0 max] OwnerMemberSymbolIndices;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic TypedGenericOwnerKind OwnerKinds;
+    internal dynamic TypedGenericParameterKind Kinds;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] RangeStartTokens;
+    internal dynamic u32[0 max] RangeEndTokens;
+    internal dynamic u32[0 max] ParamOrdinals;
+    internal dynamic u32[0 max] TypeOrdinals;
+    internal dynamic u32[0 max] ComptimeOrdinals;
+    internal dynamic u32[0 max] ConstraintCounts;
+    internal dynamic u32[0 max] Flags;
+
+    TypedGenericParameterSymbolTable()
+    {
+        self.OwnerDeclarationSymbolIndices = new();
+        self.OwnerMemberSymbolIndices = new();
+        self.OwnerNameTokens = new();
+        self.OwnerKinds = new();
+        self.Kinds = new();
+        self.NameTokens = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.RangeStartTokens = new();
+        self.RangeEndTokens = new();
+        self.ParamOrdinals = new();
+        self.TypeOrdinals = new();
+        self.ComptimeOrdinals = new();
+        self.ConstraintCounts = new();
+        self.Flags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedGenericParameterSymbolTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] OwnerDeclarationSymbolIndexPlusOneAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationSymbolIndices.Length)
+        {
+            value = self.OwnerDeclarationSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerMemberSymbolIndexPlusOneAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerMemberSymbolIndices.Length)
+        {
+            value = self.OwnerMemberSymbolIndices[index];
+        }
+
+        return value;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedGenericOwnerKind OwnerKindAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedGenericOwnerKind kind = TypedGenericOwnerKind.Unknown;
+        if (index < self.OwnerKinds.Length)
+        {
+            kind = self.OwnerKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedGenericParameterKind KindAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedGenericParameterKind kind = TypedGenericParameterKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeStartTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeStartTokens.Length)
+        {
+            token = self.RangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeEndTokenAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeEndTokens.Length)
+        {
+            token = self.RangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamOrdinalAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.ParamOrdinals.Length)
+        {
+            ordinal = self.ParamOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law u32[0 max] TypeOrdinalAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.TypeOrdinals.Length)
+        {
+            ordinal = self.TypeOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law u32[0 max] ComptimeOrdinalAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.ComptimeOrdinals.Length)
+        {
+            ordinal = self.ComptimeOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law u32[0 max] ConstraintCountAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ConstraintCounts.Length)
+        {
+            count = self.ConstraintCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] FlagsAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.Flags.Length)
+        {
+            flags = self.Flags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool IsComptimeValueAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagComptimeValue());
+    }
+
+    public law bool HasTypeAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagHasType());
+    }
+
+    public law bool IsIntegerTypeAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagIntegerType());
+    }
+
+    public law bool IsFloatTypeAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagFloatType());
+    }
+
+    public law bool IsBoolTypeAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagBoolType());
+    }
+
+    public law bool IsTextTypeAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagTextType());
+    }
+
+    public law bool IsNamedTypeAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagNamedType());
+    }
+
+    public law bool HasRangeBoundsAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagHasRangeBounds());
+    }
+
+    public law bool HasConstraintsAt(borrow TypedGenericParameterSymbolTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedDeclFlagPresent(self.FlagsAt(index), TypedGenericFlagHasConstraints());
+    }
+
+    public law u32[0 max] TypeParameterCount(borrow TypedGenericParameterSymbolTable self)
+    {
+        return self.CountOfKind(TypedGenericParameterKind.Type);
+    }
+
+    public law u32[0 max] ComptimeValueParameterCount(borrow TypedGenericParameterSymbolTable self)
+    {
+        return self.CountOfKind(TypedGenericParameterKind.ComptimeValue);
+    }
+
+    internal law u32[0 max] CountOfKind(borrow TypedGenericParameterSymbolTable self, TypedGenericParameterKind kind)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.KindAt(index) == kind)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedGenericParameterSymbolTable self,
+        u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+        u32[0 max] ownerMemberSymbolIndexPlusOne,
+        u32[0 max] ownerNameToken,
+        TypedGenericOwnerKind ownerKind,
+        TypedGenericParameterKind kind,
+        u32[0 max] nameToken,
+        u32[0 max] startToken,
+        u32[0 max] endToken,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken,
+        u32[0 max] rangeStartToken,
+        u32[0 max] rangeEndToken,
+        u32[0 max] paramOrdinal,
+        u32[0 max] typeOrdinal,
+        u32[0 max] comptimeOrdinal,
+        u32[0 max] constraintCount,
+        u32[0 max] flags)
+    {
+        if (!self.OwnerDeclarationSymbolIndices.TryReserve(1)
+            || !self.OwnerMemberSymbolIndices.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.OwnerKinds.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
+            || !self.RangeStartTokens.TryReserve(1)
+            || !self.RangeEndTokens.TryReserve(1)
+            || !self.ParamOrdinals.TryReserve(1)
+            || !self.TypeOrdinals.TryReserve(1)
+            || !self.ComptimeOrdinals.TryReserve(1)
+            || !self.ConstraintCounts.TryReserve(1)
+            || !self.Flags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.OwnerDeclarationSymbolIndices[self.OwnerDeclarationSymbolIndices.Length] = ownerDeclarationSymbolIndexPlusOne;
+        init self.OwnerMemberSymbolIndices[self.OwnerMemberSymbolIndices.Length] = ownerMemberSymbolIndexPlusOne;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.OwnerKinds[self.OwnerKinds.Length] = ownerKind;
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.StartTokens[self.StartTokens.Length] = startToken;
+        init self.EndTokens[self.EndTokens.Length] = endToken;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        init self.RangeStartTokens[self.RangeStartTokens.Length] = rangeStartToken;
+        init self.RangeEndTokens[self.RangeEndTokens.Length] = rangeEndToken;
+        init self.ParamOrdinals[self.ParamOrdinals.Length] = paramOrdinal;
+        init self.TypeOrdinals[self.TypeOrdinals.Length] = typeOrdinal;
+        init self.ComptimeOrdinals[self.ComptimeOrdinals.Length] = comptimeOrdinal;
+        init self.ConstraintCounts[self.ConstraintCounts.Length] = constraintCount;
+        init self.Flags[self.Flags.Length] = flags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law TypedGenericParameterKind TypedGenericParameterKindForSegment(borrow TokenStream stream, u32[0 max] startToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])startToken) == TokenKind.Comptime)
+    {
+        return TypedGenericParameterKind.ComptimeValue;
+    }
+
+    return TypedGenericParameterKind.Type;
+}
+
+internal finite law u32[0 max] TypedGenericLastTopLevelIdentifierInSpan(borrow TokenStream stream, u32[0 max] startToken, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] token = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = startToken;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            token = scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return token;
+}
+
+internal finite law u32[0 max] TypedGenericRangeStartToken(borrow TokenStream stream, u32[0 max] startToken, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut bool sawIntegerType = false;
+    stack mut u32[0 max] scan = startToken;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0)
+        {
+            if (kind == TokenKind.IntegerType)
+            {
+                sawIntegerType = true;
+            }
+            else if (kind == TokenKind.LBrack && sawIntegerType)
+            {
+                return scan;
+            }
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law u32[0 max] TypedGenericWhereTokenForOwner(borrow TokenStream stream, u32[0 max] ownerKeywordToken)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = ownerKeywordToken;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        if (depth == 0 && (kind == TokenKind.LBrace || kind == TokenKind.Semi))
+        {
+            return 0;
+        }
+
+        if (depth == 0 && kind == TokenKind.Where
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.Identifier
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Colon)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedGenericConstraintCountForParameter(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] whereToken,
+    u32[0 max] ownerEndToken,
+    u32[0 max] nameToken)
+{
+    if (whereToken == 0 || nameToken == 0 || ownerEndToken <= whereToken)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] count = 0;
+    stack mut bool currentMatches = false;
+    stack mut u32[0 max] segmentStart = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(whereToken + 1);
+    while willexit (scan <= ownerEndToken)
+    {
+        stack mut bool boundary = false;
+        if (scan >= ownerEndToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (depth == 0 && kind == TokenKind.Identifier
+                && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.Colon)
+            {
+                currentMatches = BindingTokenTextEqualsToken(source, stream, scan, nameToken);
+                segmentStart = (u32[0 max])(scan + 2);
+                scan = (u32[0 max])(scan + 2);
+                continue;
+            }
+
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (currentMatches && segmentStart != 0 && segmentStart < scan)
+            {
+                count = (u32[0 max])(count + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+internal finite law u32[0 max] TypedGenericFlagsForParameter(
+    TypedGenericParameterKind kind,
+    borrow TokenStream stream,
+    u32[0 max] typePrimaryToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] rangeStartToken,
+    u32[0 max] constraintCount)
+{
+    stack mut u32[0 max] flags = 0;
+    if (kind == TypedGenericParameterKind.ComptimeValue)
+    {
+        flags = flags | TypedGenericFlagComptimeValue();
+    }
+
+    if (typeStartToken != 0 && typeStartToken < typeEndToken)
+    {
+        flags = flags | TypedGenericFlagHasType();
+    }
+
+    if (typePrimaryToken != 0)
+    {
+        stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])typePrimaryToken);
+        if (primaryKind == TokenKind.IntegerType)
+        {
+            flags = flags | TypedGenericFlagIntegerType();
+        }
+        else if (primaryKind == TokenKind.FloatType)
+        {
+            flags = flags | TypedGenericFlagFloatType();
+        }
+        else if (primaryKind == TokenKind.Bool)
+        {
+            flags = flags | TypedGenericFlagBoolType();
+        }
+        else if (primaryKind == TokenKind.AsciiView
+            || primaryKind == TokenKind.UnicodeView
+            || primaryKind == TokenKind.AsciiOwned
+            || primaryKind == TokenKind.UnicodeOwned)
+        {
+            flags = flags | TypedGenericFlagTextType();
+        }
+    }
+
+    if (typeHeadToken != 0)
+    {
+        flags = flags | TypedGenericFlagNamedType();
+    }
+
+    if (rangeStartToken != 0)
+    {
+        flags = flags | TypedGenericFlagHasRangeBounds();
+    }
+
+    if (constraintCount > 0)
+    {
+        flags = flags | TypedGenericFlagHasConstraints();
+    }
+
+    return flags;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedGenericParameterFromSegment(
+    mut borrow TypedGenericParameterSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    TypedGenericOwnerKind ownerKind,
+    u32[0 max] ownerWhereToken,
+    u32[0 max] ownerEndToken,
+    u32[0 max] segmentStartToken,
+    u32[0 max] segmentEndTokenExclusive,
+    u32[0 max] paramOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] comptimeOrdinal,
+    out TypedGenericParameterKind appendedKind)
+{
+    appendedKind = TypedGenericParameterKind.Unknown;
+    if (segmentStartToken >= segmentEndTokenExclusive)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack TypedGenericParameterKind kind = TypedGenericParameterKindForSegment(stream, segmentStartToken);
+    stack u32[0 max] nameToken = TypedGenericLastTopLevelIdentifierInSpan(stream, segmentStartToken, segmentEndTokenExclusive);
+    if (nameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] typeStartToken = nameToken;
+    stack mut u32[0 max] typeEndToken = (u32[0 max])(nameToken + 1);
+    stack mut u32[0 max] typePrimaryToken = nameToken;
+    stack mut u32[0 max] typeHeadToken = nameToken;
+    if (kind == TypedGenericParameterKind.ComptimeValue)
+    {
+        typeStartToken = (u32[0 max])(segmentStartToken + 1);
+        typeEndToken = nameToken;
+        typePrimaryToken = FirstTypeTokenInSpan(stream, typeStartToken, typeEndToken);
+        typeHeadToken = LastTypeHeadIdentifierInSpan(stream, typeStartToken, typeEndToken);
+    }
+
+    stack u32[0 max] rangeStartToken = TypedGenericRangeStartToken(stream, typeStartToken, typeEndToken);
+    stack mut u32[0 max] rangeEndToken = 0;
+    if (rangeStartToken != 0)
+    {
+        rangeEndToken = MatchingMemberCloseToken(stream, rangeStartToken);
+        if (rangeEndToken == rangeStartToken)
+        {
+            rangeEndToken = 0;
+        }
+    }
+
+    stack u32[0 max] constraintCount = TypedGenericConstraintCountForParameter(source, stream, ownerWhereToken, ownerEndToken, nameToken);
+    stack u32[0 max] flags = TypedGenericFlagsForParameter(kind, stream, typePrimaryToken, typeHeadToken, typeStartToken, typeEndToken, rangeStartToken, constraintCount);
+    stack mut u32[0 max] storedTypeOrdinal = 0;
+    stack mut u32[0 max] storedComptimeOrdinal = 0;
+    if (kind == TypedGenericParameterKind.Type)
+    {
+        storedTypeOrdinal = typeOrdinal;
+    }
+    else if (kind == TypedGenericParameterKind.ComptimeValue)
+    {
+        storedComptimeOrdinal = comptimeOrdinal;
+    }
+
+    switch (symbols.Append(
+        ownerDeclarationSymbolIndexPlusOne,
+        ownerMemberSymbolIndexPlusOne,
+        ownerNameToken,
+        ownerKind,
+        kind,
+        nameToken,
+        segmentStartToken,
+        (u32[0 max])(segmentEndTokenExclusive - 1),
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        paramOrdinal,
+        storedTypeOrdinal,
+        storedComptimeOrdinal,
+        constraintCount,
+        flags))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+            appendedKind = kind;
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedGenericParametersFromList(
+    mut borrow TypedGenericParameterSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+    u32[0 max] ownerMemberSymbolIndexPlusOne,
+    u32[0 max] ownerNameToken,
+    TypedGenericOwnerKind ownerKind,
+    u32[0 max] ownerKeywordToken,
+    u32[0 max] genericOpenToken)
+{
+    if (genericOpenToken == 0 || stream.KindAt((u64[0 2 ** 63 - 1])genericOpenToken) != TokenKind.Lt)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] genericCloseToken = MatchingMemberCloseToken(stream, genericOpenToken);
+    if (genericCloseToken <= genericOpenToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] ownerWhereToken = TypedGenericWhereTokenForOwner(stream, ownerKeywordToken);
+    stack u32[0 max] ownerEndToken = TypedGenericOwnerTerminatorToken(stream, ownerKeywordToken);
+    stack mut u32[0 max] paramOrdinal = 0;
+    stack mut u32[0 max] typeOrdinal = 0;
+    stack mut u32[0 max] comptimeOrdinal = 0;
+    stack mut u32[0 max] segmentStartToken = (u32[0 max])(genericOpenToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(genericOpenToken + 1);
+    while willexit (scan <= genericCloseToken)
+    {
+        stack mut bool boundary = false;
+        if (scan == genericCloseToken)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            stack mut TypedGenericParameterKind appendedKind = TypedGenericParameterKind.Unknown;
+            switch (AppendTypedGenericParameterFromSegment(
+                symbols,
+                source,
+                stream,
+                ownerDeclarationSymbolIndexPlusOne,
+                ownerMemberSymbolIndexPlusOne,
+                ownerNameToken,
+                ownerKind,
+                ownerWhereToken,
+                ownerEndToken,
+                segmentStartToken,
+                scan,
+                paramOrdinal,
+                typeOrdinal,
+                comptimeOrdinal,
+                appendedKind))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (appendedKind != TypedGenericParameterKind.Unknown)
+            {
+                paramOrdinal = (u32[0 max])(paramOrdinal + 1);
+                if (appendedKind == TypedGenericParameterKind.Type)
+                {
+                    typeOrdinal = (u32[0 max])(typeOrdinal + 1);
+                }
+                else if (appendedKind == TypedGenericParameterKind.ComptimeValue)
+                {
+                    comptimeOrdinal = (u32[0 max])(comptimeOrdinal + 1);
+                }
+            }
+
+            segmentStartToken = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedGenericsForDeclaration(
+    mut borrow TypedGenericParameterSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    u64[0 2 ** 63 - 1] index)
+{
+    stack u32[0 max] ownerNameToken = declarations.NameTokenAt(index);
+    if (ownerNameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] genericOpenToken = (u32[0 max])(ownerNameToken + 1);
+    if (stream.KindAt((u64[0 2 ** 63 - 1])genericOpenToken) != TokenKind.Lt)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return AppendTypedGenericParametersFromList(
+        symbols,
+        source,
+        stream,
+        (u32[0 max])(index + 1),
+        0,
+        ownerNameToken,
+        TypedGenericOwnerKind.Declaration,
+        declarations.KeywordTokenAt(index),
+        genericOpenToken);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedGenericsForMemberMethod(
+    mut borrow TypedGenericParameterSymbolTable symbols,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedMemberSymbolTable members,
+    u64[0 2 ** 63 - 1] index)
+{
+    stack u32[0 max] ownerNameToken = members.NameTokenAt(index);
+    if (ownerNameToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] genericOpenToken = (u32[0 max])(ownerNameToken + 1);
+    if (stream.KindAt((u64[0 2 ** 63 - 1])genericOpenToken) != TokenKind.Lt)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return AppendTypedGenericParametersFromList(
+        symbols,
+        source,
+        stream,
+        members.OwnerDeclarationSymbolIndexPlusOneAt(index),
+        (u32[0 max])(index + 1),
+        ownerNameToken,
+        TypedGenericOwnerKind.MemberMethod,
+        members.KeywordTokenAt(index),
+        genericOpenToken);
+}
+
+public fn BindResult<TypedGenericParameterSymbolTable> BuildTypedGenericParameterSymbols(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedMemberSymbolTable members)
+{
+    stack mut TypedGenericParameterSymbolTable symbols = new();
+    stack u64[0 2 ** 63 - 1] declarationCount = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declarationCount; index += 1)
+    {
+        if (declarations.ClassAt(index) == TypedDeclarationSymbolClass.Type
+            || declarations.ClassAt(index) == TypedDeclarationSymbolClass.Function)
+        {
+            switch (AppendTypedGenericsForDeclaration(symbols, source, stream, declarations, index))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<TypedGenericParameterSymbolTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] memberCount = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < memberCount; index += 1)
+    {
+        if (members.KindAt(index) == TypedMemberSymbolKind.Method)
+        {
+            switch (AppendTypedGenericsForMemberMethod(symbols, source, stream, members, index))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<TypedGenericParameterSymbolTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<TypedGenericParameterSymbolTable>.Ok(symbols);
+}

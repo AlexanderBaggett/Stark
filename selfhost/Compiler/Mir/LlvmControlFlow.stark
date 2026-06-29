@@ -1,0 +1,310 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Builder
+import Compiler.Mir.LlvmText
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmInstructions
+import Compiler.Mir.LlvmBlocks
+import System.Memory
+import System.Text
+module Compiler.Mir.LlvmControlFlow
+
+// Direct-switch and control-flow-specific LLVM emission helpers.
+
+internal fn bool DirectSwitchCaseValueExists(borrow IrTable<i64[min max]> values, i64[min max] value)
+{
+    stack u64[0 2 ** 63 - 1] total = values.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= total)
+    {
+        stack i64[min max] current = values.Get(index);
+        if (current == value)
+        {
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryBuildDirectSwitchEmissionPlan(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<BlockEmit> ranges,
+    u32[0 max] rangeIndex,
+    out u32[0 max] caseCount,
+    out u32[0 max] scrutineeValue,
+    out u32[0 max] defaultBlock,
+    out u32[0 max] setupFirst,
+    out u32[0 max] setupCount,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<u32[0 max]> caseBlocks)
+{
+    caseCount = 0;
+    scrutineeValue = 0;
+    defaultBlock = 0;
+    setupFirst = 0;
+    setupCount = 0;
+    if (!ranges.Contains(rangeIndex))
+    {
+        return false;
+    }
+
+    stack BlockEmit entryRange = ranges.Get(rangeIndex);
+    if (!blocks.Contains(entryRange.BlockIndex))
+    {
+        return false;
+    }
+
+    stack MirBlock entryBlock = blocks.Get(entryRange.BlockIndex);
+    if (entryBlock.Terminator() != MirTermKind.CondBranch)
+    {
+        return false;
+    }
+
+    if (!instrs.Contains(entryBlock.Slot0Index()))
+    {
+        return false;
+    }
+
+    stack MirInstruction firstCondition = instrs.Get(entryBlock.Slot0Index());
+    if (firstCondition.Opcode() != MirOp.CmpEq || firstCondition.ResultType() != MirType.I1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstCaseConstant = firstCondition.OperandBIndex();
+    if (!instrs.Contains(firstCaseConstant))
+    {
+        return false;
+    }
+
+    stack MirInstruction firstCaseConstantInstr = instrs.Get(firstCaseConstant);
+    stack u32[0 max] firstScrutineeValue = firstCondition.OperandAIndex();
+    if (firstCaseConstantInstr.Opcode() != MirOp.ConstInt
+        || MirValueType(instrs, firstScrutineeValue) != MirType.I64
+        || firstCaseConstant < entryRange.First
+        || firstCaseConstant >= entryRange.First + entryRange.Count
+        || entryBlock.Slot0Index() < entryRange.First
+        || entryBlock.Slot0Index() >= entryRange.First + entryRange.Count)
+    {
+        return false;
+    }
+
+    scrutineeValue = firstScrutineeValue;
+    setupFirst = entryRange.First;
+    setupCount = firstCaseConstant - entryRange.First;
+    stack u32[0 max] firstTestBlock = entryRange.BlockIndex;
+    stack mut u32[0 max] currentBlockIndex = firstTestBlock;
+    stack mut u32[0 max] currentRangeIndex = rangeIndex;
+    stack mut bool done = false;
+    while willexit (!done)
+    {
+        if (!blocks.Contains(currentBlockIndex) || !ranges.Contains(currentRangeIndex))
+        {
+            return false;
+        }
+
+        stack BlockEmit currentRange = ranges.Get(currentRangeIndex);
+        if (currentRange.BlockIndex != currentBlockIndex)
+        {
+            return false;
+        }
+
+        stack MirBlock currentBlock = blocks.Get(currentBlockIndex);
+        if (currentBlock.Terminator() != MirTermKind.CondBranch || !instrs.Contains(currentBlock.Slot0Index()))
+        {
+            return false;
+        }
+
+        stack MirInstruction condition = instrs.Get(currentBlock.Slot0Index());
+        if (condition.Opcode() != MirOp.CmpEq
+            || condition.ResultType() != MirType.I1
+            || condition.OperandAIndex() != scrutineeValue
+            || !instrs.Contains(condition.OperandBIndex()))
+        {
+            return false;
+        }
+
+        stack MirInstruction caseConstant = instrs.Get(condition.OperandBIndex());
+        if (caseConstant.Opcode() != MirOp.ConstInt
+            || DirectSwitchCaseValueExists(caseValues, caseConstant.Immediate()))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseConstant.Immediate()) == 0
+            || caseBlocks.Add(currentBlock.Slot1Index()) == 0)
+        {
+            return false;
+        }
+
+        caseCount = caseCount + 1;
+        if (!blocks.Contains(currentBlock.Slot1Index()) || !blocks.Contains(currentBlock.Slot2Index()))
+        {
+            return false;
+        }
+
+        stack MirBlock elseBlock = blocks.Get(currentBlock.Slot2Index());
+        if (elseBlock.Terminator() == MirTermKind.CondBranch)
+        {
+            if (currentBlock.Slot2Index() != currentBlockIndex + 1)
+            {
+                return false;
+            }
+
+            currentBlockIndex = currentBlock.Slot2Index();
+            currentRangeIndex = currentRangeIndex + 1;
+        }
+        else
+        {
+            defaultBlock = currentBlock.Slot2Index();
+            done = true;
+        }
+    }
+
+    if (caseCount < 3)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] checkIndex = 1;
+    while willexit (checkIndex <= caseCount)
+    {
+        stack u32[0 max] caseBlock = caseBlocks.Get(checkIndex);
+        if ((caseBlock >= firstTestBlock && caseBlock < firstTestBlock + caseCount)
+            || defaultBlock == caseBlock)
+        {
+            return false;
+        }
+
+        checkIndex = checkIndex + 1;
+    }
+
+    if (defaultBlock >= firstTestBlock && defaultBlock < firstTestBlock + caseCount)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchTerminator(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    stack MirType switchType = MirValueType(instrs, scrutineeValue);
+    try sink.AppendConstAscii("  switch ");
+    try EmitLlvmTypeName(switchType, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, scrutineeValue);
+    try sink.AppendConstAscii(", label ");
+    try EmitLlvmBlockRef(sink, defaultBlock);
+    try sink.AppendConstAscii(" [\n");
+
+    stack u64[0 2 ** 63 - 1] total = caseValues.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= total)
+    {
+        stack i64[min max] caseValue = caseValues.Get(index);
+        stack u32[0 max] caseBlock = caseBlocks.Get(index);
+        try sink.AppendConstAscii("    ");
+        try EmitLlvmTypeName(switchType, sink);
+        try sink.AppendConstAscii(" ");
+        try sink.AppendI64(caseValue);
+        try sink.AppendConstAscii(", label ");
+        try EmitLlvmBlockRef(sink, caseBlock);
+        try sink.AppendConstAscii("\n");
+        index = index + 1;
+    }
+
+    try sink.AppendConstAscii("  ]\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    u32[0 max] blockIndex,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = setupFirst;
+    stack mut u32[0 max] remaining = setupCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithTailCallees(instrs, funcTailFlags, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    bool emitSeparateStorageFacts,
+    u32[0 max] blockIndex,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    if (emitSeparateStorageFacts)
+    {
+        try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
+    }
+
+    stack mut u32[0 max] index = setupFirst;
+    stack mut u32[0 max] remaining = setupCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithRangeFacts(
+            instrs,
+            funcTailFlags,
+            functionEffectFacts,
+            functionCallContractFacts,
+            functionCallingConventionFacts,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            rangeMetadata,
+            sink,
+            index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
+}

@@ -1,0 +1,910 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedFields
+
+public struct TypedFieldDeclarationTable
+{
+    internal dynamic u32[0 max] OwnerDeclarationIndices;
+    internal dynamic DeclarationKind OwnerKinds;
+    internal dynamic u32[0 max] OwnerNameTokens;
+    internal dynamic u32[0 max] FieldOrdinals;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic TypedSignatureTypeKind TypeKinds;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] RangeStartTokens;
+    internal dynamic u32[0 max] RangeEndTokens;
+    internal dynamic u32[0 max] ElementCountStartTokens;
+    internal dynamic u32[0 max] ElementCountEndTokens;
+    internal dynamic u32[0 max] BitWidths;
+    internal dynamic u32[0 max] TypeArgumentCounts;
+    internal dynamic u32[0 max] ComptimeArgumentCounts;
+    internal dynamic u32[0 max] TypeFlags;
+    internal dynamic u32[0 max] StorageCapacityStartTokens;
+    internal dynamic u32[0 max] StorageCapacityEndTokens;
+
+    TypedFieldDeclarationTable()
+    {
+        self.OwnerDeclarationIndices = new();
+        self.OwnerKinds = new();
+        self.OwnerNameTokens = new();
+        self.FieldOrdinals = new();
+        self.NameTokens = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.TypeKinds = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.RangeStartTokens = new();
+        self.RangeEndTokens = new();
+        self.ElementCountStartTokens = new();
+        self.ElementCountEndTokens = new();
+        self.BitWidths = new();
+        self.TypeArgumentCounts = new();
+        self.ComptimeArgumentCounts = new();
+        self.TypeFlags = new();
+        self.StorageCapacityStartTokens = new();
+        self.StorageCapacityEndTokens = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedFieldDeclarationTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] OwnerDeclarationIndexAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.OwnerDeclarationIndices.Length)
+        {
+            value = self.OwnerDeclarationIndices[index];
+        }
+
+        return value;
+    }
+
+    public law DeclarationKind OwnerKindAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut DeclarationKind kind = DeclarationKind.Unknown;
+        if (index < self.OwnerKinds.Length)
+        {
+            kind = self.OwnerKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] OwnerNameTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerNameTokens.Length)
+        {
+            token = self.OwnerNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] FieldOrdinalAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.FieldOrdinals.Length)
+        {
+            ordinal = self.FieldOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedSignatureTypeKind TypeKindAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSignatureTypeKind kind = TypedSignatureTypeKind.Unknown;
+        if (index < self.TypeKinds.Length)
+        {
+            kind = self.TypeKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeStartTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeStartTokens.Length)
+        {
+            token = self.RangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeEndTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeEndTokens.Length)
+        {
+            token = self.RangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementCountStartTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementCountStartTokens.Length)
+        {
+            token = self.ElementCountStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementCountEndTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementCountEndTokens.Length)
+        {
+            token = self.ElementCountEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] BitWidthAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] width = 0;
+        if (index < self.BitWidths.Length)
+        {
+            width = self.BitWidths[index];
+        }
+
+        return width;
+    }
+
+    public law u32[0 max] TypeArgumentCountAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TypeArgumentCounts.Length)
+        {
+            count = self.TypeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ComptimeArgumentCountAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ComptimeArgumentCounts.Length)
+        {
+            count = self.ComptimeArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TypeFlagsAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.TypeFlags.Length)
+        {
+            flags = self.TypeFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u32[0 max] StorageCapacityStartTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StorageCapacityStartTokens.Length)
+        {
+            token = self.StorageCapacityStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] StorageCapacityEndTokenAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StorageCapacityEndTokens.Length)
+        {
+            token = self.StorageCapacityEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law bool HasStorageCapacityAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.StorageCapacityStartTokenAt(index) != 0 && self.StorageCapacityEndTokenAt(index) > self.StorageCapacityStartTokenAt(index);
+    }
+
+    public law bool IsIntegerSignedAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerSigned());
+    }
+
+    public law bool IsIntegerUnsignedAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagIntegerUnsigned());
+    }
+
+    public law bool HasIntegerRangeAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasIntegerRange());
+    }
+
+    public law bool RangeStartsAtMinAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRangeStartsAtMin());
+    }
+
+    public law bool RangeEndsAtMaxAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRangeEndsAtMax());
+    }
+
+    public law bool IsBorrowAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagBorrow());
+    }
+
+    public law bool IsRawMutablePointerAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagRawMutablePointer());
+    }
+
+    public law bool HasElementCountExpressionAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHasElementCountExpression());
+    }
+
+    public law bool IsOwnedTextAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagOwnedText());
+    }
+
+    public law bool IsUnicodeTextAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagUnicodeText());
+    }
+
+    public law bool TypeHeadIsGenericParameterAt(borrow TypedFieldDeclarationTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return TypedSignatureFlagPresent(self.TypeFlagsAt(index), TypedSignatureTypeFlagHeadIsGenericParameter());
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedFieldDeclarationTable self,
+        u32[0 max] ownerDeclarationIndex,
+        DeclarationKind ownerKind,
+        u32[0 max] ownerNameToken,
+        u32[0 max] fieldOrdinal,
+        u32[0 max] nameToken,
+        u32[0 max] startToken,
+        u32[0 max] endToken,
+        TypedSignatureTypeKind typeKind,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken,
+        u32[0 max] rangeStartToken,
+        u32[0 max] rangeEndToken,
+        u32[0 max] elementCountStartToken,
+        u32[0 max] elementCountEndToken,
+        u32[0 max] bitWidth,
+        u32[0 max] typeArgumentCount,
+        u32[0 max] comptimeArgumentCount,
+        u32[0 max] typeFlags,
+        u32[0 max] storageCapacityStartToken,
+        u32[0 max] storageCapacityEndToken)
+    {
+        if (!self.OwnerDeclarationIndices.TryReserve(1)
+            || !self.OwnerKinds.TryReserve(1)
+            || !self.OwnerNameTokens.TryReserve(1)
+            || !self.FieldOrdinals.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.TypeKinds.TryReserve(1)
+            || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
+            || !self.RangeStartTokens.TryReserve(1)
+            || !self.RangeEndTokens.TryReserve(1)
+            || !self.ElementCountStartTokens.TryReserve(1)
+            || !self.ElementCountEndTokens.TryReserve(1)
+            || !self.BitWidths.TryReserve(1)
+            || !self.TypeArgumentCounts.TryReserve(1)
+            || !self.ComptimeArgumentCounts.TryReserve(1)
+            || !self.TypeFlags.TryReserve(1)
+            || !self.StorageCapacityStartTokens.TryReserve(1)
+            || !self.StorageCapacityEndTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.OwnerDeclarationIndices[self.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+        init self.OwnerKinds[self.OwnerKinds.Length] = ownerKind;
+        init self.OwnerNameTokens[self.OwnerNameTokens.Length] = ownerNameToken;
+        init self.FieldOrdinals[self.FieldOrdinals.Length] = fieldOrdinal;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.StartTokens[self.StartTokens.Length] = startToken;
+        init self.EndTokens[self.EndTokens.Length] = endToken;
+        init self.TypeKinds[self.TypeKinds.Length] = typeKind;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        init self.RangeStartTokens[self.RangeStartTokens.Length] = rangeStartToken;
+        init self.RangeEndTokens[self.RangeEndTokens.Length] = rangeEndToken;
+        init self.ElementCountStartTokens[self.ElementCountStartTokens.Length] = elementCountStartToken;
+        init self.ElementCountEndTokens[self.ElementCountEndTokens.Length] = elementCountEndToken;
+        init self.BitWidths[self.BitWidths.Length] = bitWidth;
+        init self.TypeArgumentCounts[self.TypeArgumentCounts.Length] = typeArgumentCount;
+        init self.ComptimeArgumentCounts[self.ComptimeArgumentCounts.Length] = comptimeArgumentCount;
+        init self.TypeFlags[self.TypeFlags.Length] = typeFlags;
+        init self.StorageCapacityStartTokens[self.StorageCapacityStartTokens.Length] = storageCapacityStartToken;
+        init self.StorageCapacityEndTokens[self.StorageCapacityEndTokens.Length] = storageCapacityEndToken;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+
+internal finite law bool TypedFieldDeclarationKindOwnsFields(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct || kind == DeclarationKind.Record;
+}
+
+internal fn u32[0 max] TypedFieldSkipAttribute(borrow TokenStream stream, u32[0 max] start)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])start) != TokenKind.LBrack)
+    {
+        return start;
+    }
+
+    stack u32[0 max] close = TypedSignatureMatchingCloseToken(stream, start);
+    if (close <= start)
+    {
+        return start;
+    }
+
+    return (u32[0 max])(close + 1);
+}
+
+internal fn u32[0 max] TypedFieldModifierEndToken(borrow TokenStream stream, u32[0 max] token)
+{
+    if (TypedSignatureIsContextualTailToken(stream, token))
+    {
+        return (u32[0 max])(token + 1);
+    }
+
+    switch (stream.KindAt((u64[0 2 ** 63 - 1])token))
+    {
+        case TokenKind.Internal:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Public:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Export:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Finite:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Law:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Inline:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Noinline:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Inlinehint:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Hot:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Cold:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Varargs:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Unsafe:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Strictfp:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Static:
+            return (u32[0 max])(token + 1);
+        case TokenKind.Ffi:
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+            {
+                return (u32[0 max])(TypedSignatureMatchingCloseToken(stream, (u32[0 max])(token + 1)) + 1);
+            }
+
+            return (u32[0 max])(token + 1);
+        case TokenKind.Asm:
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+            {
+                return (u32[0 max])(TypedSignatureMatchingCloseToken(stream, (u32[0 max])(token + 1)) + 1);
+            }
+
+            return (u32[0 max])(token + 1);
+        default:
+            return token;
+    }
+}
+
+internal fn u32[0 max] TypedFieldMemberKindCursor(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] cursor = start;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.LBrack)
+    {
+        stack u32[0 max] nextAttribute = TypedFieldSkipAttribute(stream, cursor);
+        if (nextAttribute <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = nextAttribute;
+    }
+
+    while willexit (true)
+    {
+        stack u32[0 max] nextModifier = TypedFieldModifierEndToken(stream, cursor);
+        if (nextModifier <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = nextModifier;
+    }
+
+    return cursor;
+}
+
+internal fn u32[0 max] TypedFieldLastIdentifierInSpan(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] token = 0;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == TokenKind.Identifier)
+        {
+            token = scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return token;
+}
+
+internal fn u32[0 max] TypedFieldStorageCapacityStartToken(borrow TokenStream stream, u32[0 max] nameToken, u32[0 max] endExclusive)
+{
+    stack u32[0 max] next = (u32[0 max])(nameToken + 1);
+    if (next < endExclusive && stream.KindAt((u64[0 2 ** 63 - 1])next) == TokenKind.LBrack)
+    {
+        stack u32[0 max] close = TypedSignatureMatchingCloseToken(stream, next);
+        if (close > next && close < endExclusive)
+        {
+            return next;
+        }
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypedFieldStorageCapacityEndToken(borrow TokenStream stream, u32[0 max] capacityStartToken)
+{
+    if (capacityStartToken == 0)
+    {
+        return 0;
+    }
+
+    return TypedSignatureMatchingCloseToken(stream, capacityStartToken);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedFieldDeclaration(
+    mut borrow TypedFieldDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] fieldOrdinal,
+    u32[0 max] nameToken,
+    u32[0 max] fieldStartToken,
+    u32[0 max] fieldEndToken,
+    u32[0 max] typeHeadToken,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] storageCapacityStartToken,
+    u32[0 max] storageCapacityEndToken)
+{
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        arrayKind);
+
+    stack u32[0 max] semanticPrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, typeHeadToken);
+    stack TypedSignatureTypeKind typeKind = TypedSignatureKindForType(source, stream, semanticPrimaryToken, typeHeadToken, 0, ownerGenericOpenToken, arrayKind);
+    stack mut u32[0 max] bitWidth = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])semanticPrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        bitWidth = TypedSignatureIntegerBitWidth(source, stream, semanticPrimaryToken);
+    }
+    else if (primaryKind == TokenKind.FloatType)
+    {
+        bitWidth = TypedSignatureFloatBitWidth(source, stream, semanticPrimaryToken);
+    }
+
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    if (typeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(typeHeadToken + 1)) == TokenKind.Lt)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(typeHeadToken + 1), typeArgumentCount, comptimeArgumentCount);
+    }
+
+    stack u32[0 max] flags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        semanticPrimaryToken,
+        typeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        0,
+        ownerGenericOpenToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        false,
+        0,
+        false);
+
+    return table.Append(
+        ownerDeclarationIndex,
+        owner.Kind,
+        owner.NameToken,
+        fieldOrdinal,
+        nameToken,
+        fieldStartToken,
+        fieldEndToken,
+        typeKind,
+        typeHeadToken,
+        semanticPrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        flags,
+        storageCapacityStartToken,
+        storageCapacityEndToken);
+}
+
+internal fn u32[0 max] TypedFieldRecordHeaderOpenToken(borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind != DeclarationKind.Record || item.NameToken == 0)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] scan = (u32[0 max])(item.NameToken + 1);
+    stack mut u32[0 max] angleDepth = 0;
+    while willexit (scan <= item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile || kind == TokenKind.LBrace || kind == TokenKind.Semi)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.LParen && angleDepth == 0)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.Lt)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedRecordHeaderFieldsForDeclaration(
+    mut borrow TypedFieldDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    out u32[0 max] nextFieldOrdinal)
+{
+    nextFieldOrdinal = 0;
+    stack mut u32[0 max] ordinal = 0;
+    stack u32[0 max] openToken = TypedFieldRecordHeaderOpenToken(stream, owner);
+    if (openToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] closeToken = TypedSignatureMatchingCloseToken(stream, openToken);
+    if (closeToken <= openToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] segmentStart = (u32[0 max])(openToken + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = segmentStart;
+    while willexit (scan <= closeToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        stack mut bool boundary = scan == closeToken;
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        if (depth == 0 && kind == TokenKind.Comma)
+        {
+            boundary = true;
+        }
+
+        if (boundary)
+        {
+            stack u32[0 max] cursor = TypedFieldMemberKindCursor(stream, segmentStart);
+            stack u32[0 max] nameToken = TypedFieldLastIdentifierInSpan(stream, cursor, scan);
+            if (nameToken != 0 && cursor < nameToken)
+            {
+                stack u32[0 max] typeHeadToken = TypedFieldLastIdentifierInSpan(stream, cursor, nameToken);
+                stack u32[0 max] capacityStart = TypedFieldStorageCapacityStartToken(stream, nameToken, scan);
+                stack u32[0 max] capacityEnd = TypedFieldStorageCapacityEndToken(stream, capacityStart);
+                stack mut u32[0 max] fieldEnd = nameToken;
+                if (capacityEnd != 0)
+                {
+                    fieldEnd = capacityEnd;
+                }
+
+                switch (AppendTypedFieldDeclaration(
+                    table,
+                    source,
+                    stream,
+                    owner,
+                    ownerDeclarationIndex,
+                    ownerGenericOpenToken,
+                    ordinal,
+                    nameToken,
+                    segmentStart,
+                    fieldEnd,
+                    typeHeadToken,
+                    cursor,
+                    nameToken,
+                    capacityStart,
+                    capacityEnd))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                ordinal = (u32[0 max])(ordinal + 1);
+            }
+
+            segmentStart = (u32[0 max])(scan + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    nextFieldOrdinal = ordinal;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedBodyFieldsForDeclaration(
+    mut borrow TypedFieldDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerGenericOpenToken,
+    u32[0 max] firstFieldOrdinal)
+{
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, owner.KeywordToken))
+    {
+        case ParseResult<FieldList>.Err(var fieldError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FieldList>.Ok(var parsedFields):
+            fields = parsedFields;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = fields.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] nameToken = fields.NameTokenAt(index);
+        stack u32[0 max] capacityStart = TypedFieldStorageCapacityStartToken(stream, nameToken, owner.EndToken);
+        stack u32[0 max] capacityEnd = TypedFieldStorageCapacityEndToken(stream, capacityStart);
+        stack mut u32[0 max] fieldEnd = nameToken;
+        if (capacityEnd != 0)
+        {
+            fieldEnd = capacityEnd;
+        }
+
+        switch (AppendTypedFieldDeclaration(
+            table,
+            source,
+            stream,
+            owner,
+            ownerDeclarationIndex,
+            ownerGenericOpenToken,
+            (u32[0 max])(firstFieldOrdinal + index),
+            nameToken,
+            fields.TypeStartAt(index),
+            fieldEnd,
+            fields.TypeHeadAt(index),
+            fields.TypeStartAt(index),
+            fields.TypeEndAt(index),
+            capacityStart,
+            capacityEnd))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedFieldsForDeclaration(
+    mut borrow TypedFieldDeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem owner,
+    u32[0 max] ownerDeclarationIndex)
+{
+    stack u32[0 max] ownerGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, owner.NameToken);
+    stack mut u32[0 max] nextFieldOrdinal = 0;
+    if (owner.Kind == DeclarationKind.Record)
+    {
+        switch (AppendTypedRecordHeaderFieldsForDeclaration(table, source, stream, owner, ownerDeclarationIndex, ownerGenericOpenToken, nextFieldOrdinal))
+        {
+            case System.Memory.MemoryStatus.Err(var headerError):
+                return System.Memory.MemoryStatus.Err(headerError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return AppendTypedBodyFieldsForDeclaration(table, source, stream, owner, ownerDeclarationIndex, ownerGenericOpenToken, nextFieldOrdinal);
+}

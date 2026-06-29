@@ -1,0 +1,264 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.SignatureHelpers
+import Compiler.Binding.FunctionEffects
+import Compiler.Binding.TokenHelpers
+import System.Memory
+module Compiler.Binding.LawValidation
+
+internal fn System.Memory.MemoryStatus CollectLawSignatureDiagnostics(
+    borrow FunctionSignature signature,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+{
+    if (!signature.LawKind())
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (TypeSpanIsOutputOnlyParameter(stream, signature.ReturnTypeStartTokenAt(), signature.ReturnTypeEndTokenAt()))
+    {
+        switch (diags.Append(BindDiagnosticCode.LawReturnOutputType, TokenOrFallback(signature.ReturnTypeStartTokenAt(), signature.Name())))
+        {
+            case System.Memory.MemoryStatus.Err(var returnError):
+                return System.Memory.MemoryStatus.Err(returnError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
+    {
+        if (TypeSpanIsOutputOnlyParameter(stream, signature.ParamStartTokenAt(index), signature.ParamNameAt(index)))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawParameterOutputType, TokenOrFallback(signature.ParamStartTokenAt(index), signature.ParamNameAt(index))))
+            {
+                case System.Memory.MemoryStatus.Err(var paramError):
+                    return System.Memory.MemoryStatus.Err(paramError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal finite law bool LawForbiddenLocalStorage(TokenKind storage)
+{
+    return storage == TokenKind.Heap || storage == TokenKind.Static;
+}
+
+internal fn bool AssignmentTargetWritesThroughRoot(borrow StatementList body, u32[0 max] target)
+{
+    if (target == 0)
+    {
+        return false;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(target);
+    return kind == Compiler.Parsing.ExprKind.Member
+        || kind == Compiler.Parsing.ExprKind.Index
+        || kind == Compiler.Parsing.ExprKind.Unary;
+}
+
+internal fn bool FunctionScopeSymbolIsMemoryBacked(borrow TokenStream stream, borrow FunctionScope scope, u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    if (target >= scope.Count())
+    {
+        return false;
+    }
+
+    return TypeSpanIsMemoryBackedParameter(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target));
+}
+
+internal fn bool AssignmentTargetIsExternallyVisible(
+    borrow DeclarationTable table,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] target)
+{
+    stack u32[0 max] root = AssignmentTargetRootNode(body, target);
+    if (root == 0 || body.ExprKindAt(root) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, root);
+    if (refIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+    stack ReferenceKind kind = refs.KindAt(refIndex);
+    if (kind == ReferenceKind.Declaration)
+    {
+        return DeclarationRootIsLongLived(table, refs.TargetAt(refIndex));
+    }
+
+    if (kind == ReferenceKind.Parameter && AssignmentTargetWritesThroughRoot(body, target))
+    {
+        return FunctionScopeSymbolIsMemoryBacked(stream, scope, refs.TargetAt(refIndex));
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectLawBodyRestrictionDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    if (!signature.LawKind())
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < statementCount; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.Local && LawForbiddenLocalStorage(stream.KindAt((u64[0 2 ** 63 - 1])item.StartToken)))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawLocalStorageInLaw, item.StartToken))
+            {
+                case System.Memory.MemoryStatus.Err(var localError):
+                    return System.Memory.MemoryStatus.Err(localError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        stack u32[0 max] root = body.ExprRootAt(index);
+        if (item.Kind == StatementKind.Local
+            && TypeSpanIsDynamicStorage(stream, item.TypeStartToken, item.TypeEndToken)
+            && ExpressionIsRuntimeDynamicNew(body, stream, root))
+        {
+            stack mut u32[0 max] token = item.StartToken;
+            if (root != 0)
+            {
+                token = body.ExprTokenAt(root);
+            }
+
+            switch (diags.Append(BindDiagnosticCode.LawDynamicStorageAllocation, token))
+            {
+                case System.Memory.MemoryStatus.Err(var localDynamicError):
+                    return System.Memory.MemoryStatus.Err(localDynamicError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (item.Kind == StatementKind.Return
+            && TypeSpanIsDynamicStorage(stream, signature.ReturnTypeStartTokenAt(), signature.ReturnTypeEndTokenAt())
+            && ExpressionIsRuntimeDynamicNew(body, stream, root))
+        {
+            stack mut u32[0 max] token = item.StartToken;
+            if (root != 0)
+            {
+                token = body.ExprTokenAt(root);
+            }
+
+            switch (diags.Append(BindDiagnosticCode.LawDynamicStorageAllocation, token))
+            {
+                case System.Memory.MemoryStatus.Err(var returnDynamicError):
+                    return System.Memory.MemoryStatus.Err(returnDynamicError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == Compiler.Parsing.ExprKind.Assign
+            && AssignmentTargetIsExternallyVisible(table, refs, scope, stream, body, body.ExprLeftAt(node)))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawExternallyVisibleWrite, body.ExprTokenAt(body.ExprLeftAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var writeError):
+                    return System.Memory.MemoryStatus.Err(writeError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == Compiler.Parsing.ExprKind.Assign
+            && AssignmentTargetIsDynamicStorage(table, source, refs, scope, stream, body, body.ExprLeftAt(node))
+            && ExpressionIsRuntimeDynamicNew(body, stream, body.ExprRightAt(node)))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawDynamicStorageAllocation, body.ExprTokenAt(body.ExprRightAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var assignDynamicError):
+                    return System.Memory.MemoryStatus.Err(assignDynamicError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Call
+            && CallAllocatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawDynamicStorageAllocation, body.ExprTokenAt(body.ExprLeftAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var allocateDynamicError):
+                    return System.Memory.MemoryStatus.Err(allocateDynamicError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Call
+            && CallMutatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawDynamicStorageMutation, body.ExprTokenAt(body.ExprLeftAt(node))))
+            {
+                case System.Memory.MemoryStatus.Err(var dynamicError):
+                    return System.Memory.MemoryStatus.Err(dynamicError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectLawExternallyVisibleEffectDiagnostics(
+    borrow FunctionSignature signature,
+    borrow DeclarationTable table,
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    mut borrow BindDiagnosticList diags)
+{
+    if (!signature.LawKind())
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] refIndex = 0; refIndex < refCount; refIndex += 1)
+    {
+        if (ReferenceReadsGlobalState(table, refs, body, refIndex))
+        {
+            switch (diags.Append(BindDiagnosticCode.LawGlobalStateRead, refs.NameTokenAt(refIndex)))
+            {
+                case System.Memory.MemoryStatus.Err(var readError):
+                    return System.Memory.MemoryStatus.Err(readError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

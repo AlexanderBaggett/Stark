@@ -1,0 +1,2014 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.Declarations
+import Compiler.Binding.Scopes
+import Compiler.Binding.References
+import Compiler.Binding.ExpressionTypeHelpers
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.AttributeHelpers
+import Compiler.Binding.TypedModuleSymbols
+import Compiler.Binding.TypedDeclarations
+import Compiler.Binding.TypedMembers
+import Compiler.Binding.TypedLocals
+import System.Text
+import System.Memory
+module Compiler.Binding.FunctionEffects
+
+public enum TypedFunctionEffectOwnerKind
+{
+    Declaration,
+    MemberMethod,
+    Unknown,
+}
+
+public enum TypedFunctionInlinePreference
+{
+    InlineHint,
+    Inline,
+    NoInline,
+}
+
+public enum TypedFunctionBackendOptimizationMode
+{
+    Default,
+    Opaque,
+}
+
+internal inline finite law u32[0 max] TypedFunctionEffectFlagHasBody() { return 1; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagReadsArgumentMemory() { return 2; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagPure() { return 4; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagNoSync() { return 8; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagNoFree() { return 16; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagNoUnwind() { return 32; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagWillReturn() { return 64; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagMustProgress() { return 128; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagFastCall() { return 256; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagFfi() { return 512; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagVarargs() { return 1024; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagHot() { return 2048; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagCold() { return 4096; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagStrictFp() { return 8192; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagReadsOtherMemory() { return 16384; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagWritesOtherMemory() { return 32768; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagNoRecurse() { return 65536; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagTailCallable() { return 131072; }
+internal inline finite law u32[0 max] TypedFunctionEffectFlagAsm() { return 262144; }
+
+internal inline finite law u32[0 max] TypedFunctionBodyFlagUnsafe() { return 1; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagLoop() { return 2; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagBranch() { return 4; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagSwitch() { return 8; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagCall() { return 16; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagNew() { return 32; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagAssign() { return 64; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagReturn() { return 128; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagBecome() { return 256; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagLocal() { return 512; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagBreakOrContinue() { return 1024; }
+internal inline finite law u32[0 max] TypedFunctionBodyFlagBlock() { return 2048; }
+
+internal struct TypedFunctionBodyShape
+{
+    u32[0 max] StatementCount;
+    u32[0 max] TopLevelStatementCount;
+    u32[0 max] ExpressionNodeCount;
+    u32[0 max] CallExpressionCount;
+    u32[0 max] NewExpressionCount;
+    u32[0 max] AssignmentExpressionCount;
+    u32[0 max] LocalDeclarationCount;
+    u32[0 max] ReturnCount;
+    u32[0 max] LoopCount;
+    u32[0 max] BranchCount;
+    u32[0 max] Flags;
+
+    TypedFunctionBodyShape()
+    {
+        self.StatementCount = 0;
+        self.TopLevelStatementCount = 0;
+        self.ExpressionNodeCount = 0;
+        self.CallExpressionCount = 0;
+        self.NewExpressionCount = 0;
+        self.AssignmentExpressionCount = 0;
+        self.LocalDeclarationCount = 0;
+        self.ReturnCount = 0;
+        self.LoopCount = 0;
+        self.BranchCount = 0;
+        self.Flags = 0;
+    }
+}
+
+public struct TypedFunctionEffectSummaryTable
+{
+    internal dynamic TypedFunctionEffectOwnerKind OwnerKinds;
+    internal dynamic u32[0 max] DeclarationSymbolIndices;
+    internal dynamic u32[0 max] MemberSymbolIndices;
+    internal dynamic u32[0 max] OwnerDeclarationSymbolIndices;
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic u32[0 max] BodyOpenTokens;
+    internal dynamic TypedDeclarationFunctionKind FunctionKinds;
+    internal dynamic TypedFunctionInlinePreference InlinePreferences;
+    internal dynamic TypedFunctionBackendOptimizationMode BackendOptimizationModes;
+    internal dynamic u32[0 max] ParamCounts;
+    internal dynamic u32[0 max] AbiNameTokens;
+    internal dynamic u32[0 max] LinkNameValueTokens;
+    internal dynamic u32[0 max] AsmInputCounts;
+    internal dynamic u32[0 max] AsmOutputCounts;
+    internal dynamic u32[0 max] AsmClobberCounts;
+    internal dynamic u32[0 max] StatementCounts;
+    internal dynamic u32[0 max] TopLevelStatementCounts;
+    internal dynamic u32[0 max] ExpressionNodeCounts;
+    internal dynamic u32[0 max] CallExpressionCounts;
+    internal dynamic u32[0 max] NewExpressionCounts;
+    internal dynamic u32[0 max] AssignmentExpressionCounts;
+    internal dynamic u32[0 max] LocalDeclarationCounts;
+    internal dynamic u32[0 max] ReturnCounts;
+    internal dynamic u32[0 max] LoopCounts;
+    internal dynamic u32[0 max] BranchCounts;
+    internal dynamic u32[0 max] BodyFlags;
+    internal dynamic u32[0 max] EffectFlags;
+
+    TypedFunctionEffectSummaryTable()
+    {
+        self.OwnerKinds = new();
+        self.DeclarationSymbolIndices = new();
+        self.MemberSymbolIndices = new();
+        self.OwnerDeclarationSymbolIndices = new();
+        self.NameTokens = new();
+        self.KeywordTokens = new();
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.BodyOpenTokens = new();
+        self.FunctionKinds = new();
+        self.InlinePreferences = new();
+        self.BackendOptimizationModes = new();
+        self.ParamCounts = new();
+        self.AbiNameTokens = new();
+        self.LinkNameValueTokens = new();
+        self.AsmInputCounts = new();
+        self.AsmOutputCounts = new();
+        self.AsmClobberCounts = new();
+        self.StatementCounts = new();
+        self.TopLevelStatementCounts = new();
+        self.ExpressionNodeCounts = new();
+        self.CallExpressionCounts = new();
+        self.NewExpressionCounts = new();
+        self.AssignmentExpressionCounts = new();
+        self.LocalDeclarationCounts = new();
+        self.ReturnCounts = new();
+        self.LoopCounts = new();
+        self.BranchCounts = new();
+        self.BodyFlags = new();
+        self.EffectFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedFunctionEffectSummaryTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law TypedFunctionEffectOwnerKind OwnerKindAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedFunctionEffectOwnerKind kind = TypedFunctionEffectOwnerKind.Unknown;
+        if (index < self.OwnerKinds.Length)
+        {
+            kind = self.OwnerKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] BodyOpenTokenAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.BodyOpenTokens.Length)
+        {
+            token = self.BodyOpenTokens[index];
+        }
+
+        return token;
+    }
+
+    public law TypedDeclarationFunctionKind FunctionKindAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedDeclarationFunctionKind kind = TypedDeclarationFunctionKind.Fn;
+        if (index < self.FunctionKinds.Length)
+        {
+            kind = self.FunctionKinds[index];
+        }
+
+        return kind;
+    }
+
+    public law TypedFunctionInlinePreference InlinePreferenceAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedFunctionInlinePreference preference = TypedFunctionInlinePreference.InlineHint;
+        if (index < self.InlinePreferences.Length)
+        {
+            preference = self.InlinePreferences[index];
+        }
+
+        return preference;
+    }
+
+    public law TypedFunctionBackendOptimizationMode BackendOptimizationModeAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedFunctionBackendOptimizationMode mode = TypedFunctionBackendOptimizationMode.Default;
+        if (index < self.BackendOptimizationModes.Length)
+        {
+            mode = self.BackendOptimizationModes[index];
+        }
+
+        return mode;
+    }
+
+    public law u32[0 max] ParamCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ParamCounts.Length)
+        {
+            count = self.ParamCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] StatementCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.StatementCounts.Length)
+        {
+            count = self.StatementCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] TopLevelStatementCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.TopLevelStatementCounts.Length)
+        {
+            count = self.TopLevelStatementCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] CallExpressionCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.CallExpressionCounts.Length)
+        {
+            count = self.CallExpressionCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] NewExpressionCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.NewExpressionCounts.Length)
+        {
+            count = self.NewExpressionCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] AssignmentExpressionCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.AssignmentExpressionCounts.Length)
+        {
+            count = self.AssignmentExpressionCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] LocalDeclarationCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.LocalDeclarationCounts.Length)
+        {
+            count = self.LocalDeclarationCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] ReturnCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ReturnCounts.Length)
+        {
+            count = self.ReturnCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] LoopCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.LoopCounts.Length)
+        {
+            count = self.LoopCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] BranchCountAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.BranchCounts.Length)
+        {
+            count = self.BranchCounts[index];
+        }
+
+        return count;
+    }
+
+    public law u32[0 max] BodyFlagsAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.BodyFlags.Length)
+        {
+            flags = self.BodyFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law u32[0 max] EffectFlagsAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flags = 0;
+        if (index < self.EffectFlags.Length)
+        {
+            flags = self.EffectFlags[index];
+        }
+
+        return flags;
+    }
+
+    public law bool HasBodyAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagHasBody()); }
+    public law bool ReadsArgumentMemoryAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagReadsArgumentMemory()); }
+    public law bool ReadsOtherMemoryAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagReadsOtherMemory()); }
+    public law bool WritesOtherMemoryAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagWritesOtherMemory()); }
+    public law bool IsPureAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagPure()); }
+    public law bool NoSyncAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagNoSync()); }
+    public law bool NoFreeAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagNoFree()); }
+    public law bool NoUnwindAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagNoUnwind()); }
+    public law bool WillReturnAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagWillReturn()); }
+    public law bool MustProgressAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagMustProgress()); }
+    public law bool NoRecurseAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagNoRecurse()); }
+    public law bool UseFastCallingConventionAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagFastCall()); }
+    public law bool IsFfiAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagFfi()); }
+    public law bool IsVarargsAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagVarargs()); }
+    public law bool IsHotAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagHot()); }
+    public law bool IsColdAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagCold()); }
+    public law bool IsStrictFpAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagStrictFp()); }
+    public law bool IsTailCallableAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagTailCallable()); }
+    public law bool IsAsmAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.EffectFlagsAt(index), TypedFunctionEffectFlagAsm()); }
+    public law bool BodyContainsCallAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagCall()); }
+    public law bool BodyContainsNewAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagNew()); }
+    public law bool BodyContainsAssignmentAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagAssign()); }
+    public law bool BodyContainsLoopAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagLoop()); }
+    public law bool BodyContainsBranchAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagBranch()); }
+    public law bool BodyContainsReturnAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagReturn()); }
+    public law bool BodyContainsBecomeAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index) { return TypedDeclFlagPresent(self.BodyFlagsAt(index), TypedFunctionBodyFlagBecome()); }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow TypedFunctionEffectSummaryTable self,
+        TypedFunctionEffectOwnerKind ownerKind,
+        u32[0 max] declarationSymbolIndexPlusOne,
+        u32[0 max] memberSymbolIndexPlusOne,
+        u32[0 max] ownerDeclarationSymbolIndexPlusOne,
+        u32[0 max] nameToken,
+        u32[0 max] keywordToken,
+        u32[0 max] startToken,
+        u32[0 max] endToken,
+        u32[0 max] bodyOpenToken,
+        TypedDeclarationFunctionKind functionKind,
+        TypedFunctionInlinePreference inlinePreference,
+        TypedFunctionBackendOptimizationMode backendOptimizationMode,
+        u32[0 max] paramCount,
+        u32[0 max] abiNameToken,
+        u32[0 max] linkNameValueToken,
+        u32[0 max] asmInputCount,
+        u32[0 max] asmOutputCount,
+        u32[0 max] asmClobberCount,
+        TypedFunctionBodyShape bodyShape,
+        u32[0 max] effectFlags)
+    {
+        if (!self.OwnerKinds.TryReserve(1)
+            || !self.DeclarationSymbolIndices.TryReserve(1)
+            || !self.MemberSymbolIndices.TryReserve(1)
+            || !self.OwnerDeclarationSymbolIndices.TryReserve(1)
+            || !self.NameTokens.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.BodyOpenTokens.TryReserve(1)
+            || !self.FunctionKinds.TryReserve(1)
+            || !self.InlinePreferences.TryReserve(1)
+            || !self.BackendOptimizationModes.TryReserve(1)
+            || !self.ParamCounts.TryReserve(1)
+            || !self.AbiNameTokens.TryReserve(1)
+            || !self.LinkNameValueTokens.TryReserve(1)
+            || !self.AsmInputCounts.TryReserve(1)
+            || !self.AsmOutputCounts.TryReserve(1)
+            || !self.AsmClobberCounts.TryReserve(1)
+            || !self.StatementCounts.TryReserve(1)
+            || !self.TopLevelStatementCounts.TryReserve(1)
+            || !self.ExpressionNodeCounts.TryReserve(1)
+            || !self.CallExpressionCounts.TryReserve(1)
+            || !self.NewExpressionCounts.TryReserve(1)
+            || !self.AssignmentExpressionCounts.TryReserve(1)
+            || !self.LocalDeclarationCounts.TryReserve(1)
+            || !self.ReturnCounts.TryReserve(1)
+            || !self.LoopCounts.TryReserve(1)
+            || !self.BranchCounts.TryReserve(1)
+            || !self.BodyFlags.TryReserve(1)
+            || !self.EffectFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.OwnerKinds[self.OwnerKinds.Length] = ownerKind;
+        init self.DeclarationSymbolIndices[self.DeclarationSymbolIndices.Length] = declarationSymbolIndexPlusOne;
+        init self.MemberSymbolIndices[self.MemberSymbolIndices.Length] = memberSymbolIndexPlusOne;
+        init self.OwnerDeclarationSymbolIndices[self.OwnerDeclarationSymbolIndices.Length] = ownerDeclarationSymbolIndexPlusOne;
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.KeywordTokens[self.KeywordTokens.Length] = keywordToken;
+        init self.StartTokens[self.StartTokens.Length] = startToken;
+        init self.EndTokens[self.EndTokens.Length] = endToken;
+        init self.BodyOpenTokens[self.BodyOpenTokens.Length] = bodyOpenToken;
+        init self.FunctionKinds[self.FunctionKinds.Length] = functionKind;
+        init self.InlinePreferences[self.InlinePreferences.Length] = inlinePreference;
+        init self.BackendOptimizationModes[self.BackendOptimizationModes.Length] = backendOptimizationMode;
+        init self.ParamCounts[self.ParamCounts.Length] = paramCount;
+        init self.AbiNameTokens[self.AbiNameTokens.Length] = abiNameToken;
+        init self.LinkNameValueTokens[self.LinkNameValueTokens.Length] = linkNameValueToken;
+        init self.AsmInputCounts[self.AsmInputCounts.Length] = asmInputCount;
+        init self.AsmOutputCounts[self.AsmOutputCounts.Length] = asmOutputCount;
+        init self.AsmClobberCounts[self.AsmClobberCounts.Length] = asmClobberCount;
+        init self.StatementCounts[self.StatementCounts.Length] = bodyShape.StatementCount;
+        init self.TopLevelStatementCounts[self.TopLevelStatementCounts.Length] = bodyShape.TopLevelStatementCount;
+        init self.ExpressionNodeCounts[self.ExpressionNodeCounts.Length] = bodyShape.ExpressionNodeCount;
+        init self.CallExpressionCounts[self.CallExpressionCounts.Length] = bodyShape.CallExpressionCount;
+        init self.NewExpressionCounts[self.NewExpressionCounts.Length] = bodyShape.NewExpressionCount;
+        init self.AssignmentExpressionCounts[self.AssignmentExpressionCounts.Length] = bodyShape.AssignmentExpressionCount;
+        init self.LocalDeclarationCounts[self.LocalDeclarationCounts.Length] = bodyShape.LocalDeclarationCount;
+        init self.ReturnCounts[self.ReturnCounts.Length] = bodyShape.ReturnCount;
+        init self.LoopCounts[self.LoopCounts.Length] = bodyShape.LoopCount;
+        init self.BranchCounts[self.BranchCounts.Length] = bodyShape.BranchCount;
+        init self.BodyFlags[self.BodyFlags.Length] = bodyShape.Flags;
+        init self.EffectFlags[self.EffectFlags.Length] = effectFlags;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law bool TypedFunctionKindIsLaw(TypedDeclarationFunctionKind kind)
+{
+    return kind == TypedDeclarationFunctionKind.Law
+        || kind == TypedDeclarationFunctionKind.FiniteLaw;
+}
+
+internal finite law bool TypedFunctionKindIsFinite(TypedDeclarationFunctionKind kind)
+{
+    return kind == TypedDeclarationFunctionKind.Finite
+        || kind == TypedDeclarationFunctionKind.FiniteLaw;
+}
+
+internal finite law TypedFunctionInlinePreference TypedFunctionInlinePreferenceForFlags(u32[0 max] flags, TypedFunctionBackendOptimizationMode backendMode)
+{
+    if (backendMode == TypedFunctionBackendOptimizationMode.Opaque)
+    {
+        return TypedFunctionInlinePreference.NoInline;
+    }
+
+    if (TypedDeclFlagPresent(flags, TypedDeclFlagInline()))
+    {
+        return TypedFunctionInlinePreference.Inline;
+    }
+
+    if (TypedDeclFlagPresent(flags, TypedDeclFlagNoInline()))
+    {
+        return TypedFunctionInlinePreference.NoInline;
+    }
+
+    return TypedFunctionInlinePreference.InlineHint;
+}
+
+internal fn bool TypedFunctionSignatureReadsArgumentMemory(borrow TokenStream stream, borrow FunctionSignature signature)
+{
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] param = 0; param < paramCount; param += 1)
+    {
+        if (TypedLocalTypeSpanIsMemoryBacked(stream, signature.ParamTypeStartTokenAt(param), signature.ParamTypeEndTokenAt(param)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool TypedAsmSignatureTouchesMemory(borrow TokenStream stream, borrow FunctionSignature signature)
+{
+    if (TypedFunctionSignatureReadsArgumentMemory(stream, signature))
+    {
+        return true;
+    }
+
+    stack u64[0 2 ** 63 - 1] outputCount = (u64[0 2 ** 63 - 1])signature.AsmOutputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] output = 0; output < outputCount; output += 1)
+    {
+        if (!signature.AsmOutputBindsReturnAt(output))
+        {
+            return true;
+        }
+    }
+
+    return signature.AsmClobberCount() != 0;
+}
+
+internal finite law u32[0 max] TypedFunctionBodyOpenToken(borrow TokenStream stream, u32[0 max] keywordToken, u32[0 max] endToken)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = keywordToken;
+    while willexit (scan <= endToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0)
+        {
+            if (kind == TokenKind.LBrace)
+            {
+                return scan;
+            }
+
+            if (kind == TokenKind.Semi || kind == TokenKind.EndOfFile)
+            {
+                return 0;
+            }
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law bool AttributeListContainsBackendOpaque(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, "Backend")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, (u32[0 max])(scan + 2), "Opaque")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 3)) == TokenKind.RParen)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law TypedFunctionBackendOptimizationMode TypedFunctionBackendOptimizationModeForPrelude(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] startToken,
+    u32[0 max] keywordToken)
+{
+    stack mut u32[0 max] scan = startToken;
+    while willexit (scan < keywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return TypedFunctionBackendOptimizationMode.Default;
+        }
+
+        if (AttributeListContainsBackendOpaque(source, stream, scan, attrEnd))
+        {
+            return TypedFunctionBackendOptimizationMode.Opaque;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return TypedFunctionBackendOptimizationMode.Default;
+}
+
+internal fn TypedFunctionBodyShape AnalyzeTypedFunctionBodyShape(borrow StatementList body)
+{
+    stack mut TypedFunctionBodyShape shape = new();
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    shape.StatementCount = (u32[0 max])statementCount;
+    for willexit (stack mut u64[0 2 ** 63 - 1] statement = 0; statement < statementCount; statement += 1)
+    {
+        stack StatementItem item = body.ItemAt(statement);
+        if (body.DepthAt(statement) == 0)
+        {
+            shape.TopLevelStatementCount = (u32[0 max])(shape.TopLevelStatementCount + 1);
+        }
+
+        switch (item.Kind)
+        {
+            case StatementKind.Return:
+                shape.ReturnCount = (u32[0 max])(shape.ReturnCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagReturn();
+            case StatementKind.Become:
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagBecome();
+            case StatementKind.If:
+                shape.BranchCount = (u32[0 max])(shape.BranchCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagBranch();
+            case StatementKind.While:
+                shape.LoopCount = (u32[0 max])(shape.LoopCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagLoop();
+            case StatementKind.For:
+                shape.LoopCount = (u32[0 max])(shape.LoopCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagLoop();
+            case StatementKind.ForEach:
+                shape.LoopCount = (u32[0 max])(shape.LoopCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagLoop();
+            case StatementKind.Switch:
+                shape.BranchCount = (u32[0 max])(shape.BranchCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagSwitch() | TypedFunctionBodyFlagBranch();
+            case StatementKind.Break:
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagBreakOrContinue();
+            case StatementKind.Continue:
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagBreakOrContinue();
+            case StatementKind.Local:
+                shape.LocalDeclarationCount = (u32[0 max])(shape.LocalDeclarationCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagLocal();
+            case StatementKind.PatternBinding:
+                shape.LocalDeclarationCount = (u32[0 max])(shape.LocalDeclarationCount + 1);
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagLocal();
+            case StatementKind.Unsafe:
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagUnsafe();
+            case StatementKind.Block:
+                shape.Flags = shape.Flags | TypedFunctionBodyFlagBlock();
+            case StatementKind.Case:
+            case StatementKind.Expression:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] exprCount = body.ExprNodeCount();
+    shape.ExpressionNodeCount = (u32[0 max])exprCount;
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= exprCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == Compiler.Parsing.ExprKind.Call)
+        {
+            shape.CallExpressionCount = (u32[0 max])(shape.CallExpressionCount + 1);
+            shape.Flags = shape.Flags | TypedFunctionBodyFlagCall();
+        }
+        else if (kind == Compiler.Parsing.ExprKind.New)
+        {
+            shape.NewExpressionCount = (u32[0 max])(shape.NewExpressionCount + 1);
+            shape.Flags = shape.Flags | TypedFunctionBodyFlagNew();
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            shape.AssignmentExpressionCount = (u32[0 max])(shape.AssignmentExpressionCount + 1);
+            shape.Flags = shape.Flags | TypedFunctionBodyFlagAssign();
+        }
+    }
+
+    return shape;
+}
+
+internal finite law u32[0 max] BuildNormalFunctionEffectFlags(
+    TypedDeclarationFunctionKind functionKind,
+    bool hasBody,
+    bool readsArgumentMemory,
+    u32[0 max] bodyMemoryEffectFlags,
+    bool isFfi,
+    bool isVarargs,
+    bool isTailCallable,
+    bool isHot,
+    bool isCold,
+    bool isStrictFp,
+    bool noRecurse,
+    bool useFastCall)
+{
+    stack mut u32[0 max] flags = TypedFunctionEffectFlagNoUnwind();
+    if (hasBody)
+    {
+        flags = flags | TypedFunctionEffectFlagHasBody();
+    }
+
+    if (readsArgumentMemory)
+    {
+        flags = flags | TypedFunctionEffectFlagReadsArgumentMemory();
+    }
+
+    flags = flags | bodyMemoryEffectFlags;
+
+    if (TypedFunctionKindIsLaw(functionKind))
+    {
+        flags = flags | TypedFunctionEffectFlagPure() | TypedFunctionEffectFlagNoSync() | TypedFunctionEffectFlagNoFree();
+    }
+
+    if (TypedFunctionKindIsFinite(functionKind))
+    {
+        flags = flags | TypedFunctionEffectFlagWillReturn() | TypedFunctionEffectFlagMustProgress();
+    }
+
+    if (useFastCall) { flags = flags | TypedFunctionEffectFlagFastCall(); }
+    if (isFfi) { flags = flags | TypedFunctionEffectFlagFfi(); }
+    if (isVarargs) { flags = flags | TypedFunctionEffectFlagVarargs(); }
+    if (isHot) { flags = flags | TypedFunctionEffectFlagHot(); }
+    if (isCold) { flags = flags | TypedFunctionEffectFlagCold(); }
+    if (isStrictFp) { flags = flags | TypedFunctionEffectFlagStrictFp(); }
+    if (noRecurse) { flags = flags | TypedFunctionEffectFlagNoRecurse(); }
+    if (isTailCallable) { flags = flags | TypedFunctionEffectFlagTailCallable(); }
+    return flags;
+}
+
+internal finite law u32[0 max] BuildAsmFunctionEffectFlags(bool hasBody, bool touchesMemory)
+{
+    stack mut u32[0 max] flags = TypedFunctionEffectFlagNoUnwind() | TypedFunctionEffectFlagFfi() | TypedFunctionEffectFlagAsm();
+    if (hasBody)
+    {
+        flags = flags | TypedFunctionEffectFlagHasBody();
+    }
+
+    if (touchesMemory)
+    {
+        flags = flags | TypedFunctionEffectFlagReadsArgumentMemory();
+    }
+
+    return flags;
+}
+
+internal fn System.Memory.MemoryStatus CollectTypedFunctionBodyMemoryEffectFlags(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow FunctionSignature signature,
+    borrow StatementList body,
+    out u32[0 max] flags)
+{
+    flags = 0;
+    stack mut FunctionScope scope = new();
+    switch (BuildFunctionScope(signature, body))
+    {
+        case BindResult<FunctionScope>.Err(var scopeError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<FunctionScope>.Ok(var builtScope):
+            scope = builtScope;
+    }
+
+    stack mut ReferenceTable refs = new();
+    switch (ResolveReferences(scope, table, source, stream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var refError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case BindResult<ReferenceTable>.Ok(var builtRefs):
+            refs = builtRefs;
+    }
+
+    stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] refIndex = 0; refIndex < refCount; refIndex += 1)
+    {
+        if (ReferenceReadsGlobalState(table, refs, body, refIndex))
+        {
+            flags = flags | TypedFunctionEffectFlagReadsOtherMemory();
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] statementCount = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] statementIndex = 0; statementIndex < statementCount; statementIndex += 1)
+    {
+        stack StatementItem item = body.ItemAt(statementIndex);
+        stack u32[0 max] root = body.ExprRootAt(statementIndex);
+        if (item.Kind == StatementKind.Local)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])item.StartToken) == TokenKind.Heap)
+            {
+                flags = flags | TypedFunctionEffectFlagReadsOtherMemory() | TypedFunctionEffectFlagWritesOtherMemory();
+            }
+
+            if (TypeSpanIsDynamicStorage(stream, item.TypeStartToken, item.TypeEndToken)
+                && ExpressionIsRuntimeDynamicNew(body, stream, root))
+            {
+                flags = flags | TypedFunctionEffectFlagReadsOtherMemory() | TypedFunctionEffectFlagWritesOtherMemory();
+            }
+        }
+        else if (item.Kind == StatementKind.Return
+            && TypeSpanIsDynamicStorage(stream, signature.ReturnTypeStartTokenAt(), signature.ReturnTypeEndTokenAt())
+            && ExpressionIsRuntimeDynamicNew(body, stream, root))
+        {
+            flags = flags | TypedFunctionEffectFlagReadsOtherMemory() | TypedFunctionEffectFlagWritesOtherMemory();
+        }
+
+        if (ExpressionContainsArenaSelectorNew(body, stream, root))
+        {
+            flags = flags | TypedFunctionEffectFlagReadsOtherMemory() | TypedFunctionEffectFlagWritesOtherMemory();
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] node = (u32[0 max])nodeIndex;
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == Compiler.Parsing.ExprKind.Assign)
+        {
+            if (AssignmentTargetWritesGlobalState(table, refs, body, body.ExprLeftAt(node)))
+            {
+                flags = flags | TypedFunctionEffectFlagWritesOtherMemory();
+            }
+
+            if (AssignmentTargetIsDynamicStorage(table, source, refs, scope, stream, body, body.ExprLeftAt(node))
+                && ExpressionIsRuntimeDynamicNew(body, stream, body.ExprRightAt(node)))
+            {
+                flags = flags | TypedFunctionEffectFlagReadsOtherMemory() | TypedFunctionEffectFlagWritesOtherMemory();
+            }
+        }
+        else if (kind == Compiler.Parsing.ExprKind.Call
+            && CallAllocatesDynamicStorage(table, source, refs, scope, stream, body, node))
+        {
+            flags = flags | TypedFunctionEffectFlagReadsOtherMemory() | TypedFunctionEffectFlagWritesOtherMemory();
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn BindResult<DeclarationTable> BuildSourceDeclarationTable(ascii source, borrow TokenStream stream)
+{
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return BindResult<DeclarationTable>.Err(BindError.OutOfMemory);
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return BindResult<DeclarationTable>.Err(BindError.OutOfMemory);
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    return BuildDeclarationTable(source, stream, decls);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedFunctionEffectForDeclaration(
+    mut borrow TypedFunctionEffectSummaryTable summaries,
+    borrow DeclarationTable sourceDeclarations,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow RuntimeCallEdgeTable runtimeCallEdges,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (declarations.ClassAt(index) != TypedDeclarationSymbolClass.Function)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, declarations.KeywordTokenAt(index)))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack u32[0 max] bodyOpen = TypedFunctionBodyOpenToken(stream, declarations.KeywordTokenAt(index), declarations.EndTokenAt(index));
+    stack mut TypedFunctionBodyShape shape = new();
+    stack mut u32[0 max] bodyMemoryEffectFlags = 0;
+    if (bodyOpen != 0)
+    {
+        switch (ParseFunctionBody(stream, declarations.KeywordTokenAt(index)))
+        {
+            case ParseResult<StatementList>.Err(var bodyError):
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            case ParseResult<StatementList>.Ok(var body):
+                shape = AnalyzeTypedFunctionBodyShape(body);
+                switch (CollectTypedFunctionBodyMemoryEffectFlags(sourceDeclarations, source, stream, signature, body, bodyMemoryEffectFlags))
+                {
+                    case System.Memory.MemoryStatus.Err(var effectError):
+                        return System.Memory.MemoryStatus.Err(effectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+        }
+    }
+
+    stack TypedFunctionBackendOptimizationMode backendMode = TypedFunctionBackendOptimizationModeForPrelude(source, stream, declarations.StartTokenAt(index), declarations.KeywordTokenAt(index));
+    stack TypedFunctionInlinePreference inlinePreference = TypedFunctionInlinePreferenceForFlags(declarations.FlagsAt(index), backendMode);
+    stack bool isAsm = declarations.IsAsmAt(index) || signature.HasAsm();
+    stack mut u32[0 max] effectFlags = 0;
+    stack mut TypedDeclarationFunctionKind storedKind = declarations.FunctionKindAt(index);
+    if (isAsm)
+    {
+        storedKind = TypedDeclarationFunctionKind.Fn;
+        effectFlags = BuildAsmFunctionEffectFlags(bodyOpen != 0, TypedAsmSignatureTouchesMemory(stream, signature));
+    }
+    else
+    {
+        stack bool isLaw = TypedFunctionKindIsLaw(storedKind);
+        stack u32[0 max] sourceDeclarationPlusOne = FindSourceDeclarationByNameToken(sourceDeclarations, source, stream, declarations.NameTokenAt(index));
+        stack mut bool ordinaryRecursive = false;
+        if (sourceDeclarationPlusOne != 0)
+        {
+            switch (RuntimeDeclarationHasOrdinaryRecursiveCycle(runtimeCallEdges, sourceDeclarationPlusOne, ordinaryRecursive))
+            {
+                case System.Memory.MemoryStatus.Err(var recursionError):
+                    return System.Memory.MemoryStatus.Err(recursionError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        stack bool noRecurse = bodyOpen != 0
+            && sourceDeclarationPlusOne != 0
+            && !ordinaryRecursive
+            && !declarations.IsFfiAt(index)
+            && !declarations.IsVarargsAt(index)
+            && RuntimeCallerHasOnlyKnownOrdinaryDirectEdges(
+                sourceDeclarations,
+                stream,
+                runtimeCallEdges,
+                sourceDeclarationPlusOne,
+                shape.CallExpressionCount);
+        effectFlags = BuildNormalFunctionEffectFlags(
+            storedKind,
+            bodyOpen != 0,
+            isLaw && TypedFunctionSignatureReadsArgumentMemory(stream, signature),
+            bodyMemoryEffectFlags,
+            declarations.IsFfiAt(index),
+            declarations.IsVarargsAt(index),
+            declarations.IsTailCallableAt(index),
+            declarations.IsHotAt(index),
+            declarations.IsColdAt(index),
+            declarations.IsStrictFpAt(index),
+            noRecurse,
+            !declarations.IsTailCallableAt(index) && !declarations.IsFfiAt(index) && declarations.VisibilityAt(index) != TypedModuleSymbolVisibility.Export);
+    }
+
+    return summaries.Append(
+        TypedFunctionEffectOwnerKind.Declaration,
+        (u32[0 max])(index + 1),
+        0,
+        (u32[0 max])(index + 1),
+        declarations.NameTokenAt(index),
+        declarations.KeywordTokenAt(index),
+        declarations.StartTokenAt(index),
+        declarations.EndTokenAt(index),
+        bodyOpen,
+        storedKind,
+        inlinePreference,
+        backendMode,
+        (u32[0 max])signature.ParamCount(),
+        declarations.AbiNameTokenAt(index),
+        declarations.LinkNameValueTokenAt(index),
+        declarations.AsmInputCountAt(index),
+        declarations.AsmOutputCountAt(index),
+        declarations.AsmClobberCountAt(index),
+        shape,
+        effectFlags);
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedFunctionEffectForMember(
+    mut borrow TypedFunctionEffectSummaryTable summaries,
+    borrow DeclarationTable sourceDeclarations,
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedMemberSymbolTable members,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (members.KindAt(index) != TypedMemberSymbolKind.Method)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut FunctionSignature signature = new();
+    switch (ParseFunctionSignature(stream, members.KeywordTokenAt(index)))
+    {
+        case ParseResult<FunctionSignature>.Err(var signatureError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<FunctionSignature>.Ok(var parsedSignature):
+            signature = parsedSignature;
+    }
+
+    stack u32[0 max] bodyOpen = TypedFunctionBodyOpenToken(stream, members.KeywordTokenAt(index), members.EndTokenAt(index));
+    stack mut TypedFunctionBodyShape shape = new();
+    stack mut u32[0 max] bodyMemoryEffectFlags = 0;
+    if (bodyOpen != 0)
+    {
+        switch (ParseFunctionBody(stream, members.KeywordTokenAt(index)))
+        {
+            case ParseResult<StatementList>.Err(var bodyError):
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+            case ParseResult<StatementList>.Ok(var body):
+                shape = AnalyzeTypedFunctionBodyShape(body);
+                switch (CollectTypedFunctionBodyMemoryEffectFlags(sourceDeclarations, source, stream, signature, body, bodyMemoryEffectFlags))
+                {
+                    case System.Memory.MemoryStatus.Err(var effectError):
+                        return System.Memory.MemoryStatus.Err(effectError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+        }
+    }
+
+    stack TypedFunctionBackendOptimizationMode backendMode = TypedFunctionBackendOptimizationModeForPrelude(source, stream, members.StartTokenAt(index), members.KeywordTokenAt(index));
+    stack TypedFunctionInlinePreference inlinePreference = TypedFunctionInlinePreferenceForFlags(members.FlagsAt(index), backendMode);
+    stack bool isAsm = members.IsAsmAt(index) || signature.HasAsm();
+    stack mut u32[0 max] effectFlags = 0;
+    stack mut TypedDeclarationFunctionKind storedKind = members.FunctionKindAt(index);
+    if (isAsm)
+    {
+        storedKind = TypedDeclarationFunctionKind.Fn;
+        effectFlags = BuildAsmFunctionEffectFlags(bodyOpen != 0, TypedAsmSignatureTouchesMemory(stream, signature));
+    }
+    else
+    {
+        stack bool isLaw = TypedFunctionKindIsLaw(storedKind);
+        effectFlags = BuildNormalFunctionEffectFlags(
+            storedKind,
+            bodyOpen != 0,
+            isLaw && TypedFunctionSignatureReadsArgumentMemory(stream, signature),
+            bodyMemoryEffectFlags,
+            members.IsFfiAt(index),
+            members.IsVarargsAt(index),
+            members.IsTailCallableAt(index),
+            members.IsHotAt(index),
+            members.IsColdAt(index),
+            members.IsStrictFpAt(index),
+            false,
+            !members.IsTailCallableAt(index) && !members.IsFfiAt(index) && members.VisibilityAt(index) != TypedModuleSymbolVisibility.Export);
+    }
+
+    return summaries.Append(
+        TypedFunctionEffectOwnerKind.MemberMethod,
+        0,
+        (u32[0 max])(index + 1),
+        members.OwnerDeclarationSymbolIndexPlusOneAt(index),
+        members.NameTokenAt(index),
+        members.KeywordTokenAt(index),
+        members.StartTokenAt(index),
+        members.EndTokenAt(index),
+        bodyOpen,
+        storedKind,
+        inlinePreference,
+        backendMode,
+        (u32[0 max])signature.ParamCount(),
+        members.AbiNameTokenAt(index),
+        members.LinkNameValueTokenAt(index),
+        members.AsmInputCountAt(index),
+        members.AsmOutputCountAt(index),
+        members.AsmClobberCountAt(index),
+        shape,
+        effectFlags);
+}
+
+public fn BindResult<TypedFunctionEffectSummaryTable> BuildTypedFunctionEffectSummaries(
+    ascii source,
+    borrow TokenStream stream,
+    borrow TypedDeclarationSymbolTable declarations,
+    borrow TypedMemberSymbolTable members)
+{
+    stack mut TypedFunctionEffectSummaryTable summaries = new();
+    stack mut DeclarationTable sourceDeclarations = new();
+    switch (BuildSourceDeclarationTable(source, stream))
+    {
+        case BindResult<DeclarationTable>.Err(var sourceTableError):
+            return BindResult<TypedFunctionEffectSummaryTable>.Err(BindError.OutOfMemory);
+        case BindResult<DeclarationTable>.Ok(var builtSourceDeclarations):
+            sourceDeclarations = builtSourceDeclarations;
+    }
+
+    stack mut RuntimeCallEdgeTable runtimeCallEdges = new();
+    switch (CollectRuntimeCallEdges(sourceDeclarations, source, stream, runtimeCallEdges))
+    {
+        case System.Memory.MemoryStatus.Err(var edgeError):
+            return BindResult<TypedFunctionEffectSummaryTable>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] declarationCount = declarations.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < declarationCount; index += 1)
+    {
+        switch (AppendTypedFunctionEffectForDeclaration(summaries, sourceDeclarations, source, stream, declarations, runtimeCallEdges, index))
+        {
+            case System.Memory.MemoryStatus.Err(var declarationError):
+                return BindResult<TypedFunctionEffectSummaryTable>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] memberCount = members.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < memberCount; index += 1)
+    {
+        switch (AppendTypedFunctionEffectForMember(summaries, sourceDeclarations, source, stream, members, index))
+        {
+            case System.Memory.MemoryStatus.Err(var memberError):
+                return BindResult<TypedFunctionEffectSummaryTable>.Err(BindError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return BindResult<TypedFunctionEffectSummaryTable>.Ok(summaries);
+}
+
+
+internal fn bool DeclarationRootIsGlobalState(borrow DeclarationTable table, u32[0 max] tableIndexPlusOne)
+{
+    if (tableIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] tableIndex = (u64[0 2 ** 63 - 1])(tableIndexPlusOne - 1);
+    if (tableIndex >= table.Count())
+    {
+        return false;
+    }
+
+    stack DeclarationKind kind = table.KindAt(tableIndex);
+    return kind == DeclarationKind.Static || kind == DeclarationKind.GlobalVariable;
+}
+
+internal fn bool ExpressionNodeIsAssignmentRootTarget(borrow StatementList body, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+    {
+        stack u32[0 max] candidate = (u32[0 max])nodeIndex;
+        if (body.ExprKindAt(candidate) == Compiler.Parsing.ExprKind.Assign
+            && AssignmentTargetRootNode(body, body.ExprLeftAt(candidate)) == node)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool DeclarationRootIsLongLived(borrow DeclarationTable table, u32[0 max] tableIndexPlusOne)
+{
+    if (tableIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] tableIndex = (u64[0 2 ** 63 - 1])(tableIndexPlusOne - 1);
+    if (tableIndex >= table.Count())
+    {
+        return false;
+    }
+
+    stack DeclarationKind kind = table.KindAt(tableIndex);
+    return kind == DeclarationKind.Static || kind == DeclarationKind.Const
+        || kind == DeclarationKind.GlobalVariable;
+}
+
+internal fn bool ReferenceReadsGlobalState(
+    borrow DeclarationTable table,
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] refIndex)
+{
+    if (refs.KindAt(refIndex) != ReferenceKind.Declaration)
+    {
+        return false;
+    }
+
+    if (!DeclarationRootIsGlobalState(table, refs.TargetAt(refIndex)))
+    {
+        return false;
+    }
+
+    return !ExpressionNodeIsAssignmentRootTarget(body, refs.NodeAt(refIndex));
+}
+
+internal fn bool AssignmentTargetWritesGlobalState(
+    borrow DeclarationTable table,
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] target)
+{
+    stack u32[0 max] root = AssignmentTargetRootNode(body, target);
+    if (root == 0 || body.ExprKindAt(root) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, root);
+    if (refIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+    return refs.KindAt(refIndex) == ReferenceKind.Declaration
+        && DeclarationRootIsGlobalState(table, refs.TargetAt(refIndex));
+}
+
+
+internal fn bool NewExpressionUsesArenaSelector(borrow StatementList body, borrow TokenStream stream, u32[0 max] node)
+{
+    if (node == 0 || body.ExprKindAt(node) != Compiler.Parsing.ExprKind.New || body.ExprCallArgCountAt(node) == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstArg = body.ExprCallArgAt(node, 0);
+    return firstArg != 0
+        && body.ExprKindAt(firstArg) == Compiler.Parsing.ExprKind.StorageSelector
+        && stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(firstArg)) == TokenKind.Arena;
+}
+
+internal fn bool ExpressionContainsArenaSelectorNew(borrow StatementList body, borrow TokenStream stream, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (NewExpressionUsesArenaSelector(body, stream, node))
+    {
+        return true;
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Conversion)
+    {
+        return ExpressionContainsArenaSelectorNew(body, stream, body.ExprRightAt(node));
+    }
+
+    if (kind == Compiler.Parsing.ExprKind.Unary || kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index
+        || kind == Compiler.Parsing.ExprKind.Call || kind == Compiler.Parsing.ExprKind.New || kind == Compiler.Parsing.ExprKind.Assign
+        || kind == Compiler.Parsing.ExprKind.Binary || kind == Compiler.Parsing.ExprKind.Conditional)
+    {
+        if (ExpressionContainsArenaSelectorNew(body, stream, body.ExprLeftAt(node))
+            || ExpressionContainsArenaSelectorNew(body, stream, body.ExprRightAt(node))
+            || ExpressionContainsArenaSelectorNew(body, stream, body.ExprAuxAt(node)))
+        {
+            return true;
+        }
+
+        stack u32[0 max] argCount = body.ExprCallArgCountAt(node);
+        for willexit (stack mut u32[0 max] arg = 0; arg < argCount; arg = (u32[0 max])(arg + 1))
+        {
+            if (ExpressionContainsArenaSelectorNew(body, stream, body.ExprCallArgAt(node, arg)))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+
+// Parses the function signature named by a declaration-table entry. Returns
+// false for non-function entries, missing keyword tokens, or malformed
+// signatures.
+internal fn bool TryParseFunctionSignatureFromTable(borrow DeclarationTable table, borrow TokenStream stream, u32[0 max] tableIndexPlusOne, out FunctionSignature signature)
+{
+    signature = new();
+    if (tableIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] slot = (u64[0 2 ** 63 - 1])(tableIndexPlusOne - 1);
+    if (table.KindAt(slot) != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    stack u32[0 max] keyword = table.KeywordTokenAt(slot);
+    switch (ParseFunctionSignature(stream, keyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var parsed):
+            signature = parsed;
+            return true;
+    }
+}
+
+
+internal fn bool U32ListContains(borrow dynamic u32[0 max] values, u32[0 max] value)
+{
+    stack mut bool found = false;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < values.Length; index += 1)
+    {
+        if (!found && values[index] == value)
+        {
+            found = true;
+        }
+    }
+
+    return found;
+}
+
+internal fn System.Memory.MemoryStatus AppendU32(mut borrow dynamic u32[0 max] values, u32[0 max] value)
+{
+    if (!values.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init values[values.Length] = value;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendNodeIfPresent(mut borrow dynamic u32[0 max] nodes, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return AppendU32(nodes, node);
+}
+
+
+internal fn bool FunctionDeclarationHasOrdinaryBody(borrow DeclarationTable table, borrow TokenStream stream, u32[0 max] declarationPlusOne)
+{
+    if (declarationPlusOne == 0 || (u64[0 2 ** 63 - 1])declarationPlusOne > table.Count())
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(declarationPlusOne - 1);
+    if (table.KindAt(index) != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, table.KeywordTokenAt(index)))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return true;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendRuntimeCallEdgeForNamedCall(
+    u32[0 max] callerPlusOne,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    mut borrow RuntimeCallEdgeTable edges)
+{
+    if (callNode == 0 || body.ExprKindAt(callNode) != Compiler.Parsing.ExprKind.Call)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+    if (refIndexPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+        if (refs.KindAt(refIndex) != ReferenceKind.Declaration)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] targetPlusOne = refs.TargetAt(refIndex);
+        if (targetPlusOne == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut FunctionSignature callee = new();
+        if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+        {
+            return edges.Append(callerPlusOne, targetPlusOne, refs.NameTokenAt(refIndex));
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] nameToken = body.ExprTokenAt(calleeNode);
+    stack u64[0 2 ** 63 - 1] tableCount = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] tableIndex = 0; tableIndex < tableCount; tableIndex += 1)
+    {
+        if (BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(tableIndex), nameToken))
+        {
+            stack u32[0 max] targetPlusOne = (u32[0 max])(tableIndex + 1);
+            stack mut FunctionSignature callee = new();
+            if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+            {
+                return edges.Append(callerPlusOne, targetPlusOne, nameToken);
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u32[0 max] FindSourceDeclarationByNameToken(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] nameToken)
+{
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (BindingTokenTextEqualsToken(source, stream, table.NameTokenAt(index), nameToken))
+        {
+            return (u32[0 max])(index + 1);
+        }
+    }
+
+    return 0;
+}
+
+internal struct RuntimeCallEdgeTable
+{
+    internal dynamic u32[0 max] Callers;
+    internal dynamic u32[0 max] Callees;
+    internal dynamic u32[0 max] Tokens;
+
+    RuntimeCallEdgeTable()
+    {
+        self.Callers = new();
+        self.Callees = new();
+        self.Tokens = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow RuntimeCallEdgeTable self)
+    {
+        return self.Callers.Length;
+    }
+
+    law u32[0 max] CallerAt(borrow RuntimeCallEdgeTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] caller = 0;
+        if (index < self.Callers.Length)
+        {
+            caller = self.Callers[index];
+        }
+
+        return caller;
+    }
+
+    law u32[0 max] CalleeAt(borrow RuntimeCallEdgeTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] callee = 0;
+        if (index < self.Callees.Length)
+        {
+            callee = self.Callees[index];
+        }
+
+        return callee;
+    }
+
+    law u32[0 max] TokenAt(borrow RuntimeCallEdgeTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.Tokens.Length)
+        {
+            token = self.Tokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow RuntimeCallEdgeTable self, u32[0 max] caller, u32[0 max] callee, u32[0 max] token)
+    {
+        if (!self.Callers.TryReserve(1)
+            || !self.Callees.TryReserve(1)
+            || !self.Tokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Callers[self.Callers.Length] = caller;
+        init self.Callees[self.Callees.Length] = callee;
+        init self.Tokens[self.Tokens.Length] = token;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectRuntimeCallEdgesForFunction(
+    u32[0 max] callerPlusOne,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow RuntimeCallEdgeTable edges)
+{
+    stack mut FunctionSignature signature = new();
+    if (!TryParseFunctionSignatureFromTable(table, stream, callerPlusOne, signature))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (ParseFunctionBody(stream, table.KeywordTokenAt((u64[0 2 ** 63 - 1])(callerPlusOne - 1))))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<StatementList>.Ok(var body):
+            switch (BuildFunctionScope(signature, body))
+            {
+                case BindResult<FunctionScope>.Err(var scopeError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<FunctionScope>.Ok(var scope):
+                    stack mut ReferenceTable refs = new();
+                    switch (ResolveReferences(scope, table, source, stream, body))
+                    {
+                        case BindResult<ReferenceTable>.Err(var refError):
+                            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                        case BindResult<ReferenceTable>.Ok(var built):
+                            refs = built;
+                    }
+
+                    stack mut dynamic u32[0 max] skipCallNodes = new();
+                    stack u64[0 2 ** 63 - 1] count = body.Count();
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+                    {
+                        if (body.ItemAt(index).Kind == StatementKind.Become)
+                        {
+                            switch (AppendNodeIfPresent(skipCallNodes, body.ExprRootAt(index)))
+                            {
+                                case System.Memory.MemoryStatus.Err(var skipError):
+                                    return System.Memory.MemoryStatus.Err(skipError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+
+                    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+                    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+                    {
+                        stack u32[0 max] node = (u32[0 max])nodeIndex;
+                        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call && !U32ListContains(skipCallNodes, node))
+                        {
+                            switch (AppendRuntimeCallEdgeForNamedCall(callerPlusOne, table, source, stream, refs, body, node, edges))
+                            {
+                                case System.Memory.MemoryStatus.Err(var edgeError):
+                                    return System.Memory.MemoryStatus.Err(edgeError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus RuntimeCallPathExists(borrow RuntimeCallEdgeTable edges, u32[0 max] start, u32[0 max] target, out bool exists)
+{
+    exists = start == target;
+    if (exists)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic u32[0 max] reachable = new();
+    switch (AppendU32(reachable, start))
+    {
+        case System.Memory.MemoryStatus.Err(var startError):
+            return System.Memory.MemoryStatus.Err(startError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] round = 0; round < edgeCount; round += 1)
+    {
+        if (exists)
+        {
+            break;
+        }
+
+        stack u64[0 2 ** 63 - 1] reachableCount = reachable.Length;
+        stack mut bool changed = false;
+        for willexit (stack mut u64[0 2 ** 63 - 1] reachableIndex = 0; reachableIndex < reachableCount; reachableIndex += 1)
+        {
+            if (reachableIndex >= reachable.Length)
+            {
+                continue;
+            }
+
+            stack u32[0 max] current = reachable[reachableIndex];
+            for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+            {
+                if (edges.CallerAt(edge) == current)
+                {
+                    stack u32[0 max] next = edges.CalleeAt(edge);
+                    if (next == target)
+                    {
+                        exists = true;
+                    }
+                    else if (!U32ListContains(reachable, next))
+                    {
+                        switch (AppendU32(reachable, next))
+                        {
+                            case System.Memory.MemoryStatus.Err(var nextError):
+                                return System.Memory.MemoryStatus.Err(nextError);
+                            case System.Memory.MemoryStatus.Ok:
+                                changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!changed)
+        {
+            break;
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool RuntimeCallerHasOnlyKnownOrdinaryDirectEdges(
+    borrow DeclarationTable table,
+    borrow TokenStream stream,
+    borrow RuntimeCallEdgeTable edges,
+    u32[0 max] callerPlusOne,
+    u32[0 max] callExpressionCount)
+{
+    stack mut u32[0 max] directEdgeCount = 0;
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+    {
+        if (edges.CallerAt(edge) == callerPlusOne)
+        {
+            directEdgeCount = (u32[0 max])(directEdgeCount + 1);
+            if (!FunctionDeclarationHasOrdinaryBody(table, stream, edges.CalleeAt(edge)))
+            {
+                return false;
+            }
+        }
+    }
+
+    return directEdgeCount == callExpressionCount;
+}
+
+internal fn System.Memory.MemoryStatus RuntimeDeclarationHasOrdinaryRecursiveCycle(
+    borrow RuntimeCallEdgeTable edges,
+    u32[0 max] callerPlusOne,
+    out bool recursive)
+{
+    recursive = false;
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+    {
+        if (!recursive && edges.CallerAt(edge) == callerPlusOne)
+        {
+            stack u32[0 max] calleePlusOne = edges.CalleeAt(edge);
+            if (calleePlusOne == callerPlusOne)
+            {
+                recursive = true;
+            }
+            else
+            {
+                for willexit (stack mut u64[0 2 ** 63 - 1] other = 0; other < edgeCount; other += 1)
+                {
+                    if (!recursive && edges.CallerAt(other) == calleePlusOne && edges.CalleeAt(other) == callerPlusOne)
+                    {
+                        recursive = true;
+                    }
+                }
+
+                if (!recursive)
+                {
+                    switch (RuntimeCallPathExists(edges, calleePlusOne, callerPlusOne, recursive))
+                    {
+                        case System.Memory.MemoryStatus.Err(var pathError):
+                            return System.Memory.MemoryStatus.Err(pathError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+
+internal fn System.Memory.MemoryStatus CollectRuntimeCallEdges(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow RuntimeCallEdgeTable edges)
+{
+    stack u64[0 2 ** 63 - 1] functionCount = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < functionCount; index += 1)
+    {
+        if (table.KindAt(index) == DeclarationKind.Function)
+        {
+            switch (CollectRuntimeCallEdgesForFunction((u32[0 max])(index + 1), table, source, stream, edges))
+            {
+                case System.Memory.MemoryStatus.Err(var edgeError):
+                    return System.Memory.MemoryStatus.Err(edgeError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+
+internal finite law bool TypeSpanIsDynamicStorage(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    return start != 0
+        && start < endExclusive
+        && TypedLocalTypeSpanHasTopLevelToken(stream, start, endExclusive, TokenKind.Dynamic);
+}
+
+internal fn bool ExpressionIsRuntimeDynamicNew(borrow StatementList body, borrow TokenStream stream, u32[0 max] node)
+{
+    return node != 0
+        && body.ExprKindAt(node) == Compiler.Parsing.ExprKind.New
+        && !NewExpressionUsesArenaSelector(body, stream, node);
+}
+
+internal finite law bool LawDynamicAllocationMember(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    return TokenTextEquals(source, stream, token, "Reserve")
+        || TokenTextEquals(source, stream, token, "TryReserve")
+        || TokenTextEquals(source, stream, token, "ReserveCapacity")
+        || TokenTextEquals(source, stream, token, "TryReserveCapacity");
+}
+
+internal finite law bool LawDynamicMutationMember(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    return TokenTextEquals(source, stream, token, "MoveLast")
+        || TokenTextEquals(source, stream, token, "MoveAt");
+}
+
+internal fn u32[0 max] AssignmentTargetRootNode(borrow StatementList body, u32[0 max] target)
+{
+    stack mut u32[0 max] root = target;
+    stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ExprNodeCount() + 1);
+    while willexit (root != 0 && guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack ExprKind kind = body.ExprKindAt(root);
+        if (kind == Compiler.Parsing.ExprKind.Member
+            || kind == Compiler.Parsing.ExprKind.Index
+            || kind == Compiler.Parsing.ExprKind.Unary)
+        {
+            stack u32[0 max] next = body.ExprLeftAt(root);
+            if (next == 0)
+            {
+                return root;
+            }
+
+            root = next;
+        }
+        else
+        {
+            return root;
+        }
+    }
+
+    return root;
+}
+
+
+internal fn bool FunctionScopeSymbolIsDynamicStorage(borrow TokenStream stream, borrow FunctionScope scope, u32[0 max] targetPlusOne)
+{
+    if (targetPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])(targetPlusOne - 1);
+    return target < scope.Count()
+        && TypeSpanIsDynamicStorage(stream, scope.TypeStartTokenAt(target), scope.TypeEndTokenAt(target));
+}
+
+
+internal fn bool DeclarationTypeSpanIsDynamicStorage(borrow DeclarationTable table, borrow TokenStream stream, u32[0 max] tableIndexPlusOne)
+{
+    if (tableIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] tableIndex = (u64[0 2 ** 63 - 1])(tableIndexPlusOne - 1);
+    if (tableIndex >= table.Count())
+    {
+        return false;
+    }
+
+    stack DeclarationKind kind = table.KindAt(tableIndex);
+    if (kind != DeclarationKind.Static && kind != DeclarationKind.Const && kind != DeclarationKind.GlobalVariable)
+    {
+        return false;
+    }
+
+    return TypeSpanIsDynamicStorage(stream, table.KeywordTokenAt(tableIndex), table.NameTokenAt(tableIndex));
+}
+
+internal fn bool StructFieldTypeSpanIsDynamicStorage(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] structNameToken,
+    u32[0 max] fieldNameToken)
+{
+    stack u32[0 max] structDefName = FindStructDefName(table, source, stream, structNameToken);
+    if (structDefName == 0 || fieldNameToken == 0)
+    {
+        return false;
+    }
+
+    stack ascii fieldName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fieldNameToken);
+    switch (ParseStructFields(stream, structDefName))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return false;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] field = 0; field < fieldCount; field += 1)
+            {
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(field));
+                if (System.Text.Equals(name, fieldName))
+                {
+                    return TypeSpanIsDynamicStorage(stream, fields.TypeStartAt(field), fields.TypeEndAt(field));
+                }
+            }
+    }
+
+    return false;
+}
+
+internal fn bool ExpressionIsDynamicStorageValue(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
+    {
+        stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
+        if (refIndexPlusOne == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+        stack ReferenceKind refKind = refs.KindAt(refIndex);
+        if (refKind == ReferenceKind.Local || refKind == ReferenceKind.Parameter)
+        {
+            return FunctionScopeSymbolIsDynamicStorage(stream, scope, refs.TargetAt(refIndex));
+        }
+
+        if (refKind == ReferenceKind.Declaration)
+        {
+            return DeclarationTypeSpanIsDynamicStorage(table, stream, refs.TargetAt(refIndex));
+        }
+    }
+    else if (kind == Compiler.Parsing.ExprKind.Member)
+    {
+        stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+        return StructFieldTypeSpanIsDynamicStorage(table, source, stream, receiverStruct, body.ExprTokenAt(node));
+    }
+
+    return false;
+}
+
+internal fn bool AssignmentTargetIsDynamicStorage(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] target)
+{
+    return ExpressionIsDynamicStorageValue(table, source, refs, scope, stream, body, target);
+}
+
+
+internal fn bool CallTargetsDynamicStorageMember(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    bool allocation)
+{
+    if (callNode == 0 || body.ExprKindAt(callNode) != Compiler.Parsing.ExprKind.Call)
+    {
+        return false;
+    }
+
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Member)
+    {
+        return false;
+    }
+
+    stack u32[0 max] methodToken = body.ExprTokenAt(calleeNode);
+    if (allocation)
+    {
+        if (!LawDynamicAllocationMember(source, stream, methodToken))
+        {
+            return false;
+        }
+    }
+    else if (!LawDynamicMutationMember(source, stream, methodToken))
+    {
+        return false;
+    }
+
+    stack u32[0 max] receiverNode = body.ExprLeftAt(calleeNode);
+    return ExpressionIsDynamicStorageValue(table, source, refs, scope, stream, body, receiverNode);
+}
+
+internal fn bool CallAllocatesDynamicStorage(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode)
+{
+    return CallTargetsDynamicStorageMember(table, source, refs, scope, stream, body, callNode, true);
+}
+
+internal fn bool CallMutatesDynamicStorage(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow ReferenceTable refs,
+    borrow FunctionScope scope,
+    borrow TokenStream stream,
+    borrow StatementList body,
+    u32[0 max] callNode)
+{
+    return CallTargetsDynamicStorageMember(table, source, refs, scope, stream, body, callNode, false);
+}

@@ -1,0 +1,327 @@
+import Compiler.AsmFacts
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Model
+import System.Memory
+import System.Text
+module Compiler.Mir.AssemblyMetadata
+
+internal fn bool AppendAsmRawTokenText(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    mut borrow AsmMetadataTable table,
+    out AsmTextRange range)
+{
+    range = new();
+    if (token == 0)
+    {
+        return false;
+    }
+
+    stack ascii text = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (table.AppendText(text, range))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+
+    return false;
+}
+
+internal fn bool AppendDecodedAsmStringToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    mut borrow AsmMetadataTable table,
+    out AsmTextRange range)
+{
+    range = new();
+    stack mut OwnedAscii decoded = new();
+    if (!TryDecodeAsmMetadataStringToken(source, stream, token, decoded))
+    {
+        return false;
+    }
+
+    switch (table.AppendText(decoded.View(), range))
+    {
+        case MemoryStatus.Err(var appendError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryDecodeAsmMetadataStringToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    out OwnedAscii decoded)
+{
+    decoded = new();
+    if (token == 0)
+    {
+        return false;
+    }
+
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (System.Text.DecodeStringLiteralToUtf8(literal))
+    {
+        case System.Text.TextBuildResult<OwnedAscii>.Err(var decodeError):
+            return false;
+        case System.Text.TextBuildResult<OwnedAscii>.Ok(var value):
+            decoded = value;
+            return true;
+    }
+
+    return false;
+}
+
+internal fn bool AsmRegisterTokenIsValidForArchitecture(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    Compiler.AsmFacts.StarkAsmArchitecture architecture)
+{
+    stack mut OwnedAscii registerText = new();
+    if (!TryDecodeAsmMetadataStringToken(source, stream, token, registerText))
+    {
+        return false;
+    }
+
+    return Compiler.AsmFacts.IsValidRegister(architecture, registerText.View());
+}
+
+internal fn bool AsmSignatureRegistersAreValid(
+    ascii source,
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    Compiler.AsmFacts.StarkAsmArchitecture architecture)
+{
+    stack u32[0 max] inputCount = signature.AsmInputCount();
+    stack mut u32[0 max] inputIndex = 0;
+    while willexit (inputIndex < inputCount)
+    {
+        if (!AsmRegisterTokenIsValidForArchitecture(
+            source,
+            stream,
+            signature.AsmInputRegisterAt((u64[0 2 ** 63 - 1])inputIndex),
+            architecture))
+        {
+            return false;
+        }
+
+        inputIndex = inputIndex + 1;
+    }
+
+    stack u32[0 max] outputCount = signature.AsmOutputCount();
+    stack mut u32[0 max] outputIndex = 0;
+    while willexit (outputIndex < outputCount)
+    {
+        if (!AsmRegisterTokenIsValidForArchitecture(
+            source,
+            stream,
+            signature.AsmOutputRegisterAt((u64[0 2 ** 63 - 1])outputIndex),
+            architecture))
+        {
+            return false;
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack u32[0 max] clobberCount = signature.AsmClobberCount();
+    stack mut u32[0 max] clobberIndex = 0;
+    while willexit (clobberIndex < clobberCount)
+    {
+        if (!AsmRegisterTokenIsValidForArchitecture(
+            source,
+            stream,
+            signature.AsmClobberRegisterAt((u64[0 2 ** 63 - 1])clobberIndex),
+            architecture))
+        {
+            return false;
+        }
+
+        clobberIndex = clobberIndex + 1;
+    }
+
+    return true;
+}
+
+// Copies a parsed assembly function signature into source-independent IR metadata:
+// architecture is normalized to an enum, quoted strings are decoded, and every text
+// payload is stored in the table's compact byte pool.
+public fn bool CollectAsmMetadataFromSignature(
+    ascii source,
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    MirFuncId functionId,
+    mut borrow AsmMetadataTable table,
+    out AsmFunctionId asmFunctionId)
+{
+    asmFunctionId = new();
+    if (!signature.HasAsm())
+    {
+        return false;
+    }
+
+    stack ascii architectureText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmArchitectureToken());
+    stack Compiler.AsmFacts.StarkAsmArchitecture architecture = Compiler.AsmFacts.ParseArchitectureName(architectureText);
+    if (architecture == Compiler.AsmFacts.StarkAsmArchitecture.Unknown)
+    {
+        return false;
+    }
+
+    if (!AsmSignatureRegistersAreValid(source, stream, signature, architecture))
+    {
+        return false;
+    }
+
+    stack u32[0 max] inputCount = signature.AsmInputCount();
+    stack mut u32[0 max] firstInput = 0;
+    if (inputCount != 0)
+    {
+        firstInput = (u32[0 max])(table.InputCount() + 1);
+    }
+
+    stack mut u32[0 max] inputIndex = 0;
+    while willexit (inputIndex < inputCount)
+    {
+        stack mut AsmTextRange registerRange = new();
+        stack mut AsmTextRange valueRange = new();
+        if (!AppendDecodedAsmStringToken(source, stream, signature.AsmInputRegisterAt((u64[0 2 ** 63 - 1])inputIndex), table, registerRange)
+            || !AppendAsmRawTokenText(source, stream, signature.AsmInputValueAt((u64[0 2 ** 63 - 1])inputIndex), table, valueRange))
+        {
+            return false;
+        }
+
+        switch (table.AppendInputOperand(registerRange, valueRange))
+        {
+            case MemoryStatus.Err(var inputError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        inputIndex = inputIndex + 1;
+    }
+
+    stack u32[0 max] outputCount = signature.AsmOutputCount();
+    stack mut u32[0 max] firstOutput = 0;
+    if (outputCount != 0)
+    {
+        firstOutput = (u32[0 max])(table.OutputCount() + 1);
+    }
+
+    stack mut u32[0 max] outputIndex = 0;
+    while willexit (outputIndex < outputCount)
+    {
+        stack mut AsmTextRange registerRange = new();
+        stack mut AsmTextRange valueRange = new();
+        if (!AppendDecodedAsmStringToken(source, stream, signature.AsmOutputRegisterAt((u64[0 2 ** 63 - 1])outputIndex), table, registerRange)
+            || !AppendAsmRawTokenText(source, stream, signature.AsmOutputValueAt((u64[0 2 ** 63 - 1])outputIndex), table, valueRange))
+        {
+            return false;
+        }
+
+        switch (table.AppendOutputOperand(registerRange, valueRange, signature.AsmOutputBindsReturnAt((u64[0 2 ** 63 - 1])outputIndex)))
+        {
+            case MemoryStatus.Err(var outputError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack u32[0 max] clobberCount = signature.AsmClobberCount();
+    stack mut u32[0 max] firstClobber = 0;
+    if (clobberCount != 0)
+    {
+        firstClobber = (u32[0 max])(table.ClobberCount() + 1);
+    }
+
+    stack mut u32[0 max] clobberIndex = 0;
+    while willexit (clobberIndex < clobberCount)
+    {
+        stack mut AsmTextRange clobberRange = new();
+        if (!AppendDecodedAsmStringToken(source, stream, signature.AsmClobberRegisterAt((u64[0 2 ** 63 - 1])clobberIndex), table, clobberRange))
+        {
+            return false;
+        }
+
+        switch (table.AppendClobber(clobberRange))
+        {
+            case MemoryStatus.Err(var clobberError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        clobberIndex = clobberIndex + 1;
+    }
+
+    stack mut AsmTextRange templateRange = new();
+    if (!AppendDecodedAsmStringToken(source, stream, signature.AsmTemplateToken(), table, templateRange))
+    {
+        return false;
+    }
+
+    switch (table.AppendFunction(
+        functionId,
+        architecture,
+        templateRange,
+        firstInput,
+        inputCount,
+        firstOutput,
+        outputCount,
+        firstClobber,
+        clobberCount,
+        asmFunctionId))
+    {
+        case MemoryStatus.Err(var functionError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+
+    return false;
+}
+
+// Test/leaf bridge for the first assembly function in a source buffer. Full module
+// lowering can call `CollectAsmMetadataFromSignature` once it owns real function ids.
+public fn bool CollectFirstAsmFunctionMetadata(ascii source, MirFuncId functionId, mut borrow AsmMetadataTable table, out AsmFunctionId asmFunctionId)
+{
+    asmFunctionId = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var stream):
+            stack mut u64[0 2 ** 63 - 1] cursor = 0;
+            stack u64[0 2 ** 63 - 1] count = stream.Count();
+            while willexit (cursor < count)
+            {
+                if (stream.KindAt(cursor) == TokenKind.Fn)
+                {
+                    switch (ParseFunctionSignature(stream, (u32[0 max])cursor))
+                    {
+                        case ParseResult<FunctionSignature>.Err(var signatureError):
+                            return false;
+                        case ParseResult<FunctionSignature>.Ok(var signature):
+                            return CollectAsmMetadataFromSignature(source, stream, signature, functionId, table, asmFunctionId);
+                    }
+                }
+
+                cursor = cursor + 1;
+            }
+
+            return false;
+    }
+
+    return false;
+}
