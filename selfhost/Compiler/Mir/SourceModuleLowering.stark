@@ -528,6 +528,7 @@ internal fn bool CopyFlagTable(borrow IrTable<u32[0 max]> source, out IrTable<u3
 
 internal fn bool BuildModuleFunctionTablesForEffectPrepass(
     borrow TokenStream stream,
+    ascii sourceText,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
@@ -536,6 +537,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
     mut borrow IrTable<MirInstruction> instrs,
     mut borrow IrTable<MirBlock> blocks,
     mut borrow IrTable<MirFunction> funcs)
+    where overlap(sourceText, source)
 {
     stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
     stack mut u32[0 max] functionNumber = 0;
@@ -731,6 +733,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
                 if (!LowerModuleTerminalSwitchFunctionToBlocks(
+                    sourceText,
                     stream,
                     source,
                     funcNames,
@@ -750,6 +753,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
                 if (!LowerModuleLocalSwitchStatementFunctionToBlocks(
+                    sourceText,
                     stream,
                     source,
                     funcNames,
@@ -1872,6 +1876,7 @@ internal fn LoweredBody LowerFunctionWithLocals(
 }
 internal fn bool EmitModuleFunctionAst(
     borrow TokenStream stream,
+    ascii sourceText,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
@@ -1885,6 +1890,7 @@ internal fn bool EmitModuleFunctionAst(
     u64[0 2 ** 63 - 1] fnIndex,
     u32[0 max] functionNumber,
     mut borrow OwnedAscii sink)
+    where overlap(sourceText, source)
 {
     stack bool isTailCallable = FunctionIdIsTailCallable(funcTailFlags, functionNumber);
     stack i64[min max] bodyBrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
@@ -2083,6 +2089,7 @@ internal fn bool EmitModuleFunctionAst(
     if (FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
     {
         return EmitModuleTerminalIntegerSwitchFunction(
+            sourceText,
             stream,
             source,
             funcNames,
@@ -2103,6 +2110,7 @@ internal fn bool EmitModuleFunctionAst(
     if (FunctionBodyStartsWithLocalSwitchStatementAssignment(stream, source, funcNames, fnIndex))
     {
         return EmitModuleLocalSwitchStatementFunction(
+            sourceText,
             stream,
             source,
             funcNames,
@@ -2243,18 +2251,20 @@ internal fn bool EmitModuleFunctionAst(
 
 internal fn bool PrecomputeModuleFunctionEffectFactsFromAstStream(
     borrow TokenStream stream,
+    ascii sourceText,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<u32[0 max]> funcTailFlags,
     out IrTable<FunctionEffectFacts> functionEffectFacts)
+    where overlap(sourceText, source)
 {
     functionEffectFacts = new();
     stack mut IrTable<MirInstruction> instrs = new();
     stack mut IrTable<MirBlock> blocks = new();
     stack mut IrTable<MirFunction> funcs = new();
-    if (!BuildModuleFunctionTablesForEffectPrepass(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, instrs, blocks, funcs))
+    if (!BuildModuleFunctionTablesForEffectPrepass(stream, sourceText, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, instrs, blocks, funcs))
     {
         return false;
     }
@@ -2401,7 +2411,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
     }
 
     stack mut IrTable<FunctionEffectFacts> functionEffectFacts = new();
-    if (!PrecomputeModuleFunctionEffectFactsFromAstStream(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, functionEffectFacts))
+    if (!PrecomputeModuleFunctionEffectFactsFromAstStream(stream, sourceText, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, functionEffectFacts))
     {
         return false;
     }
@@ -2417,6 +2427,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
             functionNumber = functionNumber + 1;
             if (!EmitModuleFunctionAst(
                 stream,
+                sourceText,
                 source,
                 funcNames,
                 funcParamCounts,
@@ -2741,6 +2752,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
                     if (!LowerModuleTerminalSwitchFunctionToBlocks(
+                        sourceText,
                         stream,
                         source,
                         funcNames,
@@ -2760,6 +2772,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
                     if (!LowerModuleLocalSwitchStatementFunctionToBlocks(
+                        sourceText,
                         stream,
                         source,
                         funcNames,

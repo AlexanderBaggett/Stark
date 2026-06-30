@@ -1,0 +1,160 @@
+import Compiler.Typing.TypedAssignmentKinds
+import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedIndexModel
+import Compiler.Typing.TypedMemberFacts
+import Compiler.Typing.TypedSignatures
+import System.Memory
+module Compiler.Typing.TypedAssignmentModelRows
+
+internal fn System.Memory.MemoryStatus AppendTypedAssignmentRow(
+    mut borrow TypedAssignmentExpressionTable table,
+    TypedAssignmentContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] assignmentNode,
+    u32[0 max] assignmentToken,
+    u32[0 max] targetNode,
+    u32[0 max] valueNode,
+    TypedAssignmentOperatorKind operatorKind,
+    TypedAssignmentTargetKind targetKind,
+    TypedAssignmentValueKind valueKind,
+    TypedIdentifierTargetKind identifierTargetKind,
+    TypedMemberTargetKind memberTargetKind,
+    TypedIndexAccessKind indexAccessKind,
+    u32[0 max] targetDeclarationIndex,
+    u32[0 max] targetSymbolIndexPlusOne,
+    u32[0 max] targetNameToken,
+    TypedGlobalStorageKind targetStorageKind,
+    TypedGlobalBindingKind targetBindingKind,
+    TypedSignatureTypeKind targetTypeKind,
+    u32[0 max] targetTypeHeadToken,
+    u32[0 max] targetTypePrimaryToken,
+    u32[0 max] targetTypeStartToken,
+    u32[0 max] targetTypeEndToken,
+    u32[0 max] targetRangeStartToken,
+    u32[0 max] targetRangeEndToken,
+    u32[0 max] targetElementCountStartToken,
+    u32[0 max] targetElementCountEndToken,
+    u32[0 max] targetBitWidth,
+    u32[0 max] targetTypeArgumentCount,
+    u32[0 max] targetComptimeArgumentCount,
+    u32[0 max] targetTypeFlags,
+    TypedSignatureTypeKind valueTypeKind,
+    u32[0 max] valueTypeHeadToken,
+    u32[0 max] valueTypePrimaryToken,
+    u32[0 max] valueTypeStartToken,
+    u32[0 max] valueTypeEndToken,
+    u32[0 max] valueRangeStartToken,
+    u32[0 max] valueRangeEndToken,
+    u32[0 max] valueElementCountStartToken,
+    u32[0 max] valueElementCountEndToken,
+    u32[0 max] valueBitWidth,
+    u32[0 max] valueTypeArgumentCount,
+    u32[0 max] valueComptimeArgumentCount,
+    u32[0 max] valueTypeFlags,
+    u32[0 max] assignmentFlags)
+{
+    if (!table.Contexts.TryReserve(1)
+        || !table.OwnerDeclarationIndices.TryReserve(1)
+        || !table.OwnerNameTokens.TryReserve(1)
+        || !table.FunctionNameTokens.TryReserve(1)
+        || !table.StatementIndices.TryReserve(1)
+        || !table.AssignmentNodes.TryReserve(1)
+        || !table.AssignmentTokens.TryReserve(1)
+        || !table.TargetNodes.TryReserve(1)
+        || !table.ValueNodes.TryReserve(1)
+        || !table.OperatorKinds.TryReserve(1)
+        || !table.TargetKinds.TryReserve(1)
+        || !table.ValueKinds.TryReserve(1)
+        || !table.IdentifierTargetKinds.TryReserve(1)
+        || !table.MemberTargetKinds.TryReserve(1)
+        || !table.IndexAccessKinds.TryReserve(1)
+        || !table.TargetDeclarationIndices.TryReserve(1)
+        || !table.TargetSymbolIndices.TryReserve(1)
+        || !table.TargetNameTokens.TryReserve(1)
+        || !table.TargetStorageKinds.TryReserve(1)
+        || !table.TargetBindingKinds.TryReserve(1)
+        || !table.TargetTypeKinds.TryReserve(1)
+        || !table.TargetTypeHeadTokens.TryReserve(1)
+        || !table.TargetTypePrimaryTokens.TryReserve(1)
+        || !table.TargetTypeStartTokens.TryReserve(1)
+        || !table.TargetTypeEndTokens.TryReserve(1)
+        || !table.TargetRangeStartTokens.TryReserve(1)
+        || !table.TargetRangeEndTokens.TryReserve(1)
+        || !table.TargetElementCountStartTokens.TryReserve(1)
+        || !table.TargetElementCountEndTokens.TryReserve(1)
+        || !table.TargetBitWidths.TryReserve(1)
+        || !table.TargetTypeArgumentCounts.TryReserve(1)
+        || !table.TargetComptimeArgumentCounts.TryReserve(1)
+        || !table.TargetTypeFlags.TryReserve(1)
+        || !table.ValueTypeKinds.TryReserve(1)
+        || !table.ValueTypeHeadTokens.TryReserve(1)
+        || !table.ValueTypePrimaryTokens.TryReserve(1)
+        || !table.ValueTypeStartTokens.TryReserve(1)
+        || !table.ValueTypeEndTokens.TryReserve(1)
+        || !table.ValueRangeStartTokens.TryReserve(1)
+        || !table.ValueRangeEndTokens.TryReserve(1)
+        || !table.ValueElementCountStartTokens.TryReserve(1)
+        || !table.ValueElementCountEndTokens.TryReserve(1)
+        || !table.ValueBitWidths.TryReserve(1)
+        || !table.ValueTypeArgumentCounts.TryReserve(1)
+        || !table.ValueComptimeArgumentCounts.TryReserve(1)
+        || !table.ValueTypeFlags.TryReserve(1)
+        || !table.AssignmentFlags.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init table.Contexts[table.Contexts.Length] = context;
+    init table.OwnerDeclarationIndices[table.OwnerDeclarationIndices.Length] = ownerDeclarationIndex;
+    init table.OwnerNameTokens[table.OwnerNameTokens.Length] = ownerNameToken;
+    init table.FunctionNameTokens[table.FunctionNameTokens.Length] = functionNameToken;
+    init table.StatementIndices[table.StatementIndices.Length] = statementIndexPlusOne;
+    init table.AssignmentNodes[table.AssignmentNodes.Length] = assignmentNode;
+    init table.AssignmentTokens[table.AssignmentTokens.Length] = assignmentToken;
+    init table.TargetNodes[table.TargetNodes.Length] = targetNode;
+    init table.ValueNodes[table.ValueNodes.Length] = valueNode;
+    init table.OperatorKinds[table.OperatorKinds.Length] = operatorKind;
+    init table.TargetKinds[table.TargetKinds.Length] = targetKind;
+    init table.ValueKinds[table.ValueKinds.Length] = valueKind;
+    init table.IdentifierTargetKinds[table.IdentifierTargetKinds.Length] = identifierTargetKind;
+    init table.MemberTargetKinds[table.MemberTargetKinds.Length] = memberTargetKind;
+    init table.IndexAccessKinds[table.IndexAccessKinds.Length] = indexAccessKind;
+    init table.TargetDeclarationIndices[table.TargetDeclarationIndices.Length] = targetDeclarationIndex;
+    init table.TargetSymbolIndices[table.TargetSymbolIndices.Length] = targetSymbolIndexPlusOne;
+    init table.TargetNameTokens[table.TargetNameTokens.Length] = targetNameToken;
+    init table.TargetStorageKinds[table.TargetStorageKinds.Length] = targetStorageKind;
+    init table.TargetBindingKinds[table.TargetBindingKinds.Length] = targetBindingKind;
+    init table.TargetTypeKinds[table.TargetTypeKinds.Length] = targetTypeKind;
+    init table.TargetTypeHeadTokens[table.TargetTypeHeadTokens.Length] = targetTypeHeadToken;
+    init table.TargetTypePrimaryTokens[table.TargetTypePrimaryTokens.Length] = targetTypePrimaryToken;
+    init table.TargetTypeStartTokens[table.TargetTypeStartTokens.Length] = targetTypeStartToken;
+    init table.TargetTypeEndTokens[table.TargetTypeEndTokens.Length] = targetTypeEndToken;
+    init table.TargetRangeStartTokens[table.TargetRangeStartTokens.Length] = targetRangeStartToken;
+    init table.TargetRangeEndTokens[table.TargetRangeEndTokens.Length] = targetRangeEndToken;
+    init table.TargetElementCountStartTokens[table.TargetElementCountStartTokens.Length] = targetElementCountStartToken;
+    init table.TargetElementCountEndTokens[table.TargetElementCountEndTokens.Length] = targetElementCountEndToken;
+    init table.TargetBitWidths[table.TargetBitWidths.Length] = targetBitWidth;
+    init table.TargetTypeArgumentCounts[table.TargetTypeArgumentCounts.Length] = targetTypeArgumentCount;
+    init table.TargetComptimeArgumentCounts[table.TargetComptimeArgumentCounts.Length] = targetComptimeArgumentCount;
+    init table.TargetTypeFlags[table.TargetTypeFlags.Length] = targetTypeFlags;
+    init table.ValueTypeKinds[table.ValueTypeKinds.Length] = valueTypeKind;
+    init table.ValueTypeHeadTokens[table.ValueTypeHeadTokens.Length] = valueTypeHeadToken;
+    init table.ValueTypePrimaryTokens[table.ValueTypePrimaryTokens.Length] = valueTypePrimaryToken;
+    init table.ValueTypeStartTokens[table.ValueTypeStartTokens.Length] = valueTypeStartToken;
+    init table.ValueTypeEndTokens[table.ValueTypeEndTokens.Length] = valueTypeEndToken;
+    init table.ValueRangeStartTokens[table.ValueRangeStartTokens.Length] = valueRangeStartToken;
+    init table.ValueRangeEndTokens[table.ValueRangeEndTokens.Length] = valueRangeEndToken;
+    init table.ValueElementCountStartTokens[table.ValueElementCountStartTokens.Length] = valueElementCountStartToken;
+    init table.ValueElementCountEndTokens[table.ValueElementCountEndTokens.Length] = valueElementCountEndToken;
+    init table.ValueBitWidths[table.ValueBitWidths.Length] = valueBitWidth;
+    init table.ValueTypeArgumentCounts[table.ValueTypeArgumentCounts.Length] = valueTypeArgumentCount;
+    init table.ValueComptimeArgumentCounts[table.ValueComptimeArgumentCounts.Length] = valueComptimeArgumentCount;
+    init table.ValueTypeFlags[table.ValueTypeFlags.Length] = valueTypeFlags;
+    init table.AssignmentFlags[table.AssignmentFlags.Length] = assignmentFlags;
+    return System.Memory.MemoryStatus.Ok;
+}

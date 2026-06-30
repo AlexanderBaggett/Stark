@@ -11,6 +11,163 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-29 Selfhost MIR Checked Recursion Facts
+
+- Checked source module lowering now preserves ordinary direct and mutual recursive call effects through LLVM emission.
+- Finite checked source functions now reject reachable source call cycles before codegen.
+- Tail finite self recursion is rejected to match the stage0 finite-cycle contract.
+- Focused verification in `tests-stark/selfhost.Ir`:
+  - `../../stark test --filter CheckedFiniteRecursiveFunctionFromAstIsRejected`: passed.
+  - `../../stark test --filter CheckedMutualFiniteRecursiveFunctionsFromAstAreRejected`: passed.
+  - `../../stark test --filter CheckedTailFiniteSelfRecursiveFunctionFromAstIsRejected`: passed.
+  - `../../stark test --filter CheckedRecursiveFunctionFromAstPreservesRecursionEffects`: passed.
+  - `../../stark test --filter CheckedMutualRecursiveFunctionsFromAstPreserveRecursionEffects`: passed.
+  - `../../stark test --filter CompilesRecursiveFunctionFromAst`: passed.
+  - `../../stark test --filter CompilesModuleFromAstThroughCheckedPipeline`: passed.
+  - `../../stark test --filter CompileModuleTailFiniteLawCallSitesLowerEffectAttributes`: passed.
+  - `../../stark test --filter CompilesTailRecursiveBranchFromAst`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Integer Range Switch Lowering
+
+- Terminal integer range-pattern switch cases now parse inclusive `case min..max` intervals and lower to ordered compare-and-branch tests.
+- Local-prefixed terminal switches and non-terminal switch assignments use the same interval parser and reject reversed or overlapping ranges.
+- The simple LLVM block emitter now preserves MIR result types for binary operations, so boolean range-condition conjunctions emit `and i1`.
+- Focused verification in `tests-stark/selfhost.Ir`:
+  - `../../stark test --filter RangeCase`: passed.
+  - `../../stark test --filter TerminalIntegerSwitchFromAst`: passed.
+  - `../../stark test --filter LocalSwitchStatementAssignment`: passed.
+  - `../../stark test --filter EnumUnitSwitchFromAst`: passed.
+  - `../../stark test --filter EmitsLlvmTypedI32`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost MIR Enum Unit Switch Lowering
+
+- Source-expression typing now preserves enum owner identity for signature parameters through local type codes.
+- Terminal enum unit switches now resolve `Owner.Variant` labels through typed enum layout tags and lower to compact tag comparisons.
+- Non-terminal enum unit switch assignments now use the same layout-backed tag values and existing scalar phi merge lowering.
+- Focused verification in `tests-stark/selfhost.Ir`:
+  - `../../stark test --filter CompilesTerminalEnumUnitSwitchFromAst`: passed.
+  - `../../stark test --filter CompilesEnumLocalSwitchStatementAssignmentThenReturnFromAst`: passed.
+  - `../../stark test --filter CompilesTerminalIntegerSwitchFromAst`: passed.
+  - `../../stark test --filter CompilesMultiCaseTerminalIntegerSwitchFromAst`: passed.
+  - `../../stark test --filter CompilesTerminalBooleanSwitchFromAst`: passed.
+  - `../../stark test --filter CompilesLocalSwitchStatementAssignmentThenReturnFromAst`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Constructor Validation Helper Splits
+
+- `Compiler.Binding.ConstructorFieldState` now owns constructor assigned-field table storage and set operations.
+- `Compiler.Binding.ConstructorFieldFacts` now owns constructor field assignment requirement checks.
+- `Compiler.Binding.ConstructorExpressionReads` now owns expression-level constructor `self` field read collection.
+- `Compiler.Binding.ConstructorStatementTraversal` now owns constructor validation statement-tree and switch-section navigation helpers.
+- `Compiler.Binding.ConstructorSwitchCoverage` now owns switch default, bool, enum, and bounded-integer coverage checks used by constructor and initialization joins.
+- `Compiler.Binding.ConstructorValidation` now keeps constructor initialization orchestration and recursive branch/switch field-read joins.
+- `Compiler.Binding.OwnershipInitialization` now imports the shared traversal and switch coverage helpers directly.
+- Focused verification:
+  - Constructor helper split lower-MIR batch passed with 0 errors for `ConstructorFieldState`, `ConstructorFieldFacts`, `ConstructorExpressionReads`, `ConstructorStatementTraversal`, `ConstructorSwitchCoverage`, `ConstructorValidation`, `OwnershipInitialization`, `BindingPipeline`, and `Compiler.Binding`.
+  - The known `STK4122` recursion warnings remain in constructor and branch-complete initialization recursive walkers.
+  - `scripts/check-selfhost-binding-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Binding Copyability And Thread-Safety Fact Splits
+
+- `Compiler.Binding.CopyabilityModel` now owns copyability fact table storage and accessors.
+- `Compiler.Binding.CopyabilityTypeFacts` now owns copyability type-span and structural declaration fact derivation.
+- `Compiler.Binding.Copyability` now keeps copyability fact construction and `where Copyable` predicate validation.
+- `Compiler.Binding.ThreadSafetyModel` now owns thread-safety law kinds, fact table storage, and flag helpers.
+- `Compiler.Binding.ThreadSafetyLawNames` now owns law-name recognition helpers.
+- `Compiler.Binding.ThreadSafetyAtomicFacts` now owns atomic builtin type recognition.
+- `Compiler.Binding.ThreadSafetyTypeFacts` now owns thread-safety type-span and declaration law fact derivation.
+- `Compiler.Binding.ThreadSafetyPredicates` now owns shared law-predicate where-clause scanning and single-identifier matching.
+- `Compiler.Binding` now re-exports the split fact modules, and the binding dependency guard checks them as data modules.
+- Focused verification:
+  - Binding copyability/thread-safety split lower-MIR batch passed with 0 errors for 14 roots covering the new modules, direct ownership/constructor consumers, `BindingPipeline`, and `Compiler.Binding`.
+  - The batch reported 30 `STK4122` recursion warnings in the bounded recursive fact walkers and existing constructor-validation recursion paths.
+  - `scripts/check-selfhost-binding-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Signature, Member, And Assignment Model Splits
+
+- `Compiler.Typing.TypedSignatureModel` now owns signature table storage, accessors, and low-level table methods.
+- `Compiler.Typing.TypedSignatureRows` now owns signature type-slot and function-signature row construction.
+- `Compiler.Typing.TypedSignatureDeclarations` now owns declaration and member function signature scanning helpers.
+- `Compiler.Typing.TypedSignatures` now stays as a compatibility facade over the signature modules.
+- `Compiler.Typing.TypedMemberKinds` now owns member contexts, receiver kinds, target kinds, and member flags.
+- `Compiler.Typing.TypedMemberModelRows` now owns low-level member and candidate table appenders.
+- `Compiler.Typing.TypedMemberModel` now keeps member table storage and accessors while re-exporting member kinds.
+- `Compiler.Typing.TypedAssignmentKinds` now owns assignment contexts, operators, target kinds, value kinds, and assignment flags.
+- `Compiler.Typing.TypedAssignmentModelRows` now owns the low-level assignment table appender.
+- `Compiler.Typing.TypedAssignmentModel` now keeps assignment table storage and accessors while re-exporting assignment kinds.
+- Focused verification:
+  - Typed-signature split lower-MIR batch passed with 0 diagnostics for the new signature modules, signature consumers, and `Compiler.Typing`.
+  - Typed-member-model split lower-MIR batch passed with 0 diagnostics for the new member modules, downstream consumers, and `Compiler.Typing`.
+  - Typed-assignment-model split lower-MIR batch passed with 0 diagnostics for the new assignment modules, downstream consumers, and `Compiler.Typing`.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Call Model, Signature, And Argument Splits
+
+- `Compiler.Typing.TypedCallKinds` now owns call contexts, target kinds, flags, and call type-fact records.
+- `Compiler.Typing.TypedCallModel` now owns call expression table storage, accessors, and row appenders.
+- `Compiler.Typing.TypedCallFacts` now stays as a compatibility facade over the call kind and model modules.
+- `Compiler.Typing.TypedCallSignatureSlots` now owns signature-slot fact projection.
+- `Compiler.Typing.TypedCallCallableSpans` now owns callable parameter-list and span scanning.
+- `Compiler.Typing.TypedCallCallableFacts` now owns callable return, parameter, and type-span fact extraction.
+- `Compiler.Typing.TypedCallSignatures` now stays as a compatibility facade over the call signature modules.
+- `Compiler.Typing.TypedCallArgumentLookup` now owns call argument node lookups across identifiers, literals, prior calls, and members.
+- `Compiler.Typing.TypedCallArgumentSourceFacts` now owns source fact projection from literals, identifiers, prior calls, conversions, `new`, and boolean operators.
+- `Compiler.Typing.TypedCallArgumentWalkers` now owns expression-tree and function-body argument fact walkers.
+- `Compiler.Typing.TypedCallArgumentFacts` now stays as a compatibility facade over the call argument modules.
+- Focused verification:
+  - Typed-call model split lower-MIR batch passed with 0 diagnostics for call kind/model/facade modules, call consumers, pipeline, artifact rendering, `SourceModuleLowering`, and `Compiler.Mir`.
+  - Typed-call argument split lower-MIR batch passed with 0 diagnostics for the new argument modules, call consumers, and `Compiler.Typing`.
+  - Typed-call signature split lower-MIR batch passed with 0 diagnostics for the new signature modules, call/return/index/member consumers, and `Compiler.Typing`.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-29 Selfhost Typing Field, Global, And Local Splits
+
+- `Compiler.Typing.TypedFieldModel` now owns field table storage, accessors, and row storage.
+- `Compiler.Typing.TypedFieldHelpers` now owns field declaration token scanning helpers.
+- `Compiler.Typing.TypedFieldRows` now owns field row construction while `TypedFields` keeps record-header and body-field orchestration.
+- `Compiler.Typing.TypedGlobalModel` now owns global binding/storage enums, table storage, accessors, and row storage.
+- `Compiler.Typing.TypedGlobalHelpers` now owns global declaration token scanning and storage/binding classification helpers.
+- `Compiler.Typing.TypedGlobalRows` now owns global row construction while `TypedGlobals` stays as the facade.
+- `Compiler.Typing.TypedLocalModel` now owns local owner-kind enums, table storage, accessors, and row storage.
+- `Compiler.Typing.TypedLocalHelpers` now owns local initializer token scanning helpers.
+- `Compiler.Typing.TypedLocalRows` now owns local row construction while `TypedLocals` keeps body/function traversal.
+- Focused verification:
+  - Typed-field split lower-MIR batch passed with 0 errors for the new field modules, enum payload/layout consumers, member consumers, artifact rendering, `SourceModuleLowering`, and `Compiler.Mir`; the existing 7 enum-layout recursion warnings remain.
+  - Typed-global split lower-MIR batch passed with 0 diagnostics for the new global modules, storage selectors, local/identifier/assignment/call/member consumers, artifact rendering, `SourceModuleLowering`, and `Compiler.Mir`.
+  - Typed-local split lower-MIR batch passed with 0 diagnostics for the new local modules, field/global dependencies, identifier/assignment/call/member consumers, artifact rendering, `SourceModuleLowering`, and `Compiler.Mir`.
+  - `scripts/check-selfhost-typing-dependencies.sh`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
 ## 2026-06-29 Selfhost Typing Literal And Enum Payload Splits
 
 - `Compiler.Typing.TypedLiteralModel` now owns literal context/kind enums, literal flags, table storage, accessors, and row storage.

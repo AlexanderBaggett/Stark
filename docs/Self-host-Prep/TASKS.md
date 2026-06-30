@@ -189,8 +189,15 @@ Execution constraints:
   - [x] Move typed trait conformance table construction into a trait-conformance module.
   - [x] Move associated alias symbol construction into an associated-types module without creating a typed-members cycle.
   - [x] Move copyability fact construction and `where Copyable` predicate validation into a copyability module.
+    - [x] Move copyability table storage and accessors into a copyability-model module.
+    - [x] Move copyability type-span and declaration structural facts into a copyability-type-facts module.
   - [x] Move shared function-signature parameter helpers into a signature helpers module.
   - [x] Move thread-safety law facts and law predicate helpers into a thread-safety module.
+    - [x] Move thread-safety table storage and flag helpers into a thread-safety-model module.
+    - [x] Move thread-safety law-name helpers into a thread-safety-law-names module.
+    - [x] Move atomic builtin recognition into a thread-safety-atomic-facts module.
+    - [x] Move thread-safety type-span and declaration law facts into a thread-safety-type-facts module.
+    - [x] Move law-predicate where-clause scanning into a thread-safety-predicates module.
     - [x] Move shared law-predicate table and single-identifier helpers into a thread-safety module.
     - [x] Port `Transferable` and `Shareable` binding facts into the thread-safety module.
   - [x] Move layout-control attribute validation and concrete-layout query validation into a layout-validation module.
@@ -204,6 +211,11 @@ Execution constraints:
   - [x] Move destructor shape, drop validity, and destructor effect diagnostics into destructor validation modules.
   - [x] Move constructor initialization, local initialization, move, borrow, arena, and dead-on-return checks into ownership validation modules.
     - [x] Move constructor field initialization validation into a constructor validation module.
+      - [x] Move constructor assigned-field tracking into a constructor field state module.
+      - [x] Move constructor field assignment requirement checks into a constructor field facts module.
+      - [x] Move constructor expression field-read collection into a constructor expression reads module.
+      - [x] Move constructor statement traversal helpers into a constructor statement traversal module.
+      - [x] Move constructor switch exhaustiveness coverage checks into a constructor switch coverage module.
     - [x] Move local and output initialization validation into an ownership initialization module.
     - [x] Move straight-line move-after-move validation into an ownership move module.
     - [x] Move straight-line borrow-liveness validation into an ownership borrow module.
@@ -213,18 +225,29 @@ Execution constraints:
   - [x] Move assembly signature and register diagnostics into an assembly binding module.
   - [x] Move `BindCompilationUnit` orchestration into a narrow binding pipeline module.
   - [x] Add dependency-direction checks so binding data modules do not import semantic, ownership, C ABI, or assembly validation modules.
-  - [ ] Run focused selfhost binding and typing tests after each module split.
+  - [~] Run focused selfhost binding and typing tests after each module split.
+    - [x] Run focused lower-MIR checks for the constructor validation helper splits.
+    - [x] Run focused lower-MIR checks for the copyability and thread-safety fact splits.
 ### Typing.stark
 - [~] Decompose the oversized self-host typing implementation into focused modules.
   - [ ] Record the target `Compiler.Typing.*` module map from the stage0 C# counterpart files.
   - [x] Keep `Compiler.Typing` as an API-compatible facade that re-exports the new typing submodules.
   - [x] Move coarse expression classification and non-boolean condition checks into an expression-classification module.
   - [x] Move typed function signature tables into a typed-signatures module.
+    - [x] Move typed signature table storage and accessors into a typed-signature-model module.
+    - [x] Move typed signature row construction into a typed-signature-rows module.
+    - [x] Move typed signature declaration and member scanning into a typed-signature-declarations module.
   - [x] Move Stark type-resolution, type-kind flags, type-span scanners, and alias-aware type-head classification helpers into a type-resolution module.
   - [x] Move type compatibility, conversion permissibility, and conversion-cost facts into a type-compatibility module.
   - [x] Move global declaration typing and global storage facts into a typed-globals module.
+    - [x] Move global table storage and accessors into a typed-global-model module.
+    - [x] Move global declaration token and storage/binding helpers into a typed-global-helpers module.
+    - [x] Move global row construction into a typed-global-rows module.
   - [x] Move explicit storage selector collection into a storage-selectors module.
   - [x] Move struct, record, and record-header field typing into a typed-fields module.
+    - [x] Move field table storage and accessors into a typed-field-model module.
+    - [x] Move field declaration token helpers into a typed-field-helpers module.
+    - [x] Move field row construction into a typed-field-rows module.
   - [x] Move enum payload typing and enum variant role facts into a typed-enum-payloads module.
     - [x] Move enum-payload table storage and accessors into a typed-enum-payload-model module.
     - [x] Move enum-payload role and attribute readers into a typed-enum-payload-attributes module.
@@ -236,6 +259,9 @@ Execution constraints:
   - [x] Move enum-layout scalar sizing and alignment arithmetic into a typed-enum-layout-arithmetic module.
   - [x] Move enum-layout generic contexts and comptime-value readers into a typed-enum-layout-generics module.
   - [x] Move local declaration typing and local storage facts into a typed-locals module.
+    - [x] Move local table storage and accessors into a typed-local-model module.
+    - [x] Move local initializer token helpers into a typed-local-helpers module.
+    - [x] Move local row construction into a typed-local-rows module.
   - [x] Move literal expression typing and literal scalar/text fact derivation into a typed-literals module.
     - [x] Move literal table storage and accessors into a typed-literal-model module.
     - [x] Move literal scalar, text, and expression-kind facts into a typed-literal-facts module.
@@ -245,13 +271,23 @@ Execution constraints:
     - [x] Move identifier symbol, signature, parameter, and local lookup helpers into a typed-identifier-lookup module.
     - [x] Move identifier row appenders and target-fact propagation into a typed-identifier-rows module.
   - [x] Move direct call typing, call argument facts, and overload resolution into a typed-calls module.
+    - [x] Move call context, target-kind, flag, and type-fact records into a typed-call-kinds module.
+    - [x] Move call expression table storage and accessors into a typed-call-model module.
   - [x] Move callable signature extraction and callable return or parameter facts into a typed-call-signatures module.
+    - [x] Move signature-slot fact projection into a typed-call-signature-slots module.
+    - [x] Move callable parameter-list and span scanning into a typed-call-callable-spans module.
+    - [x] Move callable return, parameter, and type-span fact extraction into a typed-call-callable-facts module.
   - [x] Move call argument type-fact derivation into a typed-call-argument-facts module.
+    - [x] Move call argument node lookups into a typed-call-argument-lookup module.
+    - [x] Move call argument source fact projection into a typed-call-argument-source-facts module.
+    - [x] Move call argument expression walkers into a typed-call-argument-walkers module.
   - [x] Move direct and method overload scoring into a typed-call-overloads module.
   - [x] Move call argument row appenders into a typed-call-arguments module.
   - [x] Move call target resolution and call-row appending into a typed-call-targets module.
   - [x] Move member expression typing and method-candidate logic into a typed-members module.
     - [x] Move member table storage and accessors into a typed-member-model module.
+    - [x] Move member context, receiver, target, and flag facts into a typed-member-kinds module.
+    - [x] Move member table row storage appenders into a typed-member-model-rows module.
     - [x] Move member node and declaration lookup helpers into a typed-member-lookup module.
     - [x] Move member receiver and type-fact derivation into a typed-member-receiver-facts module.
     - [x] Move member method-candidate collection into a typed-member-methods module.
@@ -265,6 +301,8 @@ Execution constraints:
     - [x] Move conversion operand fact derivation into a typed-conversion-operand-facts module.
   - [x] Move assignment target typing, assignment value facts, and compound-operator typing into a typed-assignments module.
     - [x] Move assignment table storage and accessors into a typed-assignment-model module.
+    - [x] Move assignment context, operator, target, value, and flag facts into a typed-assignment-kinds module.
+    - [x] Move assignment table row storage appender into a typed-assignment-model-rows module.
     - [x] Move assignment context, operator, and node-lookup helpers into a typed-assignment-helpers module.
     - [x] Move assignment target and value fact derivation into a typed-assignment-node-facts module.
   - [x] Move return expression typing and expected-return fact derivation into a typed-returns module.
@@ -297,6 +335,9 @@ Execution constraints:
     - [x] Run focused lower-MIR checks for the typed-member helper splits.
     - [x] Run focused lower-MIR checks for the typed-literal helper splits.
     - [x] Run focused lower-MIR checks for the typed-enum-payload helper splits.
+    - [x] Run focused lower-MIR checks for the typed-field, typed-global, and typed-local helper splits.
+    - [x] Run focused lower-MIR checks for the typed-call model, signature, and argument splits.
+    - [x] Run focused lower-MIR checks for the typed-signature, typed-member-model, and typed-assignment-model splits.
     - [ ] Run focused tests for future typing module splits.
 
 - [x] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.
@@ -519,12 +560,13 @@ Execution constraints:
     - [~] Lower non-integer and pattern switch cases into MIR branch tests.
       - [x] Lower boolean literal terminal switch cases through typed MIR branch tests.
       - [x] Lower boolean literal non-terminal switch assignments through typed MIR branch tests.
-      - [~] Lower enum unit switch cases through MIR branch tests.
+      - [x] Lower enum unit switch cases through MIR branch tests.
         - [x] Add compact MIR scalar widths needed for enum tag branch tests.
-        - [ ] Carry enum owner identity from source signatures into expression typing.
-        - [ ] Resolve unit enum case labels to layout-backed variant tags.
-        - [ ] Lower terminal enum unit switches to compact tag comparisons.
-        - [ ] Lower non-terminal enum unit switch assignments to compact tag comparisons.
+        - [x] Carry enum owner identity from source signatures into expression typing.
+        - [x] Resolve unit enum case labels to layout-backed variant tags.
+        - [x] Lower terminal enum unit switches to compact tag comparisons.
+        - [x] Lower non-terminal enum unit switch assignments to compact tag comparisons.
+      - [x] Lower integer range-pattern switch cases through MIR branch tests.
       - [ ] Lower aggregate and list pattern switch cases through MIR branch tests.
     - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
   - [ ] Lower `try`.
@@ -533,10 +575,12 @@ Execution constraints:
     - [x] Lower typed non-i64 `become` calls once typed tail-call terminator emission exists.
     - [x] Validate carried argument facts before emitting MIR tail-call payloads.
     - [x] Validate tail-call payload fact rows before emitting MIR tail-call blocks.
-  - [~] Lower recursion and tail calls.
+  - [x] Lower recursion and tail calls.
     - [x] Preserve direct i64 tail-call payloads through HIR-to-MIR lowering.
     - [x] Lower typed tail-call terminators for all scalar MIR return types.
-  - [ ] Lower self-recursive source functions through the full HIR body pipeline.
+    - [x] Lower self-recursive source functions through the full HIR body pipeline.
+    - [x] Preserve recursive call facts through checked source lowering.
+    - [x] Reject source call cycles reachable from finite checked source functions.
   - [ ] Lower object construction.
   - [ ] Lower enum payloads.
   - [~] Lower dynamic storage.

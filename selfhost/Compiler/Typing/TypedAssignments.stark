@@ -2,6 +2,7 @@ import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Typing.TypedAssignmentHelpers
 import Compiler.Typing.TypedAssignmentModel
+import Compiler.Typing.TypedAssignmentModelRows
 import Compiler.Typing.TypedAssignmentNodeFacts
 import Compiler.Typing.TypedCallFacts
 import Compiler.Typing.TypedCalls
@@ -80,7 +81,8 @@ internal fn System.Memory.MemoryStatus AppendTypedAssignmentExpression(
         flags = flags | TypedAssignmentFlagNumericCompound();
     }
 
-    return table.AppendAssignment(
+    return AppendTypedAssignmentRow(
+        table,
         context,
         ownerDeclarationIndex,
         ownerNameToken,

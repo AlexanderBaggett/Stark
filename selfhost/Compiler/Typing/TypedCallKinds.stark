@@ -1,0 +1,99 @@
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCallKinds
+
+public enum TypedCallContext
+{
+    GlobalInitializer,
+    FunctionBody,
+    Unknown,
+}
+
+public enum TypedCallTargetKind
+{
+    DirectFunction,
+    InstanceMethod,
+    StaticMethod,
+    FunctionPointerValue,
+    ClosureValue,
+    NonCallableValue,
+    NonIdentifier,
+    Unknown,
+}
+
+internal inline finite law u32[0 max] TypedCallFlagResolved()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] TypedCallFlagArityMatches()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] TypedCallFlagDirect()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] TypedCallFlagCallableValue()
+{
+    return 8;
+}
+
+internal inline finite law u32[0 max] TypedCallFlagOverloadResolved()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] TypedCallFlagOverloadAmbiguous()
+{
+    return 32;
+}
+
+internal inline finite law u32[0 max] TypedCallFlagOverloadNoMatch()
+{
+    return 64;
+}
+
+internal inline finite law bool TypedCallFlagPresent(u32[0 max] flags, u32[0 max] flag)
+{
+    return (flags & flag) != 0;
+}
+
+internal struct TypedCallTypeFacts
+{
+    TypedSignatureTypeKind TypeKind;
+    u32[0 max] TypeHeadToken;
+    u32[0 max] TypePrimaryToken;
+    u32[0 max] TypeStartToken;
+    u32[0 max] TypeEndToken;
+    u32[0 max] RangeStartToken;
+    u32[0 max] RangeEndToken;
+    u32[0 max] ElementCountStartToken;
+    u32[0 max] ElementCountEndToken;
+    u32[0 max] BitWidth;
+    u32[0 max] TypeArgumentCount;
+    u32[0 max] ComptimeArgumentCount;
+    u32[0 max] TypeFlags;
+    bool IsCompileTimeInteger;
+    bool IsNullLiteral;
+
+    TypedCallTypeFacts()
+    {
+        self.TypeKind = TypedSignatureTypeKind.Unknown;
+        self.TypeHeadToken = 0;
+        self.TypePrimaryToken = 0;
+        self.TypeStartToken = 0;
+        self.TypeEndToken = 0;
+        self.RangeStartToken = 0;
+        self.RangeEndToken = 0;
+        self.ElementCountStartToken = 0;
+        self.ElementCountEndToken = 0;
+        self.BitWidth = 0;
+        self.TypeArgumentCount = 0;
+        self.ComptimeArgumentCount = 0;
+        self.TypeFlags = 0;
+        self.IsCompileTimeInteger = false;
+        self.IsNullLiteral = false;
+    }
+}

@@ -366,12 +366,12 @@ public fn MirValueId LowerExprNodeWithTypesAndLocals(
             if (localTypes.Contains(paramIndex + 1))
             {
                 stack u32[0 max] typeCode = localTypes.Get(paramIndex + 1);
-                if (typeCode == 1)
+                if (typeCode == SourceLocalTypeCodeBool())
                 {
                     return MirParamTyped(instrs, MirType.I1, paramIndex);
                 }
 
-                if (typeCode == 3)
+                if (typeCode == SourceLocalTypeCodePointer())
                 {
                     return MirParamTyped(instrs, MirType.Ptr, paramIndex);
                 }

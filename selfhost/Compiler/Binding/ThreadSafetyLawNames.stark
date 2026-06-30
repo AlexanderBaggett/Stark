@@ -1,0 +1,32 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.ThreadSafetyModel
+module Compiler.Binding.ThreadSafetyLawNames
+
+internal finite law bool ThreadSafetyLawNameMatches(ascii source, borrow TokenStream stream, u32[0 max] token, ThreadSafetyLawKind lawKind)
+{
+    switch (lawKind)
+    {
+        case ThreadSafetyLawKind.Transferable:
+            return TokenTextEquals(source, stream, token, "Transferable");
+        case ThreadSafetyLawKind.Shareable:
+            return TokenTextEquals(source, stream, token, "Shareable");
+    }
+}
+
+internal finite law bool ThreadSafetyLawNameTokenIsKnown(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    return TokenTextEquals(source, stream, token, "Transferable")
+        || TokenTextEquals(source, stream, token, "Shareable");
+}
+
+internal finite law ThreadSafetyLawKind ThreadSafetyLawKindFromToken(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    if (TokenTextEquals(source, stream, token, "Shareable"))
+    {
+        return ThreadSafetyLawKind.Shareable;
+    }
+
+    return ThreadSafetyLawKind.Transferable;
+}

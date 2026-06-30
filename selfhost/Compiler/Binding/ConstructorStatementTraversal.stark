@@ -1,0 +1,170 @@
+import Compiler.Lexing
+import Compiler.Parsing
+module Compiler.Binding.ConstructorStatementTraversal
+
+internal fn bool ConstructorIfStatementHasCompleteElse(borrow TokenStream stream, StatementItem item)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan <= item.EndToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Else
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) != TokenKind.If)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] ConstructorIfBraceArmCount(borrow TokenStream stream, StatementItem item)
+{
+    stack mut u32[0 max] cursor = (u32[0 max])(item.StartToken + 1);
+    stack mut u32[0 max] parenDepth = 0;
+    stack mut bool foundHeader = false;
+    stack mut bool headerDone = false;
+    while willexit (cursor <= item.EndToken && !headerDone)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        if (kind == TokenKind.LParen)
+        {
+            foundHeader = true;
+            parenDepth = (u32[0 max])(parenDepth + 1);
+        }
+        else if (kind == TokenKind.RParen && foundHeader)
+        {
+            if (parenDepth > 0)
+            {
+                parenDepth = (u32[0 max])(parenDepth - 1);
+            }
+
+            if (parenDepth == 0)
+            {
+                headerDone = true;
+            }
+        }
+        else if (kind == TokenKind.LBrace && !foundHeader)
+        {
+            headerDone = true;
+            continue;
+        }
+
+        cursor = (u32[0 max])(cursor + 1);
+    }
+
+    stack mut u32[0 max] braceDepth = 0;
+    stack mut u32[0 max] armCount = 0;
+    while willexit (cursor <= item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        if (kind == TokenKind.LBrace)
+        {
+            if (braceDepth == 0)
+            {
+                armCount = (u32[0 max])(armCount + 1);
+            }
+
+            braceDepth = (u32[0 max])(braceDepth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (braceDepth > 0)
+            {
+                braceDepth = (u32[0 max])(braceDepth - 1);
+            }
+        }
+
+        cursor = (u32[0 max])(cursor + 1);
+    }
+
+    return armCount;
+}
+
+internal fn u64[0 2 ** 63 - 1] ConstructorStatementSubtreeEnd(borrow StatementList body, u64[0 2 ** 63 - 1] statement)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    if (statement >= count)
+    {
+        return count;
+    }
+
+    stack u32[0 max] depth = body.DepthAt(statement);
+    stack mut u64[0 2 ** 63 - 1] scan = statement + 1;
+    while willexit (scan < count && body.DepthAt(scan) > depth)
+    {
+        scan += 1;
+    }
+
+    return scan;
+}
+
+internal fn u64[0 2 ** 63 - 1] ConstructorNextIfArmEnd(
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] armStart,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] parentDepth,
+    u32[0 max] armScope)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = armStart + 1;
+    while willexit (scan < subtreeEnd)
+    {
+        if (body.DepthAt(scan) == parentDepth + 1 && body.ScopeIdAt(scan) != armScope)
+        {
+            return scan;
+        }
+
+        scan += 1;
+    }
+
+    return subtreeEnd;
+}
+
+internal fn bool ConstructorSwitchLabelContinuesSection(borrow TokenStream stream, StatementItem label)
+{
+    stack TokenKind next = stream.KindAt((u64[0 2 ** 63 - 1])(label.EndToken + 1));
+    return next == TokenKind.Case || next == TokenKind.Default;
+}
+
+internal fn u64[0 2 ** 63 - 1] ConstructorNextSwitchCaseAt(
+    borrow StatementList body,
+    u64[0 2 ** 63 - 1] startStatement,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] switchDepth)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = startStatement;
+    while willexit (scan < subtreeEnd)
+    {
+        if (body.DepthAt(scan) == switchDepth && body.ItemAt(scan).Kind == StatementKind.Case)
+        {
+            return scan;
+        }
+
+        scan += 1;
+    }
+
+    return subtreeEnd;
+}
+
+internal fn u64[0 2 ** 63 - 1] ConstructorSwitchSectionEnd(
+    borrow StatementList body,
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] firstLabelStatement,
+    u64[0 2 ** 63 - 1] subtreeEnd,
+    u32[0 max] switchDepth)
+{
+    stack mut u64[0 2 ** 63 - 1] lastLabel = firstLabelStatement;
+    while willexit (lastLabel < subtreeEnd && ConstructorSwitchLabelContinuesSection(stream, body.ItemAt(lastLabel)))
+    {
+        stack u64[0 2 ** 63 - 1] nextLabel = ConstructorNextSwitchCaseAt(body, (u64[0 2 ** 63 - 1])(lastLabel + 1), subtreeEnd, switchDepth);
+        if (nextLabel >= subtreeEnd)
+        {
+            return subtreeEnd;
+        }
+
+        lastLabel = nextLabel;
+    }
+
+    return ConstructorNextSwitchCaseAt(body, (u64[0 2 ** 63 - 1])(lastLabel + 1), subtreeEnd, switchDepth);
+}

@@ -15,6 +15,8 @@ import Compiler.Mir.SourceLocalLowering
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
 import System.Memory
 import System.Text
 module Compiler.Mir.SourceSwitchLowering
@@ -53,6 +55,156 @@ internal finite law u32[0 max] MatchingBracketForMirLowering(borrow TokenStream 
     }
 
     return open;
+}
+
+internal fn bool TryParseMirSourceDeclarations(borrow TokenStream stream, out DeclarationList declarations)
+{
+    declarations = new();
+    stack mut CompilationUnitHeader header = new();
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var parsedHeader):
+            header = parsedHeader;
+    }
+
+    switch (ParseDeclarations(stream, header.NextToken))
+    {
+        case ParseResult<DeclarationList>.Err(var declarationError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+            return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetEnumVariantOrdinalForToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    DeclItem enumItem,
+    u32[0 max] variantToken,
+    out u32[0 max] variantOrdinal)
+{
+    variantOrdinal = 0;
+    switch (ParseEnumVariants(stream, enumItem.KeywordToken))
+    {
+        case ParseResult<VariantList>.Err(var variantError):
+            return false;
+        case ParseResult<VariantList>.Ok(var variants):
+            stack u64[0 2 ** 63 - 1] count = variants.Count();
+            stack mut u64[0 2 ** 63 - 1] index = 0;
+            while willexit (index < count)
+            {
+                if (TokenTextEqualsToken(stream, source, variants.NameTokenAt(index), variantToken))
+                {
+                    variantOrdinal = (u32[0 max])index;
+                    return true;
+                }
+
+                index = index + 1;
+            }
+    }
+
+    return false;
+}
+
+internal fn bool TryParseTerminalSwitchEnumCaseLabel(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u32[0 max] ownerDeclarationIndex,
+    u64[0 2 ** 63 - 1] valueStart,
+    out i64[min max] value,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    value = 0;
+    nextToken = valueStart;
+    if ((u64[0 2 ** 63 - 1])ownerDeclarationIndex >= declarations.Count())
+    {
+        return false;
+    }
+
+    stack DeclItem enumItem = declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
+    if (enumItem.Kind != DeclarationKind.Enum
+        || enumItem.NameToken == 0
+        || stream.KindAt(valueStart) != TokenKind.Identifier
+        || stream.KindAt(valueStart + 1) != TokenKind.Dot
+        || stream.KindAt(valueStart + 2) != TokenKind.Identifier
+        || !TokenTextEqualsToken(stream, source, (u32[0 max])valueStart, enumItem.NameToken))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] variantOrdinal = 0;
+    if (!TryGetEnumVariantOrdinalForToken(stream, source, enumItem, (u32[0 max])(valueStart + 2), variantOrdinal))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] payloadCount = 0;
+    stack mut u64[0 max] tagValue = 0;
+    if (!enumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount)
+        || payloadCount != 0
+        || !enumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+    {
+        return false;
+    }
+
+    value = (i64[min max])tagValue;
+    nextToken = valueStart + 3;
+    return true;
+}
+
+internal fn bool TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingBracketForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstCase = (u64[0 2 ** 63 - 1])closeParen + 2;
+    if (stream.KindAt(firstCase) != TokenKind.Case
+        || stream.KindAt(firstCase + 1) != TokenKind.Identifier
+        || stream.KindAt(firstCase + 2) != TokenKind.Dot)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Enum
+            && item.NameToken != 0
+            && TokenTextEqualsToken(stream, source, (u32[0 max])(firstCase + 1), item.NameToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
 }
 
 
@@ -210,6 +362,7 @@ internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
 
     stack mut ExprParseResult scrutinee = new();
     stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
     stack mut IrTable<u32[0 max]> booleanCaseValues = new();
     stack mut IrTable<ParsedSwitchAssignmentArm> caseArms = new();
     stack mut IrTable<u32[0 max]> armLocalRoots = new();
@@ -217,6 +370,11 @@ internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
     stack mut IrTable<u32[0 max]> assignedTargetOffsets = new();
     stack mut ParsedSwitchAssignmentArm defaultArm = new();
     stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (SwitchFirstCaseLabelLooksQualifiedName(stream, cursor))
+    {
+        return true;
+    }
+
     if (SwitchFirstCaseLabelIsBoolean(stream, cursor))
     {
         if (!TryParseBooleanSwitchAssignmentCases(
@@ -251,6 +409,7 @@ internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
         signatureParamCount,
         scrutinee,
         caseValues,
+        caseMaxValues,
         caseArms,
         armLocalRoots,
         assignedRoots,
@@ -447,6 +606,46 @@ internal fn bool TryParseTerminalSwitchIntegerCaseLabel(
     return false;
 }
 
+internal fn bool TryParseTerminalSwitchIntegerCaseInterval(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] valueStart,
+    out i64[min max] minValue,
+    out i64[min max] maxValue,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    minValue = 0;
+    maxValue = 0;
+    nextToken = valueStart;
+    stack mut i64[min max] first = 0;
+    stack mut u64[0 2 ** 63 - 1] afterFirst = valueStart;
+    if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, valueStart, first, afterFirst))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterFirst) == TokenKind.Range)
+    {
+        stack mut i64[min max] last = 0;
+        stack mut u64[0 2 ** 63 - 1] afterLast = afterFirst + 1;
+        if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, afterFirst + 1, last, afterLast)
+            || first > last)
+        {
+            return false;
+        }
+
+        minValue = first;
+        maxValue = last;
+        nextToken = afterLast;
+        return true;
+    }
+
+    minValue = first;
+    maxValue = first;
+    nextToken = afterFirst;
+    return true;
+}
+
 internal fn bool TryParseTerminalSwitchBooleanCaseLabel(
     borrow TokenStream stream,
     u64[0 2 ** 63 - 1] valueStart,
@@ -471,6 +670,73 @@ internal fn bool TryParseTerminalSwitchBooleanCaseLabel(
     }
 
     return false;
+}
+
+internal fn bool TerminalSwitchCaseIntervalOverlaps(
+    borrow IrTable<i64[min max]> caseMinValues,
+    borrow IrTable<i64[min max]> caseMaxValues,
+    i64[min max] minValue,
+    i64[min max] maxValue)
+{
+    stack u64[0 2 ** 63 - 1] count = caseMinValues.Count();
+    if (caseMaxValues.Count() != count)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack i64[min max] currentMin = caseMinValues.Get((u32[0 max])(i + 1));
+        stack i64[min max] currentMax = caseMaxValues.Get((u32[0 max])(i + 1));
+        if (!(maxValue < currentMin || minValue > currentMax))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool CopyCaseValuesToCaseMaxValues(
+    borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<i64[min max]> caseMaxValues)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    while willexit (index < count)
+    {
+        stack i64[min max] value = caseValues.Get((u32[0 max])(index + 1));
+        if (caseMaxValues.Add(value) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn MirValueId LowerIntegerSwitchCaseCondition(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId scrutineeValue,
+    i64[min max] minValue,
+    i64[min max] maxValue)
+{
+    if (minValue == maxValue)
+    {
+        stack MirValueId caseConstant = MirConstInt(instrs, minValue);
+        return LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+    }
+
+    stack MirValueId lowerConstant = MirConstInt(instrs, minValue);
+    stack MirValueId lowerCondition = LowerComparison(instrs, TokenKind.Gte, scrutineeValue, lowerConstant);
+    stack MirValueId upperConstant = MirConstInt(instrs, maxValue);
+    stack MirValueId upperCondition = LowerComparison(instrs, TokenKind.Lte, scrutineeValue, upperConstant);
+    return MirAndTyped(instrs, MirType.I1, lowerCondition, upperCondition);
 }
 
 internal fn bool SwitchFirstCaseLabelIsBoolean(borrow TokenStream stream, u64[0 2 ** 63 - 1] switchIndex)
@@ -498,9 +764,161 @@ internal fn bool SwitchFirstCaseLabelIsBoolean(borrow TokenStream stream, u64[0 
     return labelKind == TokenKind.True || labelKind == TokenKind.False;
 }
 
+internal fn bool SwitchFirstCaseLabelLooksQualifiedName(borrow TokenStream stream, u64[0 2 ** 63 - 1] switchIndex)
+{
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingBracketForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstCase = (u64[0 2 ** 63 - 1])closeParen + 2;
+    return stream.KindAt(firstCase) == TokenKind.Case
+        && stream.KindAt(firstCase + 1) == TokenKind.Identifier
+        && stream.KindAt(firstCase + 2) == TokenKind.Dot
+        && stream.KindAt(firstCase + 3) == TokenKind.Identifier;
+}
+
 internal fn bool TryParseIntegerSwitchAssignmentCases(
     borrow TokenStream stream,
     borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<i64[min max]> caseMaxValues,
+    mut borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut i64[min max] caseMaxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchIntegerCaseInterval(stream, source, cursor + 1, caseValue, caseMaxValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseIntervalOverlaps(caseValues, caseMaxValues, caseValue, caseMaxValue))
+        {
+            return false;
+        }
+
+        stack mut ParsedSwitchAssignmentArm caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseSwitchAssignmentArm(
+            stream,
+            source,
+            nodes,
+            params,
+            signatureParamCount,
+            funcNames,
+            targetNameTokens,
+            afterCaseLabel + 1,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0
+            || caseMaxValues.Add(caseMaxValue) == 0
+            || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ParsedSwitchAssignmentArm parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseSwitchAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        cursor + 2,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseEnumSwitchAssignmentCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u32[0 max] ownerDeclarationIndex,
     mut borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<ParamName> params,
     borrow IrTable<ParamName> funcNames,
@@ -544,7 +962,7 @@ internal fn bool TryParseIntegerSwitchAssignmentCases(
     {
         stack mut i64[min max] caseValue = 0;
         stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
-        if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, cursor + 1, caseValue, afterCaseLabel)
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, declarations, enumLayouts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
             || TerminalSwitchCaseValueExists(caseValues, caseValue))
         {
@@ -789,6 +1207,7 @@ internal fn bool TryParseTerminalIntegerSwitchReturnCases(
     u64[0 2 ** 63 - 1] switchIndex,
     out ExprParseResult scrutinee,
     mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<i64[min max]> caseMaxValues,
     mut borrow IrTable<ExprParseResult> caseArms,
     out ExprParseResult defaultArm,
     out u64[0 2 ** 63 - 1] nextToken)
@@ -820,10 +1239,11 @@ internal fn bool TryParseTerminalIntegerSwitchReturnCases(
     while willexit (stream.KindAt(cursor) == TokenKind.Case)
     {
         stack mut i64[min max] caseValue = 0;
+        stack mut i64[min max] caseMaxValue = 0;
         stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
-        if (!TryParseTerminalSwitchIntegerCaseLabel(stream, source, cursor + 1, caseValue, afterCaseLabel)
+        if (!TryParseTerminalSwitchIntegerCaseInterval(stream, source, cursor + 1, caseValue, caseMaxValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
-            || TerminalSwitchCaseValueExists(caseValues, caseValue))
+            || TerminalSwitchCaseIntervalOverlaps(caseValues, caseMaxValues, caseValue, caseMaxValue))
         {
             return false;
         }
@@ -835,7 +1255,9 @@ internal fn bool TryParseTerminalIntegerSwitchReturnCases(
             return false;
         }
 
-        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        if (caseValues.Add(caseValue) == 0
+            || caseMaxValues.Add(caseMaxValue) == 0
+            || caseArms.Add(caseArm) == 0)
         {
             return false;
         }
@@ -916,6 +1338,101 @@ internal fn bool TryParseTerminalBooleanSwitchReturnCases(
         if (!TryParseTerminalSwitchBooleanCaseLabel(stream, cursor + 1, caseValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
             || TerminalBooleanSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, afterCaseLabel + 1, caseArm, afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalEnumSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u32[0 max] ownerDeclarationIndex,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, declarations, enumLayouts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseValueExists(caseValues, caseValue))
         {
             return false;
         }
@@ -1176,6 +1693,7 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] scrutineeNode,
     borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<i64[min max]> caseMaxValues,
     borrow IrTable<ExprParseResult> caseArms,
     ExprParseResult defaultArm,
     borrow IrTable<u32[0 max]> localTypes,
@@ -1190,12 +1708,13 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
 {
     body = new();
     stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
-    if (caseCountWide == 0 || caseArms.Count() != caseCountWide)
+    if (caseCountWide == 0 || caseMaxValues.Count() != caseCountWide || caseArms.Count() != caseCountWide)
     {
         return false;
     }
 
-    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.IntType)
+    stack ExprType scrutineeType = TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes);
+    if (scrutineeType != ExprType.IntType && scrutineeType != ExprType.EnumType)
     {
         return false;
     }
@@ -1241,9 +1760,9 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
             testFirst = entryFirst;
         }
 
-        stack i64[min max] caseImmediate = caseValues.Get((u32[0 max])(caseIndex + 1));
-        stack MirValueId caseConstant = MirConstInt(instrs, caseImmediate);
-        stack MirValueId condition = LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+        stack i64[min max] caseMin = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack i64[min max] caseMax = caseMaxValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirValueId condition = LowerIntegerSwitchCaseCondition(instrs, scrutineeValue, caseMin, caseMax);
         stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
         if (testFirsts.Add(testFirst) == 0
             || testCounts.Add(testCount) == 0
@@ -1562,11 +2081,7 @@ internal fn bool BuildSwitchAssignmentArmLocalTypes(
             return false;
         }
 
-        stack mut u32[0 max] localTypeCode = 0;
-        if (localType == ExprType.BoolType)
-        {
-            localTypeCode = 1;
-        }
+        stack u32[0 max] localTypeCode = SourceLocalTypeCodeForNodeWithLocals(nodes, localRoot, armLocalTypes);
 
         if (armLocalTypes.Add(localTypeCode) == 0)
         {
@@ -1779,6 +2294,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] scrutineeNode,
     borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<i64[min max]> caseMaxValues,
     borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
     borrow IrTable<u32[0 max]> armLocalRoots,
     borrow IrTable<u32[0 max]> assignedRoots,
@@ -1800,12 +2316,13 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
 {
     body = new();
     stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
-    if (caseCountWide == 0 || caseArms.Count() != caseCountWide || targetCount == 0)
+    if (caseCountWide == 0 || caseMaxValues.Count() != caseCountWide || caseArms.Count() != caseCountWide || targetCount == 0)
     {
         return false;
     }
 
-    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.IntType)
+    stack ExprType scrutineeType = TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes);
+    if (scrutineeType != ExprType.IntType && scrutineeType != ExprType.EnumType)
     {
         return false;
     }
@@ -1821,7 +2338,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
     {
         stack u32[0 max] targetTypeCode = localTypes.Get(paramCount + (u32[0 max])targetTypeIndex + 1);
         stack mut ExprType expectedTargetType = ExprType.IntType;
-        if (targetTypeCode == 1)
+        if (targetTypeCode == SourceLocalTypeCodeBool())
         {
             expectedTargetType = ExprType.BoolType;
         }
@@ -1922,9 +2439,9 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
             testFirst = entryFirst;
         }
 
-        stack i64[min max] caseImmediate = caseValues.Get((u32[0 max])(caseIndex + 1));
-        stack MirValueId caseConstant = MirConstInt(instrs, caseImmediate);
-        stack MirValueId condition = LowerComparison(instrs, TokenKind.EqEq, scrutineeValue, caseConstant);
+        stack i64[min max] caseMin = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack i64[min max] caseMax = caseMaxValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirValueId condition = LowerIntegerSwitchCaseCondition(instrs, scrutineeValue, caseMin, caseMax);
         stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
         if (testFirsts.Add(testFirst) == 0
             || testCounts.Add(testCount) == 0
@@ -2019,7 +2536,7 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
             stack u32[0 max] incomingTailValue = tailValues.Get((u32[0 max])(targetPhiIndex + 1));
             stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetPhiIndex + 1));
             stack mut MirType phiType = MirType.I64;
-            if (targetTypeCode == 1)
+            if (targetTypeCode == SourceLocalTypeCodeBool())
             {
                 phiType = MirType.I1;
             }
@@ -2336,7 +2853,7 @@ internal fn bool LowerAssignedBooleanSwitchCasesToBlocks(
     {
         stack u32[0 max] targetTypeCode = localTypes.Get(paramCount + (u32[0 max])targetTypeIndex + 1);
         stack mut ExprType expectedTargetType = ExprType.IntType;
-        if (targetTypeCode == 1)
+        if (targetTypeCode == SourceLocalTypeCodeBool())
         {
             expectedTargetType = ExprType.BoolType;
         }
@@ -2499,7 +3016,7 @@ internal fn bool LowerAssignedBooleanSwitchCasesToBlocks(
     {
         stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetTypeIndex + 1));
         stack mut MirType phiType = MirType.I64;
-        if (targetTypeCode == 1)
+        if (targetTypeCode == SourceLocalTypeCodeBool())
         {
             phiType = MirType.I1;
         }
@@ -2730,6 +3247,7 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
     stack mut IrTable<ExprNode> nodes = new();
     stack mut ExprParseResult scrutinee = new();
     stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
     stack mut IrTable<ExprParseResult> caseArms = new();
     stack mut ExprParseResult defaultArm = new();
     stack mut u64[0 2 ** 63 - 1] nextToken = 0;
@@ -2742,6 +3260,7 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
         (u64[0 2 ** 63 - 1])braceIndex + 1,
         scrutinee,
         caseValues,
+        caseMaxValues,
         caseArms,
         defaultArm,
         nextToken))
@@ -2782,6 +3301,7 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
         nodes,
         scrutinee.NodeId,
         caseValues,
+        caseMaxValues,
         caseArms,
         defaultArm,
         localTypes,
@@ -2904,7 +3424,8 @@ internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
         body);
 }
 
-internal fn bool LowerModuleTerminalSwitchFunctionToBlocks(
+internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
+    ascii sourceText,
     borrow TokenStream stream,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
@@ -2916,8 +3437,180 @@ internal fn bool LowerModuleTerminalSwitchFunctionToBlocks(
     mut borrow IrTable<BlockEmit> ranges,
     bool recordRanges,
     out LoweredBody body)
+    where overlap(sourceText, source)
+{
+    body = new();
+    if (AsciiLength(sourceText) == 0 || !FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut DeclarationList declarations = new();
+    if (!TryParseMirSourceDeclarations(stream, declarations))
+    {
+        return false;
+    }
+
+    stack mut TypedEnumLayoutTable enumLayouts = new();
+    switch (BuildTypedEnumLayouts(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            enumLayouts = builtLayouts;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut u32[0 max] caseOwnerDeclarationIndex = 0;
+    if (!TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+        stream,
+        source,
+        declarations,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        caseOwnerDeclarationIndex))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalEnumSwitchReturnCases(
+        stream,
+        source,
+        declarations,
+        enumLayouts,
+        caseOwnerDeclarationIndex,
+        nodes,
+        params,
+        funcNames,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        caseValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (!CopyCaseValuesToCaseMaxValues(caseValues, caseMaxValues))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scrutineeOwnerDeclarationIndex = 0;
+    if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, scrutinee.NodeId, localTypes, scrutineeOwnerDeclarationIndex)
+        || scrutineeOwnerDeclarationIndex != caseOwnerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    return LowerTerminalIntegerSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseMaxValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body);
+}
+
+internal fn bool LowerModuleTerminalSwitchFunctionToBlocks(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+    where overlap(sourceText, source)
 {
     if (LowerModuleTerminalBooleanSwitchFunctionToBlocks(
+        stream,
+        source,
+        funcNames,
+        funcParamCounts,
+        functionCallContractFacts,
+        fnIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        body))
+    {
+        return true;
+    }
+
+    if (LowerModuleTerminalEnumSwitchFunctionToBlocks(
+        sourceText,
         stream,
         source,
         funcNames,
@@ -2948,6 +3641,7 @@ internal fn bool LowerModuleTerminalSwitchFunctionToBlocks(
 }
 
 internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
+    ascii sourceText,
     borrow TokenStream stream,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
@@ -2959,6 +3653,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     mut borrow IrTable<BlockEmit> ranges,
     bool recordRanges,
     out LoweredBody body)
+    where overlap(sourceText, source)
 {
     body = new();
     if (!FunctionBodyStartsWithLocalSwitchStatementAssignment(stream, source, funcNames, fnIndex))
@@ -3061,8 +3756,36 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
 
     stack mut ExprParseResult scrutinee = new();
     stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
     stack mut IrTable<u32[0 max]> booleanCaseValues = new();
     stack bool switchCasesAreBoolean = SwitchFirstCaseLabelIsBoolean(stream, cursor);
+    stack bool switchCasesAreEnum = !switchCasesAreBoolean && SwitchFirstCaseLabelLooksQualifiedName(stream, cursor);
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumLayoutTable enumLayouts = new();
+    stack mut u32[0 max] caseOwnerDeclarationIndex = 0;
+    if (switchCasesAreEnum)
+    {
+        if (AsciiLength(sourceText) == 0
+            || !TryParseMirSourceDeclarations(stream, declarations)
+            || !TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+                stream,
+                source,
+                declarations,
+                cursor,
+                caseOwnerDeclarationIndex))
+        {
+            return false;
+        }
+
+        switch (BuildTypedEnumLayouts(sourceText, stream, declarations))
+        {
+            case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+                return false;
+            case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+                enumLayouts = builtLayouts;
+        }
+    }
+
     stack mut IrTable<ParsedSwitchAssignmentArm> caseArms = new();
     stack mut IrTable<u32[0 max]> armLocalRoots = new();
     stack mut IrTable<u32[0 max]> assignedRoots = new();
@@ -3092,6 +3815,37 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
             return false;
         }
     }
+    else if (switchCasesAreEnum)
+    {
+        if (!TryParseEnumSwitchAssignmentCases(
+            stream,
+            source,
+            declarations,
+            enumLayouts,
+            caseOwnerDeclarationIndex,
+            nodes,
+            params,
+            funcNames,
+            cursor,
+            targetNameTokens,
+            signatureParamCount,
+            scrutinee,
+            caseValues,
+            caseArms,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            defaultArm,
+            nextToken))
+        {
+            return false;
+        }
+
+        if (!CopyCaseValuesToCaseMaxValues(caseValues, caseMaxValues))
+        {
+            return false;
+        }
+    }
     else if (!TryParseIntegerSwitchAssignmentCases(
         stream,
         source,
@@ -3103,6 +3857,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
         signatureParamCount,
         scrutinee,
         caseValues,
+        caseMaxValues,
         caseArms,
         armLocalRoots,
         assignedRoots,
@@ -3227,9 +3982,29 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    stack mut bool seededLocalTypes = false;
+    if (switchCasesAreEnum)
+    {
+        seededLocalTypes = SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes);
+    }
+    else
+    {
+        seededLocalTypes = SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes);
+    }
+
+    if (!seededLocalTypes)
     {
         return false;
+    }
+
+    if (switchCasesAreEnum)
+    {
+        stack mut u32[0 max] scrutineeOwnerDeclarationIndex = 0;
+        if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, scrutinee.NodeId, localTypes, scrutineeOwnerDeclarationIndex)
+            || scrutineeOwnerDeclarationIndex != caseOwnerDeclarationIndex)
+        {
+            return false;
+        }
     }
 
     stack mut u64[0 2 ** 63 - 1] targetTypeIndex = 0;
@@ -3271,10 +4046,10 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
             return false;
         }
 
-        stack mut u32[0 max] localTypeCode = 0;
+        stack mut u32[0 max] localTypeCode = SourceLocalTypeCodeInt();
         if (allBool)
         {
-            localTypeCode = 1;
+            localTypeCode = SourceLocalTypeCodeBool();
         }
 
         if (localTypes.Add(localTypeCode) == 0)
@@ -3295,11 +4070,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
             return false;
         }
 
-        stack mut u32[0 max] postLocalTypeCode = 0;
-        if (postLocalType == ExprType.BoolType)
-        {
-            postLocalTypeCode = 1;
-        }
+        stack u32[0 max] postLocalTypeCode = SourceLocalTypeCodeForNodeWithLocals(nodes, postLocalRootNode, localTypes);
 
         if (localTypes.Add(postLocalTypeCode) == 0)
         {
@@ -3402,6 +4173,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
         nodes,
         scrutinee.NodeId,
         caseValues,
+        caseMaxValues,
         caseArms,
         armLocalRoots,
         assignedRoots,
@@ -3523,11 +4295,11 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         stack u32[0 max] addedRoot = localRoots.Add(varExpr.NodeId);
         if (varType == ExprType.BoolType)
         {
-            stack u32[0 max] boolSlot = localTypes.Add(1);
+            stack u32[0 max] boolSlot = localTypes.Add(SourceLocalTypeCodeBool());
         }
         else
         {
-            stack u32[0 max] intSlot = localTypes.Add(0);
+            stack u32[0 max] intSlot = localTypes.Add(SourceLocalTypeCodeForNodeWithLocals(nodes, varExpr.NodeId, localTypes));
         }
 
         cursor = statementEnd + 1;
@@ -3535,6 +4307,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
 
     stack mut ExprParseResult scrutinee = new();
     stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
     stack mut IrTable<ExprParseResult> caseArms = new();
     stack mut ExprParseResult defaultArm = new();
     stack mut u64[0 2 ** 63 - 1] nextToken = 0;
@@ -3547,6 +4320,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         cursor,
         scrutinee,
         caseValues,
+        caseMaxValues,
         caseArms,
         defaultArm,
         nextToken))
@@ -3598,6 +4372,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         nodes,
         scrutinee.NodeId,
         caseValues,
+        caseMaxValues,
         caseArms,
         defaultArm,
         localTypes,
@@ -3613,6 +4388,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
 
 
 internal fn bool EmitModuleTerminalIntegerSwitchFunction(
+    ascii sourceText,
     borrow TokenStream stream,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
@@ -3628,12 +4404,14 @@ internal fn bool EmitModuleTerminalIntegerSwitchFunction(
     u64[0 2 ** 63 - 1] fnIndex,
     u32[0 max] functionNumber,
     mut borrow OwnedAscii sink)
+    where overlap(sourceText, source)
 {
     stack mut IrTable<MirInstruction> instrs = new();
     stack mut IrTable<MirBlock> blocks = new();
     stack mut IrTable<BlockEmit> ranges = new();
     stack mut LoweredBody body = new();
     if (!LowerModuleTerminalSwitchFunctionToBlocks(
+        sourceText,
         stream,
         source,
         funcNames,
@@ -3720,6 +4498,7 @@ internal fn bool EmitModuleTerminalIntegerSwitchFunction(
 }
 
 internal fn bool EmitModuleLocalSwitchStatementFunction(
+    ascii sourceText,
     borrow TokenStream stream,
     borrow i8[min max][] source,
     borrow IrTable<ParamName> funcNames,
@@ -3735,12 +4514,14 @@ internal fn bool EmitModuleLocalSwitchStatementFunction(
     u64[0 2 ** 63 - 1] fnIndex,
     u32[0 max] functionNumber,
     mut borrow OwnedAscii sink)
+    where overlap(sourceText, source)
 {
     stack mut IrTable<MirInstruction> instrs = new();
     stack mut IrTable<MirBlock> blocks = new();
     stack mut IrTable<BlockEmit> ranges = new();
     stack mut LoweredBody body = new();
     if (!LowerModuleLocalSwitchStatementFunctionToBlocks(
+        sourceText,
         stream,
         source,
         funcNames,

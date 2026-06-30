@@ -3,6 +3,7 @@ import Compiler.Typing.TypedFields
 import Compiler.Typing.TypedMemberFacts
 import Compiler.Typing.TypedMemberMethods
 import Compiler.Typing.TypedMemberModel
+import Compiler.Typing.TypedMemberModelRows
 import Compiler.Typing.TypedMemberReceiverFacts
 import Compiler.Typing.TypedSignatures
 import System.Memory
@@ -80,7 +81,8 @@ internal fn System.Memory.MemoryStatus AppendTypedMemberExpression(
     }
 
     stack mut u32[0 max] memberIndexPlusOne = 0;
-    switch (table.AppendMember(
+    switch (AppendTypedMemberRow(
+        table,
         context,
         ownerDeclarationIndex,
         ownerNameToken,

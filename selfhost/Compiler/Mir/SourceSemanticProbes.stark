@@ -101,6 +101,39 @@ internal fn bool FunctionTokenHasTailModifier(borrow TokenStream stream, u64[0 2
     return false;
 }
 
+internal fn bool FunctionTokenHasFiniteModifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    if (fnIndex == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnIndex - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        if (stream.KindAt(token) == TokenKind.Finite)
+        {
+            return true;
+        }
+
+        if (IsTailContextualToken(stream, token))
+        {
+            scan = scan - 1;
+        }
+        else if (!IsTailFunctionModifierKind(stream.KindAt(token)))
+        {
+            return false;
+        }
+        else
+        {
+            scan = scan - 1;
+        }
+    }
+
+    return false;
+}
+
 internal fn bool IsDeclaringIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
 {
     if (index == 0)
@@ -142,6 +175,221 @@ internal fn bool IsDeclaringIdentifier(borrow TokenStream stream, u64[0 2 ** 63 
     }
 
     return false;
+}
+
+internal struct FiniteFunctionRow
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u64[0 2 ** 63 - 1] FnIndex;
+    u64[0 2 ** 63 - 1] EndToken;
+    bool DeclaredFinite;
+
+    FiniteFunctionRow()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.FnIndex = 0;
+        self.EndToken = 0;
+        self.DeclaredFinite = false;
+    }
+}
+
+internal struct FiniteCallEdge
+{
+    u32[0 max] Caller;
+    u32[0 max] Callee;
+
+    FiniteCallEdge()
+    {
+        self.Caller = 0;
+        self.Callee = 0;
+    }
+}
+
+internal fn void BuildFiniteFunctionRows(borrow TokenStream stream, mut borrow IrTable<FiniteFunctionRow> rows)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (stream.KindAt(index) == TokenKind.Fn
+            && index + 1 < count
+            && stream.KindAt(index + 1) == TokenKind.Identifier)
+        {
+            stack mut FiniteFunctionRow row = new();
+            row.Start = stream.StartAt(index + 1);
+            row.Length = stream.LengthAt(index + 1);
+            row.FnIndex = index;
+            row.EndToken = count;
+            row.DeclaredFinite = FunctionTokenHasFiniteModifier(stream, index);
+
+            stack i64[min max] nextFn = FirstTokenOfKindAfter(stream, TokenKind.Fn, index);
+            if (nextFn >= 0)
+            {
+                row.EndToken = (u64[0 2 ** 63 - 1])nextFn;
+            }
+
+            stack u32[0 max] added = rows.Add(row);
+        }
+
+        index = index + 1;
+    }
+}
+
+internal fn i64[min max] FiniteFunctionIndexOf(
+    borrow IrTable<FiniteFunctionRow> rows,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = rows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack FiniteFunctionRow row = rows.Get((u32[0 max])(index + 1));
+        if (SpanEquals(source, row.Start, row.Length, start, length))
+        {
+            return (i64[min max])(index + 1);
+        }
+
+        index = index + 1;
+    }
+
+    return -1;
+}
+
+internal fn bool FiniteCallEdgeTableContains(borrow IrTable<FiniteCallEdge> edges, u32[0 max] caller, u32[0 max] callee)
+{
+    stack u64[0 2 ** 63 - 1] count = edges.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack FiniteCallEdge edge = edges.Get((u32[0 max])(index + 1));
+        if (edge.Caller == caller && edge.Callee == callee)
+        {
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn void AppendFiniteCallEdge(mut borrow IrTable<FiniteCallEdge> edges, u32[0 max] caller, u32[0 max] callee)
+{
+    if (caller == 0 || callee == 0 || FiniteCallEdgeTableContains(edges, caller, callee))
+    {
+        return;
+    }
+
+    stack mut FiniteCallEdge edge = new();
+    edge.Caller = caller;
+    edge.Callee = callee;
+    stack u32[0 max] added = edges.Add(edge);
+}
+
+internal fn void BuildFiniteFunctionCallEdges(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<FiniteFunctionRow> rows,
+    mut borrow IrTable<FiniteCallEdge> edges)
+{
+    stack u64[0 2 ** 63 - 1] count = rows.Count();
+    stack mut u64[0 2 ** 63 - 1] rowIndex = 0;
+    while willexit (rowIndex < count)
+    {
+        stack FiniteFunctionRow row = rows.Get((u32[0 max])(rowIndex + 1));
+        stack mut u64[0 2 ** 63 - 1] cursor = row.FnIndex + 2;
+        while willexit (cursor + 1 < row.EndToken)
+        {
+            if (stream.KindAt(cursor) == TokenKind.Identifier
+                && stream.KindAt(cursor + 1) == TokenKind.LParen)
+            {
+                stack i64[min max] callee = FiniteFunctionIndexOf(rows, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+                if (callee > 0)
+                {
+                    AppendFiniteCallEdge(edges, (u32[0 max])(rowIndex + 1), (u32[0 max])callee);
+                }
+            }
+
+            cursor = cursor + 1;
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+}
+
+internal fn void ExpandFiniteFunctionCallClosure(mut borrow IrTable<FiniteCallEdge> edges)
+{
+    stack mut bool changed = true;
+    while willexit (changed)
+    {
+        changed = false;
+        stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+        stack mut u64[0 2 ** 63 - 1] leftIndex = 0;
+        while willexit (leftIndex < edgeCount)
+        {
+            stack FiniteCallEdge left = edges.Get((u32[0 max])(leftIndex + 1));
+            stack mut u64[0 2 ** 63 - 1] rightIndex = 0;
+            while willexit (rightIndex < edgeCount)
+            {
+                stack FiniteCallEdge right = edges.Get((u32[0 max])(rightIndex + 1));
+                if (left.Callee == right.Caller && !FiniteCallEdgeTableContains(edges, left.Caller, right.Callee))
+                {
+                    AppendFiniteCallEdge(edges, left.Caller, right.Callee);
+                    changed = true;
+                }
+
+                rightIndex = rightIndex + 1;
+            }
+
+            leftIndex = leftIndex + 1;
+        }
+    }
+}
+
+internal fn bool FiniteRecursionValidStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack mut IrTable<FiniteFunctionRow> rows = new();
+    BuildFiniteFunctionRows(stream, rows);
+
+    stack mut IrTable<FiniteCallEdge> edges = new();
+    BuildFiniteFunctionCallEdges(stream, source, rows, edges);
+    ExpandFiniteFunctionCallClosure(edges);
+
+    stack u64[0 2 ** 63 - 1] count = rows.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack FiniteFunctionRow row = rows.Get((u32[0 max])(index + 1));
+        if (row.DeclaredFinite)
+        {
+            stack u32[0 max] functionIndex = (u32[0 max])(index + 1);
+            if (FiniteCallEdgeTableContains(edges, functionIndex, functionIndex))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+            while willexit (targetIndex < count)
+            {
+                stack u32[0 max] target = (u32[0 max])(targetIndex + 1);
+                if (FiniteCallEdgeTableContains(edges, functionIndex, target)
+                    && FiniteCallEdgeTableContains(edges, target, target))
+                {
+                    return false;
+                }
+
+                targetIndex = targetIndex + 1;
+            }
+        }
+
+        index = index + 1;
+    }
+
+    return true;
 }
 
 // True when the identifier at `index` is a function name (introduced right after `fn`).
@@ -571,6 +819,7 @@ public enum ExprType
 {
     IntType,
     BoolType,
+    EnumType,
     PtrType,
     ErrorType,
 }
@@ -814,7 +1063,8 @@ public fn bool ProgramNoBooleanOperand(ascii source)
 // The front-end's single "is this program well-formed?" verdict: every binder and typer
 // pass run over ONE lex. A program is semantically valid only if all hold — names bind,
 // calls match arity, no scope redeclares, function names are unique, every condition is
-// boolean, and no comparison's boolean result is used as an integer operand.
+// boolean, no comparison's boolean result is used as an integer operand, and finite
+// functions do not participate in or depend on source call cycles.
 internal fn bool SemanticallyValidStream(borrow TokenStream stream, borrow i8[min max][] source)
 {
     return NamesResolveStream(stream, source)
@@ -823,7 +1073,8 @@ internal fn bool SemanticallyValidStream(borrow TokenStream stream, borrow i8[mi
         && FunctionNamesUniqueStream(stream, source)
         && WhileConditionsAreBooleanStream(stream)
         && IfConditionsAreBooleanStream(stream)
-        && NoBooleanOperandStream(stream);
+        && NoBooleanOperandStream(stream)
+        && FiniteRecursionValidStream(stream, source);
 }
 
 // Lexes a program once and returns true iff it passes EVERY binder and typer check.

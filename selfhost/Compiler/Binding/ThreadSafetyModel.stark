@@ -1,0 +1,193 @@
+import System.Memory
+module Compiler.Binding.ThreadSafetyModel
+
+public enum ThreadSafetyLawKind
+{
+    Transferable,
+    Shareable,
+}
+
+public struct ThreadSafetyLawFactTable
+{
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] TransferableFlags;
+    internal dynamic u32[0 max] ShareableFlags;
+    internal dynamic u32[0 max] TransferableStates;
+    internal dynamic u32[0 max] ShareableStates;
+
+    ThreadSafetyLawFactTable()
+    {
+        self.NameTokens = new();
+        self.TransferableFlags = new();
+        self.ShareableFlags = new();
+        self.TransferableStates = new();
+        self.ShareableStates = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ThreadSafetyLawFactTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law bool IsTransferableAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return ThreadSafetyFlagHolds(self.TransferableFlagAt(index));
+    }
+
+    public law bool IsShareableAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return ThreadSafetyFlagHolds(self.ShareableFlagAt(index));
+    }
+
+    public law bool TransferableIsConditionalAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return ThreadSafetyFlagIsConditional(self.TransferableFlagAt(index));
+    }
+
+    public law bool ShareableIsConditionalAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return ThreadSafetyFlagIsConditional(self.ShareableFlagAt(index));
+    }
+
+    internal law u32[0 max] TransferableFlagAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flag = 0;
+        if (index < self.TransferableFlags.Length)
+        {
+            flag = self.TransferableFlags[index];
+        }
+
+        return flag;
+    }
+
+    internal law u32[0 max] ShareableFlagAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flag = 0;
+        if (index < self.ShareableFlags.Length)
+        {
+            flag = self.ShareableFlags[index];
+        }
+
+        return flag;
+    }
+
+    internal law u32[0 max] StateAt(borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index, ThreadSafetyLawKind lawKind)
+    {
+        stack mut u32[0 max] state = 0;
+        switch (lawKind)
+        {
+            case ThreadSafetyLawKind.Transferable:
+                if (index < self.TransferableStates.Length)
+                {
+                    state = self.TransferableStates[index];
+                }
+
+                return state;
+            case ThreadSafetyLawKind.Shareable:
+                if (index < self.ShareableStates.Length)
+                {
+                    state = self.ShareableStates[index];
+                }
+
+                return state;
+        }
+    }
+
+    internal fn void SetStateAt(mut borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index, ThreadSafetyLawKind lawKind, u32[0 max] state)
+    {
+        switch (lawKind)
+        {
+            case ThreadSafetyLawKind.Transferable:
+                if (index < self.TransferableStates.Length)
+                {
+                    self.TransferableStates[index] = state;
+                }
+
+                return;
+            case ThreadSafetyLawKind.Shareable:
+                if (index < self.ShareableStates.Length)
+                {
+                    self.ShareableStates[index] = state;
+                }
+
+                return;
+        }
+    }
+
+    internal fn void SetFactAt(mut borrow ThreadSafetyLawFactTable self, u64[0 2 ** 63 - 1] index, ThreadSafetyLawKind lawKind, bool holds, bool conditional)
+    {
+        stack u32[0 max] flag = ThreadSafetyMakeFactFlag(holds, conditional);
+        switch (lawKind)
+        {
+            case ThreadSafetyLawKind.Transferable:
+                if (index < self.TransferableFlags.Length)
+                {
+                    self.TransferableFlags[index] = flag;
+                }
+
+                return;
+            case ThreadSafetyLawKind.Shareable:
+                if (index < self.ShareableFlags.Length)
+                {
+                    self.ShareableFlags[index] = flag;
+                }
+
+                return;
+        }
+    }
+
+    internal fn System.Memory.MemoryStatus AppendPending(mut borrow ThreadSafetyLawFactTable self, u32[0 max] nameToken)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.TransferableFlags.TryReserve(1)
+            || !self.ShareableFlags.TryReserve(1)
+            || !self.TransferableStates.TryReserve(1)
+            || !self.ShareableStates.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.TransferableFlags[self.TransferableFlags.Length] = 0;
+        init self.ShareableFlags[self.ShareableFlags.Length] = 0;
+        init self.TransferableStates[self.TransferableStates.Length] = 0;
+        init self.ShareableStates[self.ShareableStates.Length] = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law u32[0 max] ThreadSafetyMakeFactFlag(bool holds, bool conditional)
+{
+    if (!holds)
+    {
+        return 0;
+    }
+
+    if (conditional)
+    {
+        return 2;
+    }
+
+    return 1;
+}
+
+internal finite law bool ThreadSafetyFlagHolds(u32[0 max] flag)
+{
+    return flag != 0;
+}
+
+internal finite law bool ThreadSafetyFlagIsConditional(u32[0 max] flag)
+{
+    return flag == 2;
+}
