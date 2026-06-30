@@ -1,6 +1,7 @@
 import Compiler.Ir
 import Compiler.Mir.Model
 import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
 import Compiler.Mir.LlvmText
 import Compiler.Mir.LlvmFacts
 import Compiler.Mir.LlvmInstructions
@@ -255,6 +256,34 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
     return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
 }
 
+internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithEnumLayoutsAndTailCallees(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    u32[0 max] blockIndex,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = setupFirst;
+    stack mut u32[0 max] remaining = setupCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithEnumLayoutsAndTailCallees(instrs, funcTailFlags, enumLayoutFacts, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
+}
+
 internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<u32[0 max]> funcTailFlags,
@@ -299,6 +328,62 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
             valueFacts,
             globalFacts,
             functionReturnFacts,
+            rangeMetadata,
+            sink,
+            index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return EmitLlvmDirectSwitchTerminator(instrs, scrutineeValue, defaultBlock, caseValues, caseBlocks, sink);
+}
+
+internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFactsAndEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    bool emitSeparateStorageFacts,
+    u32[0 max] blockIndex,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    u32[0 max] defaultBlock,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> caseBlocks,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    if (emitSeparateStorageFacts)
+    {
+        try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
+    }
+
+    stack mut u32[0 max] index = setupFirst;
+    stack mut u32[0 max] remaining = setupCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
+            instrs,
+            funcTailFlags,
+            functionEffectFacts,
+            functionCallContractFacts,
+            functionCallingConventionFacts,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            enumLayoutFacts,
             rangeMetadata,
             sink,
             index);

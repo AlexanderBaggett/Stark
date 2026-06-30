@@ -298,6 +298,8 @@ internal finite law bool IntegerValueFitsMirType(MirType type, i64[min max] valu
             return true;
         case MirType.Ptr:
             return false;
+        case MirType.EnumValue:
+            return false;
     }
 }
 
@@ -347,6 +349,8 @@ internal finite bool TryCheckedShiftAmount(MirType type, i64[min max] value, out
                 return false;
             }
         case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
             return false;
     }
 
@@ -580,6 +584,8 @@ internal finite bool TryMirTypeSignedBounds(MirType type, out i64[min max] lower
         case MirType.I1:
             return false;
         case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
             return false;
     }
 }
@@ -985,6 +991,72 @@ internal fn bool TryBuildPhiRangeFacts(ValueFacts leftFacts, ValueFacts rightFac
     return true;
 }
 
+internal fn bool TryBuildPtrOffsetFacts(
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts resultFacts)
+{
+    if (instr.ResultType() != MirType.Ptr || instr.OperandAIndex() == 0)
+    {
+        return false;
+    }
+
+    stack ValueFacts baseFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex()));
+    if (baseFacts.KnownNonNull())
+    {
+        resultFacts.MarkKnownNonNull();
+    }
+
+    if (baseFacts.HasNoAlias())
+    {
+        resultFacts.MarkNoAlias();
+    }
+
+    if (instr.OperandBIndex() != 0)
+    {
+        resultFacts.SetAlignment(instr.OperandBIndex());
+    }
+    else if (instr.Immediate() == 0 && baseFacts.HasAlignment())
+    {
+        resultFacts.SetAlignment(baseFacts.AlignmentBytes());
+    }
+
+    return resultFacts.HasNullability()
+        || resultFacts.HasNoAlias()
+        || resultFacts.HasAlignment();
+}
+
+internal fn bool TryBuildPtrIndexOffsetFacts(
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts resultFacts)
+{
+    if (instr.ResultType() != MirType.Ptr || instr.OperandAIndex() == 0 || instr.OperandBIndex() == 0)
+    {
+        return false;
+    }
+
+    stack ValueFacts baseFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex()));
+    if (baseFacts.KnownNonNull())
+    {
+        resultFacts.MarkKnownNonNull();
+    }
+
+    if (baseFacts.HasNoAlias())
+    {
+        resultFacts.MarkNoAlias();
+    }
+
+    if (instr.OperandDIndex() != 0)
+    {
+        resultFacts.SetAlignment(instr.OperandDIndex());
+    }
+
+    return resultFacts.HasNullability()
+        || resultFacts.HasNoAlias()
+        || resultFacts.HasAlignment();
+}
+
 internal fn bool TryBuildGeneratedValueFactsForInstruction(
     borrow IrTable<ValueFacts> valueFacts,
     MirInstruction instr,
@@ -1018,6 +1090,34 @@ internal fn bool TryBuildGeneratedValueFactsForInstruction(
             built.SetAlignment(instr.OperandAIndex());
             built.MarkNoAlias();
             built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.StackAlloc:
+            built.SetAlignment(instr.OperandAIndex());
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.HeapAlloc:
+            built.SetAlignment(instr.OperandAIndex());
+            built.MarkNoAlias();
+            built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.PtrOffset:
+            if (!TryBuildPtrOffsetFacts(valueFacts, instr, built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.PtrIndexOffset:
+            if (!TryBuildPtrIndexOffsetFacts(valueFacts, instr, built))
+            {
+                return false;
+            }
+
             facts = built;
             return true;
         case MirOp.ArenaDynamicStorageInit:
@@ -1302,7 +1402,11 @@ internal fn bool BuildMirValueRangeFactForInstruction(
             return ImportGlobalValueFactsForMirValue(valueFacts, value, globalFacts, (u32[0 max])instr.Immediate());
         case MirOp.Call:
             return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.CallWide:
+            return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
         case MirOp.TailCall:
+            return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.TailCallWide:
             return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
         default:
     }

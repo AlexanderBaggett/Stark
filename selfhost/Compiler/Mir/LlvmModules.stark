@@ -1,6 +1,7 @@
 import Compiler.Ir
 import Compiler.Mir.Model
 import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
 import Compiler.Mir.LlvmText
 import Compiler.Mir.LlvmBlocks
 import Compiler.Mir.LlvmFunctions
@@ -34,6 +35,28 @@ internal fn MemoryStatus EmitLlvmDefinitionNumbered(borrow IrTable<MirInstructio
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmDefinitionNumberedWithEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    const ascii prefix,
+    u32[0 max] number,
+    u32[0 max] entryBlockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define ");
+    try EmitLlvmTypeName(MirBlockScalarReturnType(instrs, blocks, entryBlockIndex), sink);
+    try sink.AppendConstAscii(" @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try sink.AppendConstAscii("() {\n");
+    try EmitLlvmLabeledBlockWithEnumLayouts(instrs, enumLayoutFacts, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
 // Emits an LLVM module: one single-block `define` per function in `funcs`, in id
 // order, each a single-block definition over its entry block. An empty table emits
 // nothing.
@@ -45,6 +68,25 @@ public fn MemoryStatus EmitLlvmModule(borrow IrTable<MirInstruction> instrs, bor
     {
         stack MirFunction f = funcs.Get(id);
         try EmitLlvmDefinitionNumbered(instrs, blocks, "f", id, f.EntryIndex(), f.FirstInstrIndex(), f.OwnedInstrCount(), sink);
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        try EmitLlvmDefinitionNumberedWithEnumLayouts(instrs, blocks, enumLayoutFacts, "f", id, f.EntryIndex(), f.FirstInstrIndex(), f.OwnedInstrCount(), sink);
         id = id + 1;
     }
 
@@ -99,5 +141,18 @@ public fn MemoryStatus EmitLlvmModuleWithGlobals(borrow IrTable<MirInstruction> 
 {
     try EmitLlvmGlobals(globals, sink);
     try EmitLlvmModule(instrs, blocks, funcs, sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithGlobalsAndEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobals(globals, sink);
+    try EmitLlvmModuleWithEnumLayouts(instrs, blocks, funcs, enumLayoutFacts, sink);
     return MemoryStatus.Ok;
 }

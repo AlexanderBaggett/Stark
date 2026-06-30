@@ -266,6 +266,19 @@ internal fn u8[0 max] MirOpToByte(MirOp op)
         case MirOp.SaturatingAdd: return 36;
         case MirOp.SaturatingSub: return 37;
         case MirOp.SaturatingMul: return 38;
+        case MirOp.StackAlloc: return 39;
+        case MirOp.PtrOffset: return 40;
+        case MirOp.LoadPtr: return 41;
+        case MirOp.StorePtr: return 42;
+        case MirOp.HeapAlloc: return 43;
+        case MirOp.PtrIndexOffset: return 44;
+        case MirOp.CallArg: return 45;
+        case MirOp.CallWide: return 46;
+        case MirOp.TailCallWide: return 47;
+        case MirOp.EnumVariantTag: return 48;
+        case MirOp.EnumPayloadInsert: return 49;
+        case MirOp.LoadEnumPtr: return 50;
+        case MirOp.StoreEnumPtr: return 51;
     }
 }
 
@@ -311,6 +324,19 @@ internal fn MirOp MirOpFromByte(u8[0 max] b)
         case 36: return MirOp.SaturatingAdd;
         case 37: return MirOp.SaturatingSub;
         case 38: return MirOp.SaturatingMul;
+        case 39: return MirOp.StackAlloc;
+        case 40: return MirOp.PtrOffset;
+        case 41: return MirOp.LoadPtr;
+        case 42: return MirOp.StorePtr;
+        case 43: return MirOp.HeapAlloc;
+        case 44: return MirOp.PtrIndexOffset;
+        case 45: return MirOp.CallArg;
+        case 46: return MirOp.CallWide;
+        case 47: return MirOp.TailCallWide;
+        case 48: return MirOp.EnumVariantTag;
+        case 49: return MirOp.EnumPayloadInsert;
+        case 50: return MirOp.LoadEnumPtr;
+        case 51: return MirOp.StoreEnumPtr;
         default: return MirOp.ConstInt;
     }
 }
@@ -325,6 +351,7 @@ internal fn u8[0 max] MirTypeToByte(MirType t)
         case MirType.Ptr: return 3;
         case MirType.I8: return 4;
         case MirType.I16: return 5;
+        case MirType.EnumValue: return 6;
     }
 }
 
@@ -337,6 +364,7 @@ internal fn MirType MirTypeFromByte(u8[0 max] b)
         case 3: return MirType.Ptr;
         case 4: return MirType.I8;
         case 5: return MirType.I16;
+        case 6: return MirType.EnumValue;
         default: return MirType.I64;
     }
 }

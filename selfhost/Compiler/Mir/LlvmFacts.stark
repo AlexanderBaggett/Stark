@@ -56,7 +56,7 @@ internal fn ValueFacts RangeFactForValue(
         return FactAt(globalFacts, (u32[0 max])instr.Immediate());
     }
 
-    if (instr.Opcode() == MirOp.Call || instr.Opcode() == MirOp.TailCall)
+    if (MirOpIsAnyCall(instr.Opcode()))
     {
         return FactAt(functionReturnFacts, (u32[0 max])instr.Immediate());
     }

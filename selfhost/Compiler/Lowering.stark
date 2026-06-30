@@ -537,6 +537,8 @@ internal finite law bool HighLevelIrParameterTypeIsLowerable(HighLevelIrParamete
             return true;
         case MirType.Ptr:
             return true;
+        case MirType.EnumValue:
+            return false;
     }
 }
 
@@ -556,6 +558,8 @@ internal finite law bool HighLevelIrMirTypeIsLowerable(MirType type)
             return true;
         case MirType.Ptr:
             return true;
+        case MirType.EnumValue:
+            return false;
     }
 }
 
@@ -575,6 +579,8 @@ internal finite law bool HighLevelIrTypeAllowsNullabilityFacts(MirType type)
             return false;
         case MirType.Ptr:
             return true;
+        case MirType.EnumValue:
+            return false;
     }
 }
 
@@ -614,6 +620,8 @@ internal finite law bool HighLevelIrValueFactsFitType(MirType type, ValueFacts f
         case MirType.I64:
             return true;
         case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
             return false;
     }
 }
@@ -711,6 +719,8 @@ internal finite law bool HighLevelIrGlobalInitializerFitsType(MirType type, i64[
             return true;
         case MirType.Ptr:
             return true;
+        case MirType.EnumValue:
+            return false;
     }
 }
 
@@ -2074,6 +2084,8 @@ internal finite law bool HighLevelIrShiftAmountIsValid(MirType type, i64[min max
         case MirType.I1:
             return value < 1;
         case MirType.Ptr:
+            return false;
+        case MirType.EnumValue:
             return false;
     }
 }

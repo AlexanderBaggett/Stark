@@ -11,6 +11,313 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-30 Selfhost Object Enum Field Storage
+
+- Struct and record object layout now accounts for enum field size and alignment when enum layout rows are available.
+- Enum-valued object field initializers and assignments now lower through owner-aware `StoreEnumPtr` instructions.
+- Enum-valued object field reads now lower through owner-aware `LoadEnumPtr` instructions.
+- Focused verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter StackObjectEnumField` in `tests-stark/selfhost.Ir` was stopped after 180 seconds with no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Switch Enum Storage Locals
+
+- Switch-arm lowering now parses stored enum locals and enum local assignments using typed enum layout rows.
+- Integer, boolean, and enum switch arms now preserve enum owner and storage-alignment facts through arm validation and lowering.
+- Braced switch arm locals can read stored enum values through owner-aware enum loads before later arm assignments.
+- Focused verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter SwitchStackEnumLocal --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after 180 seconds with no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Terminal If Enum Storage Locals
+
+- Local-prefixed terminal `if` lowering now uses typed enum declarations and layout rows when parsing locals.
+- Stack enum local initializers before terminal `if` branches now lower through owner-aware enum stores.
+- Stored enum local reads and mutable enum assignments before terminal `if` branches now preserve enum owner and storage-alignment facts.
+- Focused verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter TerminalIfStackEnumLocal --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after 180 seconds with no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Stack Enum Storage Locals
+
+- Straight-line `stack` enum locals now allocate concrete enum storage from typed enum layout rows.
+- Enum local initializers and mutable assignments now lower through owner-aware `StoreEnumPtr` instructions with explicit storage alignment.
+- Reads from stored enum locals now lower through owner-aware `LoadEnumPtr` instructions while preserving the enum owner fact for later LLVM storage typing.
+- Focused verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter StackEnumLocal --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after 180 seconds with no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Named Source Enum Constructors
+
+- Source enum constructor lowering now accepts named payload syntax such as `Enum.Move { X: value, Flag: true }`.
+- Named payload fields resolve through typed enum layout rows, reject duplicate, missing, unknown, and scalar-family mismatched payloads, and emit MIR payload inserts by canonical payload ordinal.
+- Focused verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter SourceModuleLowersNamedPayloadEnumConstructorLocalToLlvm --filter SourceModuleRejectsIncompleteNamedPayloadEnumConstructor --filter PackageTablesPreserveSourceNamedEnumConstructorMirFacts --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after roughly 90 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Source Enum Constructors
+
+- Source lowering now recognizes `Enum.Unit` and positional scalar `Enum.Payload(value)` constructors in local initializers and terminal return expressions.
+- Enum constructor lowering reuses typed enum layout rows for payload count and scalar payload width, then emits MIR enum construction operations with owner, variant, payload ordinal, and value facts.
+- Module and single-function LLVM emission now thread source-built enum layout facts into enum-aware LLVM instruction emission for the default local-body path.
+- Focused verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+- `../../stark test --filter SourceModuleLowersUnitEnumConstructorLocalToLlvm --filter SourceModuleLowersPayloadEnumConstructorLocalToLlvm --filter PackageTablesPreserveSourceEnumConstructorMirFacts --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after several minutes of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Wide Direct Calls
+
+- Source calls with more than four arguments now lower through linked MIR call-argument rows.
+- MIR text, package serialization, value facts, and LLVM call emission now understand wide direct and tail-call payloads.
+- Wide call argument range and ABI facts survive source lowering through LLVM call argument emission.
+- Focused verification:
+  - `Compiler.Mir.Builder` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceExpressions`, `Compiler.Mir.SourceExpressionLowering`, `Compiler.Mir.LlvmInstructions`, and `Compiler.Mir.LlvmBlocks` host-test inspect through `lower-mir`: passed with 0 errors.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - Direct stdin smoke compiled and ran `/tmp/wide-call-smoke`, returning exit code 0.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter BinaryRoundTripsWideArgumentCall --filter CompilesThreeAndFourArgumentCallsFromAst` in `tests-stark/selfhost.Ir` was stopped after several minutes of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Switch Scalar Storage Locals
+
+- Storage-backed switch lowering now accepts initialized `stack` scalar locals as base storage values.
+- Switch arms now lower scalar stack assignments as typed stores, interleaved in source order with constructed-object field stores.
+- The lowered path preserves stack allocation size, alignment, scalar MIR type, pointer facts, and typed load/store facts through LLVM IR.
+- Focused verification:
+  - `Compiler.Mir.SourceSwitchLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test` with the four new switch stack-scalar filters in `tests-stark/selfhost.Ir` was stopped after about 150 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Terminal If Scalar Storage Locals
+
+- Local-prefixed terminal `if` lowering now supports initialized `stack` scalar locals through typed storage-backed loads.
+- Mutable scalar stack assignments before terminal `if` branches now lower as typed stores before the branch condition.
+- The terminal-if path reuses the source-order storage mutation ledger so scalar and constructed-object mutations preserve source order before branching.
+- Focused verification:
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test` with the four new terminal-if stack-scalar filters in `tests-stark/selfhost.Ir` was stopped after about 150 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Stack Scalar Storage Locals
+
+- Initialized straight-line `stack` scalar locals now allocate typed storage and read through aligned MIR loads.
+- Mutable straight-line scalar stack assignments now lower as typed stores before terminal returns.
+- Storage mutation lowering preserves source order across scalar local assignments and constructed object field assignments.
+- Focused verification:
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- `../../stark test` with the four new stack-scalar storage filters in `tests-stark/selfhost.Ir` was stopped twice after extended no-output waits.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Dynamic Fixed-Array Source Indexing
+
+- Dynamic fixed-array element reads and assignments on constructed object fields now lower through the indexed pointer offset operation.
+- Source index bounds are proven from parameter/local value facts before emitting dynamic fixed-array element addressing.
+- The lowered path preserves receiver pointer provenance, base field offset, element size, element alignment, and typed load/store facts through LLVM IR.
+- Focused verification:
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed for the touched Stark and task files.
+- `../../stark test` with the three new dynamic fixed-array source-index filters in `tests-stark/selfhost.Ir` was stopped after 90 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Dynamic Pointer Index Addressing
+
+- MIR now has a first-class indexed pointer offset operation for dynamic element addresses.
+- The operation carries base pointer, index value, element size, base byte offset, and derived alignment without pointer-to-integer lowering.
+- Generated pointer facts inherit nonnull/noalias from the base and preserve element alignment for later loads and stores.
+- LLVM emission scales the index only when needed, adds the base offset only when needed, and emits a final inbounds i8 GEP.
+- Text rendering, package serialization, function validation, and artifact opcode names understand the new operation.
+- Focused verification:
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed for the touched Stark and task files.
+- `../../stark test` with the four new dynamic-pointer filters in `tests-stark/selfhost.Ir` was stopped after roughly 90 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Fixed-Array Field Elements
+
+- Constant fixed-array element reads and assignments on constructed object fields now resolve to storage-backed byte offsets.
+- Fixed-array field layout uses total element storage size while preserving element alignment for pointer loads and stores.
+- The lowered element path preserves element MIR type, byte offset, stride-derived address, and alignment through LLVM emission.
+- Focused verification:
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 errors and existing constructed-object parser recursion warnings.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+- `../../stark test` with the new fixed-array element filters in `tests-stark/selfhost.Ir` was stopped after roughly 90 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Switch Field Assignments
+
+- Constructed object field assignments inside integer, boolean, and enum switch arms now lower as storage-backed stores before the merge block.
+- Arm stores preserve field offset, field alignment, scalar MIR type, and derived pointer facts through LLVM emission.
+- Focused selfhost IR facts cover integer, boolean, enum, and invalid-target switch field assignment cases.
+- Focused verification:
+  - `Compiler.Mir.SourceSwitchLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- `../../stark test` with the four new switch-field-assignment filters in `tests-stark/selfhost.Ir` was stopped after roughly 90 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Constructed Object Field Assignments
+
+- Straight-line `object.field = expr` statements now parse after constructed object locals and lower as storage-backed field stores.
+- Assignment targets resolve field offset, alignment, and scalar MIR type before lowering, matching constructor initializer and field-read facts.
+- Assignment RHS expressions can read earlier constructed object fields and lower before the typed store without losing field-width facts.
+- Field assignments before terminal `if` branches lower before the condition and branch returns, so stored values can feed branch tests.
+- Focused verification:
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 errors and existing constructed-object parser recursion warnings.
+  - `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and 2 existing recursion warnings.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed for the touched Stark and task files.
+- `../../stark test` with the four new object-field-assignment filters in `tests-stark/selfhost.Ir` was stopped after roughly 90 seconds of no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Constructed Object Field Reads
+
+- Constructed stack and heap object locals now keep storage-root overrides while remaining non-value source locals.
+- Direct `object.field` reads over constructed object locals resolve field offset, alignment, and scalar MIR type before lowering.
+- Field reads lower through MIR `ptr.offset` plus typed `load.ptr`, preserving derived-pointer alignment facts through LLVM emission.
+- Constructor initializers can read fields from earlier constructed locals, while self/forward object field reads remain rejected.
+- Focused verification:
+  - `Compiler.Mir.SourceExpressions` host-test inspect through `lower-mir`: passed with 0 errors and existing recursive-parser warnings.
+  - `Compiler.Mir.SourceExpressionLowering` host-test inspect through `lower-mir`: passed with 0 errors and existing recursive-lowering warnings.
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 errors and recursive-parser warnings for the constructed-object parser.
+  - `Compiler.Mir.SourceFunctionContext` host-test inspect through `lower-mir`: passed with 0 errors and existing recursive-validation warnings.
+  - `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and 2 existing recursion warnings.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- `../../stark test` with the five new object-field-read filters in `tests-stark/selfhost.Ir` was stopped after roughly 90 seconds of no output.
+- A throwaway executable harness that directly called the changed Stark helper APIs was also stopped after a silent dependency build; no broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Heap Object Construction
+
+- Heap object construction now lowers to a first-class MIR heap allocation operation instead of an opaque call.
+- Heap allocation facts preserve alignment, noalias, and nonnull through MIR facts, package serialization, text rendering, and LLVM emission.
+- LLVM heap allocation emission declares and calls `__stark_heap_alloc` with `allocalign`, `allocsize`, `allockind`, `noalias`, `nonnull`, result alignment, and `dereferenceable` facts.
+- Source lowering now handles explicit, target-typed, field-initialized, positional-record, and terminal-if heap object constructors.
+- Focused verification:
+  - `Compiler.Mir.Model`, `Compiler.Mir.Builder`, `Compiler.Mir.Facts`, `Compiler.Mir.PackageCodec`, and `Compiler.Mir.TextRendering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.LlvmInstructions`, `Compiler.Mir.LlvmBlocks`, and `Compiler.Mir.LlvmFunctions` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceLocalLowering` and `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and 2 existing recursion warnings.
+  - `Compiler.Mir`, `Compiler.ArtifactRendering`, and `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter Heap` in `tests-stark/selfhost.Ir` was stopped after several minutes because the filtered project build did not produce output quickly enough for a narrow check.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Stack Record Positional Constructors
+
+- Record primary-constructor fields now participate in the lightweight stack object layout used by source MIR lowering.
+- Stack record positional constructor arguments lower as storage-backed typed stores with field offsets and alignment preserved through MIR memory operations.
+- The positional lowering path scans record header fields linearly and reuses the existing stack object initializer emission path.
+- Focused verification:
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and 2 existing recursion warnings.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- A tiny runtime probe executable for the new record constructor cases was attempted and stopped after several minutes because compiling the imported self-host MIR graph fanned out heavily.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Stack Object Field Initializers
+
+- Stack object field initializer bodies now parse into pending storage writes and lower after prior locals are available.
+- Field initializer stores preserve scalar MIR types, field offsets, field alignment, noalias, and nonnull pointer facts into LLVM emission.
+- Focused verification:
+  - `Compiler.Mir.SourceLocalLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceExpressionLowering` host-test inspect through `lower-mir`: passed with 0 errors and the existing localized recursion warnings.
+  - `Compiler.Mir.SourceModuleLowering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and 2 existing recursion warnings.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- Runtime probes were attempted with `../../stark test --filter StackObject` and a tiny stack-object executable probe, but both were stopped after several minutes because compiling the imported self-host MIR graph fanned out heavily.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost MIR Pointer Memory Ops
+
+- MIR now has pointer-offset, typed pointer-load, and typed pointer-store operations for storage-backed field places.
+- Derived pointer offsets preserve known-nonnull, noalias, and alignment facts into LLVM-oriented lowering.
+- Pointer loads and stores now carry explicit alignment through LLVM text emission, MIR text rendering, and package serialization.
+- Focused verification:
+  - `Compiler.Mir.Model`, `Compiler.Mir.Builder`, `Compiler.Mir.Facts`, `Compiler.Mir.LlvmInstructions`, `Compiler.Mir.TextRendering`, `Compiler.Mir.PackageCodec`, `Compiler.Mir.SourceModuleLowering`, `Compiler.Mir`, and `Compiler.ArtifactRendering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `tests-stark/selfhost.Ir/IrTests.stark` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
 ## 2026-06-29 Selfhost MIR Checked Recursion Facts
 
 - Checked source module lowering now preserves ordinary direct and mutual recursive call effects through LLVM emission.
@@ -2938,4 +3245,66 @@ comments explaining which platform is required.
   - `TypedConversionModel`, `TypedConversionHelpers`, `TypedConversionOperandFacts`, `TypedConversions`, `TypedAssignmentHelpers`, `TypedAssignmentNodeFacts`, `TypedAssignments`, `TypedReturns`, `TypedPipeline`, and `Compiler.Typing` host-test inspect through `lower-mir`: passed with 0 diagnostics.
   - `scripts/check-selfhost-typing-dependencies.sh`: passed.
   - `SourceModuleLowering` and `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-06-29 MIR Stack Allocation Slice
+
+- Added MIR stack allocation as a distinct pointer-producing operation for empty source `stack` object construction.
+- Preserved stack allocation size, alignment, nonnull, and noalias facts through MIR facts, package codec, text rendering, and LLVM alloca emission.
+- Lowered explicit and target-typed empty stack object construction in module and terminal-if local prefixes.
+- Narrow verification:
+  - `Compiler.Mir.Builder` and `Compiler.Mir.Model` host-test inspect through `type-check`: passed with 0 diagnostics.
+  - `Compiler.Mir.Facts`, `Compiler.Mir.LlvmInstructions`, `Compiler.Mir.PackageCodec`, and `Compiler.Mir.TextRendering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceLocalLowering`, `Compiler.Mir.SourceModuleLowering`, and `Compiler.ArtifactRendering` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `Compiler.Mir.SourceIfLowering` host-test inspect through `lower-mir`: passed with 0 errors and two pre-existing recursion warnings.
+  - `Compiler.Mir` host-test inspect through `lower-mir`: passed with 0 diagnostics.
+  - `../../stark test --filter StackAllocGeneratesPointerFacts` in `tests-stark/selfhost.Ir`: stopped after several minutes because the filtered project compile fanned out heavily.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Enum Construction Slice
+
+- Added MIR enum construction opcodes for tag creation and payload insertion.
+- Preserved enum owner type, variant ordinal, payload ordinal, source enum value, and payload value in MIR fields and package serialization.
+- Rendered enum construction operations in MIR artifact text and named them in artifact rendering.
+- Kept enum values out of scalar/global lowering validators until layout-aware LLVM emission is wired.
+- Narrow verification:
+  - `../../stark test --filter EnumConstructionInstructionsCarryPayloadLayoutFacts --filter EmitsMirTextForEnumConstructionInstructions --filter BinaryRoundTripsEnumConstructionInstructions` in `tests-stark/selfhost.Ir`: stopped after several minutes because the filtered project compile fanned out heavily.
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Enum LLVM Emission Slice
+
+- Emitted MIR enum tag construction and payload insertion as LLVM `insertvalue` operations using MIR enum layout facts.
+- Threaded enum layout fact tables through enum-aware instruction, block, function, range-fact, module, and artifact LLVM emission entrypoints.
+- Kept scalar, pointer, call, and range metadata emission on the existing fact-preserving path for non-enum instructions.
+- Added focused IR tests for instruction-level, range-fact definition, and module-level enum construction emission.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter EmitsLlvmForEnumConstructionInstructionsFromLayoutFacts` in `tests-stark/selfhost.Ir`: stopped after about a minute because the filtered project compile remained silent and appeared to fan out.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Enum Source Expression Slice
+
+- Added source-expression nodes for enum tag construction and enum payload insertion.
+- Preserved enum owner type, variant ordinal, payload ordinal, payload value, and payload scalar width through expression lowering into MIR enum construction operations.
+- Kept enum constructor expressions visible to source local type propagation, direct enum-owner lookup, call validation, discardability checks, and integer range-fact analysis.
+- Added focused IR tests for enum source-expression fact preservation, MIR lowering, and enum-layout LLVM emission.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Enum Pointer Memory Slice
+
+- Added owner-aware MIR enum value load and store operations for storage-backed enum places.
+- Preserved enum owner type, value operand, pointer operand, and lowered pointer alignment through text rendering, package serialization, and LLVM emission.
+- Added aligned enum value load/store LLVM helpers so derived pointer alignment survives aggregate enum memory operations.
+- Classified enum pointer loads and stores in MIR memory-effect scans.
+- Added focused IR tests for builder operands, MIR text, package round-trip, and LLVM enum aggregate load/store emission.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `../../stark test --filter EnumPointerMemory --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped at the 120-second alarm with no output.
+  - `git diff --check`: passed.
 - No broad test sweep was run.

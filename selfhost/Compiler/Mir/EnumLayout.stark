@@ -1099,12 +1099,12 @@ public fn bool TryGetLlvmEnumPayloadFieldIndex(
 internal fn MemoryStatus EmitLlvmEnumStorageTypeOperand(
     borrow IrTable<MirEnumLayoutFact> facts,
     TypeId ownerType,
-    const ascii valueName,
+    ascii valueName,
     mut borrow OwnedAscii sink)
 {
     try EmitLlvmEnumStorageType(facts, ownerType, sink);
     try sink.AppendConstAscii(" ");
-    try sink.AppendConstAscii(valueName);
+    try sink.AppendAscii(valueName);
     return MemoryStatus.Ok;
 }
 
@@ -1112,7 +1112,7 @@ public fn MemoryStatus EmitLlvmEnumVariantTagConstructor(
     borrow IrTable<MirEnumLayoutFact> facts,
     TypeId ownerType,
     u32[0 max] variantOrdinal,
-    const ascii resultName,
+    ascii resultName,
     mut borrow OwnedAscii sink)
 {
     stack mut MirEnumLayoutFact variantFact = new();
@@ -1128,7 +1128,7 @@ public fn MemoryStatus EmitLlvmEnumVariantTagConstructor(
     }
 
     try sink.AppendConstAscii("  ");
-    try sink.AppendConstAscii(resultName);
+    try sink.AppendAscii(resultName);
     try sink.AppendConstAscii(" = insertvalue ");
     try EmitLlvmEnumStorageType(facts, ownerType, sink);
     try sink.AppendConstAscii(" zeroinitializer, ");
@@ -1146,9 +1146,9 @@ public fn MemoryStatus EmitLlvmEnumPayloadInsert(
     TypeId ownerType,
     u32[0 max] variantOrdinal,
     u32[0 max] payloadOrdinal,
-    const ascii resultName,
-    const ascii sourceValueName,
-    const ascii payloadValueName,
+    ascii resultName,
+    ascii sourceValueName,
+    ascii payloadValueName,
     mut borrow OwnedAscii sink)
 {
     stack mut MirEnumLayoutFact payloadFact = new();
@@ -1164,13 +1164,13 @@ public fn MemoryStatus EmitLlvmEnumPayloadInsert(
     }
 
     try sink.AppendConstAscii("  ");
-    try sink.AppendConstAscii(resultName);
+    try sink.AppendAscii(resultName);
     try sink.AppendConstAscii(" = insertvalue ");
     try EmitLlvmEnumStorageTypeOperand(facts, ownerType, sourceValueName, sink);
     try sink.AppendConstAscii(", ");
     try EmitLlvmEnumFactStorageType(payloadFact, sink);
     try sink.AppendConstAscii(" ");
-    try sink.AppendConstAscii(payloadValueName);
+    try sink.AppendAscii(payloadValueName);
     try sink.AppendConstAscii(", ");
     try sink.AppendU64((u64[0 max])fieldIndex);
     try sink.AppendConstAscii("\n");
@@ -1180,8 +1180,19 @@ public fn MemoryStatus EmitLlvmEnumPayloadInsert(
 public fn MemoryStatus EmitLlvmEnumValueLoad(
     borrow IrTable<MirEnumLayoutFact> facts,
     TypeId ownerType,
-    const ascii resultName,
-    const ascii sourcePtrName,
+    ascii resultName,
+    ascii sourcePtrName,
+    mut borrow OwnedAscii sink)
+{
+    return EmitLlvmEnumValueLoadAligned(facts, ownerType, resultName, sourcePtrName, 0, sink);
+}
+
+public fn MemoryStatus EmitLlvmEnumValueLoadAligned(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    ascii resultName,
+    ascii sourcePtrName,
+    u32[0 max] alignBytes,
     mut borrow OwnedAscii sink)
 {
     stack mut MirEnumAbiLayoutFacts layout = new();
@@ -1191,13 +1202,21 @@ public fn MemoryStatus EmitLlvmEnumValueLoad(
     }
 
     try sink.AppendConstAscii("  ");
-    try sink.AppendConstAscii(resultName);
+    try sink.AppendAscii(resultName);
     try sink.AppendConstAscii(" = load ");
     try EmitLlvmEnumStorageType(facts, ownerType, sink);
     try sink.AppendConstAscii(", ptr ");
-    try sink.AppendConstAscii(sourcePtrName);
+    try sink.AppendAscii(sourcePtrName);
     try sink.AppendConstAscii(", align ");
-    try sink.AppendU64(layout.AlignmentBytes());
+    if (alignBytes == 0)
+    {
+        try sink.AppendU64(layout.AlignmentBytes());
+    }
+    else
+    {
+        try sink.AppendU64((u64[0 max])alignBytes);
+    }
+
     try sink.AppendConstAscii("\n");
     return MemoryStatus.Ok;
 }
@@ -1205,8 +1224,19 @@ public fn MemoryStatus EmitLlvmEnumValueLoad(
 public fn MemoryStatus EmitLlvmEnumValueStore(
     borrow IrTable<MirEnumLayoutFact> facts,
     TypeId ownerType,
-    const ascii valueName,
-    const ascii targetPtrName,
+    ascii valueName,
+    ascii targetPtrName,
+    mut borrow OwnedAscii sink)
+{
+    return EmitLlvmEnumValueStoreAligned(facts, ownerType, valueName, targetPtrName, 0, sink);
+}
+
+public fn MemoryStatus EmitLlvmEnumValueStoreAligned(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    ascii valueName,
+    ascii targetPtrName,
+    u32[0 max] alignBytes,
     mut borrow OwnedAscii sink)
 {
     stack mut MirEnumAbiLayoutFacts layout = new();
@@ -1218,9 +1248,17 @@ public fn MemoryStatus EmitLlvmEnumValueStore(
     try sink.AppendConstAscii("  store ");
     try EmitLlvmEnumStorageTypeOperand(facts, ownerType, valueName, sink);
     try sink.AppendConstAscii(", ptr ");
-    try sink.AppendConstAscii(targetPtrName);
+    try sink.AppendAscii(targetPtrName);
     try sink.AppendConstAscii(", align ");
-    try sink.AppendU64(layout.AlignmentBytes());
+    if (alignBytes == 0)
+    {
+        try sink.AppendU64(layout.AlignmentBytes());
+    }
+    else
+    {
+        try sink.AppendU64((u64[0 max])alignBytes);
+    }
+
     try sink.AppendConstAscii("\n");
     return MemoryStatus.Ok;
 }
@@ -1228,8 +1266,8 @@ public fn MemoryStatus EmitLlvmEnumValueStore(
 public fn MemoryStatus EmitLlvmEnumTagRead(
     borrow IrTable<MirEnumLayoutFact> facts,
     TypeId ownerType,
-    const ascii resultName,
-    const ascii enumValueName,
+    ascii resultName,
+    ascii enumValueName,
     mut borrow OwnedAscii sink)
 {
     stack mut u32[0 max] fieldIndex = 0;
@@ -1239,7 +1277,7 @@ public fn MemoryStatus EmitLlvmEnumTagRead(
     }
 
     try sink.AppendConstAscii("  ");
-    try sink.AppendConstAscii(resultName);
+    try sink.AppendAscii(resultName);
     try sink.AppendConstAscii(" = extractvalue ");
     try EmitLlvmEnumStorageTypeOperand(facts, ownerType, enumValueName, sink);
     try sink.AppendConstAscii(", ");

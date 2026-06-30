@@ -27,9 +27,44 @@ internal inline finite law u32[0 max] SourceLocalTypeCodePointer()
     return 3;
 }
 
-internal inline finite law u32[0 max] SourceLocalTypeCodeEnumBase()
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredBool()
 {
     return 4;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI8()
+{
+    return 5;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI16()
+{
+    return 6;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI32()
+{
+    return 7;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredI64()
+{
+    return 8;
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsStoredScalar(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeStoredBool() && typeCode <= SourceLocalTypeCodeStoredI64();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeEnumBase()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredEnumBase()
+{
+    return 1073741824;
 }
 
 internal inline finite law u32[0 max] SourceLocalTypeCodeForEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
@@ -37,9 +72,19 @@ internal inline finite law u32[0 max] SourceLocalTypeCodeForEnumOwnerDeclaration
     return SourceLocalTypeCodeEnumBase() + ownerDeclarationIndex;
 }
 
+internal inline finite law u32[0 max] SourceLocalTypeCodeForStoredEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
+{
+    return SourceLocalTypeCodeStoredEnumBase() + ownerDeclarationIndex;
+}
+
 internal inline finite law bool SourceLocalTypeCodeIsEnum(u32[0 max] typeCode)
 {
-    return typeCode >= SourceLocalTypeCodeEnumBase();
+    return typeCode >= SourceLocalTypeCodeEnumBase() && typeCode < SourceLocalTypeCodeStoredEnumBase();
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsStoredEnum(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeStoredEnumBase();
 }
 
 internal inline finite law u32[0 max] SourceLocalTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
@@ -50,6 +95,101 @@ internal inline finite law u32[0 max] SourceLocalTypeCodeEnumOwnerDeclarationInd
     }
 
     return typeCode - SourceLocalTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(u32[0 max] typeCode)
+{
+    if (typeCode < SourceLocalTypeCodeStoredEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceLocalTypeCodeStoredEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeInvalid()
+{
+    return 0;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeBool()
+{
+    return 1;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI8()
+{
+    return 2;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI16()
+{
+    return 3;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI32()
+{
+    return 4;
+}
+
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI64()
+{
+    return 5;
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeEnumBase()
+{
+    return 16;
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
+{
+    return SourceResolvedFieldTypeCodeEnumBase() + ownerDeclarationIndex;
+}
+
+internal inline finite law bool SourceResolvedFieldTypeCodeIsEnum(u32[0 max] typeCode)
+{
+    return typeCode >= SourceResolvedFieldTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
+{
+    if (typeCode < SourceResolvedFieldTypeCodeEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceResolvedFieldTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForStoredLocalTypeCode(u32[0 max] typeCode)
+{
+    if (typeCode == SourceLocalTypeCodeStoredBool())
+    {
+        return SourceResolvedFieldTypeCodeBool();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI8())
+    {
+        return SourceResolvedFieldTypeCodeI8();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI16())
+    {
+        return SourceResolvedFieldTypeCodeI16();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI32())
+    {
+        return SourceResolvedFieldTypeCodeI32();
+    }
+
+    if (typeCode == SourceLocalTypeCodeStoredI64())
+    {
+        return SourceResolvedFieldTypeCodeI64();
+    }
+
+    return SourceResolvedFieldTypeCodeInvalid();
 }
 
 // True when `k` is a `+`/`-` additive operator token.
@@ -78,9 +218,14 @@ public enum ExprKind
     IntLitExpr,
     BoolLitExpr,
     NameExpr,
+    FieldExpr,
+    IndexedFieldExpr,
+    EnumVariantExpr,
+    EnumPayloadExpr,
     BinaryExpr,
     CompareExpr,
     CallExpr,
+    CallArgLinkExpr,
 }
 
 public struct ExprNode
@@ -90,10 +235,14 @@ public struct ExprNode
     u32[0 max] Left;
     u32[0 max] Right;
     // A call's 2nd/3rd/4th argument nodes (0 = none); unused by the other node kinds. The
-    // AST call model carries up to four arguments (Right = first, Arg2/Arg3/Arg4 = the rest).
+    // common AST call model carries four inline arguments (Right = first, Arg2/Arg3/Arg4 =
+    // the rest) and spills wider calls through ExtraArgLink.
     u32[0 max] Arg2;
     u32[0 max] Arg3;
     u32[0 max] Arg4;
+    // For CallExpr this is the first overflow argument link; for CallArgLinkExpr it is
+    // the next overflow argument link. It is 0 for all other node kinds.
+    u32[0 max] ExtraArgLink;
     i64[min max] Imm;
 
     ExprNode()
@@ -105,6 +254,7 @@ public struct ExprNode
         self.Arg2 = 0;
         self.Arg3 = 0;
         self.Arg4 = 0;
+        self.ExtraArgLink = 0;
         self.Imm = 0;
     }
 }
@@ -142,6 +292,74 @@ public fn u32[0 max] MakeName(mut borrow IrTable<ExprNode> nodes, u32[0 max] par
     return nodes.Add(node);
 }
 
+public fn u32[0 max] MakeResolvedFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] receiverParamIndex,
+    u32[0 max] byteOffset,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.FieldExpr;
+    node.Left = receiverParamIndex;
+    node.Right = byteOffset;
+    node.Arg2 = alignBytes;
+    node.Arg3 = fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeResolvedIndexedFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] receiverParamIndex,
+    u32[0 max] indexNode,
+    u32[0 max] baseByteOffset,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.IndexedFieldExpr;
+    node.Left = receiverParamIndex;
+    node.Right = indexNode;
+    node.Arg2 = baseByteOffset;
+    node.Arg3 = elementSizeBytes;
+    node.Arg4 = alignBytes;
+    node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeEnumVariant(
+    mut borrow IrTable<ExprNode> nodes,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.EnumVariantExpr;
+    node.Left = ownerType.Index();
+    node.Right = variantOrdinal;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeEnumPayloadInsert(
+    mut borrow IrTable<ExprNode> nodes,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] sourceEnumValue,
+    u32[0 max] payloadValue,
+    u32[0 max] payloadTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.EnumPayloadExpr;
+    node.Left = sourceEnumValue;
+    node.Right = payloadValue;
+    node.Arg2 = ownerType.Index();
+    node.Arg3 = variantOrdinal;
+    node.Arg4 = payloadOrdinal;
+    node.Imm = (i64[min max])payloadTypeCode;
+    return nodes.Add(node);
+}
+
 public fn u32[0 max] MakeBinary(mut borrow IrTable<ExprNode> nodes, TokenKind op, u32[0 max] left, u32[0 max] right)
 {
     stack mut ExprNode node = new();
@@ -164,10 +382,9 @@ public fn u32[0 max] MakeCompare(mut borrow IrTable<ExprNode> nodes, TokenKind o
 
 // A call node. `callee` is the resolved function id (0 = unresolved, filled in once the
 // parser threads a function-name table); `argCount` is the number of arguments WRITTEN at
-// the call site (checked against the callee's declared arity); `arg1`..`arg4` are the up-to-
-// four argument nodes the AST model carries (0 = none, filled contiguously — so 0-, 1-, 2-,
-// 3-, and 4-argument calls lower).
-public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4)
+// the call site (checked against the callee's declared arity); `arg1`..`arg4` are the four
+// inline argument nodes and `extraArgLink` is the first overflow argument link.
+public fn u32[0 max] MakeCallWithExtra(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4, u32[0 max] extraArgLink)
 {
     stack mut ExprNode node = new();
     node.Kind = ExprKind.CallExpr;
@@ -177,7 +394,85 @@ public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] cal
     node.Arg2 = arg2;
     node.Arg3 = arg3;
     node.Arg4 = arg4;
+    node.ExtraArgLink = extraArgLink;
     return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4)
+{
+    return MakeCallWithExtra(nodes, callee, argCount, arg1, arg2, arg3, arg4, 0);
+}
+
+public fn u32[0 max] MakeCallArgLink(mut borrow IrTable<ExprNode> nodes, u32[0 max] argNode, u32[0 max] nextLink)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CallArgLinkExpr;
+    node.Left = argNode;
+    node.ExtraArgLink = nextLink;
+    return nodes.Add(node);
+}
+
+internal fn u32[0 max] BuildCallExtraArgLinks(mut borrow IrTable<ExprNode> nodes, borrow IrTable<u32[0 max]> extraArgs)
+{
+    stack mut u64[0 2 ** 63 - 1] i = extraArgs.Count();
+    stack mut u32[0 max] next = 0;
+    while willexit (i > 0)
+    {
+        stack u32[0 max] arg = extraArgs.Get((u32[0 max])i);
+        next = MakeCallArgLink(nodes, arg, next);
+        i = (u64[0 2 ** 63 - 1])(i - 1);
+    }
+
+    return next;
+}
+
+public fn u32[0 max] CallArgumentNodeAt(borrow IrTable<ExprNode> nodes, ExprNode node, u32[0 max] paramIndex)
+{
+    if (paramIndex == 0)
+    {
+        return node.Right;
+    }
+
+    if (paramIndex == 1)
+    {
+        return node.Arg2;
+    }
+
+    if (paramIndex == 2)
+    {
+        return node.Arg3;
+    }
+
+    if (paramIndex == 3)
+    {
+        return node.Arg4;
+    }
+
+    stack mut u32[0 max] remaining = paramIndex - 4;
+    stack mut u32[0 max] link = node.ExtraArgLink;
+    while willexit (link != 0)
+    {
+        if (!nodes.Contains(link))
+        {
+            return 0;
+        }
+
+        stack ExprNode argLink = nodes.Get(link);
+        if (argLink.Kind != ExprKind.CallArgLinkExpr)
+        {
+            return 0;
+        }
+
+        if (remaining == 0)
+        {
+            return argLink.Left;
+        }
+
+        remaining = remaining - 1;
+        link = argLink.ExtraArgLink;
+    }
+
+    return 0;
 }
 
 // The STRUCTURAL type of the expression rooted at `id`, recursing over the AST. A literal,
@@ -212,6 +507,16 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                     return ExprType.BoolType;
                 }
 
+                if (SourceLocalTypeCodeIsStoredScalar(typeCode))
+                {
+                    if (typeCode == SourceLocalTypeCodeStoredBool())
+                    {
+                        return ExprType.BoolType;
+                    }
+
+                    return ExprType.IntType;
+                }
+
                 if (typeCode == SourceLocalTypeCodeNonValue())
                 {
                     return ExprType.ErrorType;
@@ -222,15 +527,68 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                     return ExprType.PtrType;
                 }
 
-                if (SourceLocalTypeCodeIsEnum(typeCode))
+                if (SourceLocalTypeCodeIsEnum(typeCode) || SourceLocalTypeCodeIsStoredEnum(typeCode))
                 {
                     return ExprType.EnumType;
                 }
             }
 
             return ExprType.IntType;
+        case ExprKind.FieldExpr:
+            if (node.Arg3 == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodeI8()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI16()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI32()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.IndexedFieldExpr:
+            stack u32[0 max] indexedTypeCode = (u32[0 max])node.Imm;
+            if (indexedTypeCode == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceResolvedFieldTypeCodeIsEnum(indexedTypeCode))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (indexedTypeCode == SourceResolvedFieldTypeCodeI8()
+                || indexedTypeCode == SourceResolvedFieldTypeCodeI16()
+                || indexedTypeCode == SourceResolvedFieldTypeCodeI32()
+                || indexedTypeCode == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.EnumVariantExpr:
+            return ExprType.EnumType;
+        case ExprKind.EnumPayloadExpr:
+            if (TypeOfNodeWithLocals(nodes, node.Left, localTypes) == ExprType.EnumType
+                && TypeOfNodeWithLocals(nodes, node.Right, localTypes) != ExprType.ErrorType)
+            {
+                return ExprType.EnumType;
+            }
+
+            return ExprType.ErrorType;
         case ExprKind.CallExpr:
             return ExprType.IntType;
+        case ExprKind.CallArgLinkExpr:
+            return ExprType.ErrorType;
         case ExprKind.BinaryExpr:
             if (TypeOfNodeWithLocals(nodes, node.Left, localTypes) == ExprType.IntType && TypeOfNodeWithLocals(nodes, node.Right, localTypes) == ExprType.IntType)
             {
@@ -272,12 +630,39 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
     if (nodes.Contains(id))
     {
         stack ExprNode node = nodes.Get(id);
+        if (node.Kind == ExprKind.EnumVariantExpr && node.Left > 0)
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(node.Left - 1);
+        }
+
+        if (node.Kind == ExprKind.EnumPayloadExpr && node.Arg2 > 0)
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(node.Arg2 - 1);
+        }
+
+        if (node.Kind == ExprKind.FieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3));
+        }
+
+        if (node.Kind == ExprKind.IndexedFieldExpr
+            && node.Imm >= 0
+            && SourceResolvedFieldTypeCodeIsEnum((u32[0 max])node.Imm))
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex((u32[0 max])node.Imm));
+        }
+
         if (node.Kind == ExprKind.NameExpr && localTypes.Contains(node.Left + 1))
         {
             stack u32[0 max] sourceCode = localTypes.Get(node.Left + 1);
             if (SourceLocalTypeCodeIsEnum(sourceCode))
             {
                 return sourceCode;
+            }
+
+            if (SourceLocalTypeCodeIsStoredEnum(sourceCode))
+            {
+                return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(sourceCode));
             }
         }
     }
@@ -301,6 +686,66 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
     return SourceLocalTypeCodeInt();
 }
 
+public fn bool TryGetSourceExpressionEnumOwnerTypeIndexForNode(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    borrow IrTable<u32[0 max]> localTypes,
+    out u32[0 max] ownerTypeIndex)
+{
+    ownerTypeIndex = 0;
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind == ExprKind.EnumVariantExpr)
+    {
+        ownerTypeIndex = node.Left;
+        return ownerTypeIndex > 0;
+    }
+
+    if (node.Kind == ExprKind.EnumPayloadExpr)
+    {
+        ownerTypeIndex = node.Arg2;
+        return ownerTypeIndex > 0;
+    }
+
+    if (node.Kind == ExprKind.FieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.IndexedFieldExpr
+        && node.Imm >= 0
+        && SourceResolvedFieldTypeCodeIsEnum((u32[0 max])node.Imm))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex((u32[0 max])node.Imm) + 1;
+        return true;
+    }
+
+    if (node.Kind != ExprKind.NameExpr || !localTypes.Contains(node.Left + 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeCode = localTypes.Get(node.Left + 1);
+    if (SourceLocalTypeCodeIsStoredEnum(typeCode))
+    {
+        ownerTypeIndex = SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(typeCode) + 1;
+        return true;
+    }
+
+    if (!SourceLocalTypeCodeIsEnum(typeCode))
+    {
+        return false;
+    }
+
+    ownerTypeIndex = SourceLocalTypeCodeEnumOwnerDeclarationIndex(typeCode) + 1;
+    return true;
+}
+
 internal fn bool TryGetSourceLocalEnumOwnerDeclarationIndexForNode(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] id,
@@ -308,24 +753,14 @@ internal fn bool TryGetSourceLocalEnumOwnerDeclarationIndexForNode(
     out u32[0 max] ownerDeclarationIndex)
 {
     ownerDeclarationIndex = 0;
-    if (!nodes.Contains(id))
+    stack mut u32[0 max] ownerTypeIndex = 0;
+    if (!TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, id, localTypes, ownerTypeIndex)
+        || ownerTypeIndex == 0)
     {
         return false;
     }
 
-    stack ExprNode node = nodes.Get(id);
-    if (node.Kind != ExprKind.NameExpr || !localTypes.Contains(node.Left + 1))
-    {
-        return false;
-    }
-
-    stack u32[0 max] typeCode = localTypes.Get(node.Left + 1);
-    if (!SourceLocalTypeCodeIsEnum(typeCode))
-    {
-        return false;
-    }
-
-    ownerDeclarationIndex = SourceLocalTypeCodeEnumOwnerDeclarationIndex(typeCode);
+    ownerDeclarationIndex = ownerTypeIndex - 1;
     return true;
 }
 
@@ -556,6 +991,7 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
         stack mut u32[0 max] secondArg = 0;
         stack mut u32[0 max] thirdArg = 0;
         stack mut u32[0 max] fourthArg = 0;
+        stack mut IrTable<u32[0 max]> extraArgs = new();
         while willexit (stream.KindAt(argCursor) == TokenKind.Comma)
         {
             stack ExprParseResult more = ParseExprIn(stream, source, nodes, params, funcNames, argCursor + 1);
@@ -571,12 +1007,21 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
             {
                 fourthArg = more.NodeId;
             }
+            else
+            {
+                stack u32[0 max] addedExtra = extraArgs.Add(more.NodeId);
+                if (addedExtra == 0)
+                {
+                    return MakeParseResult(0, argCursor);
+                }
+            }
 
             argCursor = more.Next;
             argCount = argCount + 1;
         }
 
-        return MakeParseResult(MakeCall(nodes, callee, argCount, firstArg.NodeId, secondArg, thirdArg, fourthArg), argCursor + 1);
+        stack u32[0 max] extraArgLink = BuildCallExtraArgLinks(nodes, extraArgs);
+        return MakeParseResult(MakeCallWithExtra(nodes, callee, argCount, firstArg.NodeId, secondArg, thirdArg, fourthArg, extraArgLink), argCursor + 1);
     }
 
     // A bare name: resolve it to a parameter index (first-appearance order).
