@@ -40,6 +40,196 @@ internal fn MirValueId LowerBinOp(mut borrow IrTable<MirInstruction> instrs, Tok
     return MirAdd(instrs, a, b);
 }
 
+internal fn MirValueId LowerBinOpTyped(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirType type, MirValueId a, MirValueId b)
+{
+    if (op == TokenKind.Minus)
+    {
+        return MirSubTyped(instrs, type, a, b);
+    }
+
+    if (op == TokenKind.Star)
+    {
+        return MirMulTyped(instrs, type, a, b);
+    }
+
+    if (op == TokenKind.Div)
+    {
+        return MirSDivTyped(instrs, type, a, b);
+    }
+
+    if (op == TokenKind.Mod)
+    {
+        return MirSRemTyped(instrs, type, a, b);
+    }
+
+    return MirAddTyped(instrs, type, a, b);
+}
+
+internal fn MirType MirTypeForResolvedFieldTypeCode(u32[0 max] typeCode)
+{
+    if (typeCode == SourceResolvedFieldTypeCodeBool())
+    {
+        return MirType.I1;
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI8())
+    {
+        return MirType.I8;
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI16())
+    {
+        return MirType.I16;
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI32())
+    {
+        return MirType.I32;
+    }
+
+    return MirType.I64;
+}
+
+internal fn u32[0 max] AlignmentForResolvedFieldTypeCode(u32[0 max] typeCode)
+{
+    if (typeCode == SourceResolvedFieldTypeCodeI16())
+    {
+        return 2;
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI32())
+    {
+        return 4;
+    }
+
+    if (typeCode == SourceResolvedFieldTypeCodeI64())
+    {
+        return 8;
+    }
+
+    return 1;
+}
+
+internal fn MirValueId LowerStoredScalarLocalRead(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] typeCode,
+    u32[0 max] storageValue)
+{
+    stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForStoredLocalTypeCode(typeCode);
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    return MirLoadPtrAlignedTyped(
+        instrs,
+        MirTypeForResolvedFieldTypeCode(fieldTypeCode),
+        MirValueIdOf(storageValue),
+        AlignmentForResolvedFieldTypeCode(fieldTypeCode));
+}
+
+internal fn MirValueId LowerStoredEnumLocalRead(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] typeCode,
+    u32[0 max] storageValue)
+{
+    if (!SourceLocalTypeCodeIsStoredEnum(typeCode))
+    {
+        return MirEnumVariantTag(instrs, TypeIdOf(0), 0);
+    }
+
+    stack u32[0 max] ownerTypeIndex = SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(typeCode) + 1;
+    return MirLoadEnumPtrAligned(instrs, TypeIdOf(ownerTypeIndex), MirValueIdOf(storageValue), 0);
+}
+
+internal fn MirValueId LowerResolvedFieldRead(
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack u32[0 max] receiverIndex = node.Left;
+    if (!localOverrides.Contains(receiverIndex + 1))
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack u32[0 max] baseValue = localOverrides.Get(receiverIndex + 1);
+    if (baseValue == 0)
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack MirValueId fieldPointer = MirPtrOffset(instrs, MirValueIdOf(baseValue), node.Right, node.Arg2);
+    if (SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+    {
+        stack u32[0 max] ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3) + 1;
+        return MirLoadEnumPtrAligned(instrs, TypeIdOf(ownerTypeIndex), fieldPointer, node.Arg2);
+    }
+
+    return MirLoadPtrAlignedTyped(instrs, MirTypeForResolvedFieldTypeCode(node.Arg3), fieldPointer, node.Arg2);
+}
+
+internal fn MirValueId LowerResolvedIndexedFieldRead(
+    borrow IrTable<ExprNode> nodes,
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack u32[0 max] receiverIndex = node.Left;
+    if (!localOverrides.Contains(receiverIndex + 1))
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack u32[0 max] baseValue = localOverrides.Get(receiverIndex + 1);
+    if (baseValue == 0)
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack MirValueId indexValue = LowerExprNodeAsTypeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides, MirType.I64);
+    stack MirValueId elementPointer = MirPtrIndexOffset(instrs, MirValueIdOf(baseValue), indexValue, node.Arg3, node.Arg2, node.Arg4);
+    stack u32[0 max] indexedTypeCode = (u32[0 max])node.Imm;
+    if (SourceResolvedFieldTypeCodeIsEnum(indexedTypeCode))
+    {
+        stack u32[0 max] ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(indexedTypeCode) + 1;
+        return MirLoadEnumPtrAligned(instrs, TypeIdOf(ownerTypeIndex), elementPointer, node.Arg4);
+    }
+
+    return MirLoadPtrAlignedTyped(instrs, MirTypeForResolvedFieldTypeCode((u32[0 max])node.Imm), elementPointer, node.Arg4);
+}
+
+internal fn MirValueId LowerEnumPayloadExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    if (node.Imm < 0)
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack MirValueId sourceValue = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
+    stack u32[0 max] payloadTypeCode = (u32[0 max])node.Imm;
+    stack MirValueId payloadValue = LowerExprNodeAsTypeWithTypesAndLocals(
+        nodes,
+        node.Right,
+        instrs,
+        localTypes,
+        localOverrides,
+        MirTypeForResolvedFieldTypeCode(payloadTypeCode));
+    return MirEnumPayloadInsert(
+        instrs,
+        TypeIdOf(node.Arg2),
+        node.Arg3,
+        node.Arg4,
+        sourceValue,
+        payloadValue);
+}
+
 // Lowers a `<`/`>` comparison to its signed MIR comparison (`<` is the default).
 internal fn MirValueId LowerComparison(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
 {
@@ -242,62 +432,70 @@ internal fn MirValueId LowerCallExprNodeWithTypesAndLocals(
     borrow IrTable<u32[0 max]> localOverrides,
     bool isTailCall)
 {
-    if (node.Arg4 != 0)
+    stack mut IrTable<u32[0 max]> argValues = new();
+    if (!AppendLoweredCallArgumentValueIndexes(nodes, node, instrs, localTypes, localOverrides, argValues))
     {
-        stack MirValueId a0 = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
-        stack MirValueId a1 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
-        stack MirValueId a2 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg3, instrs, localTypes, localOverrides);
-        stack MirValueId a3 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg4, instrs, localTypes, localOverrides);
-        if (isTailCall)
-        {
-            return MirTailCall4(instrs, MirFuncIdOf(node.Left), a0, a1, a2, a3);
-        }
-
-        return MirCall4(instrs, MirFuncIdOf(node.Left), a0, a1, a2, a3);
-    }
-
-    if (node.Arg3 != 0)
-    {
-        stack MirValueId b0 = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
-        stack MirValueId b1 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
-        stack MirValueId b2 = LowerExprNodeWithTypesAndLocals(nodes, node.Arg3, instrs, localTypes, localOverrides);
-        if (isTailCall)
-        {
-            return MirTailCall3(instrs, MirFuncIdOf(node.Left), b0, b1, b2);
-        }
-
-        return MirCall3(instrs, MirFuncIdOf(node.Left), b0, b1, b2);
-    }
-
-    if (node.Arg2 != 0)
-    {
-        stack MirValueId firstCallArg = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
-        stack MirValueId secondCallArg = LowerExprNodeWithTypesAndLocals(nodes, node.Arg2, instrs, localTypes, localOverrides);
-        if (isTailCall)
-        {
-            return MirTailCall2(instrs, MirFuncIdOf(node.Left), firstCallArg, secondCallArg);
-        }
-
-        return MirCall2(instrs, MirFuncIdOf(node.Left), firstCallArg, secondCallArg);
-    }
-
-    if (node.Right != 0)
-    {
-        stack MirValueId callArgument = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
-        if (isTailCall)
-        {
-            return MirTailCall1(instrs, MirFuncIdOf(node.Left), callArgument);
-        }
-
-        return MirCall1(instrs, MirFuncIdOf(node.Left), callArgument);
+        return MirConstInt(instrs, 0);
     }
 
     if (isTailCall)
     {
-        return MirTailCall(instrs, MirFuncIdOf(node.Left));
+        return MirTailCallFromArgumentValueIndexes(instrs, MirFuncIdOf(node.Left), argValues);
     }
 
-    return MirCall(instrs, MirFuncIdOf(node.Left));
+    return MirCallFromArgumentValueIndexes(instrs, MirFuncIdOf(node.Left), argValues);
+}
+
+internal fn MirValueId LowerCallExprNodeAsTypeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    MirType targetType)
+{
+    stack mut IrTable<u32[0 max]> argValues = new();
+    if (!AppendLoweredCallArgumentValueIndexes(nodes, node, instrs, localTypes, localOverrides, argValues))
+    {
+        return MirConstIntTyped(instrs, targetType, 0);
+    }
+
+    return MirCallFromArgumentValueIndexesTyped(instrs, targetType, MirFuncIdOf(node.Left), argValues);
+}
+
+internal fn bool AppendLoweredCallArgumentValueIndexes(
+    borrow IrTable<ExprNode> nodes,
+    ExprNode node,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    mut borrow IrTable<u32[0 max]> argValues)
+{
+    if (node.Imm < 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] i = 0;
+    while willexit ((i64[min max])i < node.Imm)
+    {
+        stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, i);
+        if (argNode == 0)
+        {
+            return false;
+        }
+
+        stack MirValueId argValue = LowerExprNodeWithTypesAndLocals(nodes, argNode, instrs, localTypes, localOverrides);
+        stack u32[0 max] added = argValues.Add(argValue.Index());
+        if (added == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
 }
 
 internal fn MirValueId LowerCallExprNodeWithLocals(borrow IrTable<ExprNode> nodes, ExprNode node, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides, bool isTailCall)
@@ -359,6 +557,20 @@ public fn MirValueId LowerExprNodeWithTypesAndLocals(
                 stack u32[0 max] override = localOverrides.Get(paramIndex + 1);
                 if (override != 0)
                 {
+                    if (localTypes.Contains(paramIndex + 1))
+                    {
+                        stack u32[0 max] overrideTypeCode = localTypes.Get(paramIndex + 1);
+                        if (SourceLocalTypeCodeIsStoredScalar(overrideTypeCode))
+                        {
+                            return LowerStoredScalarLocalRead(instrs, overrideTypeCode, override);
+                        }
+
+                        if (SourceLocalTypeCodeIsStoredEnum(overrideTypeCode))
+                        {
+                            return LowerStoredEnumLocalRead(instrs, overrideTypeCode, override);
+                        }
+                    }
+
                     return MirValueIdOf(override);
                 }
             }
@@ -378,8 +590,18 @@ public fn MirValueId LowerExprNodeWithTypesAndLocals(
             }
 
             return MirParam(instrs, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            return LowerResolvedFieldRead(node, instrs, localOverrides);
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return LowerResolvedIndexedFieldRead(nodes, node, instrs, localTypes, localOverrides);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
+            return MirEnumVariantTag(instrs, TypeIdOf(node.Left), node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
+            return LowerEnumPayloadExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides);
         case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
             return LowerCallExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides, false);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            return MirConstInt(instrs, 0);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             stack MirValueId binLeft = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
             stack MirValueId binRight = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
@@ -388,6 +610,73 @@ public fn MirValueId LowerExprNodeWithTypesAndLocals(
             stack MirValueId cmpLeft = LowerExprNodeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides);
             stack MirValueId cmpRight = LowerExprNodeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides);
             return LowerComparison(instrs, node.Op, cmpLeft, cmpRight);
+    }
+}
+
+public fn MirValueId LowerExprNodeAsTypeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    MirType targetType)
+{
+    if (!nodes.Contains(id))
+    {
+        return MirConstIntTyped(instrs, targetType, 0);
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
+            return MirConstIntTyped(instrs, targetType, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return MirConstIntTyped(instrs, targetType, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
+            stack u32[0 max] paramIndex = node.Left;
+            if (localOverrides.Contains(paramIndex + 1))
+            {
+                stack u32[0 max] override = localOverrides.Get(paramIndex + 1);
+                if (override != 0)
+                {
+                    if (localTypes.Contains(paramIndex + 1))
+                    {
+                        stack u32[0 max] overrideTypeCode = localTypes.Get(paramIndex + 1);
+                        if (SourceLocalTypeCodeIsStoredScalar(overrideTypeCode))
+                        {
+                            return LowerStoredScalarLocalRead(instrs, overrideTypeCode, override);
+                        }
+
+                        if (SourceLocalTypeCodeIsStoredEnum(overrideTypeCode))
+                        {
+                            return LowerStoredEnumLocalRead(instrs, overrideTypeCode, override);
+                        }
+                    }
+
+                    return MirValueIdOf(override);
+                }
+            }
+
+            return MirParamTyped(instrs, targetType, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            return LowerResolvedFieldRead(node, instrs, localOverrides);
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return LowerResolvedIndexedFieldRead(nodes, node, instrs, localTypes, localOverrides);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
+            return MirEnumVariantTag(instrs, TypeIdOf(node.Left), node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
+            return LowerEnumPayloadExprNodeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            return LowerCallExprNodeAsTypeWithTypesAndLocals(nodes, node, instrs, localTypes, localOverrides, targetType);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            return MirConstIntTyped(instrs, targetType, 0);
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            stack MirValueId binLeft = LowerExprNodeAsTypeWithTypesAndLocals(nodes, node.Left, instrs, localTypes, localOverrides, targetType);
+            stack MirValueId binRight = LowerExprNodeAsTypeWithTypesAndLocals(nodes, node.Right, instrs, localTypes, localOverrides, targetType);
+            return LowerBinOpTyped(instrs, node.Op, targetType, binLeft, binRight);
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            return LowerExprNodeWithTypesAndLocals(nodes, id, instrs, localTypes, localOverrides);
     }
 }
 

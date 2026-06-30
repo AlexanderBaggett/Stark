@@ -25,6 +25,8 @@ internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
             try sink.AppendConstAscii("i64");
         case MirType.Ptr:
             try sink.AppendConstAscii("ptr");
+        case MirType.EnumValue:
+            try sink.AppendConstAscii("unknown");
     }
 
     return MemoryStatus.Ok;

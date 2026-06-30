@@ -456,6 +456,22 @@ public finite law ascii MirOpName(MirOp op)
             return "load-global";
         case MirOp.StoreGlobal:
             return "store-global";
+        case MirOp.StackAlloc:
+            return "stack-alloc";
+        case MirOp.HeapAlloc:
+            return "heap-alloc";
+        case MirOp.PtrOffset:
+            return "ptr-offset";
+        case MirOp.PtrIndexOffset:
+            return "ptr-index-offset";
+        case MirOp.LoadPtr:
+            return "load-ptr";
+        case MirOp.StorePtr:
+            return "store-ptr";
+        case MirOp.LoadEnumPtr:
+            return "load-enum-ptr";
+        case MirOp.StoreEnumPtr:
+            return "store-enum-ptr";
         case MirOp.ArenaFrameEnter:
             return "arena-frame-enter";
         case MirOp.ArenaAlloc:
@@ -472,10 +488,20 @@ public finite law ascii MirOpName(MirOp op)
             return "arena-frame-leave";
         case MirOp.Phi:
             return "phi";
+        case MirOp.CallArg:
+            return "call-arg";
         case MirOp.Call:
             return "call";
+        case MirOp.CallWide:
+            return "call-wide";
         case MirOp.TailCall:
             return "tail-call";
+        case MirOp.TailCallWide:
+            return "tail-call-wide";
+        case MirOp.EnumVariantTag:
+            return "enum-variant-tag";
+        case MirOp.EnumPayloadInsert:
+            return "enum-payload-insert";
         case MirOp.Return:
             return "return";
     }
@@ -497,6 +523,8 @@ public finite law ascii MirTypeName(MirType type)
             return "i64";
         case MirType.Ptr:
             return "ptr";
+        case MirType.EnumValue:
+            return "enum";
     }
 }
 
@@ -677,6 +705,18 @@ public fn System.Memory.MemoryStatus AppendLlvmModuleArtifact(
 {
     try writer.AppendAscii("llvm module\n");
     return EmitLlvmModuleWithGlobals(instructions, blocks, functions, globals, writer);
+}
+
+public fn System.Memory.MemoryStatus AppendLlvmModuleArtifactWithEnumLayouts(
+    mut borrow OwnedAscii writer,
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts)
+{
+    try writer.AppendAscii("llvm module\n");
+    return EmitLlvmModuleWithGlobalsAndEnumLayouts(instructions, blocks, functions, globals, enumLayoutFacts, writer);
 }
 
 public fn System.Memory.MemoryStatus AppendPackageImageArtifact(

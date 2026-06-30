@@ -930,6 +930,10 @@ internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             return AbiFactAt(paramAbiFacts, node.Left + 1).IsPointer;
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
                 || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
@@ -937,10 +941,21 @@ internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
                 || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
         case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
-            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right)
-                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg2)
-                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg3)
-                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg4);
+            stack mut u32[0 max] argIndex = 0;
+            while willexit ((i64[min max])argIndex < node.Imm)
+            {
+                stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, argIndex);
+                if (ExprNodeUsesPointerParam(nodes, paramAbiFacts, argNode))
+                {
+                    return true;
+                }
+
+                argIndex = argIndex + 1;
+            }
+
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
         default:
             return false;
     }
@@ -1093,30 +1108,11 @@ internal fn bool SeedParamLocalTypesFromSignatureWithDeclarations(
 
 // True iff every CALL node in the AST is well-formed against the module: (1) its callee
 // resolved to a defined function (a non-0 1-based id — a 0 would emit an invalid `@f0`);
-// (2) its argument count is at most four (the AST call model carries up to four arguments,
-// so a wider call cannot be lowered); (3) that count matches the callee's declared parameter
-// count (an arity mismatch would emit a `call` LLVM rejects); (4) each present argument
-// matches the callee's scalar-or-pointer ABI shape; and (5) memory-backed arguments satisfy
+// (2) its argument count matches the callee's declared parameter count; (3) each argument
+// matches the callee's scalar-or-pointer ABI shape; and (4) memory-backed arguments satisfy
 // the callee's required distinct-storage contract. `funcParamCounts` is indexed by 1-based
 // id. `localTypes` records each name index's type (1 = boolean, 3 = pointer), so a boolean
 // local passed as an integer argument and a scalar local passed as a pointer are caught.
-internal fn u32[0 max] CallArgumentNodeForParam(ExprNode node, u32[0 max] paramIndex)
-{
-    switch (paramIndex)
-    {
-        case 0:
-            return node.Right;
-        case 1:
-            return node.Arg2;
-        case 2:
-            return node.Arg3;
-        case 3:
-            return node.Arg4;
-        default:
-            return 0;
-    }
-}
-
 internal fn bool ValidateCallArgumentType(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> localTypes,
@@ -1130,6 +1126,32 @@ internal fn bool ValidateCallArgumentType(
     }
 
     return actual == ExprType.IntType;
+}
+
+internal fn bool ValidateCallArgumentTypesForNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    ExprNode node,
+    FunctionCallContractFacts calleeFacts)
+{
+    if (node.Imm < 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] argIndex = 0;
+    while willexit ((i64[min max])argIndex < node.Imm)
+    {
+        stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, argIndex);
+        if (argNode == 0 || !ValidateCallArgumentType(nodes, localTypes, argNode, FunctionCallContractParamAbi(calleeFacts, argIndex)))
+        {
+            return false;
+        }
+
+        argIndex = argIndex + 1;
+    }
+
+    return true;
 }
 
 internal fn bool TryReadDirectPointerParamArgument(
@@ -1170,8 +1192,8 @@ internal fn bool ValidateCallDistinctStorageArguments(
     while willexit (i < calleeFacts.DistinctCount)
     {
         stack DistinctStoragePair pair = FunctionCallContractDistinctPair(calleeFacts, i);
-        stack u32[0 max] leftArgNode = CallArgumentNodeForParam(callNode, pair.LeftParam);
-        stack u32[0 max] rightArgNode = CallArgumentNodeForParam(callNode, pair.RightParam);
+        stack u32[0 max] leftArgNode = CallArgumentNodeAt(nodes, callNode, pair.LeftParam);
+        stack u32[0 max] rightArgNode = CallArgumentNodeAt(nodes, callNode, pair.RightParam);
         stack mut u32[0 max] leftParam = 0;
         stack mut u32[0 max] rightParam = 0;
         if (!TryReadDirectPointerParamArgument(nodes, localTypes, leftArgNode, leftParam)
@@ -1206,33 +1228,13 @@ internal fn bool ValidateModuleCalls(
                 return false;
             }
 
-            if (node.Imm > 4)
-            {
-                return false;
-            }
-
             if (node.Imm != (i64[min max])funcParamCounts.Get(node.Left))
             {
                 return false;
             }
 
             stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
-            if (node.Right != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Right, FunctionCallContractParamAbi(calleeFacts, 0)))
-            {
-                return false;
-            }
-
-            if (node.Arg2 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg2, FunctionCallContractParamAbi(calleeFacts, 1)))
-            {
-                return false;
-            }
-
-            if (node.Arg3 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg3, FunctionCallContractParamAbi(calleeFacts, 2)))
-            {
-                return false;
-            }
-
-            if (node.Arg4 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg4, FunctionCallContractParamAbi(calleeFacts, 3)))
+            if (!ValidateCallArgumentTypesForNode(nodes, localTypes, node, calleeFacts))
             {
                 return false;
             }
@@ -1267,33 +1269,13 @@ internal fn bool ValidateModuleCallNode(
         return false;
     }
 
-    if (node.Imm > 4)
-    {
-        return false;
-    }
-
     if (node.Imm != (i64[min max])funcParamCounts.Get(node.Left))
     {
         return false;
     }
 
     stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
-    if (node.Right != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Right, FunctionCallContractParamAbi(calleeFacts, 0)))
-    {
-        return false;
-    }
-
-    if (node.Arg2 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg2, FunctionCallContractParamAbi(calleeFacts, 1)))
-    {
-        return false;
-    }
-
-    if (node.Arg3 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg3, FunctionCallContractParamAbi(calleeFacts, 2)))
-    {
-        return false;
-    }
-
-    if (node.Arg4 != 0 && !ValidateCallArgumentType(nodes, localTypes, node.Arg4, FunctionCallContractParamAbi(calleeFacts, 3)))
+    if (!ValidateCallArgumentTypesForNode(nodes, localTypes, node, calleeFacts))
     {
         return false;
     }
@@ -1328,6 +1310,15 @@ internal fn bool ValidateModuleCallsForRoot(
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
+            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
                 && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
@@ -1335,22 +1326,26 @@ internal fn bool ValidateModuleCallsForRoot(
             return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
                 && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
-            if (node.Right != 0 && !ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            stack mut u32[0 max] argIndex = 0;
+            while willexit ((i64[min max])argIndex < node.Imm)
+            {
+                stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, argIndex);
+                if (argNode == 0 || !ValidateModuleCallsForRoot(nodes, argNode, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+                {
+                    return false;
+                }
+
+                argIndex = argIndex + 1;
+            }
+
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            if (node.Left != 0 && !ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
             {
                 return false;
             }
 
-            if (node.Arg2 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg2, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
-            {
-                return false;
-            }
-
-            if (node.Arg3 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg3, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
-            {
-                return false;
-            }
-
-            if (node.Arg4 != 0 && !ValidateModuleCallsForRoot(nodes, node.Arg4, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            if (node.ExtraArgLink != 0 && !ValidateModuleCallsForRoot(nodes, node.ExtraArgLink, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
             {
                 return false;
             }

@@ -223,6 +223,152 @@ public fn MirValueId MirMul(mut borrow IrTable<MirInstruction> instrs, MirValueI
     return MirEmit(instrs, MirOp.Mul, a.Index(), b.Index(), 0);
 }
 
+// Allocates stack storage with compile-time-known byte size and alignment. The result
+// is a pointer value; generated facts mark it nonnull, noalias, and aligned.
+public fn MirValueId MirStackAlloc(mut borrow IrTable<MirInstruction> instrs, u32[0 max] sizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.StackAlloc;
+    instr.AIndex = alignBytes;
+    instr.Imm = (i64[min max])sizeBytes;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Allocates heap storage with compile-time-known byte size and alignment. The result
+// is a pointer value; generated facts mark it nonnull, noalias, and aligned.
+public fn MirValueId MirHeapAlloc(mut borrow IrTable<MirInstruction> instrs, u32[0 max] sizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.HeapAlloc;
+    instr.AIndex = alignBytes;
+    instr.Imm = (i64[min max])sizeBytes;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Computes a byte-offset pointer within the same allocation. The alignment is the
+// known alignment of the derived pointer, normally the target field alignment.
+public fn MirValueId MirPtrOffset(mut borrow IrTable<MirInstruction> instrs, MirValueId base, u32[0 max] byteOffset, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.PtrOffset;
+    instr.AIndex = base.Index();
+    instr.BIndex = alignBytes;
+    instr.Imm = (i64[min max])byteOffset;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Computes base + baseOffset + index * elementSize while preserving pointer
+// provenance and the derived element alignment for later load/store metadata.
+public fn MirValueId MirPtrIndexOffset(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId base,
+    MirValueId index,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] baseByteOffset,
+    u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.PtrIndexOffset;
+    instr.AIndex = base.Index();
+    instr.BIndex = index.Index();
+    instr.CIndex = elementSizeBytes;
+    instr.DIndex = alignBytes;
+    instr.Imm = (i64[min max])baseByteOffset;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirLoadPtr(mut borrow IrTable<MirInstruction> instrs, MirValueId ptr)
+{
+    return MirLoadPtrTyped(instrs, MirType.I64, ptr);
+}
+
+public fn MirValueId MirLoadPtrTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId ptr)
+{
+    return MirLoadPtrAlignedTyped(instrs, type, ptr, 0);
+}
+
+public fn MirValueId MirLoadPtrAlignedTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId ptr, u32[0 max] alignBytes)
+{
+    return MirEmitTyped(instrs, MirOp.LoadPtr, type, ptr.Index(), alignBytes, 0);
+}
+
+public fn MirValueId MirStorePtr(mut borrow IrTable<MirInstruction> instrs, MirValueId ptr, MirValueId value)
+{
+    return MirStorePtrTyped(instrs, MirValueType(instrs, value.Index()), ptr, value);
+}
+
+public fn MirValueId MirStorePtrTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId ptr, MirValueId value)
+{
+    return MirStorePtrAlignedTyped(instrs, type, ptr, value, 0);
+}
+
+public fn MirValueId MirStorePtrAlignedTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId ptr, MirValueId value, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.StorePtr;
+    instr.AIndex = ptr.Index();
+    instr.BIndex = value.Index();
+    instr.CIndex = alignBytes;
+    instr.ResType = type;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirLoadEnumPtrAligned(mut borrow IrTable<MirInstruction> instrs, TypeId ownerType, MirValueId ptr, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.LoadEnumPtr;
+    instr.AIndex = ptr.Index();
+    instr.BIndex = ownerType.Index();
+    instr.CIndex = alignBytes;
+    instr.ResType = MirType.EnumValue;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirStoreEnumPtrAligned(mut borrow IrTable<MirInstruction> instrs, TypeId ownerType, MirValueId ptr, MirValueId value, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.StoreEnumPtr;
+    instr.AIndex = ptr.Index();
+    instr.BIndex = value.Index();
+    instr.CIndex = ownerType.Index();
+    instr.DIndex = alignBytes;
+    instr.ResType = MirType.EnumValue;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirEnumVariantTag(mut borrow IrTable<MirInstruction> instrs, TypeId ownerType, u32[0 max] variantOrdinal)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.EnumVariantTag;
+    instr.AIndex = ownerType.Index();
+    instr.BIndex = variantOrdinal;
+    instr.ResType = MirType.EnumValue;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirEnumPayloadInsert(
+    mut borrow IrTable<MirInstruction> instrs,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    MirValueId sourceValue,
+    MirValueId payloadValue)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.EnumPayloadInsert;
+    instr.AIndex = sourceValue.Index();
+    instr.BIndex = payloadValue.Index();
+    instr.CIndex = ownerType.Index();
+    instr.DIndex = variantOrdinal;
+    instr.Imm = (i64[min max])payloadOrdinal;
+    instr.ResType = MirType.EnumValue;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
 // Opens a function-scope arena frame. This is a real MIR instruction so arena setup
 // participates in ordering, effect analysis, serialization, and LLVM emission.
 public fn MirValueId MirArenaFrameEnter(mut borrow IrTable<MirInstruction> instrs)
@@ -587,6 +733,120 @@ public fn MirValueId MirCall4Typed(mut borrow IrTable<MirInstruction> instrs, Mi
     return MirValueIdOf(instrs.Add(instr));
 }
 
+internal fn u32[0 max] MirAppendCallArgLinks(mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> argValueIndexes)
+{
+    stack mut u64[0 2 ** 63 - 1] i = argValueIndexes.Count();
+    stack mut u32[0 max] next = 0;
+    while willexit (i > 0)
+    {
+        stack u32[0 max] argValue = argValueIndexes.Get((u32[0 max])i);
+        stack mut MirInstruction instr = new();
+        instr.Op = MirOp.CallArg;
+        instr.AIndex = argValue;
+        instr.Imm = (i64[min max])next;
+        stack u32[0 max] added = instrs.Add(instr);
+        if (added == 0)
+        {
+            return 0;
+        }
+
+        next = added;
+        i = (u64[0 2 ** 63 - 1])(i - 1);
+    }
+
+    return next;
+}
+
+internal fn MirValueId MirWideCallFromArgumentValueIndexesTyped(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirOp op,
+    MirType type,
+    MirFuncId callee,
+    borrow IrTable<u32[0 max]> argValueIndexes)
+{
+    stack u32[0 max] firstArg = MirAppendCallArgLinks(instrs, argValueIndexes);
+    if (firstArg == 0 && argValueIndexes.Count() != 0)
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack mut MirInstruction instr = new();
+    instr.Op = op;
+    instr.AIndex = firstArg;
+    instr.BIndex = (u32[0 max])argValueIndexes.Count();
+    instr.Imm = (i64[min max])callee.Index();
+    instr.ResType = type;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+internal fn MirValueId MirArgumentValueIdAt(borrow IrTable<u32[0 max]> argValueIndexes, u32[0 max] index)
+{
+    stack u32[0 max] valueIndex = argValueIndexes.Get(index);
+    return MirValueIdOf(valueIndex);
+}
+
+public fn MirValueId MirCallFromArgumentValueIndexes(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, borrow IrTable<u32[0 max]> argValueIndexes)
+{
+    stack u64[0 2 ** 63 - 1] count = argValueIndexes.Count();
+    if (count == 0)
+    {
+        return MirCall(instrs, callee);
+    }
+
+    if (count == 1)
+    {
+        return MirCall1(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1));
+    }
+
+    if (count == 2)
+    {
+        return MirCall2(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2));
+    }
+
+    if (count == 3)
+    {
+        return MirCall3(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3));
+    }
+
+    if (count == 4)
+    {
+        return MirCall4(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3), MirArgumentValueIdAt(argValueIndexes, 4));
+    }
+
+    return MirWideCallFromArgumentValueIndexesTyped(instrs, MirOp.CallWide, MirType.I64, callee, argValueIndexes);
+}
+
+public fn MirValueId MirCallFromArgumentValueIndexesTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirFuncId callee, borrow IrTable<u32[0 max]> argValueIndexes)
+{
+    stack u64[0 2 ** 63 - 1] count = argValueIndexes.Count();
+    if (count == 0)
+    {
+        return MirCallTyped(instrs, type, callee);
+    }
+
+    if (count == 1)
+    {
+        return MirCall1Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1));
+    }
+
+    if (count == 2)
+    {
+        return MirCall2Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2));
+    }
+
+    if (count == 3)
+    {
+        return MirCall3Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3));
+    }
+
+    if (count == 4)
+    {
+        return MirCall4Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3), MirArgumentValueIdAt(argValueIndexes, 4));
+    }
+
+    return MirWideCallFromArgumentValueIndexesTyped(instrs, MirOp.CallWide, type, callee, argValueIndexes);
+}
+
 // Emits a zero-arg tail-call payload to `callee`. The returned value must be consumed by
 // `MirTailCallBlock`, not emitted as an ordinary instruction.
 public fn MirValueId MirTailCall(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee)
@@ -667,6 +927,68 @@ public fn MirValueId MirTailCall4Typed(mut borrow IrTable<MirInstruction> instrs
     return MirValueIdOf(instrs.Add(instr));
 }
 
+public fn MirValueId MirTailCallFromArgumentValueIndexes(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, borrow IrTable<u32[0 max]> argValueIndexes)
+{
+    stack u64[0 2 ** 63 - 1] count = argValueIndexes.Count();
+    if (count == 0)
+    {
+        return MirTailCall(instrs, callee);
+    }
+
+    if (count == 1)
+    {
+        return MirTailCall1(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1));
+    }
+
+    if (count == 2)
+    {
+        return MirTailCall2(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2));
+    }
+
+    if (count == 3)
+    {
+        return MirTailCall3(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3));
+    }
+
+    if (count == 4)
+    {
+        return MirTailCall4(instrs, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3), MirArgumentValueIdAt(argValueIndexes, 4));
+    }
+
+    return MirWideCallFromArgumentValueIndexesTyped(instrs, MirOp.TailCallWide, MirType.I64, callee, argValueIndexes);
+}
+
+public fn MirValueId MirTailCallFromArgumentValueIndexesTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirFuncId callee, borrow IrTable<u32[0 max]> argValueIndexes)
+{
+    stack u64[0 2 ** 63 - 1] count = argValueIndexes.Count();
+    if (count == 0)
+    {
+        return MirTailCallTyped(instrs, type, callee);
+    }
+
+    if (count == 1)
+    {
+        return MirTailCall1Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1));
+    }
+
+    if (count == 2)
+    {
+        return MirTailCall2Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2));
+    }
+
+    if (count == 3)
+    {
+        return MirTailCall3Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3));
+    }
+
+    if (count == 4)
+    {
+        return MirTailCall4Typed(instrs, type, callee, MirArgumentValueIdAt(argValueIndexes, 1), MirArgumentValueIdAt(argValueIndexes, 2), MirArgumentValueIdAt(argValueIndexes, 3), MirArgumentValueIdAt(argValueIndexes, 4));
+    }
+
+    return MirWideCallFromArgumentValueIndexesTyped(instrs, MirOp.TailCallWide, type, callee, argValueIndexes);
+}
+
 // The callee of the call instruction naming `value` (invalid when not a call /
 // out of range). Guards on the opcode so the shared `Imm` field is not misread for
 // a ConstInt/Param value that also stores data there.
@@ -678,12 +1000,63 @@ public fn MirFuncId MirCalleeOf(borrow IrTable<MirInstruction> instrs, MirValueI
     }
 
     stack MirInstruction instr = instrs.Get(value.Index());
-    if (instr.Opcode() != MirOp.Call && instr.Opcode() != MirOp.TailCall)
+    if (!MirOpIsAnyCall(instr.Opcode()))
     {
         return MirFuncIdOf(0);
     }
 
     return MirFuncIdOf((u32[0 max])instr.Immediate());
+}
+
+public fn u32[0 max] MirCallArgValueIndexAt(borrow IrTable<MirInstruction> instrs, u32[0 max] firstArgLink, u32[0 max] argIndex)
+{
+    stack mut u32[0 max] link = firstArgLink;
+    stack mut u32[0 max] remaining = argIndex;
+    while willexit (link != 0)
+    {
+        if (!instrs.Contains(link))
+        {
+            return 0;
+        }
+
+        stack MirInstruction arg = instrs.Get(link);
+        if (arg.Opcode() != MirOp.CallArg)
+        {
+            return 0;
+        }
+
+        if (remaining == 0)
+        {
+            return arg.OperandAIndex();
+        }
+
+        remaining = remaining - 1;
+        link = (u32[0 max])arg.Immediate();
+    }
+
+    return 0;
+}
+
+public fn u32[0 max] MirCallArgumentValueIndexAt(borrow IrTable<MirInstruction> instrs, MirInstruction instr, u32[0 max] argIndex)
+{
+    if (instr.Opcode() == MirOp.CallWide || instr.Opcode() == MirOp.TailCallWide)
+    {
+        return MirCallArgValueIndexAt(instrs, instr.OperandAIndex(), argIndex);
+    }
+
+    switch (argIndex)
+    {
+        case 0:
+            return instr.OperandAIndex();
+        case 1:
+            return instr.OperandBIndex();
+        case 2:
+            return instr.OperandCIndex();
+        case 3:
+            return instr.OperandDIndex();
+        default:
+            return 0;
+    }
 }
 
 // True when `value` names a live instruction in `instrs`.
@@ -725,6 +1098,50 @@ public fn MirValueId MirOperandBOf(borrow IrTable<MirInstruction> instrs, MirVal
 
     stack MirInstruction instr = instrs.Get(value.Index());
     return MirValueIdOf(instr.OperandBIndex());
+}
+
+public fn u32[0 max] MirOperandAImmediateOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return instr.OperandAIndex();
+}
+
+public fn u32[0 max] MirOperandBImmediateOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return instr.OperandBIndex();
+}
+
+public fn u32[0 max] MirOperandCImmediateOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return instr.OperandCIndex();
+}
+
+public fn u32[0 max] MirOperandDImmediateOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return instr.OperandDIndex();
 }
 
 // The immediate of the instruction naming `value` (0 when out of range).
@@ -995,6 +1412,8 @@ internal finite law bool MirGlobalInitialValueFitsType(MirType type, i64[min max
             return true;
         case MirType.Ptr:
             return true;
+        case MirType.EnumValue:
+            return false;
     }
 }
 

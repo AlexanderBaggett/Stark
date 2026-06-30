@@ -63,6 +63,30 @@ public enum MirOp
     // Stores operand A into module global `@gN` (N = the global id in the immediate).
     // A side-effecting instruction with no meaningful result register.
     StoreGlobal,
+    // Allocates positive constant-sized stack storage. The allocation byte size rides
+    // in `Imm`; the requested alignment rides in A. The result is a nonnull pointer.
+    StackAlloc,
+    // Allocates positive constant-sized heap storage. The allocation byte size rides
+    // in `Imm`; the requested alignment rides in A. The result is a nonnull pointer.
+    HeapAlloc,
+    // Computes a constant byte offset within the same allocation. Operand A is the
+    // base pointer, `Imm` is the byte offset, and B is the derived alignment.
+    PtrOffset,
+    // Computes `base + baseOffset + index * elementSize` within the same allocation.
+    // Operand A is the base pointer, operand B is the proven in-bounds index, `Imm`
+    // is the base byte offset, C is element byte size, and D is derived alignment.
+    PtrIndexOffset,
+    // Loads from pointer operand A. The result type is `ResType`; B is alignment.
+    LoadPtr,
+    // Stores operand B through pointer operand A. `ResType` is the stored type; C is
+    // alignment. The instruction has no meaningful result value.
+    StorePtr,
+    // Loads an enum aggregate from pointer operand A. Operand B is the enum owner
+    // TypeId index, C is alignment, and the result type is `EnumValue`.
+    LoadEnumPtr,
+    // Stores enum value operand B through pointer operand A. Operand C is the enum
+    // owner TypeId index, D is alignment, and the result type is `EnumValue`.
+    StoreEnumPtr,
     // Opens the hidden arena frame for function-scope arena storage. Side-effecting;
     // emits the frame alloca and arena-enter helper call.
     ArenaFrameEnter,
@@ -93,9 +117,25 @@ public enum MirOp
     // Calls function `@fN` where N is the callee id held in the immediate. Its result
     // is the value naming this instruction.
     Call,
+    // Stores one wide-call argument in a hidden linked side record. Operand A is the
+    // argument value, and `Imm` is the next CallArg record index (0 = end).
+    CallArg,
+    // Calls function `@fN` with arguments stored in a CallArg linked side table. Operand
+    // A is the first CallArg record and B is the total argument count.
+    CallWide,
     // A call-shaped payload used only by a TailCall block terminator. Normal instruction
     // emission skips it; terminator lowering emits `musttail call tailcc` + `ret`.
     TailCall,
+    // Wide-argument variant of TailCall. Operand A is the first CallArg record and B is
+    // the total argument count.
+    TailCallWide,
+    // Constructs an enum value with only the variant tag set. Operand A is the enum
+    // owner TypeId index and operand B is the layout-backed variant ordinal.
+    EnumVariantTag,
+    // Inserts a payload value into an enum value. Operand A is the source enum value,
+    // operand B is the payload value, operand C is the enum owner TypeId index, operand D
+    // is the layout-backed variant ordinal, and Imm is the payload ordinal.
+    EnumPayloadInsert,
     // Returns operand A from the function.
     Return,
 }
@@ -110,18 +150,19 @@ public enum MirType
     I32,
     I64,
     Ptr,
+    EnumValue,
 }
 
-// One MIR instruction: an opcode, up to two operand value indices (0 = absent), an
-// integer immediate (used by `ConstInt`/`Param`/`Call`/`*Global`/`Phi`), and the
-// type of its result value (defaults to `I64`).
+// One MIR instruction: an opcode, up to four operand slots (0 = absent), an integer
+// immediate (used by `ConstInt`/`Param`/`Call`/`*Global`/`Phi`), and the type of its
+// result value (defaults to `I64`).
 public struct MirInstruction
 {
     MirOp Op;
     u32[0 max] AIndex;
     u32[0 max] BIndex;
-    // Extra operand slots for calls with three or four arguments (0 = unused). A call's
-    // arguments ride in operands A/B/C/D; ordinary instructions use only A/B.
+    // Extra operand slots for calls with three or four arguments and indexed address
+    // layout facts (0 = unused). A call's arguments ride in operands A/B/C/D.
     u32[0 max] CIndex;
     u32[0 max] DIndex;
     i64[min max] Imm;
@@ -172,6 +213,21 @@ public struct MirInstruction
     {
         return self.Imm;
     }
+}
+
+public inline finite law bool MirOpIsDirectCall(MirOp op)
+{
+    return op == MirOp.Call || op == MirOp.CallWide;
+}
+
+public inline finite law bool MirOpIsTailCall(MirOp op)
+{
+    return op == MirOp.TailCall || op == MirOp.TailCallWide;
+}
+
+public inline finite law bool MirOpIsAnyCall(MirOp op)
+{
+    return MirOpIsDirectCall(op) || MirOpIsTailCall(op);
 }
 
 // === Basic blocks + terminators ===

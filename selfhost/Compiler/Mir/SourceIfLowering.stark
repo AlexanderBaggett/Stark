@@ -14,6 +14,7 @@ import Compiler.Mir.SourceLocalLowering
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
 import System.Memory
 import System.Text
 module Compiler.Mir.SourceIfLowering
@@ -516,6 +517,133 @@ internal fn bool TryParseTerminalIfReturnArms(
     return true;
 }
 
+internal fn bool TryParseTerminalIfArmWithConstructedObjectLocals(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out bool usesBecome,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts),
+          overlap(nodes, sourceValueFacts),
+          overlap(params, sourceValueFacts),
+          overlap(funcNames, sourceValueFacts),
+          overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(localTypes, sourceValueFacts)
+{
+    arm = new();
+    usesBecome = false;
+    nextToken = armStart;
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack TokenKind terminal = stream.KindAt(armStart + 1);
+        if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        usesBecome = terminal == TokenKind.Become;
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    stack TokenKind terminal = stream.KindAt(armStart);
+    if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    usesBecome = terminal == TokenKind.Become;
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocals(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] ifIndex,
+    out ParsedIfReturnArms arms)
+    where overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts),
+          overlap(nodes, sourceValueFacts),
+          overlap(params, sourceValueFacts),
+          overlap(funcNames, sourceValueFacts),
+          overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(localTypes, sourceValueFacts)
+{
+    arms = new();
+    stack ExprParseResult condition = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, ifIndex + 1);
+
+    stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
+    stack mut ExprParseResult thenArm = new();
+    stack mut bool thenBecome = false;
+    if (!TryParseTerminalIfArmWithConstructedObjectLocals(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, condition.Next, thenArm, thenBecome, afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ExprParseResult elseArm = new();
+    stack mut bool elseBecome = false;
+    if (!TryParseTerminalIfArmWithConstructedObjectLocals(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, afterThen + 1, elseArm, elseBecome, afterElse))
+    {
+        return false;
+    }
+
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ThenBecome = thenBecome;
+    arms.ElseArm = elseArm;
+    arms.ElseBecome = elseBecome;
+    return true;
+}
+
 internal fn bool TryParseIfExpressionArms(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -563,12 +691,23 @@ internal fn bool ExprNodeCanBeDiscardedIfOverwritten(borrow IrTable<ExprNode> no
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left)
+                && ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
         case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
             return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left)
                 && ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
             return false;
     }
 }
@@ -990,6 +1129,12 @@ internal fn bool LowerModuleReturnIfExpressionFunctionToBlocks(
 
     stack mut IrTable<u32[0 max]> localTypes = new();
     if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> sourceValueFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
     {
         return false;
     }
@@ -1931,6 +2076,8 @@ internal fn bool LowerModuleLocalIfStatementFunctionToBlocks(
 internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     borrow TokenStream stream,
     borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -1982,8 +2129,25 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     stack mut IrTable<u32[0 max]> localRoots = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
     stack mut IrTable<ArenaDynamicLocal> arenaDynamicLocals = new();
+    stack mut IrTable<StackObjectFieldInitializer> stackObjectFieldInitializers = new();
+    stack mut IrTable<ScalarStorageLocal> scalarStorageLocals = new();
+    stack mut IrTable<ScalarStorageInitializer> scalarStorageInitializers = new();
+    stack mut IrTable<ScalarStorageAssignment> scalarStorageAssignments = new();
+    stack mut IrTable<EnumStorageLocal> enumStorageLocals = new();
+    stack mut IrTable<EnumStorageInitializer> enumStorageInitializers = new();
+    stack mut IrTable<EnumStorageAssignment> enumStorageAssignments = new();
+    stack mut IrTable<ConstructedObjectLocal> constructedObjectLocals = new();
+    stack mut IrTable<ConstructedObjectFieldAssignment> constructedObjectFieldAssignments = new();
+    stack mut IrTable<SourceStorageMutationStatement> storageMutationStatements = new();
+    stack mut IrTable<u32[0 max]> localOverrideValues = new();
     stack mut bool usesArenaFrame = false;
-    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> sourceValueFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
     {
         return false;
     }
@@ -2023,7 +2187,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
+            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
             if (params.Count() != beforeInit)
             {
                 return false;
@@ -2037,9 +2201,32 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
 
             stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
             stack u32[0 max] addedRoot = localRoots.Add(varExpr.NodeId);
+            stack u32[0 max] addedOverrideValue = localOverrideValues.Add(0);
+            stack mut ValueFacts localFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, varExpr.NodeId, sourceValueFacts, localFacts)
+                && varType == ExprType.BoolType)
+            {
+                localFacts.SetIntegerRange(0, 2);
+            }
+
+            if (sourceValueFacts.Add(localFacts) == 0)
+            {
+                return false;
+            }
+
             if (varType == ExprType.BoolType)
             {
                 stack u32[0 max] boolSlot = localTypes.Add(1);
+            }
+            else if (varType == ExprType.EnumType)
+            {
+                stack mut u32[0 max] ownerTypeIndex = 0;
+                if (!TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, varExpr.NodeId, localTypes, ownerTypeIndex) || ownerTypeIndex == 0)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] enumSlot = localTypes.Add(SourceLocalTypeCodeForEnumOwnerDeclarationIndex(ownerTypeIndex - 1));
             }
             else
             {
@@ -2085,6 +2272,11 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                 stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
                 stack u32[0 max] nonValueRoot = localRoots.Add(0);
                 stack u32[0 max] nonValueType = localTypes.Add(2);
+                stack u32[0 max] dynamicOverrideValue = localOverrideValues.Add(0);
+                if (sourceValueFacts.Add(new ValueFacts()) == 0)
+                {
+                    return false;
+                }
 
                 stack mut ArenaDynamicLocal dynamicLocal = new();
                 dynamicLocal.Start = nameStart;
@@ -2093,6 +2285,159 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                 dynamicLocal.ElementSize = elementSize;
                 dynamicLocal.Alignment = dynamicAlignment;
                 stack u32[0 max] addedDynamicLocal = arenaDynamicLocals.Add(dynamicLocal);
+
+                cursor = statementEnd + 1;
+                continue;
+            }
+
+            stack u32[0 max] scalarTypeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+            stack mut MirType scalarFieldType = MirType.I64;
+            if (localStorage == TokenKind.Stack
+                && hasAssign
+                && scalarTypeToken != 0
+                && MirTypeForKnownSourceScalarType(stream, source, scalarTypeToken, scalarFieldType))
+            {
+                stack u32[0 max] scalarAllocationSize = TypeKnownByteExtentForLocal(stream, source, scalarTypeToken);
+                stack u32[0 max] scalarAllocationAlign = TypeKnownByteAlignment(stream, source, scalarTypeToken);
+                stack u32[0 max] scalarLocalTypeCode = SourceLocalStoredScalarTypeCodeForMirType(scalarFieldType);
+                if (scalarAllocationSize == 0
+                    || scalarAllocationAlign == 0
+                    || !SourceLocalTypeCodeIsStoredScalar(scalarLocalTypeCode))
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+                stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+                if (params.Count() != beforeInit || scalarExpr.NodeId == 0 || scalarExpr.Next != statementEnd)
+                {
+                    return false;
+                }
+
+                stack ExprType scalarExprType = TypeOfNodeWithLocals(nodes, scalarExpr.NodeId, localTypes);
+                if (!FieldInitializerTypeMatches(scalarFieldType, scalarExprType))
+                {
+                    return false;
+                }
+
+                stack MirValueId scalarStorage = MirStackAlloc(instrs, scalarAllocationSize, scalarAllocationAlign);
+                stack bool scalarMutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+                stack u32[0 max] scalarLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+                stack u32[0 max] scalarLocalOrdinal = localRoots.Add(0);
+                stack u32[0 max] scalarLocalType = localTypes.Add(scalarLocalTypeCode);
+                stack u32[0 max] scalarOverrideValue = localOverrideValues.Add(scalarStorage.Index());
+                stack mut ValueFacts scalarFacts = new();
+                if (!scalarMutable)
+                {
+                    stack mut ValueFacts parsedFacts = new();
+                    if (TryBuildSourceValueFactsForNode(nodes, scalarExpr.NodeId, sourceValueFacts, parsedFacts))
+                    {
+                        scalarFacts = parsedFacts;
+                    }
+                }
+
+                if (sourceValueFacts.Add(scalarFacts) == 0)
+                {
+                    return false;
+                }
+
+                stack mut ScalarStorageLocal scalarLocal = new();
+                scalarLocal.Start = nameStart;
+                scalarLocal.Length = nameLength;
+                scalarLocal.ParamIndex = scalarLocalIndex;
+                scalarLocal.StorageValue = scalarStorage.Index();
+                scalarLocal.FieldAlignment = scalarAllocationAlign;
+                scalarLocal.FieldType = scalarFieldType;
+                scalarLocal.Mutable = scalarMutable;
+                stack u32[0 max] addedScalarLocal = scalarStorageLocals.Add(scalarLocal);
+                if (addedScalarLocal == 0)
+                {
+                    return false;
+                }
+
+                stack mut ScalarStorageInitializer scalarInitializer = new();
+                scalarInitializer.LocalOrdinal = scalarLocalOrdinal;
+                scalarInitializer.ParamIndex = scalarLocalIndex;
+                scalarInitializer.FieldAlignment = scalarAllocationAlign;
+                scalarInitializer.FieldType = scalarFieldType;
+                scalarInitializer.ExprRoot = scalarExpr.NodeId;
+                stack u32[0 max] addedScalarInitializer = scalarStorageInitializers.Add(scalarInitializer);
+                if (addedScalarInitializer == 0)
+                {
+                    return false;
+                }
+
+                cursor = statementEnd + 1;
+                continue;
+            }
+
+            stack mut u32[0 max] enumOwnerDeclarationIndex = 0;
+            stack mut Compiler.Parsing.DeclItem enumItem = new();
+            if (localStorage == TokenKind.Stack
+                && hasAssign
+                && scalarTypeToken != 0
+                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, declarations, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
+            {
+                stack mut u32[0 max] enumAllocationSize = 0;
+                stack mut u32[0 max] enumAllocationAlign = 1;
+                if (!TryGetSourceEnumStorageLayout(enumLayouts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+                stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+                if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
+                {
+                    return false;
+                }
+
+                stack mut u32[0 max] enumExprOwnerTypeIndex = 0;
+                stack u32[0 max] enumOwnerTypeIndex = enumOwnerDeclarationIndex + 1;
+                if (TypeOfNodeWithLocals(nodes, enumExpr.NodeId, localTypes) != ExprType.EnumType
+                    || !TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, enumExpr.NodeId, localTypes, enumExprOwnerTypeIndex)
+                    || enumExprOwnerTypeIndex != enumOwnerTypeIndex)
+                {
+                    return false;
+                }
+
+                stack MirValueId enumStorage = MirStackAlloc(instrs, enumAllocationSize, enumAllocationAlign);
+                stack bool enumMutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+                stack u32[0 max] enumLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+                stack u32[0 max] enumLocalOrdinal = localRoots.Add(0);
+                stack u32[0 max] enumLocalType = localTypes.Add(SourceLocalTypeCodeForStoredEnumOwnerDeclarationIndex(enumOwnerDeclarationIndex));
+                stack u32[0 max] enumOverrideValue = localOverrideValues.Add(enumStorage.Index());
+                if (enumLocalOrdinal == 0
+                    || enumLocalType == 0
+                    || enumOverrideValue == 0
+                    || sourceValueFacts.Add(new ValueFacts()) == 0)
+                {
+                    return false;
+                }
+
+                stack mut EnumStorageLocal enumLocal = new();
+                enumLocal.Start = nameStart;
+                enumLocal.Length = nameLength;
+                enumLocal.ParamIndex = enumLocalIndex;
+                enumLocal.StorageValue = enumStorage.Index();
+                enumLocal.FieldAlignment = enumAllocationAlign;
+                enumLocal.OwnerTypeIndex = enumOwnerTypeIndex;
+                enumLocal.Mutable = enumMutable;
+                if (enumStorageLocals.Add(enumLocal) == 0)
+                {
+                    return false;
+                }
+
+                stack mut EnumStorageInitializer enumInitializer = new();
+                enumInitializer.LocalOrdinal = enumLocalOrdinal;
+                enumInitializer.ParamIndex = enumLocalIndex;
+                enumInitializer.FieldAlignment = enumAllocationAlign;
+                enumInitializer.OwnerTypeIndex = enumOwnerTypeIndex;
+                enumInitializer.ExprRoot = enumExpr.NodeId;
+                if (enumStorageInitializers.Add(enumInitializer) == 0)
+                {
+                    return false;
+                }
 
                 cursor = statementEnd + 1;
                 continue;
@@ -2108,8 +2453,8 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                     return false;
                 }
 
-                allocationSize = TypeKnownByteExtentForLocal(stream, source, typeToken);
-                allocationAlign = TypeKnownByteAlignment(stream, source, typeToken);
+                allocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, typeToken);
+                allocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, typeToken);
                 if (allocationSize == 0 || allocationAlign == 0)
                 {
                     return false;
@@ -2117,9 +2462,130 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             }
             else if (!TryParseArenaSelectorAllocation(stream, source, cursor, statementEnd, allocationSize, allocationAlign))
             {
+                stack u32[0 max] objectTypeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+                stack mut u32[0 max] bodyOpen = 0;
+                stack mut u32[0 max] bodyClose = 0;
+                stack mut u32[0 max] argsOpen = 0;
+                stack mut u32[0 max] argsClose = 0;
+                stack bool objectStorageLocal = localStorage == TokenKind.Stack || localStorage == TokenKind.Heap;
+                stack mut bool objectConstructor = false;
+                stack mut bool positionalRecordConstructor = false;
+                if (objectStorageLocal
+                    && hasAssign
+                    && objectTypeToken != 0
+                    && TryParseTargetTypedObjectConstructorShape(stream, source, objectTypeToken, assignToken, statementEnd, bodyOpen, bodyClose))
+                {
+                    objectConstructor = true;
+                }
+                else if (objectStorageLocal
+                    && hasAssign
+                    && objectTypeToken != 0
+                    && TryParseTargetTypedPositionalRecordConstructorShape(stream, source, objectTypeToken, assignToken, statementEnd, argsOpen, argsClose))
+                {
+                    objectConstructor = true;
+                    positionalRecordConstructor = true;
+                }
+
+                if (objectConstructor)
+                {
+                    if (localStorage == TokenKind.Heap && signature.LawKind())
+                    {
+                        return false;
+                    }
+
+                    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
+                    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
+                    if (objectAllocationSize == 0 || objectAllocationAlign == 0)
+                    {
+                        return false;
+                    }
+
+                    stack mut MirValueId objectAllocation = new();
+                    if (localStorage == TokenKind.Heap)
+                    {
+                        objectAllocation = MirHeapAlloc(instrs, objectAllocationSize, objectAllocationAlign);
+                    }
+                    else
+                    {
+                        objectAllocation = MirStackAlloc(instrs, objectAllocationSize, objectAllocationAlign);
+                    }
+
+                    stack u32[0 max] objectLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+                    stack u32[0 max] objectNonValueRoot = localRoots.Add(0);
+                    stack u32[0 max] objectNonValueType = localTypes.Add(SourceLocalTypeCodeNonValue());
+                    stack u32[0 max] objectOverrideValue = localOverrideValues.Add(objectAllocation.Index());
+                    if (sourceValueFacts.Add(new ValueFacts()) == 0)
+                    {
+                        return false;
+                    }
+
+                    if (positionalRecordConstructor)
+                    {
+                        if (!TryParseStackObjectPositionalRecordConstructorInitializers(
+                            stream,
+                            source,
+                            declarations,
+                            enumLayouts,
+                            objectTypeToken,
+                            argsOpen,
+                            argsClose,
+                            objectNonValueRoot,
+                            objectAllocation,
+                            nodes,
+                            params,
+                            funcNames,
+                            constructedObjectLocals,
+                            localTypes,
+                            sourceValueFacts,
+                            stackObjectFieldInitializers))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        if (!TryParseStackObjectFieldInitializers(
+                            stream,
+                            source,
+                            declarations,
+                            enumLayouts,
+                            objectTypeToken,
+                            bodyOpen,
+                            bodyClose,
+                            objectNonValueRoot,
+                            objectAllocation,
+                            nodes,
+                            params,
+                            funcNames,
+                            constructedObjectLocals,
+                            localTypes,
+                            sourceValueFacts,
+                            stackObjectFieldInitializers))
+                        {
+                            return false;
+                        }
+                    }
+
+                    stack mut ConstructedObjectLocal constructedObjectLocal = new();
+                    constructedObjectLocal.Start = nameStart;
+                    constructedObjectLocal.Length = nameLength;
+                    constructedObjectLocal.ParamIndex = objectLocalIndex;
+                    constructedObjectLocal.TypeToken = objectTypeToken;
+                    stack u32[0 max] addedConstructedObjectLocal = constructedObjectLocals.Add(constructedObjectLocal);
+
+                    cursor = statementEnd + 1;
+                    continue;
+                }
+
                 stack u32[0 max] nonArenaLocalIndex = ResolveParam(params, source, nameStart, nameLength);
                 stack u32[0 max] nonArenaRoot = localRoots.Add(0);
                 stack u32[0 max] nonArenaType = localTypes.Add(2);
+                stack u32[0 max] nonArenaOverrideValue = localOverrideValues.Add(0);
+                if (sourceValueFacts.Add(new ValueFacts()) == 0)
+                {
+                    return false;
+                }
+
                 cursor = statementEnd + 1;
                 continue;
             }
@@ -2139,6 +2605,11 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
             stack u32[0 max] nonValueRoot = localRoots.Add(0);
             stack u32[0 max] nonValueType = localTypes.Add(2);
+            stack u32[0 max] arenaOverrideValue = localOverrideValues.Add(0);
+            if (sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
         }
 
         cursor = statementEnd + 1;
@@ -2152,7 +2623,88 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             return false;
         }
 
-        if (!TryLowerArenaDynamicReserveStatement(stream, source, arenaDynamicLocals, cursor, statementEnd, instrs))
+        if (StatementStartsConstructedObjectFieldAssignment(stream, cursor, statementEnd))
+        {
+            if (!TryParseConstructedObjectFieldAssignmentStatement(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                localTypes,
+                sourceValueFacts,
+                declarations,
+                enumLayouts,
+                cursor,
+                statementEnd,
+                constructedObjectFieldAssignments))
+            {
+                return false;
+            }
+
+            stack mut SourceStorageMutationStatement mutation = new();
+            mutation.Kind = SourceStorageMutationKindConstructedObjectField();
+            mutation.AssignmentIndex = (u32[0 max])constructedObjectFieldAssignments.Count();
+            if (storageMutationStatements.Add(mutation) == 0)
+            {
+                return false;
+            }
+        }
+        else if (StatementStartsScalarStorageAssignment(stream, cursor, statementEnd))
+        {
+            if (TryParseScalarStorageAssignmentStatement(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                scalarStorageLocals,
+                localTypes,
+                sourceValueFacts,
+                cursor,
+                statementEnd,
+                scalarStorageAssignments))
+            {
+                stack mut SourceStorageMutationStatement mutation = new();
+                mutation.Kind = SourceStorageMutationKindScalar();
+                mutation.AssignmentIndex = (u32[0 max])scalarStorageAssignments.Count();
+                if (storageMutationStatements.Add(mutation) == 0)
+                {
+                    return false;
+                }
+            }
+            else if (TryParseEnumStorageAssignmentStatement(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                enumStorageLocals,
+                localTypes,
+                sourceValueFacts,
+                declarations,
+                enumLayouts,
+                cursor,
+                statementEnd,
+                enumStorageAssignments))
+            {
+                stack mut SourceStorageMutationStatement mutation = new();
+                mutation.Kind = SourceStorageMutationKindEnum();
+                mutation.AssignmentIndex = (u32[0 max])enumStorageAssignments.Count();
+                if (storageMutationStatements.Add(mutation) == 0)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+        else if (!TryLowerArenaDynamicReserveStatement(stream, source, arenaDynamicLocals, cursor, statementEnd, instrs))
         {
             return false;
         }
@@ -2166,7 +2718,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     }
 
     stack mut ParsedIfReturnArms arms = new();
-    if (!TryParseTerminalIfReturnArms(stream, source, nodes, params, funcNames, cursor, arms))
+    if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocals(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, cursor, arms))
     {
         return false;
     }
@@ -2232,12 +2784,21 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
 
     stack u64[0 2 ** 63 - 1] localCount = localRoots.Count();
     stack mut u64[0 2 ** 63 - 1] v = 0;
+    stack mut u32[0 max] nextStackObjectInitializer = 1;
+    stack mut u32[0 max] nextScalarStorageInitializer = 1;
+    stack mut u32[0 max] nextEnumStorageInitializer = 1;
     while willexit (v < localCount)
     {
         stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(v + 1));
         if (localRoot == 0)
         {
-            stack u32[0 max] nonValueOverride = localOverrides.Add(0);
+            stack mut u32[0 max] storageOverride = 0;
+            if (localOverrideValues.Contains((u32[0 max])(v + 1)))
+            {
+                storageOverride = localOverrideValues.Get((u32[0 max])(v + 1));
+            }
+
+            stack u32[0 max] nonValueOverride = localOverrides.Add(storageOverride);
         }
         else
         {
@@ -2245,7 +2806,48 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
         }
 
+        nextScalarStorageInitializer = LowerScalarStorageInitializersForLocal(
+            scalarStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextScalarStorageInitializer,
+            nodes,
+            instrs,
+            localTypes,
+            localOverrides);
+
+        nextEnumStorageInitializer = LowerEnumStorageInitializersForLocal(
+            enumStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextEnumStorageInitializer,
+            nodes,
+            instrs,
+            localTypes,
+            localOverrides);
+
+        nextStackObjectInitializer = LowerStackObjectFieldInitializersForLocal(
+            stackObjectFieldInitializers,
+            (u32[0 max])(v + 1),
+            nextStackObjectInitializer,
+            nodes,
+            instrs,
+            localTypes,
+            localOverrides);
         v = v + 1;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextScalarStorageInitializer - 1) != scalarStorageInitializers.Count())
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextEnumStorageInitializer - 1) != enumStorageInitializers.Count())
+    {
+        return false;
+    }
+
+    if (!LowerSourceStorageMutationStatements(storageMutationStatements, scalarStorageAssignments, enumStorageAssignments, constructedObjectFieldAssignments, nodes, instrs, localTypes, localOverrides))
+    {
+        return false;
     }
 
     stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, condResult.NodeId, instrs, localTypes, localOverrides);
@@ -3120,6 +3722,8 @@ internal fn bool EmitModuleLocalIfStatementFunction(
 internal fn bool EmitModuleLocalIfReturnFunction(
     borrow TokenStream stream,
     borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -3141,6 +3745,8 @@ internal fn bool EmitModuleLocalIfReturnFunction(
     if (!LowerModuleLocalIfReturnFunctionToBlocks(
         stream,
         source,
+        declarations,
+        enumLayouts,
         funcNames,
         funcParamCounts,
         functionCallContractFacts,

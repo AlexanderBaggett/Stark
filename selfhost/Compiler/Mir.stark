@@ -97,9 +97,30 @@ internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, bo
     while willexit (viRemaining > 0)
     {
         stack MirInstruction instr = instrs.Get(vi);
-        if (instr.Opcode() == MirOp.ArenaAlloc)
+        if (instr.Opcode() == MirOp.ArenaAlloc || instr.Opcode() == MirOp.StackAlloc || instr.Opcode() == MirOp.HeapAlloc)
         {
             if (instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.PtrIndexOffset)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandBIndex() == 0 || instr.OperandBIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.PtrOffset || instr.Opcode() == MirOp.LoadPtr)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.StorePtr)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandBIndex() == 0 || instr.OperandBIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
             {
                 return false;
             }
@@ -171,7 +192,7 @@ internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, bo
                 }
 
                 stack MirInstruction payload = instrs.Get(blk.Slot0Index());
-                if (payload.Opcode() != MirOp.TailCall)
+                if (!MirOpIsTailCall(payload.Opcode()))
                 {
                     return false;
                 }

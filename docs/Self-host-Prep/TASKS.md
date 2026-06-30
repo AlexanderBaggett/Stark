@@ -458,14 +458,28 @@ Execution constraints:
   - [~] Lower locals and parameters.
     - [x] Lower dense i64 parameters with translated backend facts.
     - [x] Bind SSA local aliases without emitting extra MIR.
-      - [x] Validate carried value facts before binding SSA local aliases.
+    - [x] Validate carried value facts before binding SSA local aliases.
     - [x] Lower typed non-i64 parameters once MIR models parameter result types.
-    - [ ] Lower mutable and storage-backed locals.
+    - [~] Lower mutable and storage-backed locals.
+      - [x] Lower initialized straight-line stack scalar locals with typed storage-backed loads before terminal returns.
+      - [ ] Lower uninitialized storage-backed scalar locals after definite-assignment checks exist.
+      - [x] Lower storage-backed scalar locals through terminal `if` branches.
+      - [x] Lower storage-backed scalar locals through switch arms.
     - [ ] Lower local lifetime, move, and drop facts.
     - [~] Lower assignments.
       - [x] Lower simple SSA local reassignments by rebinding the local symbol to the assigned value.
         - [x] Validate carried value facts before rebinding SSA local assignments.
-      - [ ] Lower mutable storage-backed place assignments.
+      - [x] Lower mutable storage-backed place assignments.
+        - [x] Lower straight-line scalar stack local assignments before terminal returns.
+        - [x] Lower straight-line constructed object field assignments before terminal returns.
+        - [x] Lower straight-line constructed object field assignments before terminal `if` branches.
+        - [x] Lower scalar stack local assignments before terminal `if` branches.
+        - [x] Lower scalar stack local assignments inside switch arms.
+        - [x] Lower storage-backed switch-arm assignments.
+      - [~] Lower indexed and sliced storage-backed assignments.
+        - [x] Lower constant fixed-array element assignments on storage-backed constructed object fields.
+        - [x] Lower dynamic fixed-array element assignments on storage-backed constructed object fields.
+        - [ ] Lower slice element assignments on storage-backed places.
       - [x] Lower compound assignments with checked, wrapping, and saturating arithmetic semantics.
         - [x] Validate carried operand facts before emitting compound assignment operations.
       - [x] Lower assignment expressions in enclosing value contexts.
@@ -478,7 +492,7 @@ Execution constraints:
   - [~] Lower calls.
     - [x] Lower typed direct calls up to MIR's four-argument payload with result facts.
       - [x] Validate carried argument facts before emitting MIR direct-call payloads.
-    - [ ] Lower direct calls with more than four arguments once MIR has side-table argument storage.
+    - [x] Lower direct calls with more than four arguments once MIR has side-table argument storage.
     - [ ] Lower function-pointer, closure, method, and dynamic trait calls.
     - [x] Preserve callable ABI, effect, ownership, and alias facts through call lowering.
       - [x] Preserve direct-call result value facts through HIR-to-MIR lowering and MIR call-return fact import.
@@ -492,8 +506,19 @@ Execution constraints:
       - [x] Validate carried value facts before emitting MIR return blocks.
     - [x] Lower bare void returns once MIR has a void-return terminator.
     - [ ] Lower return-time cleanup edges after ownership cleanup lowering exists.
-  - [ ] Lower places and member access.
-  - [ ] Lower indexing and slicing.
+  - [~] Lower places and member access.
+    - [x] Lower scalar field reads from storage-backed constructed objects.
+    - [x] Lower constant fixed-array element reads from storage-backed constructed object fields.
+    - [ ] Lower general typed member chains from HIR.
+    - [ ] Lower address-taking place reads for locals, fields, and parameters.
+  - [~] Lower indexing and slicing.
+    - [x] Lower constant fixed-array element reads from storage-backed constructed object fields.
+    - [x] Lower dynamic fixed-array indexing through a MIR address operation that preserves element size, bounds, and alignment facts.
+      - [x] Add a MIR indexed pointer offset operation that preserves pointer provenance, element size, index value facts, and derived alignment.
+      - [x] Validate source dynamic fixed-array index bounds before emitting the indexed pointer operation.
+      - [x] Lower dynamic fixed-array element reads from storage-backed constructed object fields.
+    - [ ] Lower slice indexing through a MIR address operation that preserves base, length, element size, and alias facts.
+    - [ ] Lower slice creation from fixed arrays and storage-backed places.
   - [x] Lower globals.
     - [x] Lower i64 global references and stores through MIR load/store while preserving declared facts.
     - [x] Lower typed global definitions and typed global load/store once MIR global storage records value types.
@@ -556,7 +581,7 @@ Execution constraints:
       - [~] Lower switch assignments to multiple locals or storage-backed places.
         - [x] Lower declaration-order braced switch arms assigning multiple scalar locals.
         - [x] Lower arbitrary-order multiple scalar switch assignments without reordering side effects.
-        - [ ] Lower switch assignments to storage-backed places.
+        - [x] Lower switch assignments to storage-backed places.
     - [~] Lower non-integer and pattern switch cases into MIR branch tests.
       - [x] Lower boolean literal terminal switch cases through typed MIR branch tests.
       - [x] Lower boolean literal non-terminal switch assignments through typed MIR branch tests.
@@ -581,12 +606,45 @@ Execution constraints:
     - [x] Lower self-recursive source functions through the full HIR body pipeline.
     - [x] Preserve recursive call facts through checked source lowering.
     - [x] Reject source call cycles reachable from finite checked source functions.
-  - [ ] Lower object construction.
-  - [ ] Lower enum payloads.
+  - [x] Lower object construction.
+    - [x] Lower empty `stack T value = new T()` construction into MIR stack allocation.
+    - [x] Lower target-typed empty `stack T value = new()` construction into MIR stack allocation.
+    - [x] Preserve stack allocation alignment, noalias, and nonnull facts through LLVM emission.
+    - [x] Add MIR pointer-offset operations for storage-backed field places.
+    - [x] Add typed MIR pointer load and store operations for storage-backed values.
+    - [x] Preserve derived pointer alignment, noalias, and nonnull facts through MIR memory operations.
+    - [x] Emit MIR pointer memory operations through LLVM, text rendering, and package serialization.
+    - [x] Lower stack object field initializers into storage-backed writes.
+    - [x] Lower positional record constructors into storage-backed writes.
+    - [x] Lower heap object construction through runtime allocation and pointer facts.
+    - [x] Lower constructed object field and member reads from storage-backed places.
+  - [~] Lower enum payloads.
+    - [x] Preserve enum payload layout rows through MIR enum layout facts, package images, and LLVM storage helpers.
+    - [x] Represent enum-valued source expressions in the MIR source expression model.
+    - [x] Add MIR enum construction operations that carry enum owner, variant, payload ordinal, and payload value facts.
+    - [x] Thread enum layout fact tables through normal MIR-to-LLVM instruction emission.
+    - [x] Lower source enum constructors into MIR enum construction operations.
+      - [x] Lower source unit enum constructors into MIR enum construction operations.
+      - [x] Lower source positional scalar payload constructors into MIR enum construction operations.
+      - [x] Lower source named payload constructors into MIR enum construction operations.
+    - [~] Lower enum payload loads and stores for storage-backed places.
+      - [x] Add owner-aware MIR enum value load and store operations for storage-backed enum places.
+      - [x] Emit owner-aware enum value loads and stores through LLVM layout helpers.
+      - [x] Preserve enum value load and store operations through MIR text and package serialization.
+      - [x] Classify enum value loads and stores in MIR memory-effect scans.
+      - [x] Lower storage-backed enum local initializers and assignments.
+        - [x] Represent stored enum locals distinctly from SSA enum values in source local type codes.
+        - [x] Lower straight-line stack enum local initializers through owner-aware enum stores.
+        - [x] Lower straight-line stack enum local reads through owner-aware enum loads.
+        - [x] Lower straight-line mutable stack enum local assignments through owner-aware enum stores.
+        - [x] Lower storage-backed enum locals through terminal `if` branches.
+        - [x] Lower storage-backed enum locals through switch arms.
+      - [x] Lower enum-valued field and member reads and writes on storage-backed object places.
   - [~] Lower dynamic storage.
     - [x] Lower arena-backed HIR dynamic storage init and reserve operations to MIR.
   - [~] Lower all storage selectors.
     - [x] Lower fixed-size HIR arena allocations to MIR arena allocation instructions.
+    - [x] Lower fixed-size source stack allocations to MIR stack allocation instructions.
   - [ ] Port runtime drop lowering.
   - [ ] Port destructor call insertion.
   - [ ] Port ownership-driven cleanup.
@@ -618,21 +676,27 @@ Execution constraints:
     - [x] Reject stale scalar nullability facts before emitting MIR global stores.
     - [x] Reject stale scalar nullability facts before emitting MIR conditional branches.
     - [x] Reject stale scalar nullability facts before emitting MIR tail-call blocks.
+    - [x] Attach known-nonnull pointer facts to fixed-size stack allocation results.
     - [x] Attach known-nonnull pointer facts to fixed-size arena allocation results.
     - [x] Attach known-nonnull pointer facts to arena dynamic storage owner results.
+    - [x] Preserve known-nonnull facts on derived MIR pointer offsets.
     - [ ] Audit nullability fact validation when each remaining pointer-producing HIR construct is added.
   - [~] Preserve alias facts through MIR lowering.
     - [x] Enforce noalias global-store obligations before MIR store emission.
+    - [x] Attach noalias facts to fixed-size stack allocation results.
     - [x] Attach noalias facts to fixed-size arena allocation results.
     - [x] Attach noalias facts to arena dynamic storage owner results.
+    - [x] Preserve noalias facts on derived MIR pointer offsets.
     - [ ] Audit alias fact transfer when each remaining memory-producing HIR construct is added.
   - [~] Preserve ABI facts through MIR lowering.
     - [x] Enforce calling-ABI global-store obligations before MIR store emission.
     - [ ] Audit ABI fact transfer when each remaining callable-producing HIR construct is added.
   - [~] Preserve layout facts through MIR lowering.
     - [x] Enforce alignment global-store obligations before MIR store emission.
+    - [x] Attach alignment facts to fixed-size stack allocation results.
     - [x] Attach alignment facts to fixed-size arena allocation results.
     - [x] Attach alignment facts to arena dynamic storage owner results.
+    - [x] Preserve derived alignment facts on MIR pointer offsets and aligned pointer memory ops.
     - [ ] Audit layout fact transfer when each remaining aggregate and pointer-producing HIR construct is added.
   - [ ] Preserve ownership facts through MIR lowering.
   - [ ] Preserve assembly facts through MIR lowering.
