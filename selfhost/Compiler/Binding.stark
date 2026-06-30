@@ -34,6 +34,11 @@ export import Compiler.Binding.BecomeValidation
 export import Compiler.Binding.LawValidation
 export import Compiler.Binding.FunctionKindValidation
 export import Compiler.Binding.DestructorValidation
+export import Compiler.Binding.ConstructorFieldState
+export import Compiler.Binding.ConstructorFieldFacts
+export import Compiler.Binding.ConstructorExpressionReads
+export import Compiler.Binding.ConstructorStatementTraversal
+export import Compiler.Binding.ConstructorSwitchCoverage
 export import Compiler.Binding.ConstructorValidation
 export import Compiler.Binding.OwnershipInitialization
 export import Compiler.Binding.OwnershipMove
@@ -52,7 +57,14 @@ export import Compiler.Binding.CallableCandidates
 export import Compiler.Binding.ReceiverCandidates
 export import Compiler.Binding.FunctionEffects
 export import Compiler.Binding.TraitConformance
+export import Compiler.Binding.CopyabilityModel
+export import Compiler.Binding.CopyabilityTypeFacts
 export import Compiler.Binding.Copyability
+export import Compiler.Binding.ThreadSafetyModel
+export import Compiler.Binding.ThreadSafetyLawNames
+export import Compiler.Binding.ThreadSafetyAtomicFacts
+export import Compiler.Binding.ThreadSafetyTypeFacts
+export import Compiler.Binding.ThreadSafetyPredicates
 export import Compiler.Binding.ThreadSafety
 export import Compiler.Binding.SignatureHelpers
 export import Compiler.Binding.AssemblyBinding

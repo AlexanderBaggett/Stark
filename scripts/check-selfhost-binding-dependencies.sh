@@ -30,7 +30,19 @@ DATA_MODULES=(
   FunctionEffects
   TraitConformance
   AssociatedTypes
+  ConstructorFieldState
+  ConstructorFieldFacts
+  ConstructorExpressionReads
+  ConstructorStatementTraversal
+  ConstructorSwitchCoverage
+  CopyabilityModel
+  CopyabilityTypeFacts
   Copyability
+  ThreadSafetyModel
+  ThreadSafetyLawNames
+  ThreadSafetyAtomicFacts
+  ThreadSafetyTypeFacts
+  ThreadSafetyPredicates
   ThreadSafety
   SignatureHelpers
   ReceiverTokenHelpers

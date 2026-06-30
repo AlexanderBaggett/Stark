@@ -1,0 +1,113 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.TokenHelpers
+import System.Memory
+module Compiler.Binding.ConstructorFieldState
+
+internal struct ConstructorAssignedFieldTable
+{
+    internal dynamic u32[0 max] FieldTokens;
+
+    ConstructorAssignedFieldTable()
+    {
+        self.FieldTokens = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow ConstructorAssignedFieldTable self)
+    {
+        return self.FieldTokens.Length;
+    }
+
+    internal law u32[0 max] FieldTokenAt(borrow ConstructorAssignedFieldTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FieldTokens.Length)
+        {
+            token = self.FieldTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn bool Contains(borrow ConstructorAssignedFieldTable self, ascii source, borrow TokenStream stream, u32[0 max] fieldToken)
+    {
+        stack mut bool found = false;
+        stack u64[0 2 ** 63 - 1] count = self.Count();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (!found && BindingTokenTextEqualsToken(source, stream, self.FieldTokenAt(index), fieldToken))
+            {
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    internal fn System.Memory.MemoryStatus MarkAssigned(mut borrow ConstructorAssignedFieldTable self, ascii source, borrow TokenStream stream, u32[0 max] fieldToken)
+    {
+        if (fieldToken == 0 || self.Contains(source, stream, fieldToken))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (!self.FieldTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.FieldTokens[self.FieldTokens.Length] = fieldToken;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus CopyConstructorAssignedFields(
+    borrow ConstructorAssignedFieldTable sourceTable,
+    mut borrow ConstructorAssignedFieldTable targetTable)
+{
+    stack u64[0 2 ** 63 - 1] count = sourceTable.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!targetTable.FieldTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init targetTable.FieldTokens[targetTable.FieldTokens.Length] = sourceTable.FieldTokenAt(index);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus ReplaceConstructorAssignedFields(
+    borrow ConstructorAssignedFieldTable sourceTable,
+    mut borrow ConstructorAssignedFieldTable targetTable)
+{
+    targetTable.FieldTokens = new();
+    return CopyConstructorAssignedFields(sourceTable, targetTable);
+}
+
+internal fn System.Memory.MemoryStatus IntersectConstructorAssignedFields(
+    borrow ConstructorAssignedFieldTable left,
+    borrow ConstructorAssignedFieldTable right,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow ConstructorAssignedFieldTable targetTable)
+{
+    stack u64[0 2 ** 63 - 1] count = left.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] fieldToken = left.FieldTokenAt(index);
+        if (right.Contains(source, stream, fieldToken))
+        {
+            switch (targetTable.MarkAssigned(source, stream, fieldToken))
+            {
+                case System.Memory.MemoryStatus.Err(var markError):
+                    return System.Memory.MemoryStatus.Err(markError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

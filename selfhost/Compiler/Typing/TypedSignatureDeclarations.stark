@@ -1,0 +1,103 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedSignatureModel
+import Compiler.Typing.TypedSignatureRows
+import System.Memory
+module Compiler.Typing.TypedSignatureDeclarations
+
+internal finite law u32[0 max] TypedSignatureDeclarationBodyOpenToken(borrow TokenStream stream, DeclItem item)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = item.KeywordToken;
+    while willexit (scan <= item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.LBrace)
+        {
+            return scan;
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal finite law bool TypedSignatureDeclarationCanOwnMethods(DeclarationKind kind)
+{
+    return kind == DeclarationKind.Struct
+        || kind == DeclarationKind.Record
+        || kind == DeclarationKind.Trait
+        || kind == DeclarationKind.Doctrine;
+}
+
+internal fn System.Memory.MemoryStatus AppendTypedMemberFunctionSignaturesForDeclaration(
+    mut borrow TypedFunctionSignatureTable table,
+    ascii source,
+    borrow TokenStream stream,
+    DeclItem item)
+{
+    if (!TypedSignatureDeclarationCanOwnMethods(item.Kind))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] bodyOpen = TypedSignatureDeclarationBodyOpenToken(stream, item);
+    if (bodyOpen == 0 || bodyOpen >= item.EndToken)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] ownerGenericOpenToken = TypedSignatureGenericOpenAfterName(stream, item.NameToken);
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(bodyOpen + 1);
+    while willexit (scan < item.EndToken)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Fn)
+        {
+            switch (AppendTypedFunctionSignature(
+                table,
+                source,
+                stream,
+                scan,
+                TypedSignatureOwnerKind.MemberMethod,
+                item.NameToken,
+                ownerGenericOpenToken))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}

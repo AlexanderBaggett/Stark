@@ -8,6 +8,8 @@ import Compiler.Binding.SignatureHelpers
 import Compiler.Binding.LayoutHelpers
 import Compiler.Binding.FunctionEffects
 import Compiler.Binding.ConstructorValidation
+import Compiler.Binding.ConstructorStatementTraversal
+import Compiler.Binding.ConstructorSwitchCoverage
 import Compiler.Binding.OwnershipHelpers
 import System.Memory
 module Compiler.Binding.OwnershipInitialization

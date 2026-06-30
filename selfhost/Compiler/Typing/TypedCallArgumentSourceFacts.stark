@@ -1,0 +1,208 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedCallFacts
+import Compiler.Typing.TypedCallSignatures
+import Compiler.Typing.TypedIdentifierModel
+import Compiler.Typing.TypedLiterals
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCallArgumentSourceFacts
+
+internal finite law bool TypedCallOperatorYieldsBool(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.EqEq:
+            return true;
+        case TokenKind.Neq:
+            return true;
+        case TokenKind.Lt:
+            return true;
+        case TokenKind.Gt:
+            return true;
+        case TokenKind.Lte:
+            return true;
+        case TokenKind.Gte:
+            return true;
+        case TokenKind.AndAnd:
+            return true;
+        case TokenKind.OrOr:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn void TypedCallFactsFromSignatureSlot(
+    borrow TypedFunctionSignatureTable signatures,
+    u32[0 max] slotIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    stack mut TypedSignatureTypeKind typeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] typeHeadToken = 0;
+    stack mut u32[0 max] typePrimaryToken = 0;
+    stack mut u32[0 max] typeStartToken = 0;
+    stack mut u32[0 max] typeEndToken = 0;
+    stack mut u32[0 max] rangeStartToken = 0;
+    stack mut u32[0 max] rangeEndToken = 0;
+    stack mut u32[0 max] elementCountStartToken = 0;
+    stack mut u32[0 max] elementCountEndToken = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeArgumentCount = 0;
+    stack mut u32[0 max] typeFlags = 0;
+    TypedCallSignatureSlotFacts(
+        signatures,
+        slotIndexPlusOne,
+        typeKind,
+        typeHeadToken,
+        typePrimaryToken,
+        typeStartToken,
+        typeEndToken,
+        rangeStartToken,
+        rangeEndToken,
+        elementCountStartToken,
+        elementCountEndToken,
+        bitWidth,
+        typeArgumentCount,
+        comptimeArgumentCount,
+        typeFlags);
+    facts.TypeKind = typeKind;
+    facts.TypeHeadToken = typeHeadToken;
+    facts.TypePrimaryToken = typePrimaryToken;
+    facts.TypeStartToken = typeStartToken;
+    facts.TypeEndToken = typeEndToken;
+    facts.RangeStartToken = rangeStartToken;
+    facts.RangeEndToken = rangeEndToken;
+    facts.ElementCountStartToken = elementCountStartToken;
+    facts.ElementCountEndToken = elementCountEndToken;
+    facts.BitWidth = bitWidth;
+    facts.TypeArgumentCount = typeArgumentCount;
+    facts.ComptimeArgumentCount = comptimeArgumentCount;
+    facts.TypeFlags = typeFlags;
+}
+
+internal fn void TypedCallFactsFromLiteral(
+    borrow TypedLiteralExpressionTable literals,
+    u32[0 max] literalIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (literalIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(literalIndexPlusOne - 1);
+    facts.TypeKind = literals.TypeKindAt(index);
+    facts.TypePrimaryToken = literals.LiteralTokenAt(index);
+    facts.TypeStartToken = literals.LiteralTokenAt(index);
+    facts.TypeEndToken = (u32[0 max])(literals.LiteralTokenAt(index) + 1);
+    facts.BitWidth = literals.BitWidthAt(index);
+    facts.TypeFlags = literals.TypeFlagsAt(index);
+    facts.IsCompileTimeInteger = literals.IsCompileTimeIntegerAt(index);
+    facts.IsNullLiteral = literals.LiteralKindAt(index) == TypedLiteralKind.Null;
+}
+
+internal fn void TypedCallFactsFromIdentifier(
+    borrow TypedIdentifierExpressionTable identifiers,
+    u32[0 max] identifierIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (identifierIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(identifierIndexPlusOne - 1);
+    facts.TypeKind = identifiers.TypeKindAt(index);
+    facts.TypeHeadToken = identifiers.TypeHeadTokenAt(index);
+    facts.TypePrimaryToken = identifiers.TypePrimaryTokenAt(index);
+    facts.TypeStartToken = identifiers.TypeStartTokenAt(index);
+    facts.TypeEndToken = identifiers.TypeEndTokenAt(index);
+    facts.RangeStartToken = identifiers.RangeStartTokenAt(index);
+    facts.RangeEndToken = identifiers.RangeEndTokenAt(index);
+    facts.ElementCountStartToken = identifiers.ElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = identifiers.ElementCountEndTokenAt(index);
+    facts.BitWidth = identifiers.BitWidthAt(index);
+    facts.TypeArgumentCount = identifiers.TypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = identifiers.ComptimeArgumentCountAt(index);
+    facts.TypeFlags = identifiers.TypeFlagsAt(index);
+}
+
+internal fn void TypedCallFactsFromCallReturn(
+    borrow TypedCallExpressionTable calls,
+    u32[0 max] callIndexPlusOne,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (callIndexPlusOne == 0)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(callIndexPlusOne - 1);
+    facts.TypeKind = calls.ReturnTypeKindAt(index);
+    facts.TypeHeadToken = calls.ReturnTypeHeadTokenAt(index);
+    facts.TypePrimaryToken = calls.ReturnTypePrimaryTokenAt(index);
+    facts.TypeStartToken = calls.ReturnTypeStartTokenAt(index);
+    facts.TypeEndToken = calls.ReturnTypeEndTokenAt(index);
+    facts.RangeStartToken = calls.ReturnRangeStartTokenAt(index);
+    facts.RangeEndToken = calls.ReturnRangeEndTokenAt(index);
+    facts.ElementCountStartToken = calls.ReturnElementCountStartTokenAt(index);
+    facts.ElementCountEndToken = calls.ReturnElementCountEndTokenAt(index);
+    facts.BitWidth = calls.ReturnBitWidthAt(index);
+    facts.TypeArgumentCount = calls.ReturnTypeArgumentCountAt(index);
+    facts.ComptimeArgumentCount = calls.ReturnComptimeArgumentCountAt(index);
+    facts.TypeFlags = calls.ReturnTypeFlagsAt(index);
+}
+
+internal fn void TypedCallFactsFromTypeSpan(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    mut borrow TypedCallTypeFacts facts)
+{
+    if (typeStartToken == 0 || typeEndToken <= typeStartToken)
+    {
+        return;
+    }
+
+    TypedCallTypeSpanFacts(
+        source,
+        stream,
+        typeStartToken,
+        typeEndToken,
+        facts.TypeKind,
+        facts.TypeHeadToken,
+        facts.TypePrimaryToken,
+        facts.RangeStartToken,
+        facts.RangeEndToken,
+        facts.ElementCountStartToken,
+        facts.ElementCountEndToken,
+        facts.BitWidth,
+        facts.TypeArgumentCount,
+        facts.ComptimeArgumentCount,
+        facts.TypeFlags);
+    facts.TypeStartToken = typeStartToken;
+    facts.TypeEndToken = typeEndToken;
+}
+
+internal fn void TypedCallFactsFromNewTypeToken(u32[0 max] typeNameToken, mut borrow TypedCallTypeFacts facts)
+{
+    if (typeNameToken == 0)
+    {
+        return;
+    }
+
+    facts.TypeKind = TypedSignatureTypeKind.Named;
+    facts.TypeHeadToken = typeNameToken;
+    facts.TypePrimaryToken = typeNameToken;
+    facts.TypeStartToken = typeNameToken;
+    facts.TypeEndToken = (u32[0 max])(typeNameToken + 1);
+}
+
+internal fn void TypedCallBoolFacts(u32[0 max] token, mut borrow TypedCallTypeFacts facts)
+{
+    facts.TypeKind = TypedSignatureTypeKind.Bool;
+    facts.TypePrimaryToken = token;
+    facts.TypeStartToken = token;
+    facts.TypeEndToken = (u32[0 max])(token + 1);
+}

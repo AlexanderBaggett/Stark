@@ -7,6 +7,51 @@ import System.Memory
 import System.Text
 module Compiler.Mir.SourceExpressions
 
+internal inline finite law u32[0 max] SourceLocalTypeCodeInt()
+{
+    return 0;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeBool()
+{
+    return 1;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeNonValue()
+{
+    return 2;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodePointer()
+{
+    return 3;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeEnumBase()
+{
+    return 4;
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeForEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
+{
+    return SourceLocalTypeCodeEnumBase() + ownerDeclarationIndex;
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsEnum(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
+{
+    if (typeCode < SourceLocalTypeCodeEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceLocalTypeCodeEnumBase();
+}
+
 // True when `k` is a `+`/`-` additive operator token.
 internal fn bool IsAddSubToken(TokenKind k)
 {
@@ -141,11 +186,9 @@ public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] cal
 // `(a < b) + 1`). Integer comparisons are boolean, and boolean equality/inequality is
 // boolean; ordering comparisons over booleans and mixed comparisons are type errors.
 // Unlike the token heuristic, this is correct on calls, parens, and chains by construction.
-// As `TypeOfNode`, but a name's type comes from `localTypes` (a per-index type table:
-// entry `index+1` is 1 for boolean, 2 for non-value storage, 3 for pointer, anything else
-// is integer). This lets a `var` local carry its initializer's type, keeps storage-only
-// locals out of value expressions, and lets memory-backed parameters flow to pointer calls.
-// An empty `localTypes` recovers the param-only behavior (every name is integer).
+// As `TypeOfNode`, but a name's type comes from `localTypes` (a per-index type table).
+// Boolean, storage-only, pointer, and enum-owner codes preserve source facts through MIR
+// lowering; absent entries stay integer for the bootstrap expression grammar.
 public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, borrow IrTable<u32[0 max]> localTypes)
 {
     if (!nodes.Contains(id))
@@ -164,19 +207,24 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
             if (localTypes.Contains(node.Left + 1))
             {
                 stack u32[0 max] typeCode = localTypes.Get(node.Left + 1);
-                if (typeCode == 1)
+                if (typeCode == SourceLocalTypeCodeBool())
                 {
                     return ExprType.BoolType;
                 }
 
-                if (typeCode == 2)
+                if (typeCode == SourceLocalTypeCodeNonValue())
                 {
                     return ExprType.ErrorType;
                 }
 
-                if (typeCode == 3)
+                if (typeCode == SourceLocalTypeCodePointer())
                 {
                     return ExprType.PtrType;
+                }
+
+                if (SourceLocalTypeCodeIsEnum(typeCode))
+                {
+                    return ExprType.EnumType;
                 }
             }
 
@@ -205,8 +253,80 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 return ExprType.BoolType;
             }
 
+            if (leftType == ExprType.EnumType
+                && rightType == ExprType.EnumType
+                && (node.Op == TokenKind.EqEq || node.Op == TokenKind.Neq))
+            {
+                return ExprType.BoolType;
+            }
+
             return ExprType.ErrorType;
     }
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (nodes.Contains(id))
+    {
+        stack ExprNode node = nodes.Get(id);
+        if (node.Kind == ExprKind.NameExpr && localTypes.Contains(node.Left + 1))
+        {
+            stack u32[0 max] sourceCode = localTypes.Get(node.Left + 1);
+            if (SourceLocalTypeCodeIsEnum(sourceCode))
+            {
+                return sourceCode;
+            }
+        }
+    }
+
+    stack ExprType type = TypeOfNodeWithLocals(nodes, id, localTypes);
+    if (type == ExprType.BoolType)
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (type == ExprType.PtrType)
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
+    if (type == ExprType.ErrorType)
+    {
+        return SourceLocalTypeCodeNonValue();
+    }
+
+    return SourceLocalTypeCodeInt();
+}
+
+internal fn bool TryGetSourceLocalEnumOwnerDeclarationIndexForNode(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    borrow IrTable<u32[0 max]> localTypes,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind != ExprKind.NameExpr || !localTypes.Contains(node.Left + 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeCode = localTypes.Get(node.Left + 1);
+    if (!SourceLocalTypeCodeIsEnum(typeCode))
+    {
+        return false;
+    }
+
+    ownerDeclarationIndex = SourceLocalTypeCodeEnumOwnerDeclarationIndex(typeCode);
+    return true;
 }
 
 // Types an expression where every name is a parameter (integer) — the common case.

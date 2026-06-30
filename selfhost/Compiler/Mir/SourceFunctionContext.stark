@@ -972,15 +972,77 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParam(
     stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(paramIndex + 1));
     if (facts.IsPointer)
     {
-        return 3;
+        return SourceLocalTypeCodePointer();
     }
 
     if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Bool)
     {
-        return 1;
+        return SourceLocalTypeCodeBool();
     }
 
-    return 0;
+    return SourceLocalTypeCodeInt();
+}
+
+internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    stack u32[0 max] typeToken = signature.ParamTypeTokenAt(paramIndex);
+    if (typeToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Enum
+            && item.NameToken != 0
+            && TokenTextEqualsToken(stream, source, typeToken, item.NameToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(paramIndex + 1));
+    if (facts.IsPointer)
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Bool)
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    stack mut u32[0 max] ownerDeclarationIndex = 0;
+    if (TryGetSignatureParamEnumOwnerDeclarationIndex(stream, source, declarations, signature, paramIndex, ownerDeclarationIndex))
+    {
+        return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(ownerDeclarationIndex);
+    }
+
+    return SourceLocalTypeCodeInt();
 }
 
 internal fn bool SeedParamLocalTypesFromSignature(
@@ -994,6 +1056,30 @@ internal fn bool SeedParamLocalTypesFromSignature(
     while willexit (i < paramCount)
     {
         stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParam(stream, signature, paramAbiFacts, i));
+        if (added == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SeedParamLocalTypesFromSignatureWithDeclarations(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow DeclarationList declarations,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    u64[0 2 ** 63 - 1] paramCount,
+    mut borrow IrTable<u32[0 max]> localTypes)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < paramCount)
+    {
+        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParamWithDeclarations(stream, source, declarations, signature, paramAbiFacts, i));
         if (added == 0)
         {
             return false;

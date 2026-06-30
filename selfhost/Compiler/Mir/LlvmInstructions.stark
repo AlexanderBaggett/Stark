@@ -643,15 +643,17 @@ internal fn MemoryStatus EmitLlvmPhi(borrow IrTable<MirInstruction> instrs, mut 
     return MemoryStatus.Ok;
 }
 
-// Appends one LLVM line for a binary op: `  %vDst = <mnemonic> i64 <a>, <b>`, where
-// each operand is a value reference (`%vN` or `%pK`).
+// Appends one LLVM line for a binary op, preserving the MIR result type for
+// boolean and narrow integer operations.
 internal fn MemoryStatus EmitLlvmBinary(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, u32[0 max] a, u32[0 max] b)
 {
     try sink.AppendConstAscii("  ");
     try EmitLlvmRegister(sink, dst);
     try sink.AppendConstAscii(" = ");
     try sink.AppendConstAscii(mnemonic);
-    try sink.AppendConstAscii(" i64 ");
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmTypeName(MirValueType(instrs, dst), sink);
+    try sink.AppendConstAscii(" ");
     try EmitLlvmOperand(instrs, sink, a);
     try sink.AppendConstAscii(", ");
     try EmitLlvmOperand(instrs, sink, b);

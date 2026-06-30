@@ -1,0 +1,193 @@
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Binding.Diagnostics
+import Compiler.Binding.TokenHelpers
+import Compiler.Binding.GenericUseSites
+import Compiler.Binding.TypedMembers
+import System.Memory
+module Compiler.Binding.ThreadSafetyPredicates
+
+internal struct ThreadSafetyLawPredicateTable
+{
+    internal dynamic u32[0 max] LawTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+
+    ThreadSafetyLawPredicateTable()
+    {
+        self.LawTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow ThreadSafetyLawPredicateTable self)
+    {
+        return self.LawTokens.Length;
+    }
+
+    internal law u32[0 max] LawTokenAt(borrow ThreadSafetyLawPredicateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.LawTokens.Length)
+        {
+            token = self.LawTokens[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] TypeStartTokenAt(borrow ThreadSafetyLawPredicateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    internal law u32[0 max] TypeEndTokenAt(borrow ThreadSafetyLawPredicateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow ThreadSafetyLawPredicateTable self, u32[0 max] lawToken, u32[0 max] typeStart, u32[0 max] typeEnd)
+    {
+        if (!self.LawTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.LawTokens[self.LawTokens.Length] = lawToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStart;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEnd;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn BindResult<ThreadSafetyLawPredicateTable> BuildThreadSafetyLawPredicateTable(ascii source, borrow TokenStream stream, u32[0 max] ownerKeywordToken, ascii lawName)
+{
+    stack mut ThreadSafetyLawPredicateTable predicates = new();
+    stack u32[0 max] ownerEnd = TypedGenericOwnerTerminatorToken(stream, ownerKeywordToken);
+    if (ownerKeywordToken == 0 || ownerEnd <= ownerKeywordToken)
+    {
+        return BindResult<ThreadSafetyLawPredicateTable>.Ok(predicates);
+    }
+
+    stack mut bool inWhere = false;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = ownerKeywordToken;
+    while willexit (scan < ownerEnd)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Where)
+        {
+            inWhere = true;
+            scan = (u32[0 max])(scan + 1);
+            continue;
+        }
+
+        if (inWhere && depth == 0
+            && kind == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, lawName)
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            stack u32[0 max] open = (u32[0 max])(scan + 1);
+            stack u32[0 max] close = MatchingMemberCloseToken(stream, open);
+            if (close > open)
+            {
+                switch (predicates.Append(scan, (u32[0 max])(open + 1), close))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return BindResult<ThreadSafetyLawPredicateTable>.Err(BindError.OutOfMemory);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                scan = (u32[0 max])(close + 1);
+                continue;
+            }
+        }
+
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return BindResult<ThreadSafetyLawPredicateTable>.Ok(predicates);
+}
+
+internal finite law bool ThreadSafetySingleIdentifierPrefixToken(TokenKind kind)
+{
+    return kind == TokenKind.Stack
+        || kind == TokenKind.Heap
+        || kind == TokenKind.Register
+        || kind == TokenKind.Arena
+        || kind == TokenKind.Const
+        || kind == TokenKind.Mut
+        || kind == TokenKind.Frozen
+        || kind == TokenKind.Shared;
+}
+
+internal fn bool ThreadSafetyTypeSpanIsSingleIdentifier(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, out u32[0 max] identifierToken)
+{
+    identifierToken = 0;
+    stack mut u32[0 max] cursor = start;
+    while willexit (cursor < endExclusive && ThreadSafetySingleIdentifierPrefixToken(stream.KindAt((u64[0 2 ** 63 - 1])cursor)))
+    {
+        cursor = (u32[0 max])(cursor + 1);
+    }
+
+    if (cursor < endExclusive
+        && endExclusive == (u32[0 max])(cursor + 1)
+        && stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.Identifier)
+    {
+        identifierToken = cursor;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool ThreadSafetyLawPredicatesContainSingleIdentifier(
+    borrow ThreadSafetyLawPredicateTable predicates,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] identifierToken)
+{
+    if (identifierToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = predicates.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack mut u32[0 max] predicateIdentifier = 0;
+        if (ThreadSafetyTypeSpanIsSingleIdentifier(stream, predicates.TypeStartTokenAt(index), predicates.TypeEndTokenAt(index), predicateIdentifier)
+            && BindingTokenTextEqualsToken(source, stream, predicateIdentifier, identifierToken))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}

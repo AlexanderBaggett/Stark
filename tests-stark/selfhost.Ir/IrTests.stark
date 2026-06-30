@@ -5616,6 +5616,55 @@ fn bool CompilesRecursiveFunctionFromAst()
 }
 
 [Fact]
+fn bool CheckedRecursiveFunctionFromAstPreservesRecursionEffects()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAstChecked("fn fact(n) { if n < 1 return 1 else return n * fact(n - 1) } fn main() { return fact(5) }", s);
+    stack ascii factHeader = System.Testing.LlvmDefinitionHeader(s.View(), "f1");
+    return ok
+        && System.Testing.Contains(factHeader, "define internal dso_local i64 @f1")
+        && System.Testing.DoesNotContain(factHeader, "norecurse")
+        && System.Text.Contains(s.View(), "call i64 @f1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CheckedMutualRecursiveFunctionsFromAstPreserveRecursionEffects()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAstChecked("fn even(n) { if n == 0 return 1 else return odd(n - 1) } fn odd(n) { if n == 0 return 0 else return even(n - 1) } fn main() { return even(4) }", s);
+    stack ascii evenHeader = System.Testing.LlvmDefinitionHeader(s.View(), "f1");
+    stack ascii oddHeader = System.Testing.LlvmDefinitionHeader(s.View(), "f2");
+    return ok
+        && System.Testing.DoesNotContain(evenHeader, "norecurse")
+        && System.Testing.DoesNotContain(oddHeader, "norecurse")
+        && System.Text.Contains(s.View(), "call i64 @f2")
+        && System.Text.Contains(s.View(), "call i64 @f1")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CheckedFiniteRecursiveFunctionFromAstIsRejected()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAstChecked("finite fn fact(n) { if n < 1 return 1 else return n * fact(n - 1) } fn main() { return fact(5) }", s);
+}
+
+[Fact]
+fn bool CheckedMutualFiniteRecursiveFunctionsFromAstAreRejected()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAstChecked("finite fn even(n) { if n == 0 return 1 else return odd(n - 1) } finite fn odd(n) { if n == 0 return 0 else return even(n - 1) } fn main() { return even(4) }", s);
+}
+
+[Fact]
+fn bool CheckedTailFiniteSelfRecursiveFunctionFromAstIsRejected()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAstChecked("tail finite fn count(n, acc) { if n == 0 return acc else become count(n - 1, acc + 1) } fn main() { return count(3, 0) }", s);
+}
+
+[Fact]
 fn bool CompilesLocalPrefixedTerminalIfFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -6065,6 +6114,32 @@ fn bool CompilesSignedCaseTerminalIntegerSwitchFromAst()
 }
 
 [Fact]
+fn bool CompilesRangeCaseTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 40] classify(i64[min max] x) { switch (x) { case 0..3: return 10; case 10: return 20; default: return 40; } } fn main() { return classify(2) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp sge i64 %p0")
+        && System.Text.Contains(s.View(), "icmp sle i64 %p0")
+        && System.Text.Contains(s.View(), "and i1")
+        && !System.Text.Contains(s.View(), "switch i64 %p0")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[10 39] classify(i64[min max] x) { switch (x) { case 0..3: return 10; case 10: return 20; default: return 40; } } fn main() { return classify(2) }", tooNarrow);
+}
+
+[Fact]
+fn bool RejectsInvalidRangeCaseIntegerSwitchesFromAst()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAst("fn classify(i64[min max] x) { switch (x) { case 3..0: return 10; default: return 20; } } fn main() { return classify(2) }", s)
+        && !CompileModuleFromAst("fn classify(i64[min max] x) { switch (x) { case 0..3: return 10; case 2: return 20; default: return 30; } } fn main() { return classify(2) }", s)
+        && !CompileModuleFromAst("fn classify(i64[min max] x) { var y = 0; switch (x) { case 4..2: y = 10; default: y = 20; } return y } fn main() { return classify(2) }", s)
+        && !CompileModuleFromAst("fn classify(i64[min max] x) { var y = 0; switch (x) { case 0..3: y = 10; case 2..5: y = 20; default: y = 30; } return y } fn main() { return classify(2) }", s);
+}
+
+[Fact]
 fn bool CompilesBracedArmTerminalIntegerSwitchFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -6088,6 +6163,21 @@ fn bool CompilesLocalPrefixedTerminalIntegerSwitchFromAst()
         && System.Text.Contains(s.View(), "icmp eq i64 %v")
         && System.Text.Contains(s.View(), "label %b3, label %b2")
         && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesLocalPrefixedRangeCaseTerminalIntegerSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[10 40] classify(i64[min max] x) { var y = x + 1; switch (y) { case 2..4: return 10; case 9: return 20; default: return 40; } } fn main() { return classify(1) }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i64 %p0")
+        && System.Text.Contains(s.View(), "icmp sge i64 %v")
+        && System.Text.Contains(s.View(), "icmp sle i64 %v")
+        && System.Text.Contains(s.View(), "and i1")
+        && !System.Text.Contains(s.View(), "switch i64 %v")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -6128,6 +6218,20 @@ fn bool CompilesSingleCaseTerminalIntegerSwitchFromAst()
         && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 21) i64 @f1(i64 %p0)")
         && System.Text.Contains(s.View(), "icmp eq i64 %p0")
         && System.Text.Contains(s.View(), "label %b2, label %b3")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesTerminalEnumUnitSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Color { Red, Green, Blue } fn i64[10 40] classify(Color color) { switch (color) { case Color.Red: return 10; case Color.Blue: return 30; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && System.Text.Contains(s.View(), "label %b3, label %b2")
+        && System.Text.Contains(s.View(), "label %b4, label %b5")
+        && !System.Text.Contains(s.View(), "switch i64 %p0")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -6258,6 +6362,36 @@ fn bool CompilesLocalSwitchStatementAssignmentThenReturnFromAst()
         && System.Text.Contains(s.View(), "switch i64 %p0")
         && ClangVerifiesLlvmText(s)
         && !CompileModuleFromAst("fn i64[5 40] classify(i64[min max] x) { var y = 0; switch (x) { case 0: { y = 4; } case 1: { y = 10; } case 2: { y = 40; } default: { y = 20; } } return y + 1 } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesRangeCaseLocalSwitchStatementAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[5 41] classify(i64[min max] x) { var y = 0; switch (x) { case 0..3: y = 4; case 10: y = 20; default: y = 40; } return y + 1 } fn main() { return classify(2) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 42) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "icmp sge i64 %p0")
+        && System.Text.Contains(s.View(), "icmp sle i64 %p0")
+        && System.Text.Contains(s.View(), "and i1")
+        && System.Text.Contains(s.View(), " phi ")
+        && !System.Text.Contains(s.View(), "switch i64 %p0")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[5 40] classify(i64[min max] x) { var y = 0; switch (x) { case 0..3: y = 4; case 10: y = 20; default: y = 40; } return y + 1 } fn main() { return classify(2) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesEnumLocalSwitchStatementAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Color { Red, Green, Blue } fn i64[5 41] classify(Color color) { var y = 0; switch (color) { case Color.Red: y = 4; case Color.Blue: y = 30; default: y = 40; } return y + 1 } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 42) i64 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), " phi ")
+        && System.Text.Contains(s.View(), "icmp eq i64 %p0")
+        && !System.Text.Contains(s.View(), "switch i64 %p0")
+        && ClangVerifiesLlvmText(s);
 }
 
 [Fact]

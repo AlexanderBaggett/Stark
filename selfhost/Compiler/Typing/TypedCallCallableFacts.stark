@@ -1,0 +1,238 @@
+import Compiler.Lexing
+import Compiler.Typing.TypedCallCallableSpans
+import Compiler.Typing.TypedGenerics
+import Compiler.Typing.TypedGlobals
+import Compiler.Typing.TypedSignatures
+module Compiler.Typing.TypedCallCallableFacts
+
+internal fn void TypedCallTypeSpanFacts(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    out TypedSignatureTypeKind typeKind,
+    out u32[0 max] typeHeadToken,
+    out u32[0 max] typePrimaryToken,
+    out u32[0 max] rangeStartToken,
+    out u32[0 max] rangeEndToken,
+    out u32[0 max] elementCountStartToken,
+    out u32[0 max] elementCountEndToken,
+    out u32[0 max] bitWidth,
+    out u32[0 max] typeArgumentCount,
+    out u32[0 max] comptimeArgumentCount,
+    out u32[0 max] typeFlags)
+{
+    typeKind = TypedSignatureTypeKind.Unknown;
+    typeHeadToken = 0;
+    typePrimaryToken = 0;
+    rangeStartToken = 0;
+    rangeEndToken = 0;
+    elementCountStartToken = 0;
+    elementCountEndToken = 0;
+    bitWidth = 0;
+    typeArgumentCount = 0;
+    comptimeArgumentCount = 0;
+    typeFlags = 0;
+    if (typeStartToken == 0 || typeEndToken <= typeStartToken)
+    {
+        return;
+    }
+
+    stack mut u32[0 max] computedRangeStartToken = 0;
+    stack mut u32[0 max] computedRangeEndToken = 0;
+    stack mut u32[0 max] computedElementCountStartToken = 0;
+    stack mut u32[0 max] computedElementCountEndToken = 0;
+    stack mut TypedSignatureTypeKind arrayKind = TypedSignatureTypeKind.Unknown;
+    TypedSignatureScanTopLevelTypeFacts(
+        stream,
+        typeStartToken,
+        typeEndToken,
+        computedRangeStartToken,
+        computedRangeEndToken,
+        computedElementCountStartToken,
+        computedElementCountEndToken,
+        arrayKind);
+
+    stack u32[0 max] computedTypeHeadToken = TypedGlobalTypeHeadToken(stream, typeStartToken, typeEndToken);
+    stack u32[0 max] computedTypePrimaryToken = TypedSignatureSemanticPrimaryToken(stream, typeStartToken, typeEndToken, computedTypeHeadToken);
+    stack TypedSignatureTypeKind computedTypeKind = TypedSignatureKindForType(source, stream, computedTypePrimaryToken, computedTypeHeadToken, 0, 0, arrayKind);
+
+    stack mut u32[0 max] computedBitWidth = 0;
+    stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])computedTypePrimaryToken);
+    if (primaryKind == TokenKind.IntegerType)
+    {
+        computedBitWidth = TypedSignatureIntegerBitWidth(source, stream, computedTypePrimaryToken);
+    }
+    else if (primaryKind == TokenKind.FloatType)
+    {
+        computedBitWidth = TypedSignatureFloatBitWidth(source, stream, computedTypePrimaryToken);
+    }
+
+    stack mut u32[0 max] computedTypeArgumentCount = 0;
+    stack mut u32[0 max] computedComptimeArgumentCount = 0;
+    if (computedTypeHeadToken != 0 && stream.KindAt((u64[0 2 ** 63 - 1])(computedTypeHeadToken + 1)) == TokenKind.Lt)
+    {
+        TypedSignatureCountGenericArgumentsInList(stream, (u32[0 max])(computedTypeHeadToken + 1), computedTypeArgumentCount, computedComptimeArgumentCount);
+    }
+
+    stack u32[0 max] computedTypeFlags = TypedSignatureFlagsForType(
+        source,
+        stream,
+        computedTypePrimaryToken,
+        computedTypeHeadToken,
+        typeStartToken,
+        typeEndToken,
+        0,
+        0,
+        computedRangeStartToken,
+        computedRangeEndToken,
+        computedElementCountStartToken,
+        TypedSignatureTypeSpanContainsTailCallableSignature(stream, typeStartToken, typeEndToken),
+        0,
+        TypedSignatureTypeSpanContainsDeadOnReturnContract(stream, typeStartToken, typeEndToken));
+
+    typeKind = computedTypeKind;
+    typeHeadToken = computedTypeHeadToken;
+    typePrimaryToken = computedTypePrimaryToken;
+    rangeStartToken = computedRangeStartToken;
+    rangeEndToken = computedRangeEndToken;
+    elementCountStartToken = computedElementCountStartToken;
+    elementCountEndToken = computedElementCountEndToken;
+    bitWidth = computedBitWidth;
+    typeArgumentCount = computedTypeArgumentCount;
+    comptimeArgumentCount = computedComptimeArgumentCount;
+    typeFlags = computedTypeFlags;
+}
+
+internal fn void TypedCallCallableReturnFacts(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    out u32[0 max] parameterCount,
+    out TypedSignatureTypeKind returnTypeKind,
+    out u32[0 max] returnTypeHeadToken,
+    out u32[0 max] returnTypePrimaryToken,
+    out u32[0 max] returnTypeStartToken,
+    out u32[0 max] returnTypeEndToken,
+    out u32[0 max] returnRangeStartToken,
+    out u32[0 max] returnRangeEndToken,
+    out u32[0 max] returnElementCountStartToken,
+    out u32[0 max] returnElementCountEndToken,
+    out u32[0 max] returnBitWidth,
+    out u32[0 max] returnTypeArgumentCount,
+    out u32[0 max] returnComptimeArgumentCount,
+    out u32[0 max] returnTypeFlags)
+{
+    parameterCount = 0;
+    returnTypeKind = TypedSignatureTypeKind.Unknown;
+    returnTypeHeadToken = 0;
+    returnTypePrimaryToken = 0;
+    returnTypeStartToken = 0;
+    returnTypeEndToken = 0;
+    returnRangeStartToken = 0;
+    returnRangeEndToken = 0;
+    returnElementCountStartToken = 0;
+    returnElementCountEndToken = 0;
+    returnBitWidth = 0;
+    returnTypeArgumentCount = 0;
+    returnComptimeArgumentCount = 0;
+    returnTypeFlags = 0;
+
+    stack mut u32[0 max] lparen = 0;
+    stack mut u32[0 max] rparen = 0;
+    if (!TypedCallFindCallableParamList(stream, typeStartToken, typeEndToken, lparen, rparen))
+    {
+        return;
+    }
+
+    stack u32[0 max] computedReturnTypeStartToken = TypedCallCallableReturnStart(stream, typeStartToken, lparen);
+    stack u32[0 max] computedReturnTypeEndToken = lparen;
+    TypedCallTypeSpanFacts(
+        source,
+        stream,
+        computedReturnTypeStartToken,
+        computedReturnTypeEndToken,
+        returnTypeKind,
+        returnTypeHeadToken,
+        returnTypePrimaryToken,
+        returnRangeStartToken,
+        returnRangeEndToken,
+        returnElementCountStartToken,
+        returnElementCountEndToken,
+        returnBitWidth,
+        returnTypeArgumentCount,
+        returnComptimeArgumentCount,
+        returnTypeFlags);
+    parameterCount = TypedCallCallableParamCount(stream, lparen, rparen);
+    returnTypeStartToken = computedReturnTypeStartToken;
+    returnTypeEndToken = computedReturnTypeEndToken;
+}
+
+internal fn void TypedCallCallableParameterFacts(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] typeStartToken,
+    u32[0 max] typeEndToken,
+    u32[0 max] ordinal,
+    out TypedSignatureTypeKind expectedTypeKind,
+    out u32[0 max] expectedTypeHeadToken,
+    out u32[0 max] expectedTypePrimaryToken,
+    out u32[0 max] expectedTypeStartToken,
+    out u32[0 max] expectedTypeEndToken,
+    out u32[0 max] expectedRangeStartToken,
+    out u32[0 max] expectedRangeEndToken,
+    out u32[0 max] expectedElementCountStartToken,
+    out u32[0 max] expectedElementCountEndToken,
+    out u32[0 max] expectedBitWidth,
+    out u32[0 max] expectedTypeArgumentCount,
+    out u32[0 max] expectedComptimeArgumentCount,
+    out u32[0 max] expectedTypeFlags)
+{
+    expectedTypeKind = TypedSignatureTypeKind.Unknown;
+    expectedTypeHeadToken = 0;
+    expectedTypePrimaryToken = 0;
+    expectedTypeStartToken = 0;
+    expectedTypeEndToken = 0;
+    expectedRangeStartToken = 0;
+    expectedRangeEndToken = 0;
+    expectedElementCountStartToken = 0;
+    expectedElementCountEndToken = 0;
+    expectedBitWidth = 0;
+    expectedTypeArgumentCount = 0;
+    expectedComptimeArgumentCount = 0;
+    expectedTypeFlags = 0;
+
+    stack mut u32[0 max] lparen = 0;
+    stack mut u32[0 max] rparen = 0;
+    if (!TypedCallFindCallableParamList(stream, typeStartToken, typeEndToken, lparen, rparen))
+    {
+        return;
+    }
+
+    stack mut u32[0 max] computedExpectedTypeStartToken = 0;
+    stack mut u32[0 max] computedExpectedTypeEndToken = 0;
+    if (!TypedCallCallableParamSpan(stream, lparen, rparen, ordinal, computedExpectedTypeStartToken, computedExpectedTypeEndToken))
+    {
+        return;
+    }
+
+    TypedCallTypeSpanFacts(
+        source,
+        stream,
+        computedExpectedTypeStartToken,
+        computedExpectedTypeEndToken,
+        expectedTypeKind,
+        expectedTypeHeadToken,
+        expectedTypePrimaryToken,
+        expectedRangeStartToken,
+        expectedRangeEndToken,
+        expectedElementCountStartToken,
+        expectedElementCountEndToken,
+        expectedBitWidth,
+        expectedTypeArgumentCount,
+        expectedComptimeArgumentCount,
+        expectedTypeFlags);
+    expectedTypeStartToken = computedExpectedTypeStartToken;
+    expectedTypeEndToken = computedExpectedTypeEndToken;
+}

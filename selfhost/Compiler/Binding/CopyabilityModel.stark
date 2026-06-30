@@ -1,0 +1,115 @@
+import System.Memory
+module Compiler.Binding.CopyabilityModel
+
+public struct CopyabilityFactTable
+{
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] CopyableFlags;
+    internal dynamic u32[0 max] StateFlags;
+
+    CopyabilityFactTable()
+    {
+        self.NameTokens = new();
+        self.CopyableFlags = new();
+        self.StateFlags = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow CopyabilityFactTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow CopyabilityFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law bool IsCopyableAt(borrow CopyabilityFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] flag = 0;
+        if (index < self.CopyableFlags.Length)
+        {
+            flag = self.CopyableFlags[index];
+        }
+
+        return flag != 0;
+    }
+
+    internal law u32[0 max] StateAt(borrow CopyabilityFactTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] state = 0;
+        if (index < self.StateFlags.Length)
+        {
+            state = self.StateFlags[index];
+        }
+
+        return state;
+    }
+
+    internal fn void SetCopyableAt(mut borrow CopyabilityFactTable self, u64[0 2 ** 63 - 1] index, bool isCopyable)
+    {
+        if (index < self.CopyableFlags.Length)
+        {
+            if (isCopyable)
+            {
+                self.CopyableFlags[index] = 1;
+            }
+            else
+            {
+                self.CopyableFlags[index] = 0;
+            }
+        }
+    }
+
+    internal fn void SetStateAt(mut borrow CopyabilityFactTable self, u64[0 2 ** 63 - 1] index, u32[0 max] state)
+    {
+        if (index < self.StateFlags.Length)
+        {
+            self.StateFlags[index] = state;
+        }
+    }
+
+    internal fn System.Memory.MemoryStatus AppendPending(mut borrow CopyabilityFactTable self, u32[0 max] nameToken)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.CopyableFlags.TryReserve(1)
+            || !self.StateFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.CopyableFlags[self.CopyableFlags.Length] = 0;
+        init self.StateFlags[self.StateFlags.Length] = 0;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow CopyabilityFactTable self, u32[0 max] nameToken, bool isCopyable)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.CopyableFlags.TryReserve(1)
+            || !self.StateFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        if (isCopyable)
+        {
+            init self.CopyableFlags[self.CopyableFlags.Length] = 1;
+        }
+        else
+        {
+            init self.CopyableFlags[self.CopyableFlags.Length] = 0;
+        }
+
+        init self.StateFlags[self.StateFlags.Length] = 2;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
