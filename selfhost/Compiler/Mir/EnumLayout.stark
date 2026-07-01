@@ -1286,6 +1286,33 @@ public fn MemoryStatus EmitLlvmEnumTagRead(
     return MemoryStatus.Ok;
 }
 
+public fn MemoryStatus EmitLlvmEnumPayloadRead(
+    borrow IrTable<MirEnumLayoutFact> facts,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    ascii resultName,
+    ascii enumValueName,
+    mut borrow OwnedAscii sink)
+{
+    stack mut MirEnumLayoutFact payloadFact = new();
+    stack mut u32[0 max] fieldIndex = 0;
+    if (!TryGetMirEnumPayloadFact(facts, ownerType, variantOrdinal, payloadOrdinal, payloadFact)
+        || !TryGetLlvmEnumFactFieldIndex(facts, ownerType, payloadFact, fieldIndex))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("  ");
+    try sink.AppendAscii(resultName);
+    try sink.AppendConstAscii(" = extractvalue ");
+    try EmitLlvmEnumStorageTypeOperand(facts, ownerType, enumValueName, sink);
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])fieldIndex);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
 internal finite law MirEnumLayoutFactRowKind MirEnumLayoutFactRowKindFromTyped(Compiler.Typing.TypedEnumLayoutModel.TypedEnumLayoutRowKind kind)
 {
     switch (kind)

@@ -607,6 +607,12 @@ internal finite law i64[min max] ClampI64(i64[min max] value, i64[min max] lower
 
 internal fn bool TrySetFullIntegerRangeForMirType(mut borrow ValueFacts facts, MirType type)
 {
+    if (type == MirType.I1)
+    {
+        facts.SetIntegerRange(0, 2);
+        return true;
+    }
+
     if (type == MirType.I8)
     {
         facts.SetIntegerRange(-128, 128);
@@ -626,6 +632,115 @@ internal fn bool TrySetFullIntegerRangeForMirType(mut borrow ValueFacts facts, M
     }
 
     return false;
+}
+
+internal fn bool TrySetIntegerResultFactsForMirType(mut borrow ValueFacts facts, MirType type)
+{
+    return TrySetFullIntegerRangeForMirType(facts, type);
+}
+
+internal finite law bool ValueFactsHasAny(ValueFacts facts)
+{
+    return facts.HasAlignment()
+        || facts.HasCallingAbi()
+        || facts.HasNoAlias()
+        || facts.Volatile()
+        || facts.HasIntegerRange()
+        || facts.HasNullability();
+}
+
+internal fn bool TryBuildEnumTagReadFacts(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    mut borrow ValueFacts facts)
+{
+    stack mut u32[0 max] current = instr.OperandAIndex();
+    stack mut u64[0 2 ** 63 - 1] remaining = instrs.Count();
+    while willexit (current != 0 && remaining > 0)
+    {
+        if (!instrs.Contains(current))
+        {
+            return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        stack MirInstruction currentInstr = instrs.Get(current);
+        switch (currentInstr.Opcode())
+        {
+            case MirOp.EnumVariantTag:
+                if (currentInstr.OperandAIndex() != instr.OperandBIndex())
+                {
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                if (TrySetSingleValueIntegerRangeForMirType(facts, instr.ResultType(), (i64[min max])currentInstr.OperandBIndex()))
+                {
+                    return true;
+                }
+
+                return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+            case MirOp.EnumPayloadInsert:
+                if (currentInstr.OperandCIndex() != instr.OperandBIndex())
+                {
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                current = currentInstr.OperandAIndex();
+            default:
+                return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        remaining = remaining - 1;
+    }
+
+    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+}
+
+internal fn bool TryBuildEnumPayloadExtractFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts facts)
+{
+    stack mut u32[0 max] current = instr.OperandAIndex();
+    stack mut u64[0 2 ** 63 - 1] remaining = instrs.Count();
+    while willexit (current != 0 && remaining > 0)
+    {
+        if (!instrs.Contains(current))
+        {
+            return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        stack MirInstruction currentInstr = instrs.Get(current);
+        switch (currentInstr.Opcode())
+        {
+            case MirOp.EnumPayloadInsert:
+                if (currentInstr.OperandCIndex() != instr.OperandBIndex()
+                    || currentInstr.OperandDIndex() != instr.OperandCIndex())
+                {
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                if (currentInstr.Immediate() == (i64[min max])instr.OperandDIndex())
+                {
+                    stack ValueFacts payloadFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(currentInstr.OperandBIndex()));
+                    if (ValueFactsHasAny(payloadFacts))
+                    {
+                        facts.InheritFrom(payloadFacts);
+                        return true;
+                    }
+
+                    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+                }
+
+                current = currentInstr.OperandAIndex();
+            default:
+                return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
+        }
+
+        remaining = remaining - 1;
+    }
+
+    return TrySetIntegerResultFactsForMirType(facts, instr.ResultType());
 }
 
 internal finite bool TryWrapI32(i64[min max] value, out i64[min max] wrapped)
@@ -1059,6 +1174,7 @@ internal fn bool TryBuildPtrIndexOffsetFacts(
 }
 
 internal fn bool TryBuildGeneratedValueFactsForInstruction(
+    borrow IrTable<MirInstruction> instrs,
     borrow IrTable<ValueFacts> valueFacts,
     MirInstruction instr,
     out ValueFacts facts)
@@ -1147,6 +1263,22 @@ internal fn bool TryBuildGeneratedValueFactsForInstruction(
             return true;
         case MirOp.ArenaDynamicStorageTryReserveCapacity:
             built.SetIntegerRange(0, 2);
+            facts = built;
+            return true;
+        case MirOp.EnumTagRead:
+            if (!TryBuildEnumTagReadFacts(instrs, instr, built))
+            {
+                return false;
+            }
+
+            facts = built;
+            return true;
+        case MirOp.EnumPayloadExtract:
+            if (!TryBuildEnumPayloadExtractFacts(instrs, valueFacts, instr, built))
+            {
+                return false;
+            }
+
             facts = built;
             return true;
         case MirOp.Add:
@@ -1427,7 +1559,7 @@ internal fn bool BuildMirValueRangeFactForInstruction(
     }
 
     stack mut ValueFacts facts = new();
-    if (TryBuildGeneratedValueFactsForInstruction(valueFacts, instr, facts))
+    if (TryBuildGeneratedValueFactsForInstruction(instrs, valueFacts, instr, facts))
     {
         return RecordGeneratedValueFactsForMirValue(valueFacts, value, facts);
     }
@@ -1447,7 +1579,7 @@ public fn bool RecomputeMirGeneratedValueFactsForMirValue(
 
     stack MirInstruction instr = instrs.Get(value.Index());
     stack mut ValueFacts facts = new();
-    if (TryBuildGeneratedValueFactsForInstruction(valueFacts, instr, facts))
+    if (TryBuildGeneratedValueFactsForInstruction(instrs, valueFacts, instr, facts))
     {
         return RecordGeneratedValueFactsForMirValue(valueFacts, value, facts);
     }

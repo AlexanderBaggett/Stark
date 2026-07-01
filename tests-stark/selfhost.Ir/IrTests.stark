@@ -2,6 +2,10 @@ import Compiler.AsmFacts
 import Compiler.Ir
 import Compiler.Mir
 import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedPipeline
 import System.Memory
 import System.Text
 import System.Runtime.Buffer
@@ -2082,6 +2086,209 @@ fn bool EmitsLlvmScopedNoAliasMetadataForParamRootedPointerMemoryOps()
             return store.IsValid()
                 && LlvmTextEquals(sink, "define i32 @scoped(ptr %p0, ptr %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = add i64 0, 1\n  %v4 = add i32 0, 7\n  %v5.scale = mul i64 %v3, 4\n  %v5 = getelementptr inbounds i8, ptr %p0, i64 %v5.scale\n  %v6.scale = mul i64 %v3, 4\n  %v6 = getelementptr inbounds i8, ptr %p1, i64 %v6.scale\n  store i32 %v4, ptr %v5, align 4, !alias.scope !204096, !noalias !208192\n  %v8 = load i32, ptr %v6, align 4, !alias.scope !204097, !noalias !208193\n  ret i32 %v8\n}\n!200000 = distinct !{!200000, !\"stark.noalias.mir\"}\n!200001 = distinct !{!200001, !200000, !\"stark.noalias.param.0\"}\n!200002 = distinct !{!200002, !200000, !\"stark.noalias.param.1\"}\n!204096 = !{!200001}\n!208192 = !{!200002}\n!204097 = !{!200002}\n!208193 = !{!200001}\n")
                 && ClangVerifiesLlvmText(sink);
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmIndependentLoopAccessGroupMetadataForIndexedPointerMemoryOps()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId pointer = MirParamTyped(instrs, MirType.Ptr, 0);
+    stack MirValueId index = MirConstIntTyped(instrs, MirType.I64, 1);
+    stack MirValueId value = MirConstIntTyped(instrs, MirType.I32, 7);
+    stack MirValueId element = MirPtrIndexOffset(instrs, pointer, index, 4, 0, 4);
+    stack MirValueId store = MirStorePtrAlignedTyped(instrs, MirType.I32, element, value, 4);
+    stack MirValueId load = MirLoadPtrAlignedTyped(instrs, MirType.I32, element, 4);
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId loop = MirIndependentLoopBackedgeBlock(blocks, MirBlockIdOf(2));
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(entry.Index(), 1, 0));
+    stack u32[0 max] loopRange = ranges.Add(MakeBlockEmit(loop.Index(), 1, (u32[0 max])instrs.Count()));
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts returnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmBlocksWithRangeFacts(
+        instrs,
+        blocks,
+        "loop_access",
+        returnFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        1,
+        ranges,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return store.IsValid()
+                && load.IsValid()
+                && entryRange == 1
+                && loopRange == 2
+                && System.Text.Contains(sink.View(), "store i32 %v3, ptr %v4, align 4, !llvm.access.group !")
+                && System.Text.Contains(sink.View(), "%v6 = load i32, ptr %v4, align 4, !llvm.access.group !")
+                && System.Text.Contains(sink.View(), "br label %b2, !llvm.loop !")
+                && System.Text.Contains(sink.View(), "llvm.loop.vectorize.enable")
+                && System.Text.Contains(sink.View(), "llvm.loop.parallel_accesses")
+                && System.Text.Contains(sink.View(), " = distinct !{}")
+                && ClangVerifiesLlvmText(sink);
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn ParamAbiFacts PointerBorrowAbiForNoAliasCallTest()
+{
+    stack mut ParamAbiFacts abi = new();
+    abi.IsPointer = true;
+    abi.CaptureKind = 1;
+    abi.ReadOnly = true;
+    return abi;
+}
+
+[Fact]
+fn bool EmitsLlvmScopedNoAliasMetadataForDirectPointerCall()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId left = MirParamTyped(instrs, MirType.Ptr, 0);
+    stack MirValueId right = MirParamTyped(instrs, MirType.Ptr, 1);
+    stack MirValueId call = MirCall1(instrs, MirFuncIdOf(1), left);
+    stack MirBlockId entry = MirReturnBlock(blocks, call);
+
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    stack mut IrTable<FunctionEffectFacts> noFunctionEffectFacts = new();
+    stack mut IrTable<FunctionCallContractFacts> functionCallContractFacts = new();
+    stack mut FunctionCallContractFacts calleeFacts = new();
+    calleeFacts.ParamCount = 1;
+    calleeFacts.Param0 = PointerBorrowAbiForNoAliasCallTest();
+    if (functionCallContractFacts.Add(calleeFacts) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<FunctionLinkageFacts> noFunctionLinkageFacts = new();
+    stack mut IrTable<FunctionCallingConventionFacts> noFunctionCallingConventionFacts = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    stack mut IrTable<DistinctStoragePair> separateStorageFacts = new();
+    if (!AddDistinctStoragePairIfAbsent(separateStorageFacts, 0, 1))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut ValueFacts returnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFactsCore(
+        instrs,
+        noTailCallees,
+        noFunctionEffectFacts,
+        functionCallContractFacts,
+        noFunctionLinkageFacts,
+        noFunctionCallingConventionFacts,
+        blocks,
+        "scoped_call",
+        false,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        separateStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        NoFunctionEffectFacts(),
+        2,
+        entry.Index(),
+        1,
+        3,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return right.IsValid()
+                && LlvmTextEquals(sink, "define i64 @scoped_call(ptr %p0, ptr %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = call i64 @f1(ptr captures(none) readonly %p0), !alias.scope !212006, !noalias !212007\n  ret i64 %v3\n}\n!200000 = distinct !{!200000, !\"stark.noalias.mir\"}\n!200001 = distinct !{!200001, !200000, !\"stark.noalias.param.0\"}\n!200002 = distinct !{!200002, !200000, !\"stark.noalias.param.1\"}\n!204096 = !{!200001}\n!208192 = !{!200002}\n!204097 = !{!200002}\n!208193 = !{!200001}\n!212006 = !{!200001}\n!212007 = !{!200002}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmScopedNoAliasMetadataForTailPointerCall()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId left = MirParamTyped(instrs, MirType.Ptr, 0);
+    stack MirValueId right = MirParamTyped(instrs, MirType.Ptr, 1);
+    stack MirValueId call = MirTailCall1(instrs, MirFuncIdOf(1), left);
+    stack MirBlockId entry = MirTailCallBlock(blocks, call);
+
+    stack mut IrTable<u32[0 max]> tailFlags = new();
+    stack u32[0 max] f1Tail = tailFlags.Add(1);
+    stack mut IrTable<FunctionEffectFacts> noFunctionEffectFacts = new();
+    stack mut IrTable<FunctionCallContractFacts> functionCallContractFacts = new();
+    stack mut FunctionCallContractFacts calleeFacts = new();
+    calleeFacts.ParamCount = 1;
+    calleeFacts.Param0 = PointerBorrowAbiForNoAliasCallTest();
+    if (functionCallContractFacts.Add(calleeFacts) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<FunctionLinkageFacts> noFunctionLinkageFacts = new();
+    stack mut IrTable<FunctionCallingConventionFacts> noFunctionCallingConventionFacts = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    stack mut IrTable<DistinctStoragePair> separateStorageFacts = new();
+    if (!AddDistinctStoragePairIfAbsent(separateStorageFacts, 0, 1))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut ValueFacts returnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFactsCore(
+        instrs,
+        tailFlags,
+        noFunctionEffectFacts,
+        functionCallContractFacts,
+        noFunctionLinkageFacts,
+        noFunctionCallingConventionFacts,
+        blocks,
+        "scoped_tail",
+        true,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        separateStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        NoFunctionEffectFacts(),
+        2,
+        entry.Index(),
+        1,
+        3,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return right.IsValid()
+                && f1Tail == 1
+                && LlvmTextEquals(sink, "define tailcc i64 @scoped_tail(ptr %p0, ptr %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = musttail call tailcc i64 @f1(ptr captures(none) readonly %p0), !alias.scope !212006, !noalias !212007\n  ret i64 %v3\n}\n!200000 = distinct !{!200000, !\"stark.noalias.mir\"}\n!200001 = distinct !{!200001, !200000, !\"stark.noalias.param.0\"}\n!200002 = distinct !{!200002, !200000, !\"stark.noalias.param.1\"}\n!204096 = !{!200001}\n!208192 = !{!200002}\n!204097 = !{!200002}\n!208193 = !{!200001}\n!212006 = !{!200001}\n!212007 = !{!200002}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -5229,6 +5436,7 @@ fn bool CompilesModuleIndependentCountingForLoopFromAst()
         && System.Text.Contains(s.View(), "%v6 = add i64 %v4, %v3")
         && System.Text.Contains(s.View(), "br label %b2, !llvm.loop !")
         && System.Text.Contains(s.View(), "llvm.loop.vectorize.enable")
+        && System.Text.Contains(s.View(), "llvm.loop.parallel_accesses")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -5286,6 +5494,7 @@ fn bool CompilesModuleIndependentHeaderCountingForLoopFromAst()
         && System.Text.Contains(s.View(), "%v6 = add i64 %v4, %v3")
         && System.Text.Contains(s.View(), "br label %b2, !llvm.loop !")
         && System.Text.Contains(s.View(), "llvm.loop.vectorize.enable")
+        && System.Text.Contains(s.View(), "llvm.loop.parallel_accesses")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -5318,6 +5527,2786 @@ fn bool SourceEnumExpressionNodesPreserveOwnerFacts()
         && TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, inserted, localTypes, insertedOwner)
         && taggedOwner == 3
         && insertedOwner == 3;
+}
+
+[Fact]
+fn bool SourceTryExpressionNodesKeepOperandSeparate()
+{
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] operand = MakeIntLit(nodes, 7);
+    stack u32[0 max] tryNode = MakeTry(nodes, operand);
+    stack mut u32[0 max] readOperand = 0;
+    return TryGetSourceTryOperandNode(nodes, tryNode, readOperand)
+        && readOperand == operand
+        && TypeOfNode(nodes, tryNode) == ExprType.ErrorType;
+}
+
+[Fact]
+fn bool SourceTryExpressionParserDoesNotEraseTry()
+{
+    return InferSourceExpressionType("try 1") == ExprType.ErrorType;
+}
+
+[Fact]
+fn bool SourceTryExpressionGenericLoweringRequiresTryPath()
+{
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] operand = MakeIntLit(nodes, 7);
+    stack u32[0 max] tryNode = MakeTry(nodes, operand);
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId lowered = LowerExprNode(nodes, tryNode, instrs);
+    return lowered.Index() == 0 && instrs.Count() == 0;
+}
+
+fn bool BuildTypedEnumLayoutsForSource(ascii source, out TokenStream stream, out TypedEnumLayoutTable layouts)
+{
+    stream = new();
+    layouts = new();
+
+    stack mut TokenStream parsedStream = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var lexed):
+            parsedStream = lexed;
+    }
+
+    stack mut DeclarationList declarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    switch (BuildTypedEnumLayouts(source, parsedStream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            layouts = builtLayouts;
+            stream = parsedStream;
+            return true;
+    }
+}
+
+fn bool BuildTypedEnumTryInputsForSource(
+    ascii source,
+    out TokenStream stream,
+    out DeclarationList declarations,
+    out TypedEnumPayloadTable payloads,
+    out TypedEnumLayoutTable layouts)
+{
+    stream = new();
+    declarations = new();
+    payloads = new();
+    layouts = new();
+
+    stack mut TokenStream parsedStream = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var lexed):
+            parsedStream = lexed;
+    }
+
+    stack mut DeclarationList parsedDeclarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsed):
+            parsedDeclarations = parsed;
+    }
+
+    stack mut TypedEnumPayloadTable builtPayloads = new();
+    switch (BuildTypedEnumPayloads(source, parsedStream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
+            return false;
+        case ParseResult<TypedEnumPayloadTable>.Ok(var parsedPayloads):
+            builtPayloads = parsedPayloads;
+    }
+
+    switch (BuildTypedEnumLayouts(source, parsedStream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            stream = parsedStream;
+            declarations = parsedDeclarations;
+            payloads = builtPayloads;
+            layouts = builtLayouts;
+            return true;
+    }
+}
+
+[Fact]
+fn bool SourceTryRoleFactsResolveOkErrEnumLayouts()
+{
+    stack ascii source = raw"""
+    enum Outcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failure(u8[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationRoleFacts facts = new();
+    return TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, declarations, layouts, 0, facts)
+        && facts.IsValid()
+        && facts.OkVariantOrdinal() == 0
+        && facts.OkVariantTag() == 0
+        && facts.OkPayloadCount() == 1
+        && facts.OkPayloadTypeCode() == SourceResolvedFieldTypeCodeI32()
+        && facts.ErrVariantOrdinal() == 1
+        && facts.ErrVariantTag() == 1
+        && facts.ErrPayloadCount() == 1
+        && facts.ErrPayloadTypeCode() == SourceResolvedFieldTypeCodeI8();
+}
+
+[Fact]
+fn bool SourceTryRoleFactsRejectMalformedEnums()
+{
+    stack ascii source = raw"""
+    enum Outcome
+    {
+        [Ok] Value(i32[0 max]),
+        Other(u8[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationRoleFacts facts = new();
+    return !TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, declarations, layouts, 0, facts)
+        && !facts.IsValid();
+}
+
+[Fact]
+fn bool SourceTryRoleFactsResolveEnumSuccessPayload()
+{
+    stack ascii source = raw"""
+    enum Outcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(u8[0 max])
+    }
+    enum Outer
+    {
+        [Ok] Value(Outcome),
+        [Err] Failed(u8[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationRoleFacts facts = new();
+    return TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, declarations, layouts, 1, facts)
+        && facts.IsValid()
+        && facts.OkPayloadCount() == 1
+        && facts.OkPayloadTypeCode() == SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(0)
+        && facts.ErrPayloadTypeCode() == SourceResolvedFieldTypeCodeI8();
+}
+
+[Fact]
+fn bool SourceTryCompatibilityAcceptsSameFailurePayloadType()
+{
+    stack ascii source = raw"""
+    enum IOError { Read }
+    enum FetchOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(IOError)
+    }
+    enum LoadOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(IOError)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    stack bool ok = TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 1, 2, facts);
+    stack SourceTryPropagationRoleFacts operandRoles = facts.OperandRoles();
+    stack SourceTryPropagationRoleFacts returnRoles = facts.ReturnRoles();
+    return ok
+        && facts.IsValid()
+        && facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.SameFailurePayloadType
+        && operandRoles.ErrVariantOrdinal() == 1
+        && returnRoles.ErrVariantOrdinal() == 1;
+}
+
+[Fact]
+fn bool SourceTryCompatibilityAcceptsUnitFailures()
+{
+    stack ascii source = raw"""
+    enum MaybeNumber
+    {
+        [Ok] Some(i32[0 max]),
+        [Err] None
+    }
+    enum MaybeByte
+    {
+        [Ok] Some(u8[0 max]),
+        [Err] None
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    return TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 0, 1, facts)
+        && facts.IsValid()
+        && facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.UnitFailure;
+}
+
+[Fact]
+fn bool SourceTryCompatibilityResolvesErrorFunnel()
+{
+    stack ascii source = raw"""
+    enum IOError { Read }
+    enum ParseError { Bad }
+    enum LoadError
+    {
+        Io from IOError,
+        Parse from ParseError
+    }
+    enum FetchOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(IOError)
+    }
+    enum LoadOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(LoadError)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    return TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 3, 4, facts)
+        && facts.IsValid()
+        && facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.FunnelFailurePayloadType
+        && facts.ErrorFunnelOwnerDeclarationIndex() == 2
+        && facts.ErrorFunnelVariantOrdinal() == 0
+        && facts.ErrorFunnelVariantTag() == 0;
+}
+
+[Fact]
+fn bool SourceTryCompatibilityRejectsMismatchWithoutFunnel()
+{
+    stack ascii source = raw"""
+    enum IOError { Read }
+    enum ParseError { Bad }
+    enum LoadError
+    {
+        Parse from ParseError
+    }
+    enum FetchOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(IOError)
+    }
+    enum LoadOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(LoadError)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    return !TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 3, 4, facts)
+        && !facts.IsValid();
+}
+
+[Fact]
+fn bool SourceTryCompatibilityRejectsUnitPayloadMix()
+{
+    stack ascii source = raw"""
+    enum IOError { Read }
+    enum FetchOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(IOError)
+    }
+    enum MaybeNumber
+    {
+        [Ok] Some(i32[0 max]),
+        [Err] None
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    return !TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 1, 2, facts)
+        && !facts.IsValid();
+}
+
+[Fact]
+fn bool SameOwnerSourceTryLoweringBranchesAndExtractsSuccessPayload()
+{
+    stack ascii source = raw"""
+    enum Outcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(i8[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 0, 0, facts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(1), 0);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 9);
+    stack MirValueId operand = MirEnumPayloadInsert(instrs, TypeIdOf(1), 0, 0, tagged, payload);
+    stack mut SourceTryPropagationLoweringResult lowered = new();
+    if (!TryLowerSameFamilySourceTryPropagation(
+        instrs,
+        blocks,
+        ranges,
+        facts,
+        operand,
+        0,
+        0,
+        MirBlockIdOf(4),
+        1,
+        MirType.I8,
+        true,
+        lowered))
+    {
+        return false;
+    }
+
+    stack MirInstruction tagRead = instrs.Get(4);
+    stack MirInstruction errConst = instrs.Get(5);
+    stack MirInstruction condition = instrs.Get(6);
+    stack MirInstruction successExtract = instrs.Get(7);
+    stack MirBlock entry = blocks.Get(lowered.EntryBlock().Index());
+    stack MirBlock errorBlock = blocks.Get(lowered.ErrorBlock().Index());
+    stack MirBlock continueBlock = blocks.Get(lowered.ContinueBlock().Index());
+    return lowered.IsValid()
+        && instrs.Count() == 7
+        && blocks.Count() == 3
+        && ranges.Count() == 3
+        && lowered.ErrorReturn().Equals(operand)
+        && lowered.SuccessValue().Index() == 7
+        && tagRead.Opcode() == MirOp.EnumTagRead
+        && tagRead.ResultType() == MirType.I8
+        && tagRead.OperandAIndex() == operand.Index()
+        && tagRead.OperandBIndex() == 1
+        && errConst.Opcode() == MirOp.ConstInt
+        && errConst.ResultType() == MirType.I8
+        && errConst.Immediate() == 1
+        && condition.Opcode() == MirOp.CmpEq
+        && condition.ResultType() == MirType.I1
+        && entry.Terminator() == MirTermKind.CondBranch
+        && entry.Slot0Index() == lowered.Condition().Index()
+        && entry.Slot1Index() == lowered.ErrorBlock().Index()
+        && entry.Slot2Index() == lowered.ContinueBlock().Index()
+        && errorBlock.Terminator() == MirTermKind.Return
+        && errorBlock.Slot0Index() == operand.Index()
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && continueBlock.Slot0Index() == 4
+        && successExtract.Opcode() == MirOp.EnumPayloadExtract
+        && successExtract.ResultType() == MirType.I32
+        && successExtract.OperandAIndex() == operand.Index()
+        && successExtract.OperandBIndex() == 1
+        && successExtract.OperandCIndex() == 0
+        && successExtract.OperandDIndex() == 0;
+}
+
+[Fact]
+fn bool SameFailurePayloadSourceTryLoweringBuildsReturnErr()
+{
+    stack ascii source = raw"""
+    enum Error { Bad }
+    enum FetchOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(Error)
+    }
+    enum LoadOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(Error)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 1, 2, facts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack MirValueId errorUnit = MirEnumVariantTag(instrs, TypeIdOf(1), 0);
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(2), 1);
+    stack MirValueId operand = MirEnumPayloadInsert(instrs, TypeIdOf(2), 1, 0, tagged, errorUnit);
+    stack mut SourceTryPropagationLoweringResult lowered = new();
+    if (!TryLowerSameFamilySourceTryPropagation(
+        instrs,
+        blocks,
+        ranges,
+        facts,
+        operand,
+        1,
+        2,
+        MirBlockIdOf(4),
+        1,
+        MirType.I8,
+        true,
+        lowered))
+    {
+        return false;
+    }
+
+    stack MirInstruction failureExtract = instrs.Get(7);
+    stack MirInstruction returnErrTag = instrs.Get(8);
+    stack MirInstruction returnErrInsert = instrs.Get(9);
+    stack MirInstruction successExtract = instrs.Get(10);
+    stack MirBlock errorBlock = blocks.Get(lowered.ErrorBlock().Index());
+    return lowered.IsValid()
+        && instrs.Count() == 10
+        && blocks.Count() == 3
+        && lowered.ErrorReturn().Index() == 9
+        && lowered.SuccessValue().Index() == 10
+        && errorBlock.Terminator() == MirTermKind.Return
+        && errorBlock.Slot0Index() == lowered.ErrorReturn().Index()
+        && failureExtract.Opcode() == MirOp.EnumPayloadExtract
+        && failureExtract.ResultType() == MirType.EnumValue
+        && failureExtract.OperandAIndex() == operand.Index()
+        && failureExtract.OperandBIndex() == 2
+        && failureExtract.OperandCIndex() == 1
+        && failureExtract.OperandDIndex() == 0
+        && returnErrTag.Opcode() == MirOp.EnumVariantTag
+        && returnErrTag.OperandAIndex() == 3
+        && returnErrTag.OperandBIndex() == 1
+        && returnErrInsert.Opcode() == MirOp.EnumPayloadInsert
+        && returnErrInsert.OperandAIndex() == 8
+        && returnErrInsert.OperandBIndex() == 7
+        && returnErrInsert.OperandCIndex() == 3
+        && returnErrInsert.OperandDIndex() == 1
+        && successExtract.Opcode() == MirOp.EnumPayloadExtract
+        && successExtract.ResultType() == MirType.I32
+        && successExtract.OperandAIndex() == operand.Index()
+        && successExtract.OperandBIndex() == 2
+        && successExtract.OperandCIndex() == 0
+        && successExtract.OperandDIndex() == 0;
+}
+
+[Fact]
+fn bool FunnelFailurePayloadSourceTryLoweringBuildsReturnErr()
+{
+    stack ascii source = raw"""
+    enum IOError { Read }
+    enum LoadError
+    {
+        Io from IOError
+    }
+    enum FetchOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(IOError)
+    }
+    enum LoadOutcome
+    {
+        [Ok] Value(i32[0 max]),
+        [Err] Failed(LoadError)
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable payloads = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    stack mut OwnedAscii sourceText = new();
+    if (sourceText.AppendAscii(source) != MemoryStatus.Ok
+        || !BuildTypedEnumTryInputsForSource(source, stream, declarations, payloads, layouts))
+    {
+        return false;
+    }
+
+    stack mut SourceTryPropagationCompatibilityFacts facts = new();
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 2, 3, facts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack MirValueId ioError = MirEnumVariantTag(instrs, TypeIdOf(1), 0);
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(3), 1);
+    stack MirValueId operand = MirEnumPayloadInsert(instrs, TypeIdOf(3), 1, 0, tagged, ioError);
+    stack mut SourceTryPropagationLoweringResult lowered = new();
+    if (!TryLowerSameFamilySourceTryPropagation(
+        instrs,
+        blocks,
+        ranges,
+        facts,
+        operand,
+        2,
+        3,
+        MirBlockIdOf(4),
+        1,
+        MirType.I8,
+        true,
+        lowered))
+    {
+        return false;
+    }
+
+    stack MirInstruction returnErrTag = instrs.Get(7);
+    stack MirInstruction failureExtract = instrs.Get(8);
+    stack MirInstruction funnelTag = instrs.Get(9);
+    stack MirInstruction funnelInsert = instrs.Get(10);
+    stack MirInstruction returnErrInsert = instrs.Get(11);
+    stack MirInstruction successExtract = instrs.Get(12);
+    stack MirBlock errorBlock = blocks.Get(lowered.ErrorBlock().Index());
+    return lowered.IsValid()
+        && facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.FunnelFailurePayloadType
+        && instrs.Count() == 12
+        && blocks.Count() == 3
+        && lowered.ErrorReturn().Index() == 11
+        && lowered.SuccessValue().Index() == 12
+        && errorBlock.Terminator() == MirTermKind.Return
+        && errorBlock.Slot0Index() == lowered.ErrorReturn().Index()
+        && returnErrTag.Opcode() == MirOp.EnumVariantTag
+        && returnErrTag.OperandAIndex() == 4
+        && returnErrTag.OperandBIndex() == 1
+        && failureExtract.Opcode() == MirOp.EnumPayloadExtract
+        && failureExtract.ResultType() == MirType.EnumValue
+        && failureExtract.OperandAIndex() == operand.Index()
+        && failureExtract.OperandBIndex() == 3
+        && failureExtract.OperandCIndex() == 1
+        && failureExtract.OperandDIndex() == 0
+        && funnelTag.Opcode() == MirOp.EnumVariantTag
+        && funnelTag.OperandAIndex() == 2
+        && funnelTag.OperandBIndex() == 0
+        && funnelInsert.Opcode() == MirOp.EnumPayloadInsert
+        && funnelInsert.OperandAIndex() == 9
+        && funnelInsert.OperandBIndex() == 8
+        && funnelInsert.OperandCIndex() == 2
+        && funnelInsert.OperandDIndex() == 0
+        && returnErrInsert.Opcode() == MirOp.EnumPayloadInsert
+        && returnErrInsert.OperandAIndex() == 7
+        && returnErrInsert.OperandBIndex() == 10
+        && returnErrInsert.OperandCIndex() == 4
+        && returnErrInsert.OperandDIndex() == 1
+        && successExtract.Opcode() == MirOp.EnumPayloadExtract
+        && successExtract.ResultType() == MirType.I32
+        && successExtract.OperandAIndex() == operand.Index()
+        && successExtract.OperandBIndex() == 3
+        && successExtract.OperandCIndex() == 0
+        && successExtract.OperandDIndex() == 0;
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); return Outcome.Value(value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorLocalToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); var doubled = value + 1; return Outcome.Value(doubled) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "add i32")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughNestedSuccessorLocalTryToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); var doubled = try Outcome.Value(value + 1); return Outcome.Value(doubled) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "add i32")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorSliceStoreToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main(mut i32[0 max][] view, u64[0 max] index) { var value = try Outcome.Value(7); view[index] = value; return Outcome.Value(view[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define { i64, i32 } @main({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr i8")
+        && !System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorScalarStorageToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut i32[0 max] slot = value; return Outcome.Value(slot) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorUninitializedScalarStorageToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut i32[0 max] slot; slot = value; return Outcome.Value(slot) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorFixedArrayStorageToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut i32[0 max][2] slots = { value, value + 1 }; return Outcome.Value(slots[1]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorUninitializedFixedArrayStorageToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut i32[0 max][2] slots; slots[0] = value; return Outcome.Value(slots[0]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorSliceDescriptorToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut i32[0 max][2] slots = { value, value + 1 }; stack mut i32[0 max][] view = slots; view[0] = value; return Outcome.Value(view[1]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorEnumStorageToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(i32[0 max]) } enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut Packet packet = Packet.Other(value); return Outcome.Value(value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "insertvalue {")
+        && System.Text.Contains(sink.View(), "store {")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryBindingThroughSuccessorConstructedObjectStorageToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "struct Box { i32[0 max] value; } enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = try Outcome.Value(7); stack mut Box box = new Box() { value = value }; return Outcome.Value(box.value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { var value = 0; value = try Outcome.Value(7); return Outcome.Value(value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersStorageTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { stack mut i32[0 max] value = 0; value = try Outcome.Value(7); return Outcome.Value(value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersUninitializedStorageTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { stack mut i32[0 max] value; value = try Outcome.Value(7); return Outcome.Value(value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleRejectsUninitializedStorageTryAssignmentTargetRead()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } fn Outcome main() { stack mut i32[0 max] value; value = try Outcome.Value(value); return Outcome.Value(value) }",
+        sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersConstructedObjectFieldTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersHeapConstructedObjectFieldTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { heap Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "@__stark_heap_alloc")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersNestedConstructedObjectFieldTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Inner { i32[0 max] value; } struct Box { Inner inner; } fn Outcome main() { stack Box box = new Box(); box.inner.value = try Outcome.Value(7); return Outcome.Value(box.inner.value) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersIndexedConstructedObjectFieldTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) } struct Box { bool flag; i32[min max][3] values; } fn Outcome main(u8[0 2] index) { stack mut Box box = new Box(); box.values[index] = try Outcome.Value(7); return Outcome.Value(box.values[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [16 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), ".scale = mul i64")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersNestedIndexedConstructedObjectFieldTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) } struct Inner { i32[min max][3] values; bool tail; } struct Box { bool prefix; Inner inner; } fn Outcome main(u8[0 2] index) { stack mut Box box = new Box(); box.inner.values[index] = try Outcome.Value(7); return Outcome.Value(box.inner.values[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [20 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), ".scale = mul i64")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersHeapIndexedConstructedObjectFieldTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) } struct Box { bool flag; i32[min max][3] values; } fn Outcome main(u8[0 2] index) { heap mut Box box = new Box(); box.values[index] = try Outcome.Value(7); return Outcome.Value(box.values[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "@__stark_heap_alloc")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), ".scale = mul i64")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersSourceSliceElementTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) } fn Outcome main(mut i32[min max][] view, u64[0 max] index) { view[index] = try Outcome.Value(7); return Outcome.Value(view[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define { i64, i32 } @main({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr i8")
+        && !System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalFixedArrayElementTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) } fn Outcome main(u8[0 2] index) { stack mut i32[min max][3] values = { 1, 2, 3 }; values[index] = try Outcome.Value(7); return Outcome.Value(values[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), ".scale = mul i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersLocalSliceElementTryAssignmentToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) } fn Outcome main(u8[0 2] index) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; view[index] = try Outcome.Value(7); return Outcome.Value(view[index]) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), ".scale = mul i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool SourceModuleLowersReturnTryExpressionToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } enum Inner { [Ok] Value(Outcome), [Err] Failed(u8[0 max]) } fn Outcome main() { return try Inner.Value(Outcome.Value(7)) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {");
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceTryLocalBindingMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); return Outcome.Value(value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorLocalMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); var doubled = value + 1; return Outcome.Value(doubled) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawSuccessAdd = false;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+        else if (opcode == MirOp.Add)
+        {
+            sawSuccessAdd = sawSuccessAdd
+                || MirValueType(instrs, value.Index()) == MirType.I32;
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract
+        && sawSuccessAdd;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingNestedSuccessorLocalTryMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); var doubled = try Outcome.Value(value + 1); return Outcome.Value(doubled) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut u32[0 max] tagReadCount = 0;
+    stack mut u32[0 max] conditionCount = 0;
+    stack mut u32[0 max] successExtractCount = 0;
+    stack mut bool sawSuccessAdd = false;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.EnumTagRead)
+        {
+            tagReadCount += 1;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            conditionCount += 1;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            if (MirOperandCImmediateOf(instrs, value) == 0
+                && MirOperandDImmediateOf(instrs, value) == 0
+                && MirValueType(instrs, value.Index()) == MirType.I32)
+            {
+                successExtractCount += 1;
+            }
+        }
+        else if (opcode == MirOp.Add)
+        {
+            sawSuccessAdd = sawSuccessAdd
+                || MirValueType(instrs, value.Index()) == MirType.I32;
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock nestedEntry = blocks.Get(4);
+    stack MirBlock nestedErrorBlock = blocks.Get(5);
+    stack MirBlock nestedContinueBlock = blocks.Get(6);
+    stack MirBlock finalBlock = blocks.Get(7);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 7
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && nestedEntry.Terminator() == MirTermKind.CondBranch
+        && nestedErrorBlock.Terminator() == MirTermKind.Return
+        && nestedContinueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && tagReadCount == 2
+        && conditionCount == 2
+        && successExtractCount == 2
+        && sawSuccessAdd;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorSliceStoreMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main(mut i32[0 max][] view, u64[0 max] index) { var value = try Outcome.Value(7); view[index] = value; return Outcome.Value(view[index]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawSliceBase = false;
+    stack mut bool sawSliceLength = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.SliceParamBase)
+        {
+            sawSliceBase = true;
+        }
+        else if (opcode == MirOp.SliceParamLength)
+        {
+            sawSliceLength = true;
+        }
+        else if (opcode == MirOp.PtrIndexOffsetUnbounded)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawSliceBase
+        && sawSliceLength
+        && indexedPointerCount >= 2
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorScalarStorageMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut i32[0 max] slot = value; return Outcome.Value(slot) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 4
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorUninitializedScalarStorageMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut i32[0 max] slot; slot = value; return Outcome.Value(slot) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 4
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorFixedArrayStorageMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut i32[0 max][2] slots = { value, value + 1 }; return Outcome.Value(slots[1]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 8
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrIndexOffset)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount == 2
+        && indexedPointerCount >= 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorUninitializedFixedArrayStorageMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut i32[0 max][2] slots; slots[0] = value; return Outcome.Value(slots[0]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 8
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrIndexOffset)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount == 1
+        && indexedPointerCount >= 2
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorSliceDescriptorMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut i32[0 max][2] slots = { value, value + 1 }; stack mut i32[0 max][] view = slots; view[0] = value; return Outcome.Value(view[1]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 8
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrIndexOffset)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount == 3
+        && indexedPointerCount >= 2
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorEnumStorageMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Packet { Empty, Other(i32[0 max]) }\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut Packet packet = Packet.Other(value); return Outcome.Value(value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawEnumStore = false;
+    stack mut bool sawEnumPayload = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 8
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StoreEnumPtr)
+        {
+            sawEnumStore = sawEnumStore
+                || (MirOperandCImmediateOf(instrs, value) == 1
+                    && MirOperandDImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumPayloadInsert)
+        {
+            sawEnumPayload = sawEnumPayload
+                || (MirOperandCImmediateOf(instrs, value) == 1
+                    && MirOperandDImmediateOf(instrs, value) == 1
+                    && MirImmediateOf(instrs, value) == 0);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && sawEnumStore
+        && sawEnumPayload
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalTryBindingSuccessorConstructedObjectStorageMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nstruct Box { i32[0 max] value; }\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = try Outcome.Value(7); stack mut Box box = new Box() { value = value }; return Outcome.Value(box.value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawFieldPointer = false;
+    stack mut bool sawFieldStore = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 4
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrOffset)
+        {
+            sawFieldPointer = sawFieldPointer
+                || (MirImmediateOf(instrs, value) == 0
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            sawFieldStore = sawFieldStore
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandCImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && sawFieldPointer
+        && sawFieldStore
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { var value = 0; value = try Outcome.Value(7); return Outcome.Value(value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceStorageTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { stack mut i32[0 max] value = 0; value = try Outcome.Value(7); return Outcome.Value(value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 4
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount >= 2
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceUninitializedStorageTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { stack mut i32[0 max] value; value = try Outcome.Value(7); return Outcome.Value(value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 4
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceConstructedObjectFieldTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nstruct Box { i32[0 max] value; }\nfn Outcome Main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawFieldPointer = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 4
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrOffset)
+        {
+            sawFieldPointer = sawFieldPointer
+                || (MirImmediateOf(instrs, value) == 0
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && sawFieldPointer
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceIndexedConstructedObjectFieldTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) }\nstruct Box { bool flag; i32[min max][3] values; }\nfn Outcome Main(u8[0 2] index) { stack mut Box box = new Box(); box.values[index] = try Outcome.Value(7); return Outcome.Value(box.values[index]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 16
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrIndexOffset)
+        {
+            if (MirImmediateOf(instrs, value) == 4
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && indexedPointerCount >= 2
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceSliceElementTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main(mut i32[min max][] view, u64[0 max] index) { view[index] = try Outcome.Value(7); return Outcome.Value(view[index]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawSliceBase = false;
+    stack mut bool sawSliceLength = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.SliceParamBase)
+        {
+            sawSliceBase = true;
+        }
+        else if (opcode == MirOp.SliceParamLength)
+        {
+            sawSliceLength = true;
+        }
+        else if (opcode == MirOp.PtrIndexOffsetUnbounded)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawSliceBase
+        && sawSliceLength
+        && indexedPointerCount >= 2
+        && storeCount == 1
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalFixedArrayElementTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main(u8[0 2] index) { stack mut i32[min max][3] values = { 1, 2, 3 }; values[index] = try Outcome.Value(7); return Outcome.Value(values[index]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 12
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrIndexOffset)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && indexedPointerCount >= 2
+        && storeCount >= 4
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveLocalSliceElementTryAssignmentMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[min max]), [Err] Failed(u8[0 max]) }\nfn Outcome Main(u8[0 2] index) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; view[index] = try Outcome.Value(7); return Outcome.Value(view[index]) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawStackAlloc = false;
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessExtract = false;
+    stack mut bool sawReturnLoad = false;
+    stack mut u32[0 max] indexedPointerCount = 0;
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.StackAlloc)
+        {
+            sawStackAlloc = sawStackAlloc
+                || (MirImmediateOf(instrs, value) == 12
+                    && MirOperandAImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.PtrIndexOffset)
+        {
+            if (MirImmediateOf(instrs, value) == 0
+                && MirOperandCImmediateOf(instrs, value) == 4
+                && MirOperandDImmediateOf(instrs, value) == 4
+                && MirValueType(instrs, value.Index()) == MirType.Ptr)
+            {
+                indexedPointerCount += 1;
+            }
+        }
+        else if (opcode == MirOp.StorePtr)
+        {
+            if (MirValueType(instrs, value.Index()) == MirType.I32
+                && MirOperandCImmediateOf(instrs, value) == 4)
+            {
+                storeCount += 1;
+            }
+        }
+        else if (opcode == MirOp.LoadPtr)
+        {
+            sawReturnLoad = sawReturnLoad
+                || (MirValueType(instrs, value.Index()) == MirType.I32
+                    && MirOperandBImmediateOf(instrs, value) == 4);
+        }
+        else if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract)
+        {
+            sawSuccessExtract = sawSuccessExtract
+                || (MirOperandCImmediateOf(instrs, value) == 0
+                    && MirOperandDImmediateOf(instrs, value) == 0
+                    && MirValueType(instrs, value.Index()) == MirType.I32);
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && sawStackAlloc
+        && indexedPointerCount >= 2
+        && storeCount >= 4
+        && sawReturnLoad
+        && sawTagRead
+        && sawCondition
+        && sawSuccessExtract;
+}
+
+[Fact]
+fn bool PackageTablesPreserveSourceReturnTryMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) }\nenum Inner { [Ok] Value(Outcome), [Err] Failed(u8[0 max]) }\nfn Outcome Main() { return try Inner.Value(Outcome.Value(7)) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut bool sawTagRead = false;
+    stack mut bool sawCondition = false;
+    stack mut bool sawSuccessEnumExtract = false;
+    stack mut u32[0 max] successExtractIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        stack MirOp opcode = MirOpcodeOf(instrs, value);
+        if (opcode == MirOp.EnumTagRead)
+        {
+            sawTagRead = true;
+        }
+        else if (opcode == MirOp.CmpEq)
+        {
+            sawCondition = true;
+        }
+        else if (opcode == MirOp.EnumPayloadExtract
+            && MirValueType(instrs, value.Index()) == MirType.EnumValue
+            && MirOperandCImmediateOf(instrs, value) == 0
+            && MirOperandDImmediateOf(instrs, value) == 0)
+        {
+            sawSuccessEnumExtract = true;
+            successExtractIndex = value.Index();
+        }
+
+        index = index + 1;
+    }
+
+    stack MirBlock entry = blocks.Get(1);
+    stack MirBlock errorBlock = blocks.Get(2);
+    stack MirBlock continueBlock = blocks.Get(3);
+    stack MirBlock finalBlock = blocks.Get(4);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && entry.Terminator() == MirTermKind.CondBranch
+        && errorBlock.Terminator() == MirTermKind.Return
+        && continueBlock.Terminator() == MirTermKind.Branch
+        && finalBlock.Terminator() == MirTermKind.Return
+        && finalBlock.Slot0Index() == successExtractIndex
+        && sawTagRead
+        && sawCondition
+        && sawSuccessEnumExtract;
 }
 
 [Fact]
@@ -5976,6 +8965,50 @@ fn bool PackageTablesPreserveTerminalIfMutableStackEnumLocalAssignmentMirFacts()
         && blocks.Count() == 3
         && storeCount == 2
         && sawAssignedPayload;
+}
+
+[Fact]
+fn bool PackageTablesPreserveNestedIfStackEnumLocalAssignmentsMirFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nenum Packet { Empty, Other(u32[0 max]) }\nfn i64 Pick(bool outer, bool inner) { stack mut Packet p = Packet.Empty; if outer { if inner { p = Packet.Other(1); } else { p = Packet.Other(2); } } else { p = Packet.Empty; } return 7 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+
+    stack mut u32[0 max] storeCount = 0;
+    stack mut u32[0 max] payloadCount = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 1;
+    while willexit (index <= instrs.Count())
+    {
+        stack MirValueId value = MirValueIdOf((u32[0 max])index);
+        if (MirOpcodeOf(instrs, value) == MirOp.StoreEnumPtr
+            && MirOperandCImmediateOf(instrs, value) == 1
+            && MirOperandDImmediateOf(instrs, value) == 4)
+        {
+            storeCount = storeCount + 1;
+        }
+        else if (MirOpcodeOf(instrs, value) == MirOp.EnumPayloadInsert
+            && MirOperandCImmediateOf(instrs, value) == 1
+            && MirOperandDImmediateOf(instrs, value) == 1
+            && MirImmediateOf(instrs, value) == 0)
+        {
+            payloadCount = payloadCount + 1;
+        }
+
+        index = index + 1;
+    }
+
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() >= 7
+        && storeCount == 4
+        && payloadCount == 2;
 }
 
 [Fact]
@@ -6908,6 +9941,150 @@ fn bool CompileFunctionRawPointerParameterDerefLoadsBool()
 }
 
 [Fact]
+fn bool CompileFunctionNestedRawPointerParameterDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<rawptr<i32[min max]>> p) { return **p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load ptr, ptr %p0, align 8")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedRawPointerParameterDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<rawmutptr<i32[min max]>> p) { **p = 7; return **p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load ptr, ptr %p0, align 8")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedRawPointerReadonlyDerefStoreRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<rawptr<i32[min max]>> p) { **p = 7; return **p }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedRawPointerDerefAliasKeepsPointeeFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<rawptr<i32[min max]>> p) { var q = *p; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "load ptr, ptr %p0, align 8")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedRawPointerStorageLocalKeepsPointeeFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<rawptr<i32[min max]>> p) { stack rawptr<i32[min max]> q = *p; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load ptr, ptr %p0, align 8")
+        && System.Text.Contains(sink.View(), "store ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAggregateRawPointerFieldDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Pair { i8[min max] tag; i32[min max] value; } unsafe fn i32[min max] main(rawptr<Pair> p) { return (*p).value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %p0, i64 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAggregateRawPointerNestedFieldDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Inner { i32[min max] value; } struct Outer { i8[min max] tag; Inner inner; } unsafe fn i32[min max] main(rawptr<Outer> p) { return (*p).inner.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %p0, i64 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAggregateRawPointerFieldDerefAliasKeepsLayoutFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Pair { i8[min max] tag; i32[min max] value; } unsafe fn i32[min max] main(rawptr<Pair> p) { var q = p; return (*q).value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %p0, i64 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAggregateRawPointerStorageLocalKeepsLayoutFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Pair { i8[min max] tag; i32[min max] value; } unsafe fn i32[min max] main(rawptr<Pair> p) { stack rawptr<Pair> q = p; return (*q).value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr")
+        && System.Text.Contains(sink.View(), "i64 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAggregateRawPointerFieldDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Pair { i8[min max] tag; i32[min max] value; } unsafe fn i32[min max] main(rawmutptr<Pair> p) { (*p).value = 7; return (*p).value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %p0, i64 4")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAggregateRawPointerReadonlyFieldStoreRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("struct Pair { i8[min max] tag; i32[min max] value; } unsafe fn i32[min max] main(rawptr<Pair> p) { (*p).value = 7; return (*p).value }", sink);
+}
+
+[Fact]
 fn bool CompileFunctionRawPointerParameterDerefStoresI8()
 {
     stack mut OwnedAscii sink = new();
@@ -7248,6 +10425,36 @@ fn bool CompileFunctionIfStatementBoundedRawPointerAliasIndexedDerefLoadsI32()
 }
 
 [Fact]
+fn bool CompileFunctionNestedMultiLocalIfStatementBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { var q = p; var keep = 0; if flag { if index < 2 { q = p; keep = 1; } else { keep = 2; q = p; } } else { q = p; keep = 3; } return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionBothNestedMultiLocalIfStatementBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { var q = p; var keep = 0; if flag { if index < 2 { q = p; keep = 1; } else { keep = 2; q = p; } } else { if index < 3 { keep = 3; q = p; } else { q = p; keep = 4; } } return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool CompileFunctionSwitchBoundedRawPointerAliasIndexedDerefLoadsI32()
 {
     stack mut OwnedAscii sink = new();
@@ -7267,6 +10474,13 @@ fn bool CompileFunctionIfStatementRawPointerAliasClearsBoundsAfterUnboundedArm()
 {
     stack mut OwnedAscii sink = new();
     return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, rawptr<i32[min max]> other, u8[0 3] index, bool flag) { var q = p; if flag q = p else q = other; return *(&q[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedMultiLocalIfStatementRawPointerAliasClearsBoundsAfterUnboundedArm()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, rawptr<i32[min max]> other, u8[0 3] index, bool flag) { var q = p; var keep = 0; if flag { if index < 2 { q = p; keep = 1; } else { keep = 2; q = other; } } else { q = p; keep = 3; } return *(&q[index]); }", sink);
 }
 
 [Fact]
@@ -7299,6 +10513,197 @@ fn bool CompileFunctionRawPointerParameterDerefStoresInSwitchArms()
         && System.Text.Contains(sink.View(), "store i32 13, ptr %p0, align 4")
         && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
         && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresInNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool outer, bool inner) { if outer { if inner { *p = 11; } else { *p = 13; } } else { *p = 17; } return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1, i1 %p2)")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresInBothNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool outer, bool inner) { if outer { if inner { *p = 11; } else { *p = 13; } } else { if inner { *p = 17; } else { *p = 19; } } return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1, i1 %p2)")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 19, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionStackScalarStoresInNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(bool outer, bool inner) { stack mut i32[min max] value = 0; if outer { if inner { value = 4; } else { value = 7; } } else { value = 9; } return value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 0")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionObjectFieldStoresInNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[min max] value; bool flag; } fn i32[min max] main(bool outer, bool inner) { stack Box box = new Box(); if outer { if inner { box.value = 4; } else { box.value = 7; } } else { box.value = 9; } return box.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceStoresInNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(i64[0 2] index, bool outer, bool inner) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; if outer { if inner { view[index] = 10; } else { view[index] = 20; } } else { view[index] = 30; } return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 1")
+        && System.Text.Contains(sink.View(), "store i32 2")
+        && System.Text.Contains(sink.View(), "store i32 3")
+        && System.Text.Contains(sink.View(), "store i32 10")
+        && System.Text.Contains(sink.View(), "store i32 20")
+        && System.Text.Contains(sink.View(), "store i32 30")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool PackageTablesPreserveRecursiveNestedStorageMutationIfStatement()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(bool outer, bool inner, bool deep) { stack mut i64[min max] value = 0; if outer { if inner { if deep { value = 1; } else { value = 2; } } else { value = 3; } } else { if inner { value = 4; } else { if deep { value = 5; } else { value = 6; } } } return value }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 16
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 16
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 20
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(11)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(12)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(13)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(14)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(15)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(16)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresInRecursiveNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool outer, bool inner, bool deep) { if outer { if inner { if deep { *p = 11; } else { *p = 13; } } else { *p = 17; } } else { if inner { *p = 19; } else { if deep { *p = 23; } else { *p = 29; } } } return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1, i1 %p2, i1 %p3)")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 19, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 23, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 29, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionStackScalarStoresInRecursiveNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(bool outer, bool inner, bool deep) { stack mut i32[min max] value = 0; if outer { if inner { if deep { value = 4; } else { value = 7; } } else { value = 9; } } else { if inner { value = 11; } else { if deep { value = 13; } else { value = 15; } } } return value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 0")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "store i32 11")
+        && System.Text.Contains(sink.View(), "store i32 13")
+        && System.Text.Contains(sink.View(), "store i32 15")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionObjectFieldStoresInRecursiveNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[min max] value; bool flag; } fn i32[min max] main(bool outer, bool inner, bool deep) { stack Box box = new Box(); if outer { if inner { if deep { box.value = 4; } else { box.value = 7; } } else { box.value = 9; } } else { if inner { box.value = 11; } else { if deep { box.value = 13; } else { box.value = 15; } } } return box.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "store i32 11")
+        && System.Text.Contains(sink.View(), "store i32 13")
+        && System.Text.Contains(sink.View(), "store i32 15")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceStoresInRecursiveNestedIfArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(i64[0 2] index, bool outer, bool inner, bool deep) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; if outer { if inner { if deep { view[index] = 10; } else { view[index] = 20; } } else { view[index] = 30; } } else { if inner { view[index] = 40; } else { if deep { view[index] = 50; } else { view[index] = 60; } } } return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 1")
+        && System.Text.Contains(sink.View(), "store i32 2")
+        && System.Text.Contains(sink.View(), "store i32 3")
+        && System.Text.Contains(sink.View(), "store i32 10")
+        && System.Text.Contains(sink.View(), "store i32 20")
+        && System.Text.Contains(sink.View(), "store i32 30")
+        && System.Text.Contains(sink.View(), "store i32 40")
+        && System.Text.Contains(sink.View(), "store i32 50")
+        && System.Text.Contains(sink.View(), "store i32 60")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -8498,6 +11903,34 @@ fn bool PtrIndexOffsetGeneratesPointerFactsAndCarriesLayout()
 }
 
 [Fact]
+fn bool ResolvedStoragePlaceAddressHelperBuildsDirectAndIndexedAddresses()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId alloc = MirStackAlloc(instrs, 64, 16);
+    stack MirValueId index = MirConstIntTyped(instrs, MirType.I64, 3);
+    stack MirValueId direct = LowerResolvedStoragePlaceAddress(instrs, alloc, MirValueIdOf(0), 0, 8, 0, 8, true);
+    stack MirValueId indexed = LowerResolvedStoragePlaceAddress(instrs, alloc, index, 2, 12, 4, 4, true);
+    stack MirValueId unbounded = LowerResolvedStoragePlaceAddress(instrs, alloc, index, 2, 20, 2, 2, false);
+
+    return MirOpcodeOf(instrs, direct) == MirOp.PtrOffset
+        && MirOperandAOf(instrs, direct).Equals(alloc)
+        && MirImmediateOf(instrs, direct) == 8
+        && MirOperandBImmediateOf(instrs, direct) == 8
+        && MirOpcodeOf(instrs, indexed) == MirOp.PtrIndexOffset
+        && MirOperandAOf(instrs, indexed).Equals(alloc)
+        && MirOperandBOf(instrs, indexed).Equals(index)
+        && MirOperandCImmediateOf(instrs, indexed) == 4
+        && MirOperandDImmediateOf(instrs, indexed) == 4
+        && MirImmediateOf(instrs, indexed) == 12
+        && MirOpcodeOf(instrs, unbounded) == MirOp.PtrIndexOffsetUnbounded
+        && MirOperandAOf(instrs, unbounded).Equals(alloc)
+        && MirOperandBOf(instrs, unbounded).Equals(index)
+        && MirOperandCImmediateOf(instrs, unbounded) == 2
+        && MirOperandDImmediateOf(instrs, unbounded) == 2
+        && MirImmediateOf(instrs, unbounded) == 20;
+}
+
+[Fact]
 fn bool PointerLoadStoreRecordOperandsAndTypes()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -8538,6 +11971,55 @@ fn bool EnumConstructionInstructionsCarryPayloadLayoutFacts()
 }
 
 [Fact]
+fn bool EnumExtractionInstructionsCarryOwnerAndTypeFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(7), 2);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 99);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(7), 2, 0, tagged, payload);
+    stack MirValueId tagRead = MirEnumTagRead(instrs, TypeIdOf(7), inserted, MirType.I8);
+    stack MirValueId extracted = MirEnumPayloadExtract(instrs, TypeIdOf(7), 2, 0, inserted, MirType.I32);
+    return MirOpcodeOf(instrs, tagRead) == MirOp.EnumTagRead
+        && MirValueType(instrs, tagRead.Index()) == MirType.I8
+        && MirOperandAOf(instrs, tagRead).Equals(inserted)
+        && MirOperandBImmediateOf(instrs, tagRead) == 7
+        && MirOpcodeOf(instrs, extracted) == MirOp.EnumPayloadExtract
+        && MirValueType(instrs, extracted.Index()) == MirType.I32
+        && MirOperandAOf(instrs, extracted).Equals(inserted)
+        && MirOperandBImmediateOf(instrs, extracted) == 7
+        && MirOperandCImmediateOf(instrs, extracted) == 2
+        && MirOperandDImmediateOf(instrs, extracted) == 0;
+}
+
+[Fact]
+fn bool BuildMirValueRangeFactsForEnumExtractionInstructions()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(7), 1);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I16, 42);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(7), 1, 0, tagged, payload);
+    stack MirValueId tagRead = MirEnumTagRead(instrs, TypeIdOf(7), inserted, MirType.I1);
+    stack MirValueId extracted = MirEnumPayloadExtract(instrs, TypeIdOf(7), 1, 0, inserted, MirType.I16);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts tagFacts = ValueFactsForMirValue(valueFacts, tagRead);
+    stack ValueFacts payloadFacts = ValueFactsForMirValue(valueFacts, extracted);
+    return tagFacts.HasIntegerRange()
+        && tagFacts.IntegerRangeLower() == 1
+        && tagFacts.IntegerRangeUpperExclusive() == 2
+        && payloadFacts.HasIntegerRange()
+        && payloadFacts.IntegerRangeLower() == 42
+        && payloadFacts.IntegerRangeUpperExclusive() == 43;
+}
+
+[Fact]
 fn bool EnumPointerMemoryInstructionsCarryOwnerFacts()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -8573,6 +12055,27 @@ fn bool EmitsMirTextForEnumConstructionInstructions()
         case MemoryStatus.Ok:
             return MirOpcodeOf(instrs, inserted) == MirOp.EnumPayloadInsert
                 && LlvmTextEquals(sink, "v1 = enum.variant type 7, variant 2\nv2 = const 99\nv3 = enum.payload.insert v1, v2, type 7, variant 2, payload 0\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsMirTextForEnumExtractionInstructions()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(7), 2);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 99);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(7), 2, 0, tagged, payload);
+    stack MirValueId tagRead = MirEnumTagRead(instrs, TypeIdOf(7), inserted, MirType.I8);
+    stack MirValueId extracted = MirEnumPayloadExtract(instrs, TypeIdOf(7), 2, 0, inserted, MirType.I32);
+    stack mut OwnedAscii sink = new();
+    switch (EmitMirInstructions(instrs, 1, 5, sink))
+    {
+        case MemoryStatus.Ok:
+            return MirOpcodeOf(instrs, tagRead) == MirOp.EnumTagRead
+                && MirOpcodeOf(instrs, extracted) == MirOp.EnumPayloadExtract
+                && LlvmTextEquals(sink, "v1 = enum.variant type 7, variant 2\nv2 = const 99\nv3 = enum.payload.insert v1, v2, type 7, variant 2, payload 0\nv4 = enum.tag.read v3, type 7\nv5 = enum.payload.extract v3, type 7, variant 2, payload 0\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -8648,6 +12151,49 @@ fn bool EmitsLlvmForEnumConstructionInstructionsFromLayoutFacts()
     return LlvmTextEquals(
         sink,
         "  %v1 = insertvalue { i8, i8, [2 x i8], i32 } zeroinitializer, i8 2, 0\n  %v2 = add i32 0, 99\n  %v3 = insertvalue { i8, i8, [2 x i8], i32 } %v1, i32 %v2, 3\n");
+}
+
+[Fact]
+fn bool EmitsLlvmForEnumExtractionInstructionsFromLayoutFacts()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(1), 2);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 99);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(1), 2, 0, tagged, payload);
+    stack MirValueId tagRead = MirEnumTagRead(instrs, TypeIdOf(1), inserted, MirType.I8);
+    stack MirValueId extracted = MirEnumPayloadExtract(instrs, TypeIdOf(1), 2, 0, inserted, MirType.I32);
+    stack mut OwnedAscii sink = new();
+    for willexit (stack mut u32[0 max] index = 1; index <= 5; index += 1)
+    {
+        switch (EmitLlvmInstructionWithEnumLayouts(instrs, facts, sink, index))
+        {
+            case MemoryStatus.Err(var emitError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+    }
+
+    return MirOpcodeOf(instrs, tagRead) == MirOp.EnumTagRead
+        && MirOpcodeOf(instrs, extracted) == MirOp.EnumPayloadExtract
+        && LlvmTextEquals(
+            sink,
+            "  %v1 = insertvalue { i8, i8, [2 x i8], i32 } zeroinitializer, i8 2, 0\n  %v2 = add i32 0, 99\n  %v3 = insertvalue { i8, i8, [2 x i8], i32 } %v1, i32 %v2, 3\n  %v4 = extractvalue { i8, i8, [2 x i8], i32 } %v3, 0\n  %v5 = extractvalue { i8, i8, [2 x i8], i32 } %v3, 3\n");
 }
 
 [Fact]
@@ -8955,6 +12501,36 @@ fn bool BinaryRoundTripsEnumConstructionInstructions()
         && insertBack.OperandCIndex() == 7
         && insertBack.OperandDIndex() == 2
         && insertBack.Immediate() == 0;
+}
+
+[Fact]
+fn bool BinaryRoundTripsEnumExtractionInstructions()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(7), 2);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 99);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(7), 2, 0, tagged, payload);
+    stack MirValueId tagRead = MirEnumTagRead(instrs, TypeIdOf(7), inserted, MirType.I8);
+    stack MirValueId extracted = MirEnumPayloadExtract(instrs, TypeIdOf(7), 2, 0, inserted, MirType.I32);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 5, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack MirInstruction tagReadBack = back.Get(4);
+    stack MirInstruction extractBack = back.Get(5);
+    return back.Count() == 5
+        && tagRead.Index() == 4
+        && extracted.Index() == 5
+        && tagReadBack.Opcode() == MirOp.EnumTagRead
+        && tagReadBack.ResultType() == MirType.I8
+        && tagReadBack.OperandAIndex() == inserted.Index()
+        && tagReadBack.OperandBIndex() == 7
+        && extractBack.Opcode() == MirOp.EnumPayloadExtract
+        && extractBack.ResultType() == MirType.I32
+        && extractBack.OperandAIndex() == inserted.Index()
+        && extractBack.OperandBIndex() == 7
+        && extractBack.OperandCIndex() == 2
+        && extractBack.OperandDIndex() == 0;
 }
 
 [Fact]
@@ -9653,6 +13229,279 @@ fn bool BracedBooleanLocalIfStatementAssignmentThenReturnExpressionPreservesRang
         && System.Text.Contains(s.View(), "zext i1")
         && ClangVerifiesLlvmText(s)
         && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { y = x < 5; } else { y = x == 10; } return y == (x < 5) } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[8 15] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { a = 4; b = 3; } else { a = 10; b = 4; } return a + b + 1 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 8, 16) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[8 14] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { a = 4; b = 3; } else { a = 10; b = 4; } return a + b + 1 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesSourceOrderMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[11 25] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { b = 3; a = 8; } else { b = 4; a = 21; } return a + b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 11, 26) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[11 24] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { b = 3; a = 8; } else { b = 4; a = 21; } return a + b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var a = 0 == 0; var b = 0 == 0; if x < 10 { a = x < 5; b = x == 3; } else { b = x == 10; a = x > 100; } return a == b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var a = 0 == 0; var b = 0 == 0; if x < 10 { a = x < 5; b = x == 3; } else { b = x == 10; a = x > 100; } return a == b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesArmLocalMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[14 26] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { var base = 3; var step = base + 2; b = step + 1; a = base + step; } else { var base = 7; var step = base + 3; a = step + base; b = step - 1; } return a + b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 14, 27) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[14 25] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { var base = 3; var step = base + 2; b = step + 1; a = base + step; } else { var base = 7; var step = base + 3; a = step + base; b = step - 1; } return a + b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanArmLocalMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var a = 0 == 0; var b = 0 == 0; if x < 10 { var low = x < 5; var same = low == (x < 5); a = same; b = low; } else { var high = x > 100; var same = high == (x == 10); b = same; a = high; } return a == b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var a = 0 == 0; var b = 0 == 0; if x < 10 { var low = x < 5; var same = low == (x < 5); a = same; b = low; } else { var high = x > 100; var same = high == (x == 10); b = same; a = high; } return a == b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesNestedThenArmMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[7 25] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { if x < 5 { a = 3; b = 4; } else { b = 6; a = 8; } } else { a = 20; b = 5; } return a + b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 7, 26) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[7 24] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { if x < 5 { a = 3; b = 4; } else { b = 6; a = 8; } } else { a = 20; b = 5; } return a + b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesNestedElseArmMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[3 15] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { a = 1; b = 2; } else { if x < 20 { b = 4; a = 3; } else { a = 7; b = 8; } } return a + b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 3, 16) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[3 14] pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { a = 1; b = 2; } else { if x < 20 { b = 4; a = 3; } else { a = 7; b = 8; } } return a + b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanBothNestedArmsMultiLocalIfStatementAssignmentsThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var a = 0 == 0; var b = 0 == 0; if x < 10 { if x < 5 { a = x == 3; b = x < 4; } else { b = x == 7; a = x > 0; } } else { if x < 20 { a = x == 11; b = x == 12; } else { b = x > 100; a = x < 0; } } return a == b } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var a = 0 == 0; var b = 0 == 0; if x < 10 { if x < 5 { a = x == 3; b = x < 4; } else { b = x == 7; a = x > 0; } } else { if x < 20 { a = x == 11; b = x == 12; } else { b = x > 100; a = x < 0; } } return a == b } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesArmLocalSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[7 18] pick(i64[min max] x) { var y = 0; if x < 10 { var base = 3; var step = base + 2; y = step + 1; } else { var base = 7; var step = base + 9; y = step + 1; } return y + 1 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 7, 19) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[7 17] pick(i64[min max] x) { var y = 0; if x < 10 { var base = 3; var step = base + 2; y = step + 1; } else { var base = 7; var step = base + 9; y = step + 1; } return y + 1 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanArmLocalSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { var low = x < 5; var same = low == (x < 5); y = same; } else { var high = x > 100; var same = high == (x == 10); y = same; } return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { var low = x < 5; var same = low == (x < 5); y = same; } else { var high = x > 100; var same = high == (x == 10); y = same; } return y } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesNestedThenArmSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[2 4] pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { y = 1; } else { y = 2; } } else { y = 3; } return y + 1 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 2, 5) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[2 3] pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { y = 1; } else { y = 2; } } else { y = 3; } return y + 1 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesNestedElseArmSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[2 4] pick(i64[min max] x) { var y = 0; if x < 10 { y = 1; } else { if x < 20 { y = 2; } else { y = 3; } } return y + 1 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 2, 5) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[2 3] pick(i64[min max] x) { var y = 0; if x < 10 { y = 1; } else { if x < 20 { y = 2; } else { y = 3; } } return y + 1 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanNestedThenArmSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { if x < 5 { y = x == 3; } else { y = x == 7; } } else { y = x > 100; } return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { if x < 5 { y = x == 3; } else { y = x == 7; } } else { y = x > 100; } return y } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesNestedBranchLocalSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[3 9] pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { var base = 1; y = base + 1; } else { var base = 4; y = base; } } else { var base = 8; y = base; } return y + 1 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 3, 10) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[3 8] pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { var base = 1; y = base + 1; } else { var base = 4; y = base; } } else { var base = 8; y = base; } return y + 1 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBothNestedArmsSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[2 5] pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { y = 1; } else { y = 2; } } else { if x < 20 { y = 3; } else { y = 4; } } return y + 1 } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 2, 6) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[2 4] pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { y = 1; } else { y = 2; } } else { if x < 20 { y = 3; } else { y = 4; } } return y + 1 } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanBothNestedArmsSingleLocalIfStatementAssignmentThenReturnExpressionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { if x < 5 { y = x == 3; } else { y = x == 7; } } else { if x < 20 { y = x == 11; } else { y = x > 100; } } return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), " phi i1 ")
+        && System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { if x < 5 { y = x == 3; } else { y = x == 7; } } else { if x < 20 { y = x == 11; } else { y = x > 100; } } return y } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesArmLocalReturnedLocalIfStatementAssignmentFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[5 16] pick(i64[min max] x) { var y = 0; if x < 10 { var base = 3; y = base + 2; } else { var base = 7; y = base + 9; } return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 5, 17) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "add")
+        && !System.Text.Contains(s.View(), " phi ")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[5 15] pick(i64[min max] x) { var y = 0; if x < 10 { var base = 3; y = base + 2; } else { var base = 7; y = base + 9; } return y } fn main() { return pick(3) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesBooleanArmLocalReturnedLocalIfStatementAssignmentFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[0 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { var low = x < 5; y = low; } else { var high = x > 100; y = high; } return y } fn main() { return pick(3) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 0, 2) i64 @f1")
+        && System.Text.Contains(s.View(), "br i1")
+        && System.Text.Contains(s.View(), "zext i1")
+        && !System.Text.Contains(s.View(), " phi ")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[1 1] pick(i64[min max] x) { var y = 0 == 0; if x < 10 { var low = x < 5; y = low; } else { var high = x > 100; y = high; } return y } fn main() { return pick(3) }", tooNarrow);
 }
 
 [Fact]
@@ -10798,6 +14647,286 @@ fn bool PackageTablesPreserveBracedBooleanLocalIfStatementAssignmentThenReturn()
         && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Branch
         && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
         && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveMultiLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { b = 3; a = 8; } else { b = 4; a = 21; } return a + b }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 4
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 8
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveArmLocalMultiLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { var base = 3; var step = base + 2; b = step + 1; a = base + step; } else { var base = 7; var step = base + 3; a = step + base; b = step - 1; } return a + b }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 4
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 10
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveArmLocalSingleLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = 0; if x < 10 { var base = 3; var step = base + 2; y = step + 1; } else { var base = 7; var step = base + 9; y = step + 1; } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 4
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 4
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 10
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveNestedSingleLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { y = 1; } else { y = 2; } } else { y = 3; } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 7
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 7
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 10
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveBothNestedSingleLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { y = 1; } else { y = 2; } } else { if x < 20 { y = 3; } else { y = 4; } } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 10
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveRecursiveNestedSingleLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = 0; if x < 10 { if x < 5 { if x < 2 { y = 1; } else { y = 2; } } else { y = 3; } } else { if x < 20 { y = 4; } else { if x < 30 { y = 5; } else { y = 6; } } } return y + 1 }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 16
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 16
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 20
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(11)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(12)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(13)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(14)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(15)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(16)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool CompileFunctionRecursiveNestedSingleLocalIfStatementKeepsTypedPhis()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(bool outer, bool inner, bool deep) { var value = 0; if outer { if inner { if deep { value = 1; } else { value = 2; } } else { value = 3; } } else { if inner { value = 4; } else { if deep { value = 5; } else { value = 6; } } } return value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(i1 %p0, i1 %p1, i1 %p2)")
+        && System.Text.Contains(sink.View(), " phi i32 ")
+        && !System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool PackageTablesPreserveRecursiveNestedMultiLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { if x < 5 { if x < 2 { a = 1; b = 2; } else { b = 4; a = 3; } } else { a = 5; b = 6; } } else { if x < 20 { b = 8; a = 7; } else { if x < 30 { a = 9; b = 10; } else { b = 12; a = 11; } } } return a + b }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 16
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 16
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 30
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(11)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(12)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(13)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(14)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(15)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(16)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool CompileFunctionRecursiveNestedMultiLocalIfStatementKeepsTypedPhis()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(bool outer, bool inner, bool deep) { var a = 0; var b = 0; if outer { if inner { if deep { a = 1; b = 2; } else { b = 4; a = 3; } } else { a = 5; b = 6; } } else { if inner { b = 8; a = 7; } else { if deep { a = 9; b = 10; } else { b = 12; a = 11; } } } return a + b }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(i1 %p0, i1 %p1, i1 %p2)")
+        && System.Text.Contains(sink.View(), " phi i32 ")
+        && !System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool PackageTablesPreserveBothNestedMultiLocalIfStatementAssignmentThenReturn()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var a = 0; var b = 0; if x < 10 { if x < 5 { a = 1; b = 2; } else { b = 4; a = 3; } } else { if x < 20 { a = 5; b = 6; } else { b = 8; a = 7; } } return a + b }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 10
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 10
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 14
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(4)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(5)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(6)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(8)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(9)) == MirTermKind.Branch
+        && MirBlockTerminator(blocks, MirBlockIdOf(10)) == MirTermKind.Return;
+}
+
+[Fact]
+fn bool PackageTablesPreserveArmLocalReturnedLocalIfStatementAssignment()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\nfn i64[min max] Pick(i64[min max] x) { var y = 0; if x < 10 { var base = 3; y = base + 2; } else { var base = 7; y = base + 9; } return y }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    return ok
+        && funcs.Count() == 1
+        && blocks.Count() == 3
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) >= 5
+        && MirBlockTerminator(blocks, MirBlockIdOf(1)) == MirTermKind.CondBranch
+        && MirBlockTerminator(blocks, MirBlockIdOf(2)) == MirTermKind.Return
+        && MirBlockTerminator(blocks, MirBlockIdOf(3)) == MirTermKind.Return;
 }
 
 [Fact]

@@ -332,6 +332,7 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
             rangeMetadata,
             separateStorageFacts,
             scopedNoAliasMetadataBase,
+            0,
             sink,
             index);
         index = index + 1;
@@ -391,6 +392,7 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFactsAndEnumLa
             rangeMetadata,
             separateStorageFacts,
             scopedNoAliasMetadataBase,
+            0,
             sink,
             index);
         index = index + 1;

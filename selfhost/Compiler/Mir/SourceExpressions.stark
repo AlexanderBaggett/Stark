@@ -195,6 +195,11 @@ internal inline finite law u32[0 max] SourceLocalTypeCodeForResolvedScalarValue(
         return SourceLocalTypeCodeI64();
     }
 
+    if (typeCode == SourceResolvedFieldTypeCodePointer())
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
     return SourceLocalTypeCodeNonValue();
 }
 
@@ -278,9 +283,19 @@ public inline finite law u32[0 max] SourceResolvedFieldTypeCodeI64()
     return 5;
 }
 
+public inline finite law u32[0 max] SourceResolvedFieldTypeCodePointer()
+{
+    return 6;
+}
+
 internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeEnumBase()
 {
     return 16;
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeAggregateBase()
+{
+    return 4194304;
 }
 
 internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(u32[0 max] ownerDeclarationIndex)
@@ -290,17 +305,43 @@ internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForEnumOwnerDec
 
 internal inline finite law bool SourceResolvedFieldTypeCodeIsEnum(u32[0 max] typeCode)
 {
-    return typeCode >= SourceResolvedFieldTypeCodeEnumBase();
+    return typeCode >= SourceResolvedFieldTypeCodeEnumBase()
+        && typeCode < SourceResolvedFieldTypeCodeAggregateBase();
 }
 
 internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
 {
-    if (typeCode < SourceResolvedFieldTypeCodeEnumBase())
+    if (!SourceResolvedFieldTypeCodeIsEnum(typeCode))
     {
         return 0;
     }
 
     return typeCode - SourceResolvedFieldTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForAggregateTypeToken(u32[0 max] typeToken)
+{
+    if (typeToken > 4194303)
+    {
+        return SourceResolvedFieldTypeCodeInvalid();
+    }
+
+    return SourceResolvedFieldTypeCodeAggregateBase() + typeToken;
+}
+
+internal inline finite law bool SourceResolvedFieldTypeCodeIsAggregate(u32[0 max] typeCode)
+{
+    return typeCode >= SourceResolvedFieldTypeCodeAggregateBase();
+}
+
+internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeAggregateTypeToken(u32[0 max] typeCode)
+{
+    if (!SourceResolvedFieldTypeCodeIsAggregate(typeCode))
+    {
+        return 0;
+    }
+
+    return typeCode - SourceResolvedFieldTypeCodeAggregateBase();
 }
 
 internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForStoredLocalTypeCode(u32[0 max] typeCode)
@@ -330,7 +371,77 @@ internal inline finite law u32[0 max] SourceResolvedFieldTypeCodeForStoredLocalT
         return SourceResolvedFieldTypeCodeI64();
     }
 
+    if (typeCode == SourceLocalTypeCodeStoredPointer())
+    {
+        return SourceResolvedFieldTypeCodePointer();
+    }
+
     return SourceResolvedFieldTypeCodeInvalid();
+}
+
+internal inline finite law bool SourceResolvedFieldTypeCodeIsScalarOrPointer(u32[0 max] typeCode)
+{
+    return typeCode == SourceResolvedFieldTypeCodeBool()
+        || typeCode == SourceResolvedFieldTypeCodeI8()
+        || typeCode == SourceResolvedFieldTypeCodeI16()
+        || typeCode == SourceResolvedFieldTypeCodeI32()
+        || typeCode == SourceResolvedFieldTypeCodeI64()
+        || typeCode == SourceResolvedFieldTypeCodePointer();
+}
+
+internal fn u32[0 max] PackRawPointerNestedFacts(
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment)
+{
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+        || elementSize == 0
+        || elementAlignment == 0
+        || elementSize > 15
+        || elementAlignment > 15
+        || fieldTypeCode > 8388607)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] packed = fieldTypeCode;
+    packed = packed * 16 + elementSize;
+    packed = packed * 16 + elementAlignment;
+    packed = packed * 2;
+    if (rawPointerMutable)
+    {
+        packed = packed + 1;
+    }
+
+    return packed;
+}
+
+internal fn bool TryUnpackRawPointerNestedFacts(
+    u32[0 max] packed,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment)
+{
+    rawPointerMutable = false;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    if (packed == 0)
+    {
+        return false;
+    }
+
+    rawPointerMutable = packed % 2 == 1;
+    stack mut u32[0 max] rest = packed / 2;
+    elementAlignment = rest % 16;
+    rest = rest / 16;
+    elementSize = rest % 16;
+    fieldTypeCode = rest / 16;
+    return fieldTypeCode != SourceResolvedFieldTypeCodeInvalid()
+        && elementSize != 0
+        && elementAlignment != 0;
 }
 
 // True when `k` is a `+`/`-` additive operator token.
@@ -363,8 +474,10 @@ public enum ExprKind
     IndexedFieldExpr,
     FixedArrayParamElementExpr,
     RawPointerIndexedElementExpr,
+    RawPointerFieldExpr,
     AddressOfExpr,
     DerefExpr,
+    TryExpr,
     EnumVariantExpr,
     EnumPayloadExpr,
     BinaryExpr,
@@ -527,14 +640,56 @@ public fn u32[0 max] MakeRawPointerIndexedElementRead(
     u32[0 max] alignBytes,
     u32[0 max] fieldTypeCode)
 {
+    return MakeRawPointerIndexedElementReadWithNested(
+        nodes,
+        pointerNode,
+        indexNode,
+        elementSizeBytes,
+        alignBytes,
+        fieldTypeCode,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+public fn u32[0 max] MakeRawPointerIndexedElementReadWithNested(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] pointerNode,
+    u32[0 max] indexNode,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
     stack mut ExprNode node = new();
     node.Kind = ExprKind.RawPointerIndexedElementExpr;
     node.Left = pointerNode;
     node.Right = indexNode;
     node.Arg2 = alignBytes;
     node.Arg3 = elementSizeBytes;
+    node.Arg4 = PackRawPointerNestedFacts(nestedMutable, nestedFieldTypeCode, nestedElementSize, nestedElementAlignment);
     node.IndexHasKnownBounds = true;
     node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeRawPointerFieldRead(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] pointerNode,
+    u32[0 max] byteOffset,
+    u32[0 max] alignBytes,
+    u32[0 max] fieldTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.RawPointerFieldExpr;
+    node.Left = pointerNode;
+    node.Right = byteOffset;
+    node.Arg2 = alignBytes;
+    node.Arg3 = fieldTypeCode;
     return nodes.Add(node);
 }
 
@@ -548,12 +703,45 @@ public fn u32[0 max] MakeAddressOf(mut borrow IrTable<ExprNode> nodes, u32[0 max
 
 public fn u32[0 max] MakeDeref(mut borrow IrTable<ExprNode> nodes, u32[0 max] operand, u32[0 max] fieldTypeCode, u32[0 max] elementSize, u32[0 max] alignBytes)
 {
+    return MakeDerefWithNested(
+        nodes,
+        operand,
+        fieldTypeCode,
+        elementSize,
+        alignBytes,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+public fn u32[0 max] MakeDerefWithNested(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] operand,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] alignBytes,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
     stack mut ExprNode node = new();
     node.Kind = ExprKind.DerefExpr;
     node.Left = operand;
+    node.Right = nestedFieldTypeCode;
     node.Arg2 = alignBytes;
     node.Arg3 = elementSize;
+    node.Arg4 = PackRawPointerNestedFacts(nestedMutable, nestedFieldTypeCode, nestedElementSize, nestedElementAlignment);
     node.Imm = (i64[min max])fieldTypeCode;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeTry(mut borrow IrTable<ExprNode> nodes, u32[0 max] operand)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.TryExpr;
+    node.Left = operand;
     return nodes.Add(node);
 }
 
@@ -789,6 +977,11 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 return ExprType.EnumType;
             }
 
+            if (node.Arg3 == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
             if (node.Arg3 == SourceResolvedFieldTypeCodeI8()
                 || node.Arg3 == SourceResolvedFieldTypeCodeI16()
                 || node.Arg3 == SourceResolvedFieldTypeCodeI32()
@@ -810,6 +1003,11 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 return ExprType.EnumType;
             }
 
+            if (indexedTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
             if (indexedTypeCode == SourceResolvedFieldTypeCodeI8()
                 || indexedTypeCode == SourceResolvedFieldTypeCodeI16()
                 || indexedTypeCode == SourceResolvedFieldTypeCodeI32()
@@ -824,6 +1022,11 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
             if (fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeBool())
             {
                 return ExprType.BoolType;
+            }
+
+            if (fixedArrayParamTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
             }
 
             if (fixedArrayParamTypeCode == SourceResolvedFieldTypeCodeI8()
@@ -842,10 +1045,40 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 return ExprType.BoolType;
             }
 
+            if (rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
             if (rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI8()
                 || rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI16()
                 || rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI32()
                 || rawPointerIndexedTypeCode == SourceResolvedFieldTypeCodeI64())
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.RawPointerFieldExpr:
+            if (node.Arg3 == SourceResolvedFieldTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            if (node.Arg3 == SourceResolvedFieldTypeCodeI8()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI16()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI32()
+                || node.Arg3 == SourceResolvedFieldTypeCodeI64())
             {
                 return ExprType.IntType;
             }
@@ -862,7 +1095,8 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 || addressOperand.Kind == ExprKind.FieldExpr
                 || addressOperand.Kind == ExprKind.IndexedFieldExpr
                 || addressOperand.Kind == ExprKind.FixedArrayParamElementExpr
-                || addressOperand.Kind == ExprKind.RawPointerIndexedElementExpr)
+                || addressOperand.Kind == ExprKind.RawPointerIndexedElementExpr
+                || addressOperand.Kind == ExprKind.RawPointerFieldExpr)
             {
                 return ExprType.PtrType;
             }
@@ -880,6 +1114,11 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 return ExprType.BoolType;
             }
 
+            if (derefTypeCode == SourceResolvedFieldTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
             if (derefTypeCode == SourceResolvedFieldTypeCodeI8()
                 || derefTypeCode == SourceResolvedFieldTypeCodeI16()
                 || derefTypeCode == SourceResolvedFieldTypeCodeI32()
@@ -888,6 +1127,8 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 return ExprType.IntType;
             }
 
+            return ExprType.ErrorType;
+        case ExprKind.TryExpr:
             return ExprType.ErrorType;
         case ExprKind.EnumVariantExpr:
             return ExprType.EnumType;
@@ -986,6 +1227,16 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
             return SourceLocalTypeCodeForResolvedScalarValue((u32[0 max])node.Imm);
         }
 
+        if (node.Kind == ExprKind.RawPointerFieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+        {
+            return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3));
+        }
+
+        if (node.Kind == ExprKind.RawPointerFieldExpr)
+        {
+            return SourceLocalTypeCodeForResolvedScalarValue(node.Arg3);
+        }
+
         if (node.Kind == ExprKind.AddressOfExpr)
         {
             return SourceLocalTypeCodePointer();
@@ -994,6 +1245,11 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
         if (node.Kind == ExprKind.DerefExpr && node.Imm >= 0)
         {
             return SourceLocalTypeCodeForResolvedScalarValue((u32[0 max])node.Imm);
+        }
+
+        if (node.Kind == ExprKind.TryExpr)
+        {
+            return SourceLocalTypeCodeNonValue();
         }
 
         if (node.Kind == ExprKind.NameExpr && localTypes.Contains(node.Left + 1))
@@ -1103,6 +1359,17 @@ public fn bool TryGetSourceExpressionEnumOwnerTypeIndexForNode(
         return true;
     }
 
+    if (node.Kind == ExprKind.RawPointerFieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
+    {
+        ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(node.Arg3) + 1;
+        return true;
+    }
+
+    if (node.Kind == ExprKind.TryExpr)
+    {
+        return false;
+    }
+
     if (node.Kind != ExprKind.NameExpr || !localTypes.Contains(node.Left + 1))
     {
         return false;
@@ -1139,6 +1406,30 @@ internal fn bool TryGetSourceLocalEnumOwnerDeclarationIndexForNode(
     }
 
     ownerDeclarationIndex = ownerTypeIndex - 1;
+    return true;
+}
+
+public fn bool TryGetSourceTryOperandNode(borrow IrTable<ExprNode> nodes, u32[0 max] id, out u32[0 max] operandNode)
+{
+    operandNode = 0;
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind != ExprKind.TryExpr)
+    {
+        return false;
+    }
+
+    stack u32[0 max] operand = node.Left;
+    if (operand == 0 || !nodes.Contains(operand))
+    {
+        return false;
+    }
+
+    operandNode = operand;
     return true;
 }
 
@@ -1201,7 +1492,15 @@ internal struct ParsedSwitchAssignmentArm
 // and a reused name maps to the same index).
 internal fn u32[0 max] ResolveParam(mut borrow IrTable<ParamName> params, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
 {
-    return ResolveParamWithRawPointerElementFacts(params, source, start, length, false, 0, 0, 0);
+    return ResolveParamWithRawPointerElementFacts(
+        params,
+        source,
+        start,
+        length,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
 }
 
 internal fn u32[0 max] ResolveParamWithRawPointerElementFacts(
@@ -1214,7 +1513,7 @@ internal fn u32[0 max] ResolveParamWithRawPointerElementFacts(
     u32[0 max] elementSize,
     u32[0 max] elementAlignment)
 {
-    return ResolveParamWithRawPointerElementAndCountFacts(
+    return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
         params,
         source,
         start,
@@ -1225,6 +1524,10 @@ internal fn u32[0 max] ResolveParamWithRawPointerElementFacts(
         elementAlignment,
         false,
         false,
+        0,
+        0,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
         0,
         0);
 }
@@ -1243,6 +1546,43 @@ internal fn u32[0 max] ResolveParamWithRawPointerElementAndCountFacts(
     u32[0 max] elementCountLiteral,
     u32[0 max] elementCountParamIndex)
 {
+    return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        start,
+        length,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+internal fn u32[0 max] ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
     stack i64[min max] existing = ParamIndexOf(params, source, start, length);
     if (existing >= 0)
     {
@@ -1256,6 +1596,10 @@ internal fn u32[0 max] ResolveParamWithRawPointerElementAndCountFacts(
     name.RawPointerFieldTypeCode = fieldTypeCode;
     name.RawPointerElementSize = elementSize;
     name.RawPointerElementAlignment = elementAlignment;
+    name.RawPointerNestedMutable = nestedMutable;
+    name.RawPointerNestedFieldTypeCode = nestedFieldTypeCode;
+    name.RawPointerNestedElementSize = nestedElementSize;
+    name.RawPointerNestedElementAlignment = nestedElementAlignment;
     name.RawPointerHasElementCount = hasElementCount;
     name.RawPointerElementCountIsParam = elementCountIsParam;
     name.RawPointerElementCountLiteral = elementCountLiteral;
@@ -1279,6 +1623,40 @@ internal fn bool TryGetRawPointerDerefFactsForNode(
     return TryGetRawPointerFactsForNode(nodes, params, nodeId, rawPointerMutable, fieldTypeCode, elementSize, elementAlignment);
 }
 
+internal fn bool TryGetRawPointerDerefFactsForNodeWithNested(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+    stack mut bool rawPointerMutable = false;
+    return TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        nodeId,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
 internal fn bool TryGetRawPointerFactsForNode(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<ParamName> params,
@@ -1288,10 +1666,45 @@ internal fn bool TryGetRawPointerFactsForNode(
     out u32[0 max] elementSize,
     out u32[0 max] elementAlignment)
 {
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    return TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        nodeId,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
+internal fn bool TryGetRawPointerFactsForNodeWithNested(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    u32[0 max] nodeId,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
     rawPointerMutable = false;
     fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     elementSize = 0;
     elementAlignment = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
     if (!nodes.Contains(nodeId))
     {
         return false;
@@ -1320,9 +1733,38 @@ internal fn bool TryGetRawPointerFactsForNode(
                 elementSize = pointerParam.RawPointerElementSizeValue();
                 elementAlignment = pointerParam.RawPointerElementAlignmentValue();
                 rawPointerMutable = pointerParam.RawPointerMutableValue();
+                nestedMutable = pointerParam.RawPointerNestedMutableValue();
+                nestedFieldTypeCode = pointerParam.RawPointerNestedFieldTypeCodeValue();
+                nestedElementSize = pointerParam.RawPointerNestedElementSizeValue();
+                nestedElementAlignment = pointerParam.RawPointerNestedElementAlignmentValue();
                 return true;
             }
         }
+    }
+
+    if ((node.Kind == ExprKind.DerefExpr || node.Kind == ExprKind.RawPointerIndexedElementExpr)
+        && node.Imm >= 0
+        && (u32[0 max])node.Imm == SourceResolvedFieldTypeCodePointer())
+    {
+        stack mut bool unpackedMutable = false;
+        stack mut u32[0 max] unpackedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] unpackedElementSize = 0;
+        stack mut u32[0 max] unpackedElementAlignment = 0;
+        if (!TryUnpackRawPointerNestedFacts(
+            node.Arg4,
+            unpackedMutable,
+            unpackedFieldTypeCode,
+            unpackedElementSize,
+            unpackedElementAlignment))
+        {
+            return false;
+        }
+
+        rawPointerMutable = unpackedMutable;
+        fieldTypeCode = unpackedFieldTypeCode;
+        elementSize = unpackedElementSize;
+        elementAlignment = unpackedElementAlignment;
+        return true;
     }
 
     if (node.Kind != ExprKind.NameExpr || !params.Contains(node.Left + 1))
@@ -1342,6 +1784,10 @@ internal fn bool TryGetRawPointerFactsForNode(
     elementSize = param.RawPointerElementSizeValue();
     elementAlignment = param.RawPointerElementAlignmentValue();
     rawPointerMutable = param.RawPointerMutableValue();
+    nestedMutable = param.RawPointerNestedMutableValue();
+    nestedFieldTypeCode = param.RawPointerNestedFieldTypeCodeValue();
+    nestedElementSize = param.RawPointerNestedElementSizeValue();
+    nestedElementAlignment = param.RawPointerNestedElementAlignmentValue();
     return true;
 }
 
@@ -1415,6 +1861,39 @@ internal fn bool ReplaceParamRawPointerFacts(
     u32[0 max] elementCountLiteral,
     u32[0 max] elementCountParamIndex)
 {
+    return ReplaceParamRawPointerFactsWithNested(
+        params,
+        paramIndex,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        false,
+        SourceResolvedFieldTypeCodeInvalid(),
+        0,
+        0);
+}
+
+internal fn bool ReplaceParamRawPointerFactsWithNested(
+    mut borrow IrTable<ParamName> params,
+    u32[0 max] paramIndex,
+    bool rawPointerMutable,
+    u32[0 max] fieldTypeCode,
+    u32[0 max] elementSize,
+    u32[0 max] elementAlignment,
+    bool hasElementCount,
+    bool elementCountIsParam,
+    u32[0 max] elementCountLiteral,
+    u32[0 max] elementCountParamIndex,
+    bool nestedMutable,
+    u32[0 max] nestedFieldTypeCode,
+    u32[0 max] nestedElementSize,
+    u32[0 max] nestedElementAlignment)
+{
     if (!params.Contains(paramIndex + 1))
     {
         return false;
@@ -1425,6 +1904,10 @@ internal fn bool ReplaceParamRawPointerFacts(
     param.RawPointerFieldTypeCode = fieldTypeCode;
     param.RawPointerElementSize = elementSize;
     param.RawPointerElementAlignment = elementAlignment;
+    param.RawPointerNestedMutable = nestedMutable;
+    param.RawPointerNestedFieldTypeCode = nestedFieldTypeCode;
+    param.RawPointerNestedElementSize = nestedElementSize;
+    param.RawPointerNestedElementAlignment = nestedElementAlignment;
     param.RawPointerHasElementCount = hasElementCount;
     param.RawPointerElementCountIsParam = elementCountIsParam;
     param.RawPointerElementCountLiteral = elementCountLiteral;
@@ -1491,7 +1974,11 @@ internal fn bool TryMergeRawPointerFactsForAssignedNodes(
     out bool hasElementCount,
     out bool elementCountIsParam,
     out u32[0 max] elementCountLiteral,
-    out u32[0 max] elementCountParamIndex)
+    out u32[0 max] elementCountParamIndex,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
 {
     rawPointerMutable = false;
     fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
@@ -1501,35 +1988,59 @@ internal fn bool TryMergeRawPointerFactsForAssignedNodes(
     elementCountIsParam = false;
     elementCountLiteral = 0;
     elementCountParamIndex = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
 
     stack mut bool firstMutable = false;
     stack mut u32[0 max] firstFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] firstElementSize = 0;
     stack mut u32[0 max] firstElementAlignment = 0;
+    stack mut bool firstNestedMutable = false;
+    stack mut u32[0 max] firstNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] firstNestedElementSize = 0;
+    stack mut u32[0 max] firstNestedElementAlignment = 0;
     stack mut bool secondMutable = false;
     stack mut u32[0 max] secondFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] secondElementSize = 0;
     stack mut u32[0 max] secondElementAlignment = 0;
-    if (!TryGetRawPointerFactsForNode(
+    stack mut bool secondNestedMutable = false;
+    stack mut u32[0 max] secondNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] secondNestedElementSize = 0;
+    stack mut u32[0 max] secondNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
         nodes,
         params,
         firstNodeId,
         firstMutable,
         firstFieldTypeCode,
         firstElementSize,
-        firstElementAlignment)
-        || !TryGetRawPointerFactsForNode(
+        firstElementAlignment,
+        firstNestedMutable,
+        firstNestedFieldTypeCode,
+        firstNestedElementSize,
+        firstNestedElementAlignment)
+        || !TryGetRawPointerFactsForNodeWithNested(
             nodes,
             params,
             secondNodeId,
             secondMutable,
             secondFieldTypeCode,
             secondElementSize,
-            secondElementAlignment)
+            secondElementAlignment,
+            secondNestedMutable,
+            secondNestedFieldTypeCode,
+            secondNestedElementSize,
+            secondNestedElementAlignment)
         || firstMutable != secondMutable
         || firstFieldTypeCode != secondFieldTypeCode
         || firstElementSize != secondElementSize
-        || firstElementAlignment != secondElementAlignment)
+        || firstElementAlignment != secondElementAlignment
+        || firstNestedMutable != secondNestedMutable
+        || firstNestedFieldTypeCode != secondNestedFieldTypeCode
+        || firstNestedElementSize != secondNestedElementSize
+        || firstNestedElementAlignment != secondNestedElementAlignment)
     {
         return false;
     }
@@ -1538,6 +2049,10 @@ internal fn bool TryMergeRawPointerFactsForAssignedNodes(
     fieldTypeCode = firstFieldTypeCode;
     elementSize = firstElementSize;
     elementAlignment = firstElementAlignment;
+    nestedMutable = firstNestedMutable;
+    nestedFieldTypeCode = firstNestedFieldTypeCode;
+    nestedElementSize = firstNestedElementSize;
+    nestedElementAlignment = firstNestedElementAlignment;
 
     stack mut bool firstHasElementCount = false;
     stack mut bool firstElementCountIsParam = false;
@@ -1604,6 +2119,10 @@ internal fn bool ResolveParamWithMergedRawPointerFactsForAssignedNodes(
     stack mut bool elementCountIsParam = false;
     stack mut u32[0 max] elementCountLiteral = 0;
     stack mut u32[0 max] elementCountParamIndex = 0;
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
     if (TryMergeRawPointerFactsForAssignedNodes(
         nodes,
         params,
@@ -1616,9 +2135,13 @@ internal fn bool ResolveParamWithMergedRawPointerFactsForAssignedNodes(
         hasElementCount,
         elementCountIsParam,
         elementCountLiteral,
-        elementCountParamIndex))
+        elementCountParamIndex,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
     {
-        return ResolveParamWithRawPointerElementAndCountFacts(
+        return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
             params,
             source,
             start,
@@ -1630,7 +2153,11 @@ internal fn bool ResolveParamWithMergedRawPointerFactsForAssignedNodes(
             hasElementCount,
             elementCountIsParam,
             elementCountLiteral,
-            elementCountParamIndex) == expectedParamIndex;
+            elementCountParamIndex,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment) == expectedParamIndex;
     }
 
     stack mut bool firstMutable = false;
@@ -1799,14 +2326,49 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
         stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
         stack mut u32[0 max] elementSize = 0;
         stack mut u32[0 max] elementAlignment = 0;
-        if (!TryGetRawPointerDerefFactsForNode(nodes, params, operand.NodeId, fieldTypeCode, elementSize, elementAlignment))
+        stack mut bool nestedMutable = false;
+        stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] nestedElementSize = 0;
+        stack mut u32[0 max] nestedElementAlignment = 0;
+        if (!TryGetRawPointerDerefFactsForNodeWithNested(
+            nodes,
+            params,
+            operand.NodeId,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
         {
             fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
             elementSize = 0;
             elementAlignment = 0;
+            nestedMutable = false;
+            nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            nestedElementSize = 0;
+            nestedElementAlignment = 0;
         }
 
-        return MakeParseResult(MakeDeref(nodes, operand.NodeId, fieldTypeCode, elementSize, elementAlignment), operand.Next);
+        return MakeParseResult(
+            MakeDerefWithNested(
+                nodes,
+                operand.NodeId,
+                fieldTypeCode,
+                elementSize,
+                elementAlignment,
+                nestedMutable,
+                nestedFieldTypeCode,
+                nestedElementSize,
+                nestedElementAlignment),
+            operand.Next);
+    }
+
+    if (k == TokenKind.Try)
+    {
+        stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        return MakeParseResult(MakeTry(nodes, operand.NodeId), operand.Next);
     }
 
     if (k == TokenKind.LParen)

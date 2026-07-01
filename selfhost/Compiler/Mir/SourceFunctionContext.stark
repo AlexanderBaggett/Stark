@@ -108,7 +108,23 @@ internal fn void SeedSignatureParamsFromParsed(borrow TokenStream stream, borrow
             stack mut u32[0 max] elementAlignment = 0;
             stack mut u32[0 max] fieldTypeCode = 0;
             stack mut bool rawPointerMutable = false;
-            stack bool hasRawPointerFacts = TryReadRawPointerScalarElementFacts(stream, source, signature.ParamTypeTokenAt(i), elementType, elementSize, elementAlignment, fieldTypeCode, rawPointerMutable);
+            stack mut bool nestedMutable = false;
+            stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] nestedElementSize = 0;
+            stack mut u32[0 max] nestedElementAlignment = 0;
+            stack bool hasRawPointerFacts = TryReadRawPointerElementFacts(
+                stream,
+                source,
+                signature.ParamTypeTokenAt(i),
+                elementType,
+                elementSize,
+                elementAlignment,
+                fieldTypeCode,
+                rawPointerMutable,
+                nestedMutable,
+                nestedFieldTypeCode,
+                nestedElementSize,
+                nestedElementAlignment);
             if (hasRawPointerFacts)
             {
                 stack mut bool hasElementCount = false;
@@ -131,7 +147,7 @@ internal fn void SeedSignatureParamsFromParsed(borrow TokenStream stream, borrow
                     elementCountParamIndex = 0;
                 }
 
-                stack u32[0 max] index = ResolveParamWithRawPointerElementAndCountFacts(
+                stack u32[0 max] index = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
                     params,
                     source,
                     stream.StartAt((u64[0 2 ** 63 - 1])token),
@@ -143,7 +159,11 @@ internal fn void SeedSignatureParamsFromParsed(borrow TokenStream stream, borrow
                     hasElementCount,
                     elementCountIsParam,
                     elementCountLiteral,
-                    elementCountParamIndex);
+                    elementCountParamIndex,
+                    nestedMutable,
+                    nestedFieldTypeCode,
+                    nestedElementSize,
+                    nestedElementAlignment);
             }
             else
             {
@@ -263,11 +283,48 @@ internal fn bool TryReadRawPointerScalarElementFacts(
     out u32[0 max] fieldTypeCode,
     out bool rawPointerMutable)
 {
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    return TryReadRawPointerElementFacts(
+        stream,
+        source,
+        typeToken,
+        elementType,
+        elementSize,
+        elementAlignment,
+        fieldTypeCode,
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
+internal fn bool TryReadRawPointerElementFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out MirType elementType,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out u32[0 max] fieldTypeCode,
+    out bool rawPointerMutable,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
     elementType = MirType.I64;
     elementSize = 0;
     elementAlignment = 0;
     fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     rawPointerMutable = false;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
     stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
     if (kind != TokenKind.Rawptr && kind != TokenKind.Rawmutptr)
     {
@@ -283,6 +340,67 @@ internal fn bool TryReadRawPointerScalarElementFacts(
     while willexit (IsRawPointerElementQualifier(stream.KindAt((u64[0 2 ** 63 - 1])elementToken)))
     {
         elementToken = elementToken + 1;
+    }
+
+    stack TokenKind elementKind = stream.KindAt((u64[0 2 ** 63 - 1])elementToken);
+    if (elementKind == TokenKind.Rawptr || elementKind == TokenKind.Rawmutptr)
+    {
+        stack mut MirType innerElementType = MirType.I64;
+        stack mut u32[0 max] innerElementSize = 0;
+        stack mut u32[0 max] innerElementAlignment = 0;
+        stack mut u32[0 max] innerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut bool innerMutable = false;
+        stack mut bool ignoredNestedMutable = false;
+        stack mut u32[0 max] ignoredNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] ignoredNestedElementSize = 0;
+        stack mut u32[0 max] ignoredNestedElementAlignment = 0;
+        if (!TryReadRawPointerElementFacts(
+            stream,
+            source,
+            elementToken,
+            innerElementType,
+            innerElementSize,
+            innerElementAlignment,
+            innerFieldTypeCode,
+            innerMutable,
+            ignoredNestedMutable,
+            ignoredNestedFieldTypeCode,
+            ignoredNestedElementSize,
+            ignoredNestedElementAlignment))
+        {
+            return false;
+        }
+
+        elementType = MirType.Ptr;
+        elementSize = SourceRawPointerStorageByteExtent();
+        elementAlignment = SourceRawPointerStorageByteAlignment();
+        fieldTypeCode = SourceResolvedFieldTypeCodePointer();
+        rawPointerMutable = kind == TokenKind.Rawmutptr;
+        nestedMutable = innerMutable;
+        nestedFieldTypeCode = innerFieldTypeCode;
+        nestedElementSize = innerElementSize;
+        nestedElementAlignment = innerElementAlignment;
+        return true;
+    }
+
+    if (elementKind == TokenKind.Identifier)
+    {
+        stack u32[0 max] aggregateSize = TypeKnownByteExtentForLocal(stream, source, elementToken);
+        stack u32[0 max] aggregateAlignment = TypeKnownByteAlignment(stream, source, elementToken);
+        stack u32[0 max] aggregateTypeCode = SourceResolvedFieldTypeCodeForAggregateTypeToken(elementToken);
+        if (aggregateSize == 0
+            || aggregateAlignment == 0
+            || aggregateTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return false;
+        }
+
+        elementType = MirType.Ptr;
+        elementSize = aggregateSize;
+        elementAlignment = aggregateAlignment;
+        fieldTypeCode = aggregateTypeCode;
+        rawPointerMutable = kind == TokenKind.Rawmutptr;
+        return true;
     }
 
     stack mut MirType resolvedElementType = MirType.I64;
@@ -331,7 +449,16 @@ internal fn u32[0 max] RawPointerTypeEndToken(
     }
 
     stack mut u32[0 max] afterElement = elementToken + 1;
-    if (stream.KindAt((u64[0 2 ** 63 - 1])elementToken) == TokenKind.IntegerType
+    stack TokenKind elementKind = stream.KindAt((u64[0 2 ** 63 - 1])elementToken);
+    if (elementKind == TokenKind.Rawptr || elementKind == TokenKind.Rawmutptr)
+    {
+        afterElement = RawPointerTypeEndToken(stream, elementToken);
+        if (afterElement == 0)
+        {
+            return 0;
+        }
+    }
+    else if (elementKind == TokenKind.IntegerType
         && stream.KindAt((u64[0 2 ** 63 - 1])afterElement) == TokenKind.LBrack)
     {
         stack u32[0 max] rangeClose = MatchingBracketForMirLowering(stream, afterElement);
@@ -587,7 +714,23 @@ internal fn ParamAbiFacts ClassifySignatureParamAbi(
         stack mut u32[0 max] elementAlignment = 0;
         stack mut u32[0 max] fieldTypeCode = 0;
         stack mut bool rawPointerMutable = false;
-        if (TryReadRawPointerScalarElementFacts(stream, source, signature.ParamTypeTokenAt(paramIndex), elementType, elementSize, elementAlignment, fieldTypeCode, rawPointerMutable))
+        stack mut bool nestedMutable = false;
+        stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] nestedElementSize = 0;
+        stack mut u32[0 max] nestedElementAlignment = 0;
+        if (TryReadRawPointerElementFacts(
+            stream,
+            source,
+            signature.ParamTypeTokenAt(paramIndex),
+            elementType,
+            elementSize,
+            elementAlignment,
+            fieldTypeCode,
+            rawPointerMutable,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
         {
             facts.RawPointerElementType = elementType;
             facts.RawPointerElementSize = elementSize;
@@ -1260,9 +1403,13 @@ internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow
         case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
                 || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
         case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
         case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
+        case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
@@ -1339,6 +1486,8 @@ internal fn bool ExprNodeTakesAddressOfScalarParam(
             return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
         case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
             return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex)
                 || ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
@@ -1368,6 +1517,8 @@ internal fn bool ExprNodeTakesAddressOfScalarParam(
         case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
             return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex)
                 || ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
         default:
             return false;
     }
@@ -2132,9 +2283,13 @@ internal fn bool ValidateModuleCallsForRootWithSlices(
         case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
             return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
                 && ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
             return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
             return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
             return true;

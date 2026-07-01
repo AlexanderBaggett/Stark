@@ -3273,18 +3273,30 @@ internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
     stack mut u32[0 max] mergedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] mergedElementSize = 0;
     stack mut u32[0 max] mergedElementAlignment = 0;
+    stack mut bool mergedNestedMutable = false;
+    stack mut u32[0 max] mergedNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] mergedNestedElementSize = 0;
+    stack mut u32[0 max] mergedNestedElementAlignment = 0;
     stack mut bool defaultMutable = false;
     stack mut u32[0 max] defaultFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] defaultElementSize = 0;
     stack mut u32[0 max] defaultElementAlignment = 0;
-    stack bool defaultIsRawPointer = TryGetRawPointerFactsForNode(
+    stack mut bool defaultNestedMutable = false;
+    stack mut u32[0 max] defaultNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] defaultNestedElementSize = 0;
+    stack mut u32[0 max] defaultNestedElementAlignment = 0;
+    stack bool defaultIsRawPointer = TryGetRawPointerFactsForNodeWithNested(
         nodes,
         params,
         defaultRoot,
         defaultMutable,
         defaultFieldTypeCode,
         defaultElementSize,
-        defaultElementAlignment);
+        defaultElementAlignment,
+        defaultNestedMutable,
+        defaultNestedFieldTypeCode,
+        defaultNestedElementSize,
+        defaultNestedElementAlignment);
 
     stack mut bool anyRawPointer = defaultIsRawPointer;
     stack mut bool hasElementCount = false;
@@ -3297,6 +3309,10 @@ internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
         mergedFieldTypeCode = defaultFieldTypeCode;
         mergedElementSize = defaultElementSize;
         mergedElementAlignment = defaultElementAlignment;
+        mergedNestedMutable = defaultNestedMutable;
+        mergedNestedFieldTypeCode = defaultNestedFieldTypeCode;
+        mergedNestedElementSize = defaultNestedElementSize;
+        mergedNestedElementAlignment = defaultNestedElementAlignment;
         if (!TryGetRawPointerElementCountFactsForNameNode(
             nodes,
             params,
@@ -3329,14 +3345,22 @@ internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
         stack mut u32[0 max] caseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
         stack mut u32[0 max] caseElementSize = 0;
         stack mut u32[0 max] caseElementAlignment = 0;
-        stack bool caseIsRawPointer = TryGetRawPointerFactsForNode(
+        stack mut bool caseNestedMutable = false;
+        stack mut u32[0 max] caseNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] caseNestedElementSize = 0;
+        stack mut u32[0 max] caseNestedElementAlignment = 0;
+        stack bool caseIsRawPointer = TryGetRawPointerFactsForNodeWithNested(
             nodes,
             params,
             caseRoot,
             caseMutable,
             caseFieldTypeCode,
             caseElementSize,
-            caseElementAlignment);
+            caseElementAlignment,
+            caseNestedMutable,
+            caseNestedFieldTypeCode,
+            caseNestedElementSize,
+            caseNestedElementAlignment);
         anyRawPointer = anyRawPointer || caseIsRawPointer;
         if (defaultIsRawPointer || caseIsRawPointer)
         {
@@ -3345,7 +3369,11 @@ internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
                 || mergedMutable != caseMutable
                 || mergedFieldTypeCode != caseFieldTypeCode
                 || mergedElementSize != caseElementSize
-                || mergedElementAlignment != caseElementAlignment)
+                || mergedElementAlignment != caseElementAlignment
+                || mergedNestedMutable != caseNestedMutable
+                || mergedNestedFieldTypeCode != caseNestedFieldTypeCode
+                || mergedNestedElementSize != caseNestedElementSize
+                || mergedNestedElementAlignment != caseNestedElementAlignment)
             {
                 return false;
             }
@@ -3384,7 +3412,7 @@ internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
         return true;
     }
 
-    return ReplaceParamRawPointerFacts(
+    return ReplaceParamRawPointerFactsWithNested(
         params,
         targetParamIndex,
         mergedMutable,
@@ -3394,7 +3422,11 @@ internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
         hasElementCount,
         elementCountIsParam,
         elementCountLiteral,
-        elementCountParamIndex);
+        elementCountParamIndex,
+        mergedNestedMutable,
+        mergedNestedFieldTypeCode,
+        mergedNestedElementSize,
+        mergedNestedElementAlignment);
 }
 
 internal fn bool ValidateSwitchAssignmentArmModuleCalls(
@@ -5419,19 +5451,27 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             stack mut u32[0 max] rawPointerAliasFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
             stack mut u32[0 max] rawPointerAliasElementSize = 0;
             stack mut u32[0 max] rawPointerAliasElementAlignment = 0;
+            stack mut bool rawPointerAliasNestedMutable = false;
+            stack mut u32[0 max] rawPointerAliasNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] rawPointerAliasNestedElementSize = 0;
+            stack mut u32[0 max] rawPointerAliasNestedElementAlignment = 0;
             stack mut bool rawPointerAliasHasElementCount = false;
             stack mut bool rawPointerAliasElementCountIsParam = false;
             stack mut u32[0 max] rawPointerAliasElementCountLiteral = 0;
             stack mut u32[0 max] rawPointerAliasElementCountParamIndex = 0;
             stack bool rawPointerAlias = varType == ExprType.PtrType
-                && TryGetRawPointerFactsForNode(
+                && TryGetRawPointerFactsForNodeWithNested(
                     nodes,
                     params,
                     varExpr.NodeId,
                     rawPointerAliasMutable,
                     rawPointerAliasFieldTypeCode,
                     rawPointerAliasElementSize,
-                    rawPointerAliasElementAlignment);
+                    rawPointerAliasElementAlignment,
+                    rawPointerAliasNestedMutable,
+                    rawPointerAliasNestedFieldTypeCode,
+                    rawPointerAliasNestedElementSize,
+                    rawPointerAliasNestedElementAlignment);
             if (varType == ExprType.ErrorType || (varType == ExprType.PtrType && !rawPointerAlias))
             {
                 return false;
@@ -5452,7 +5492,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
                     rawPointerAliasHasElementCount = false;
                 }
 
-                localIndex = ResolveParamWithRawPointerElementAndCountFacts(
+                localIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
                     params,
                     source,
                     nameStart,
@@ -5464,7 +5504,11 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
                     rawPointerAliasHasElementCount,
                     rawPointerAliasElementCountIsParam,
                     rawPointerAliasElementCountLiteral,
-                    rawPointerAliasElementCountParamIndex);
+                    rawPointerAliasElementCountParamIndex,
+                    rawPointerAliasNestedMutable,
+                    rawPointerAliasNestedFieldTypeCode,
+                    rawPointerAliasNestedElementSize,
+                    rawPointerAliasNestedElementAlignment);
             }
             else
             {
@@ -6001,6 +6045,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
                 argsOpen,
                 argsClose,
                 objectNonValueRoot,
+                objectLocalIndex,
                 objectAllocation,
                 nodes,
                 params,
@@ -6024,6 +6069,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
                 bodyOpen,
                 bodyClose,
                 objectNonValueRoot,
+                objectLocalIndex,
                 objectAllocation,
                 nodes,
                 params,
@@ -7650,22 +7696,30 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
 
         stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
         stack mut bool rawPointerAliasMutable = false;
-        stack mut u32[0 max] rawPointerAliasFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
-        stack mut u32[0 max] rawPointerAliasElementSize = 0;
-        stack mut u32[0 max] rawPointerAliasElementAlignment = 0;
-        stack mut bool rawPointerAliasHasElementCount = false;
-        stack mut bool rawPointerAliasElementCountIsParam = false;
-        stack mut u32[0 max] rawPointerAliasElementCountLiteral = 0;
-        stack mut u32[0 max] rawPointerAliasElementCountParamIndex = 0;
-        stack bool rawPointerAlias = varType == ExprType.PtrType
-            && TryGetRawPointerFactsForNode(
-                nodes,
-                params,
-                varExpr.NodeId,
-                rawPointerAliasMutable,
-                rawPointerAliasFieldTypeCode,
-                rawPointerAliasElementSize,
-                rawPointerAliasElementAlignment);
+            stack mut u32[0 max] rawPointerAliasFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] rawPointerAliasElementSize = 0;
+            stack mut u32[0 max] rawPointerAliasElementAlignment = 0;
+            stack mut bool rawPointerAliasNestedMutable = false;
+            stack mut u32[0 max] rawPointerAliasNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] rawPointerAliasNestedElementSize = 0;
+            stack mut u32[0 max] rawPointerAliasNestedElementAlignment = 0;
+            stack mut bool rawPointerAliasHasElementCount = false;
+            stack mut bool rawPointerAliasElementCountIsParam = false;
+            stack mut u32[0 max] rawPointerAliasElementCountLiteral = 0;
+            stack mut u32[0 max] rawPointerAliasElementCountParamIndex = 0;
+            stack bool rawPointerAlias = varType == ExprType.PtrType
+                && TryGetRawPointerFactsForNodeWithNested(
+                    nodes,
+                    params,
+                    varExpr.NodeId,
+                    rawPointerAliasMutable,
+                    rawPointerAliasFieldTypeCode,
+                    rawPointerAliasElementSize,
+                    rawPointerAliasElementAlignment,
+                    rawPointerAliasNestedMutable,
+                    rawPointerAliasNestedFieldTypeCode,
+                    rawPointerAliasNestedElementSize,
+                    rawPointerAliasNestedElementAlignment);
         if (varType == ExprType.ErrorType || (varType == ExprType.PtrType && !rawPointerAlias))
         {
             return false;
@@ -7686,19 +7740,23 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
                 rawPointerAliasHasElementCount = false;
             }
 
-            localIndex = ResolveParamWithRawPointerElementAndCountFacts(
-                params,
-                source,
-                nameStart,
+                localIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+                    params,
+                    source,
+                    nameStart,
                 nameLength,
                 rawPointerAliasMutable,
                 rawPointerAliasFieldTypeCode,
                 rawPointerAliasElementSize,
                 rawPointerAliasElementAlignment,
-                rawPointerAliasHasElementCount,
-                rawPointerAliasElementCountIsParam,
-                rawPointerAliasElementCountLiteral,
-                rawPointerAliasElementCountParamIndex);
+                    rawPointerAliasHasElementCount,
+                    rawPointerAliasElementCountIsParam,
+                    rawPointerAliasElementCountLiteral,
+                    rawPointerAliasElementCountParamIndex,
+                    rawPointerAliasNestedMutable,
+                    rawPointerAliasNestedFieldTypeCode,
+                    rawPointerAliasNestedElementSize,
+                    rawPointerAliasNestedElementAlignment);
         }
         else
         {
