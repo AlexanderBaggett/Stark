@@ -12,6 +12,10 @@ public struct ParamName
     u32[0 max] RawPointerFieldTypeCode;
     u32[0 max] RawPointerElementSize;
     u32[0 max] RawPointerElementAlignment;
+    bool RawPointerNestedMutable;
+    u32[0 max] RawPointerNestedFieldTypeCode;
+    u32[0 max] RawPointerNestedElementSize;
+    u32[0 max] RawPointerNestedElementAlignment;
     bool RawPointerHasElementCount;
     bool RawPointerElementCountIsParam;
     u32[0 max] RawPointerElementCountLiteral;
@@ -25,6 +29,10 @@ public struct ParamName
         self.RawPointerFieldTypeCode = 0;
         self.RawPointerElementSize = 0;
         self.RawPointerElementAlignment = 0;
+        self.RawPointerNestedMutable = false;
+        self.RawPointerNestedFieldTypeCode = 0;
+        self.RawPointerNestedElementSize = 0;
+        self.RawPointerNestedElementAlignment = 0;
         self.RawPointerHasElementCount = false;
         self.RawPointerElementCountIsParam = false;
         self.RawPointerElementCountLiteral = 0;
@@ -59,6 +67,26 @@ public struct ParamName
     public inline finite law u32[0 max] RawPointerElementAlignmentValue(borrow ParamName self)
     {
         return self.RawPointerElementAlignment;
+    }
+
+    public inline finite law bool RawPointerNestedMutableValue(borrow ParamName self)
+    {
+        return self.RawPointerNestedMutable;
+    }
+
+    public inline finite law u32[0 max] RawPointerNestedFieldTypeCodeValue(borrow ParamName self)
+    {
+        return self.RawPointerNestedFieldTypeCode;
+    }
+
+    public inline finite law u32[0 max] RawPointerNestedElementSizeValue(borrow ParamName self)
+    {
+        return self.RawPointerNestedElementSize;
+    }
+
+    public inline finite law u32[0 max] RawPointerNestedElementAlignmentValue(borrow ParamName self)
+    {
+        return self.RawPointerNestedElementAlignment;
     }
 
     public inline finite law bool RawPointerHasElementCountValue(borrow ParamName self)

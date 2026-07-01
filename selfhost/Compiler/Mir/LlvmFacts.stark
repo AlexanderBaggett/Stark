@@ -1,6 +1,7 @@
 import Compiler.Ir
 import Compiler.TargetFacts
 import Compiler.Mir.Model
+import Compiler.Mir.Builder
 import Compiler.Mir.LlvmText
 import System.Memory
 import System.Text
@@ -513,7 +514,7 @@ internal inline finite law u32[0 max] LlvmScopedNoAliasMetadataBase()
 
 internal inline finite law u32[0 max] LlvmScopedNoAliasMetadataBaseForFunction(u32[0 max] functionNumber)
 {
-    return LlvmScopedNoAliasMetadataBase() + functionNumber * 10000;
+    return LlvmScopedNoAliasMetadataBase() + functionNumber * 100000;
 }
 
 internal inline finite law u32[0 max] LlvmScopedNoAliasDomainMetadataId(u32[0 max] metadataBase)
@@ -534,6 +535,16 @@ internal inline finite law u32[0 max] LlvmScopedNoAliasAliasListMetadataId(u32[0
 internal inline finite law u32[0 max] LlvmScopedNoAliasNoAliasListMetadataId(u32[0 max] metadataBase, u32[0 max] paramIndex)
 {
     return metadataBase + 8192 + paramIndex;
+}
+
+internal inline finite law u32[0 max] LlvmScopedNoAliasCallAliasListMetadataId(u32[0 max] metadataBase, u32[0 max] callIndex)
+{
+    return metadataBase + 12000 + callIndex * 2;
+}
+
+internal inline finite law u32[0 max] LlvmScopedNoAliasCallNoAliasListMetadataId(u32[0 max] metadataBase, u32[0 max] callIndex)
+{
+    return metadataBase + 12000 + callIndex * 2 + 1;
 }
 
 internal fn bool TryResolveMirPointerParamRoot(borrow IrTable<MirInstruction> instrs, u32[0 max] valueIndex, out u32[0 max] paramIndex)
@@ -657,6 +668,420 @@ internal fn MemoryStatus EmitLlvmScopedNoAliasAttachmentForPointer(
     return MemoryStatus.Ok;
 }
 
+internal struct FunctionCallContractFacts
+{
+    u32[0 max] ParamCount;
+    ParamAbiFacts Param0;
+    ParamAbiFacts Param1;
+    ParamAbiFacts Param2;
+    ParamAbiFacts Param3;
+    u32[0 max] DistinctCount;
+    DistinctStoragePair Distinct0;
+    DistinctStoragePair Distinct1;
+    DistinctStoragePair Distinct2;
+    DistinctStoragePair Distinct3;
+    DistinctStoragePair Distinct4;
+    DistinctStoragePair Distinct5;
+
+    FunctionCallContractFacts()
+    {
+        self.ParamCount = 0;
+        self.Param0 = new();
+        self.Param1 = new();
+        self.Param2 = new();
+        self.Param3 = new();
+        self.DistinctCount = 0;
+        self.Distinct0 = new();
+        self.Distinct1 = new();
+        self.Distinct2 = new();
+        self.Distinct3 = new();
+        self.Distinct4 = new();
+        self.Distinct5 = new();
+    }
+}
+
+internal fn ParamAbiFacts FunctionCallContractParamAbi(FunctionCallContractFacts facts, u32[0 max] paramIndex)
+{
+    switch (paramIndex)
+    {
+        case 0:
+            return facts.Param0;
+        case 1:
+            return facts.Param1;
+        case 2:
+            return facts.Param2;
+        case 3:
+            return facts.Param3;
+        default:
+            stack mut ParamAbiFacts empty = new();
+            return empty;
+    }
+}
+
+internal fn DistinctStoragePair FunctionCallContractDistinctPair(FunctionCallContractFacts facts, u32[0 max] pairIndex)
+{
+    switch (pairIndex)
+    {
+        case 0:
+            return facts.Distinct0;
+        case 1:
+            return facts.Distinct1;
+        case 2:
+            return facts.Distinct2;
+        case 3:
+            return facts.Distinct3;
+        case 4:
+            return facts.Distinct4;
+        case 5:
+            return facts.Distinct5;
+        default:
+            stack mut DistinctStoragePair empty = new();
+            return empty;
+    }
+}
+
+internal fn FunctionCallContractFacts FunctionCallContractFactsAt(borrow IrTable<FunctionCallContractFacts> facts, u32[0 max] functionId)
+{
+    stack mut FunctionCallContractFacts empty = new();
+    if (functionId != 0 && facts.Contains(functionId))
+    {
+        return facts.Get(functionId);
+    }
+
+    return empty;
+}
+
+internal fn u32[0 max] MirCallArgumentMemoryBaseValueIndexForParam(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    u32[0 max] paramIndex)
+{
+    stack u32[0 max] valueIndex = MirCallArgumentValueIndexAt(instrs, instr, paramIndex);
+    stack ParamAbiFacts abi = FunctionCallContractParamAbi(calleeFacts, paramIndex);
+    if (abi.IsSlice && instrs.Contains(valueIndex))
+    {
+        stack MirInstruction valueInstr = instrs.Get(valueIndex);
+        if (valueInstr.Opcode() == MirOp.SliceValue)
+        {
+            return valueInstr.OperandAIndex();
+        }
+    }
+
+    return valueIndex;
+}
+
+internal fn bool MirCallAccessesParamRoot(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    u32[0 max] rootParam)
+{
+    stack mut u32[0 max] param = 0;
+    while willexit (param < calleeFacts.ParamCount)
+    {
+        stack ParamAbiFacts abi = FunctionCallContractParamAbi(calleeFacts, param);
+        if (ParamAbiFactsIsMemoryBacked(abi))
+        {
+            stack u32[0 max] valueIndex = MirCallArgumentMemoryBaseValueIndexForParam(instrs, instr, calleeFacts, param);
+            stack mut u32[0 max] resolvedParam = 0;
+            if (TryResolveMirPointerParamRoot(instrs, valueIndex, resolvedParam) && resolvedParam == rootParam)
+            {
+                return true;
+            }
+        }
+
+        param = param + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirCallParamRootIsNoAliasPeerForAllAccessedRoots(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] candidateRoot)
+{
+    stack mut bool sawAccessedRoot = false;
+    stack mut u32[0 max] param = 0;
+    while willexit (param < calleeFacts.ParamCount)
+    {
+        stack ParamAbiFacts abi = FunctionCallContractParamAbi(calleeFacts, param);
+        if (ParamAbiFactsIsMemoryBacked(abi))
+        {
+            stack u32[0 max] valueIndex = MirCallArgumentMemoryBaseValueIndexForParam(instrs, instr, calleeFacts, param);
+            stack mut u32[0 max] accessedRoot = 0;
+            if (!TryResolveMirPointerParamRoot(instrs, valueIndex, accessedRoot))
+            {
+                return false;
+            }
+
+            if (accessedRoot == candidateRoot)
+            {
+                return false;
+            }
+
+            if (!DistinctStoragePairExists(facts, accessedRoot, candidateRoot))
+            {
+                return false;
+            }
+
+            sawAccessedRoot = true;
+        }
+
+        param = param + 1;
+    }
+
+    return sawAccessedRoot;
+}
+
+internal fn bool MirCallHasScopedNoAliasPeer(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts)
+{
+    if (facts.Count() == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 max] maxParam = (u64[0 max])DistinctStorageMaxParamIndex(facts);
+    stack mut u64[0 max] candidate = 0;
+    while willexit (candidate <= maxParam)
+    {
+        if (MirCallParamRootIsNoAliasPeerForAllAccessedRoots(instrs, instr, calleeFacts, facts, (u32[0 max])candidate))
+        {
+            return true;
+        }
+
+        candidate = candidate + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirCallUsesScopedNoAliasMetadata(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts)
+{
+    if (!MirOpIsAnyCall(instr.Opcode()))
+    {
+        return false;
+    }
+
+    return MirCallHasScopedNoAliasPeer(instrs, instr, calleeFacts, facts);
+}
+
+internal fn bool MirInstructionUsesScopedNoAliasMetadataWithCalls(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return false;
+    }
+
+    if (MirInstructionUsesScopedNoAliasMetadata(instrs, facts, index))
+    {
+        return true;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.Call:
+            stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])instr.Immediate());
+            return MirCallUsesScopedNoAliasMetadata(instrs, instr, calleeFacts, facts);
+        case MirOp.CallWide:
+            stack FunctionCallContractFacts wideCalleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])instr.Immediate());
+            return MirCallUsesScopedNoAliasMetadata(instrs, instr, wideCalleeFacts, facts);
+        default:
+            return false;
+    }
+}
+
+internal fn bool MirInstructionRangeUsesScopedNoAliasMetadataWithCalls(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount)
+{
+    if (facts.Count() == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (MirInstructionUsesScopedNoAliasMetadataWithCalls(instrs, functionCallContractFacts, facts, index))
+        {
+            return true;
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasCallAliasScopes(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    stack mut bool emitted = false;
+    stack u64[0 max] maxParam = (u64[0 max])DistinctStorageMaxParamIndex(facts);
+    stack mut u64[0 max] param = 0;
+    while willexit (param <= maxParam)
+    {
+        stack u32[0 max] paramIndex = (u32[0 max])param;
+        if (MirCallAccessesParamRoot(instrs, instr, calleeFacts, paramIndex))
+        {
+            if (emitted)
+            {
+                try sink.AppendConstAscii(", ");
+            }
+
+            try sink.AppendConstAscii("!");
+            try sink.AppendU64((u64[0 max])LlvmScopedNoAliasScopeMetadataId(metadataBase, paramIndex));
+            emitted = true;
+        }
+
+        param = param + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasCallNoAliasScopes(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    stack mut bool emitted = false;
+    stack u64[0 max] maxParam = (u64[0 max])DistinctStorageMaxParamIndex(facts);
+    stack mut u64[0 max] param = 0;
+    while willexit (param <= maxParam)
+    {
+        stack u32[0 max] paramIndex = (u32[0 max])param;
+        if (MirCallParamRootIsNoAliasPeerForAllAccessedRoots(instrs, instr, calleeFacts, facts, paramIndex))
+        {
+            if (emitted)
+            {
+                try sink.AppendConstAscii(", ");
+            }
+
+            try sink.AppendConstAscii("!");
+            try sink.AppendU64((u64[0 max])LlvmScopedNoAliasScopeMetadataId(metadataBase, paramIndex));
+            emitted = true;
+        }
+
+        param = param + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasAttachmentForCall(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] metadataBase,
+    u32[0 max] callIndex,
+    mut borrow OwnedAscii sink)
+{
+    if (!MirCallUsesScopedNoAliasMetadata(instrs, instr, calleeFacts, facts))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(", !alias.scope !");
+    try sink.AppendU64((u64[0 max])LlvmScopedNoAliasCallAliasListMetadataId(metadataBase, callIndex));
+    try sink.AppendConstAscii(", !noalias !");
+    try sink.AppendU64((u64[0 max])LlvmScopedNoAliasCallNoAliasListMetadataId(metadataBase, callIndex));
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasCallMetadataDefinition(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] metadataBase,
+    u32[0 max] callIndex,
+    mut borrow OwnedAscii sink)
+{
+    if (!MirCallUsesScopedNoAliasMetadata(instrs, instr, calleeFacts, facts))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("!");
+    try sink.AppendU64((u64[0 max])LlvmScopedNoAliasCallAliasListMetadataId(metadataBase, callIndex));
+    try sink.AppendConstAscii(" = !{");
+    try EmitLlvmScopedNoAliasCallAliasScopes(instrs, instr, calleeFacts, facts, metadataBase, sink);
+    try sink.AppendConstAscii("}\n!");
+    try sink.AppendU64((u64[0 max])LlvmScopedNoAliasCallNoAliasListMetadataId(metadataBase, callIndex));
+    try sink.AppendConstAscii(" = !{");
+    try EmitLlvmScopedNoAliasCallNoAliasScopes(instrs, instr, calleeFacts, facts, metadataBase, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasCallMetadataDefinitionsForInstructionRange(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] metadataBase,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            switch (instr.Opcode())
+            {
+                case MirOp.Call:
+                    stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])instr.Immediate());
+                    try EmitLlvmScopedNoAliasCallMetadataDefinition(instrs, instr, calleeFacts, facts, metadataBase, index, sink);
+                case MirOp.CallWide:
+                    stack FunctionCallContractFacts wideCalleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])instr.Immediate());
+                    try EmitLlvmScopedNoAliasCallMetadataDefinition(instrs, instr, wideCalleeFacts, facts, metadataBase, index, sink);
+                default:
+                    try sink.AppendConstAscii("");
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
 internal fn MemoryStatus EmitLlvmScopedNoAliasPeerScopes(
     borrow IrTable<DistinctStoragePair> facts,
     u32[0 max] metadataBase,
@@ -760,89 +1185,6 @@ internal fn MemoryStatus EmitLlvmScopedNoAliasMetadataDefinitions(
     }
 
     return MemoryStatus.Ok;
-}
-
-internal struct FunctionCallContractFacts
-{
-    u32[0 max] ParamCount;
-    ParamAbiFacts Param0;
-    ParamAbiFacts Param1;
-    ParamAbiFacts Param2;
-    ParamAbiFacts Param3;
-    u32[0 max] DistinctCount;
-    DistinctStoragePair Distinct0;
-    DistinctStoragePair Distinct1;
-    DistinctStoragePair Distinct2;
-    DistinctStoragePair Distinct3;
-    DistinctStoragePair Distinct4;
-    DistinctStoragePair Distinct5;
-
-    FunctionCallContractFacts()
-    {
-        self.ParamCount = 0;
-        self.Param0 = new();
-        self.Param1 = new();
-        self.Param2 = new();
-        self.Param3 = new();
-        self.DistinctCount = 0;
-        self.Distinct0 = new();
-        self.Distinct1 = new();
-        self.Distinct2 = new();
-        self.Distinct3 = new();
-        self.Distinct4 = new();
-        self.Distinct5 = new();
-    }
-}
-
-internal fn ParamAbiFacts FunctionCallContractParamAbi(FunctionCallContractFacts facts, u32[0 max] paramIndex)
-{
-    switch (paramIndex)
-    {
-        case 0:
-            return facts.Param0;
-        case 1:
-            return facts.Param1;
-        case 2:
-            return facts.Param2;
-        case 3:
-            return facts.Param3;
-        default:
-            stack mut ParamAbiFacts empty = new();
-            return empty;
-    }
-}
-
-internal fn DistinctStoragePair FunctionCallContractDistinctPair(FunctionCallContractFacts facts, u32[0 max] pairIndex)
-{
-    switch (pairIndex)
-    {
-        case 0:
-            return facts.Distinct0;
-        case 1:
-            return facts.Distinct1;
-        case 2:
-            return facts.Distinct2;
-        case 3:
-            return facts.Distinct3;
-        case 4:
-            return facts.Distinct4;
-        case 5:
-            return facts.Distinct5;
-        default:
-            stack mut DistinctStoragePair empty = new();
-            return empty;
-    }
-}
-
-internal fn FunctionCallContractFacts FunctionCallContractFactsAt(borrow IrTable<FunctionCallContractFacts> facts, u32[0 max] functionId)
-{
-    stack mut FunctionCallContractFacts empty = new();
-    if (functionId != 0 && facts.Contains(functionId))
-    {
-        return facts.Get(functionId);
-    }
-
-    return empty;
 }
 
 internal struct LlvmRangeMetadata

@@ -455,6 +455,34 @@ public fn MirValueId MirEnumPayloadInsert(
     return MirValueIdOf(instrs.Add(instr));
 }
 
+public fn MirValueId MirEnumTagRead(mut borrow IrTable<MirInstruction> instrs, TypeId ownerType, MirValueId sourceValue, MirType tagType)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.EnumTagRead;
+    instr.AIndex = sourceValue.Index();
+    instr.BIndex = ownerType.Index();
+    instr.ResType = tagType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirEnumPayloadExtract(
+    mut borrow IrTable<MirInstruction> instrs,
+    TypeId ownerType,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    MirValueId sourceValue,
+    MirType payloadType)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.EnumPayloadExtract;
+    instr.AIndex = sourceValue.Index();
+    instr.BIndex = ownerType.Index();
+    instr.CIndex = variantOrdinal;
+    instr.DIndex = payloadOrdinal;
+    instr.ResType = payloadType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
 // Opens a function-scope arena frame. This is a real MIR instruction so arena setup
 // participates in ordering, effect analysis, serialization, and LLVM emission.
 public fn MirValueId MirArenaFrameEnter(mut borrow IrTable<MirInstruction> instrs)

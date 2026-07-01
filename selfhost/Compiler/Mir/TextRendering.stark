@@ -269,6 +269,24 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try sink.AppendConstAscii(", payload ");
             try sink.AppendI64(instr.Immediate());
             try sink.AppendConstAscii("\n");
+        case MirOp.EnumTagRead:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = enum.tag.read ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", type ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.EnumPayloadExtract:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = enum.payload.extract ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", type ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", variant ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", payload ");
+            try sink.AppendU64((u64[0 max])instr.OperandDIndex());
+            try sink.AppendConstAscii("\n");
         case MirOp.ArenaFrameEnter:
             try sink.AppendConstAscii("arena-frame.enter\n");
         case MirOp.ArenaAlloc:

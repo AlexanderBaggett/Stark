@@ -180,6 +180,46 @@ internal fn MemoryStatus EmitLlvmEnumPayloadInsertInstruction(
         sink);
 }
 
+internal fn MemoryStatus EmitLlvmEnumTagReadInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    stack mut OwnedAscii resultName = new();
+    stack mut OwnedAscii sourceValueName = new();
+    try EmitLlvmRegister(resultName, index);
+    try EmitLlvmOperand(instrs, sourceValueName, instr.OperandAIndex());
+    return EmitLlvmEnumTagRead(
+        enumLayoutFacts,
+        TypeIdOf(instr.OperandBIndex()),
+        resultName.View(),
+        sourceValueName.View(),
+        sink);
+}
+
+internal fn MemoryStatus EmitLlvmEnumPayloadExtractInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    stack mut OwnedAscii resultName = new();
+    stack mut OwnedAscii sourceValueName = new();
+    try EmitLlvmRegister(resultName, index);
+    try EmitLlvmOperand(instrs, sourceValueName, instr.OperandAIndex());
+    return EmitLlvmEnumPayloadRead(
+        enumLayoutFacts,
+        TypeIdOf(instr.OperandBIndex()),
+        instr.OperandCIndex(),
+        instr.OperandDIndex(),
+        resultName.View(),
+        sourceValueName.View(),
+        sink);
+}
+
 internal fn MemoryStatus EmitLlvmEnumValueLoadPtrInstruction(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
@@ -232,6 +272,10 @@ internal fn MemoryStatus EmitLlvmEnumInstruction(
             return EmitLlvmEnumVariantTagInstruction(enumLayoutFacts, sink, index, instr);
         case MirOp.EnumPayloadInsert:
             return EmitLlvmEnumPayloadInsertInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumTagRead:
+            return EmitLlvmEnumTagReadInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumPayloadExtract:
+            return EmitLlvmEnumPayloadExtractInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.LoadEnumPtr:
             return EmitLlvmEnumValueLoadPtrInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.StoreEnumPtr:
@@ -682,6 +726,53 @@ internal fn MemoryStatus EmitLlvmStorePtrInstruction(
     try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
     try EmitLlvmMemoryAlignment(memoryFacts, sink);
     try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn bool MirPointerOperandUsesInboundsIndexedRegion(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] pointerValue)
+{
+    stack mut u32[0 max] current = pointerValue;
+    stack mut u64[0 2 ** 63 - 1] remaining = instrs.Count();
+    while willexit (current != 0 && remaining > 0)
+    {
+        if (!instrs.Contains(current))
+        {
+            return false;
+        }
+
+        stack MirInstruction instr = instrs.Get(current);
+        switch (instr.Opcode())
+        {
+            case MirOp.PtrIndexOffset:
+                return true;
+            case MirOp.PtrOffset:
+                current = instr.OperandAIndex();
+            default:
+                return false;
+        }
+
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmIndependentLoopAccessGroupAttachment(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] accessGroupMetadataId,
+    u32[0 max] pointerValue,
+    mut borrow OwnedAscii sink)
+{
+    if (accessGroupMetadataId == 0
+        || !MirPointerOperandUsesInboundsIndexedRegion(instrs, pointerValue))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(", !llvm.access.group !");
+    try sink.AppendU64((u64[0 max])accessGroupMetadataId);
     return MemoryStatus.Ok;
 }
 
@@ -1343,6 +1434,10 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirIn
             try sink.AppendConstAscii("");
         case MirOp.EnumPayloadInsert:
             try sink.AppendConstAscii("");
+        case MirOp.EnumTagRead:
+            try sink.AppendConstAscii("");
+        case MirOp.EnumPayloadExtract:
+            try sink.AppendConstAscii("");
         case MirOp.LoadEnumPtr:
             try sink.AppendConstAscii("");
         case MirOp.StoreEnumPtr:
@@ -1371,6 +1466,7 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     u32[0 max] scopedNoAliasMetadataBase,
+    u32[0 max] independentLoopAccessGroupMetadataId,
     mut borrow OwnedAscii sink,
     u32[0 max] index)
 {
@@ -1510,6 +1606,7 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
             try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
             try EmitLlvmMemoryAlignment(loadPtrMemoryFacts, sink);
             try EmitLlvmScopedNoAliasAttachmentForPointer(instrs, separateStorageFacts, scopedNoAliasMetadataBase, instr.OperandAIndex(), sink);
+            try EmitLlvmIndependentLoopAccessGroupAttachment(instrs, independentLoopAccessGroupMetadataId, instr.OperandAIndex(), sink);
             try EmitLlvmRangeMetadataAttachment(instr.ResultType(), loadedPtrValueFacts, rangeMetadata, sink);
             try sink.AppendConstAscii("\n");
         case MirOp.StorePtr:
@@ -1523,6 +1620,7 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
             try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
             try EmitLlvmMemoryAlignment(storePtrMemoryFacts, sink);
             try EmitLlvmScopedNoAliasAttachmentForPointer(instrs, separateStorageFacts, scopedNoAliasMetadataBase, instr.OperandAIndex(), sink);
+            try EmitLlvmIndependentLoopAccessGroupAttachment(instrs, independentLoopAccessGroupMetadataId, instr.OperandAIndex(), sink);
             try sink.AppendConstAscii("\n");
         case MirOp.ArenaFrameEnter:
             try EmitLlvmArenaInstruction(sink, index, instr);
@@ -1565,6 +1663,14 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
                 instr.OperandDIndex());
             try EmitLlvmCallSiteEffectAttributes(functionEffectFacts, (u32[0 max])instr.Immediate(), sink);
             try EmitLlvmRangeMetadataAttachment(instr.ResultType(), FactAt(functionReturnFacts, (u32[0 max])instr.Immediate()), rangeMetadata, sink);
+            try EmitLlvmScopedNoAliasAttachmentForCall(
+                instrs,
+                instr,
+                calleeFacts,
+                separateStorageFacts,
+                scopedNoAliasMetadataBase,
+                index,
+                sink);
             try sink.AppendConstAscii("\n");
         case MirOp.CallArg:
             try sink.AppendConstAscii("");
@@ -1591,6 +1697,14 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
                 instr.OperandBIndex());
             try EmitLlvmCallSiteEffectAttributes(functionEffectFacts, (u32[0 max])instr.Immediate(), sink);
             try EmitLlvmRangeMetadataAttachment(instr.ResultType(), FactAt(functionReturnFacts, (u32[0 max])instr.Immediate()), rangeMetadata, sink);
+            try EmitLlvmScopedNoAliasAttachmentForCall(
+                instrs,
+                instr,
+                wideCalleeFacts,
+                separateStorageFacts,
+                scopedNoAliasMetadataBase,
+                index,
+                sink);
             try sink.AppendConstAscii("\n");
         case MirOp.TailCall:
             try sink.AppendConstAscii("");
@@ -1599,6 +1713,10 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
         case MirOp.EnumVariantTag:
             try sink.AppendConstAscii("");
         case MirOp.EnumPayloadInsert:
+            try sink.AppendConstAscii("");
+        case MirOp.EnumTagRead:
+            try sink.AppendConstAscii("");
+        case MirOp.EnumPayloadExtract:
             try sink.AppendConstAscii("");
         case MirOp.LoadEnumPtr:
             try sink.AppendConstAscii("");
@@ -1640,6 +1758,10 @@ internal fn MemoryStatus EmitLlvmInstructionWithEnumLayoutsAndTailCallees(
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.EnumPayloadInsert:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumTagRead:
+            return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumPayloadExtract:
+            return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.LoadEnumPtr:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.StoreEnumPtr:
@@ -1673,6 +1795,7 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     u32[0 max] scopedNoAliasMetadataBase,
+    u32[0 max] independentLoopAccessGroupMetadataId,
     mut borrow OwnedAscii sink,
     u32[0 max] index)
 {
@@ -1687,6 +1810,10 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
         case MirOp.EnumVariantTag:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.EnumPayloadInsert:
+            return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumTagRead:
+            return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumPayloadExtract:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.LoadEnumPtr:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
@@ -1706,6 +1833,7 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
                 rangeMetadata,
                 separateStorageFacts,
                 scopedNoAliasMetadataBase,
+                independentLoopAccessGroupMetadataId,
                 sink,
                 index);
     }
@@ -2088,6 +2216,10 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
             try sink.AppendConstAscii("");
         case MirOp.EnumPayloadInsert:
             try sink.AppendConstAscii("");
+        case MirOp.EnumTagRead:
+            try sink.AppendConstAscii("");
+        case MirOp.EnumPayloadExtract:
+            try sink.AppendConstAscii("");
         case MirOp.LoadEnumPtr:
             try sink.AppendConstAscii("");
         case MirOp.StoreEnumPtr:
@@ -2122,6 +2254,10 @@ internal fn MemoryStatus EmitLlvmTypedInstructionWithEnumLayouts(
         case MirOp.EnumVariantTag:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.EnumPayloadInsert:
+            return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumTagRead:
+            return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
+        case MirOp.EnumPayloadExtract:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);
         case MirOp.LoadEnumPtr:
             return EmitLlvmEnumInstruction(instrs, enumLayoutFacts, sink, index, instr);

@@ -523,7 +523,11 @@ Execution constraints:
     - [~] Lower general typed member chains from HIR.
       - [x] Lower scalar and enum leaf chains on storage-backed constructed object locals.
       - [x] Lower fixed-array leaves reached through nested member chains.
-      - [ ] Lower typed HIR member path rows through the shared place-address resolver.
+      - [~] Lower typed HIR member path rows through shared storage-place addressing.
+        - [x] Route constructed-object field reads and address-taking through a shared storage-place address helper.
+        - [x] Route constructed-object field assignments through the shared storage-place address helper.
+        - [x] Route direct and indexed constructed-object field parsing through the member-chain resolver.
+        - [ ] Import typed HIR member path rows into the shared place-address resolver.
     - [~] Lower address-taking place reads for locals, fields, and parameters.
       - [x] Lower address-taking for storage-backed scalar and aggregate locals.
       - [x] Lower address-taking for storage-backed field and indexed element places.
@@ -589,15 +593,23 @@ Execution constraints:
       - [x] Lower raw-pointer local dereference loads after local pointer element facts are tracked.
         - [x] Lower scalar raw-pointer alias dereference loads through typed aligned MIR loads.
         - [x] Lower declared raw-pointer local dereference loads after typed raw-pointer locals are modeled.
-      - [ ] Lower aggregate and nested-pointer dereferences after pointee layout facts are tracked.
-      - [~] Lower indexed raw-pointer dereference patterns through bounded pointer-region facts.
+      - [x] Lower aggregate and nested-pointer dereferences after pointee layout facts are tracked.
+        - [x] Model pointer-valued raw-pointer pointee facts for one nested pointee level.
+        - [x] Lower direct nested raw-pointer dereference loads through pointer-sized MIR loads.
+        - [x] Lower direct nested raw-pointer dereference stores when the nested pointer is mutable.
+        - [x] Preserve nested raw-pointer pointee facts through `var` aliases and declared raw-pointer locals.
+        - [x] Reject stores through readonly nested raw-pointer pointees.
+        - [x] Model aggregate raw-pointer pointee layout facts.
+        - [x] Lower aggregate raw-pointer field dereferences through typed field offsets.
+        - [x] Preserve aggregate pointee facts through raw-pointer aliases and locals.
+      - [x] Lower indexed raw-pointer dereference patterns through bounded pointer-region facts.
         - [x] Parse bounded scalar raw-pointer parameter indexed element expressions.
         - [x] Prove fixed-count bounded parameter indexes from source integer ranges.
         - [x] Prove count-parameter bounded indexes from count lower bounds.
         - [x] Lower bounded scalar raw-pointer parameter indexed loads through inbounds indexed MIR pointer offsets.
         - [x] Lower bounded scalar `rawmutptr` parameter indexed stores through inbounds indexed MIR pointer offsets.
         - [x] Reject unbounded and insufficiently proven indexed raw-pointer dereferences.
-        - [~] Track bounded raw-pointer region facts for declared pointer locals and aliases.
+        - [x] Track bounded raw-pointer region facts for declared pointer locals and aliases.
           - [x] Propagate bounded region facts through raw-pointer `var` aliases.
           - [x] Propagate bounded region facts into immutable declared raw-pointer locals initialized from bounded pointer names.
           - [x] Propagate bounded region facts into initialized mutable raw-pointer locals.
@@ -605,7 +617,10 @@ Execution constraints:
           - [x] Clear mutable raw-pointer local bounds after unbounded pointer assignments.
           - [x] Preserve mutable raw-pointer assignment facts through terminal-if and switch mutation uses.
           - [x] Merge bounded raw-pointer region facts across branch and switch assignments.
-        - [ ] Attach raw-pointer indexed region alias facts to calls, loops, and scoped noalias metadata.
+        - [x] Attach raw-pointer indexed region alias facts to calls, loops, and scoped noalias metadata.
+          - [x] Attach scoped noalias metadata to parameter-rooted MIR pointer loads and stores.
+          - [x] Attach scoped noalias metadata to direct and tail calls with memory-backed pointer arguments.
+          - [x] Attach independent-loop access metadata for raw-pointer indexed loop bodies.
   - [~] Lower if expressions and statements.
     - [x] Validate conditional branch conditions before emitting MIR conditional blocks.
     - [x] Lower HIR if branch terminators from block symbols to validated MIR conditional blocks.
@@ -630,7 +645,27 @@ Execution constraints:
     - [x] Preserve boolean local source if-expression phi return range facts through LLVM range attributes.
     - [x] Preserve compact boolean local source if-statement phi return range facts through LLVM range attributes.
     - [x] Preserve braced boolean local source if-statement phi return range facts through LLVM range attributes.
-    - [ ] Lower source if statements and if expressions into MIR conditional blocks.
+    - [~] Lower source if statements and if expressions into MIR conditional blocks.
+      - [x] Lower braced source if-statement arms assigning multiple scalar locals in declaration order.
+      - [x] Lower braced source if-statement arms assigning multiple scalar locals in arbitrary source order.
+      - [x] Preserve boolean phi types and return range facts for multiple scalar if-statement assignments.
+      - [x] Lower arm-local declarations inside non-terminal source if statement bodies.
+        - [x] Lower branch-local declarations inside multi-local source if-statement assignment arms.
+        - [x] Lower branch-local declarations inside single-local source if-statement assignment arms.
+        - [x] Lower branch-local declarations inside immediately returned source if-statement arms.
+      - [~] Lower nested non-terminal source if statement bodies through shared statement lowering.
+        - [x] Lower one nested braced scalar source if-statement arm before a later return expression.
+        - [x] Preserve boolean phi types and return range facts for one nested scalar source if-statement arm.
+        - [x] Lower nested source if statement arms with branch-local declarations.
+        - [x] Lower nested scalar source if-statement arms on both sides of the same join.
+        - [x] Lower nested source if statement arms with storage-backed mutation statements.
+        - [x] Lower nested source if statement arms with multiple assigned locals.
+          - [x] Lower nested source if statement arms with multiple scalar assigned locals.
+          - [x] Preserve pointer-valued nested multi-local assignment facts through typed phis.
+        - [x] Lower recursive nested source if statement arms on both sides of the same join.
+          - [x] Lower recursive nested single-local scalar source if statement arms through typed phi trees.
+          - [x] Lower recursive nested multi-local scalar source if statement arms through typed phi trees.
+          - [x] Lower recursive nested storage-backed mutation source if statement arms through branch-local stores.
   - [~] Lower loops.
     - [x] Lower canonical source while counting loops into MIR entry, header, body, and exit blocks.
     - [x] Lower canonical source accumulator while loops into MIR dual-phi loop blocks.
@@ -674,7 +709,37 @@ Execution constraints:
       - [x] Lower integer range-pattern switch cases through MIR branch tests.
       - [ ] Lower aggregate and list pattern switch cases through MIR branch tests.
     - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
-  - [ ] Lower `try`.
+  - [~] Lower `try`.
+    - [x] Represent source `try` expressions in the MIR source expression model without erasing operand identity.
+    - [x] Resolve typed `[Ok]` and `[Err]` role tags plus scalar and enum payload facts from enum layout rows.
+    - [x] Resolve source and return enum-family compatibility for `try`.
+    - [x] Lower same-family `try` expressions into tag tests, payload extraction, and early error returns.
+      - [x] Build a reusable MIR helper for same-family `try` tag tests, early error returns, and success payload extraction.
+      - [x] Route same-family source `try` expression lowering through the reusable MIR helper.
+        - [x] Route local `try` bindings followed by terminal returns through the reusable MIR helper.
+        - [x] Route terminal return-operand `try` expressions through the reusable MIR helper.
+        - [x] Route assignment right-side `try` expressions through the reusable MIR helper.
+          - [x] Route scalar local assignment right-side `try` expressions followed by terminal returns through the reusable MIR helper.
+          - [x] Route storage-backed assignment right-side `try` expressions through the reusable MIR helper.
+            - [x] Route initialized scalar stack storage assignment right-side `try` expressions through stack slots and typed stores.
+            - [x] Route uninitialized scalar stack storage assignment right-side `try` expressions after preserving write-before-read proofs.
+            - [x] Route field storage assignment right-side `try` expressions through typed place stores.
+            - [x] Route indexed storage assignment right-side `try` expressions through typed element stores.
+              - [x] Route constructed-object fixed-array field assignment RHS `try` expressions through bounded typed element stores.
+              - [x] Route mutable signature-slice element assignment RHS `try` expressions through unbounded typed element stores.
+              - [x] Route local fixed-array and local slice element assignment RHS `try` expressions through typed element stores.
+    - [x] Lower same-family `try` bindings across statement boundaries without dropping payload facts.
+      - [x] Lower immediate local `try` bindings before terminal returns without dropping success payload facts.
+      - [x] Lower local `try` bindings across ordered successor `var` locals without dropping success payload facts.
+      - [x] Lower local `try` bindings across ordered successor storage mutations without dropping success payload facts.
+      - [x] Lower local `try` bindings across successor storage-creating declarations without dropping success payload facts.
+        - [x] Lower initialized scalar stack storage declarations after local `try` success edges.
+        - [x] Lower uninitialized scalar stack storage declarations before later successor mutations after local `try` success edges.
+        - [x] Lower fixed-array and slice storage declarations after local `try` success edges.
+        - [x] Lower enum storage declarations after local `try` success edges.
+        - [x] Lower stack constructed-object storage declarations after local `try` success edges.
+      - [x] Lower nested successor `try` bindings after an earlier local `try` success edge.
+    - [x] Lower cross-family `try` expressions through declared error-funnel construction.
   - [x] Lower `become`.
     - [x] Lower direct i64 `become` calls to MIR tail-call payloads and terminator blocks with facts.
     - [x] Lower typed non-i64 `become` calls once typed tail-call terminator emission exists.
@@ -700,6 +765,7 @@ Execution constraints:
     - [x] Lower constructed object field and member reads from storage-backed places.
   - [~] Lower enum payloads.
     - [x] Preserve enum payload layout rows through MIR enum layout facts, package images, and LLVM storage helpers.
+    - [x] Add MIR enum tag and payload extraction operations with range facts and LLVM layout emission.
     - [x] Represent enum-valued source expressions in the MIR source expression model.
     - [x] Add MIR enum construction operations that carry enum owner, variant, payload ordinal, and payload value facts.
     - [x] Thread enum layout fact tables through normal MIR-to-LLVM instruction emission.
@@ -845,6 +911,8 @@ Execution constraints:
   - [~] Attach noalias facts to LLVM IR.
     - [x] Emit whole-parameter disjoint facts as deterministic textual LLVM separate-storage assumes.
     - [x] Attach noalias arena allocation facts in deterministic textual LLVM emission.
+    - [x] Attach parameter-rooted scoped noalias metadata to deterministic textual LLVM loads and stores.
+    - [x] Attach call-site scoped noalias metadata to deterministic textual LLVM direct and tail calls.
     - [ ] Attach noalias facts through the libLLVM module builder after ABI/SSA object emission lands.
   - [~] Attach readonly facts to LLVM IR.
     - [x] Attach readonly borrow parameter facts in deterministic textual LLVM emission.

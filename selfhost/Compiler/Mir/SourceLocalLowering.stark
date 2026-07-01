@@ -3,6 +3,7 @@ import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Mir.Builder
 import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
 import Compiler.Mir.LlvmFacts
 import Compiler.Mir.Model
 import Compiler.Mir.SourceExpressionLowering
@@ -11,7 +12,9 @@ import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
 import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloadModel
 import Compiler.Typing.TypedTypeResolution
+import System.Text
 module Compiler.Mir.SourceLocalLowering
 
 internal finite law u32[0 max] MatchingBraceForMirLowering(borrow TokenStream stream, u32[0 max] open)
@@ -2497,6 +2500,7 @@ internal fn bool TryReadNextRecordHeaderFieldLayout(
 internal struct StackObjectFieldInitializer
 {
     u32[0 max] LocalOrdinal;
+    u32[0 max] ParamIndex;
     u32[0 max] ObjectPointerValue;
     u32[0 max] FieldOffset;
     u32[0 max] FieldAlignment;
@@ -2507,6 +2511,7 @@ internal struct StackObjectFieldInitializer
     StackObjectFieldInitializer()
     {
         self.LocalOrdinal = 0;
+        self.ParamIndex = 0;
         self.ObjectPointerValue = 0;
         self.FieldOffset = 0;
         self.FieldAlignment = 0;
@@ -2705,6 +2710,11 @@ internal finite law bool FieldInitializerTypeCodeMatches(u32[0 max] fieldTypeCod
     if (fieldTypeCode == SourceResolvedFieldTypeCodeBool())
     {
         return exprType == ExprType.BoolType;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodePointer())
+    {
+        return exprType == ExprType.PtrType;
     }
 
     if (fieldTypeCode == SourceResolvedFieldTypeCodeI8()
@@ -3018,9 +3028,13 @@ internal fn bool TryBuildSourceValueFactsForNode(
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
             return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr:
+            return false;
         case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
             return false;
     }
 }
@@ -3488,6 +3502,11 @@ internal fn u32[0 max] SourceResolvedFieldTypeCodeForMirType(MirType type)
         return SourceResolvedFieldTypeCodeI64();
     }
 
+    if (type == MirType.Ptr)
+    {
+        return SourceResolvedFieldTypeCodePointer();
+    }
+
     return SourceResolvedFieldTypeCodeInvalid();
 }
 
@@ -3516,6 +3535,11 @@ internal fn u32[0 max] SourceLocalStoredScalarTypeCodeForMirType(MirType type)
     if (type == MirType.I64)
     {
         return SourceLocalTypeCodeStoredI64();
+    }
+
+    if (type == MirType.Ptr)
+    {
+        return SourceLocalTypeCodeStoredPointer();
     }
 
     return SourceLocalTypeCodeNonValue();
@@ -3558,11 +3582,48 @@ internal fn bool TryReadSourceLocalRawPointerScalarElementFacts(
     out u32[0 max] fieldTypeCode,
     out bool rawPointerMutable)
 {
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    return TryReadSourceLocalRawPointerElementFacts(
+        stream,
+        source,
+        typeToken,
+        elementType,
+        elementSize,
+        elementAlignment,
+        fieldTypeCode,
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+}
+
+internal fn bool TryReadSourceLocalRawPointerElementFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out MirType elementType,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out u32[0 max] fieldTypeCode,
+    out bool rawPointerMutable,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
     elementType = MirType.I64;
     elementSize = 0;
     elementAlignment = 0;
     fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     rawPointerMutable = false;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
     stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
     if (kind != TokenKind.Rawptr && kind != TokenKind.Rawmutptr)
     {
@@ -3578,6 +3639,67 @@ internal fn bool TryReadSourceLocalRawPointerScalarElementFacts(
     while willexit (SourceLocalRawPointerElementQualifier(stream.KindAt((u64[0 2 ** 63 - 1])elementToken)))
     {
         elementToken = elementToken + 1;
+    }
+
+    stack TokenKind elementKind = stream.KindAt((u64[0 2 ** 63 - 1])elementToken);
+    if (elementKind == TokenKind.Rawptr || elementKind == TokenKind.Rawmutptr)
+    {
+        stack mut MirType innerElementType = MirType.I64;
+        stack mut u32[0 max] innerElementSize = 0;
+        stack mut u32[0 max] innerElementAlignment = 0;
+        stack mut u32[0 max] innerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut bool innerMutable = false;
+        stack mut bool ignoredNestedMutable = false;
+        stack mut u32[0 max] ignoredNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] ignoredNestedElementSize = 0;
+        stack mut u32[0 max] ignoredNestedElementAlignment = 0;
+        if (!TryReadSourceLocalRawPointerElementFacts(
+            stream,
+            source,
+            elementToken,
+            innerElementType,
+            innerElementSize,
+            innerElementAlignment,
+            innerFieldTypeCode,
+            innerMutable,
+            ignoredNestedMutable,
+            ignoredNestedFieldTypeCode,
+            ignoredNestedElementSize,
+            ignoredNestedElementAlignment))
+        {
+            return false;
+        }
+
+        elementType = MirType.Ptr;
+        elementSize = SourceRawPointerStorageByteExtent();
+        elementAlignment = SourceRawPointerStorageByteAlignment();
+        fieldTypeCode = SourceResolvedFieldTypeCodePointer();
+        rawPointerMutable = kind == TokenKind.Rawmutptr;
+        nestedMutable = innerMutable;
+        nestedFieldTypeCode = innerFieldTypeCode;
+        nestedElementSize = innerElementSize;
+        nestedElementAlignment = innerElementAlignment;
+        return true;
+    }
+
+    if (elementKind == TokenKind.Identifier)
+    {
+        stack u32[0 max] aggregateSize = TypeKnownByteExtentForLocal(stream, source, elementToken);
+        stack u32[0 max] aggregateAlignment = TypeKnownByteAlignment(stream, source, elementToken);
+        stack u32[0 max] aggregateTypeCode = SourceResolvedFieldTypeCodeForAggregateTypeToken(elementToken);
+        if (aggregateSize == 0
+            || aggregateAlignment == 0
+            || aggregateTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return false;
+        }
+
+        elementType = MirType.Ptr;
+        elementSize = aggregateSize;
+        elementAlignment = aggregateAlignment;
+        fieldTypeCode = aggregateTypeCode;
+        rawPointerMutable = kind == TokenKind.Rawmutptr;
+        return true;
     }
 
     stack mut MirType resolvedElementType = MirType.I64;
@@ -3609,14 +3731,26 @@ internal fn bool RawPointerInitializerFactsMatchDeclaration(
     u32[0 max] declaredFieldTypeCode,
     u32[0 max] declaredElementSize,
     u32[0 max] declaredElementAlignment,
+    bool declaredNestedMutable,
+    u32[0 max] declaredNestedFieldTypeCode,
+    u32[0 max] declaredNestedElementSize,
+    u32[0 max] declaredNestedElementAlignment,
     bool initializerMutable,
     u32[0 max] initializerFieldTypeCode,
     u32[0 max] initializerElementSize,
-    u32[0 max] initializerElementAlignment)
+    u32[0 max] initializerElementAlignment,
+    bool initializerNestedMutable,
+    u32[0 max] initializerNestedFieldTypeCode,
+    u32[0 max] initializerNestedElementSize,
+    u32[0 max] initializerNestedElementAlignment)
 {
     if (declaredFieldTypeCode != initializerFieldTypeCode
         || declaredElementSize != initializerElementSize
-        || declaredElementAlignment != initializerElementAlignment)
+        || declaredElementAlignment != initializerElementAlignment
+        || declaredNestedMutable != initializerNestedMutable
+        || declaredNestedFieldTypeCode != initializerNestedFieldTypeCode
+        || declaredNestedElementSize != initializerNestedElementSize
+        || declaredNestedElementAlignment != initializerNestedElementAlignment)
     {
         return false;
     }
@@ -3650,7 +3784,11 @@ internal fn bool TryDeclareUninitializedRawPointerStorageLocal(
     stack mut u32[0 max] elementAlignment = 0;
     stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut bool rawPointerMutable = false;
-    if (!TryReadSourceLocalRawPointerScalarElementFacts(
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    if (!TryReadSourceLocalRawPointerElementFacts(
         stream,
         source,
         typeToken,
@@ -3658,13 +3796,17 @@ internal fn bool TryDeclareUninitializedRawPointerStorageLocal(
         elementSize,
         elementAlignment,
         fieldTypeCode,
-        rawPointerMutable))
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
     {
         return false;
     }
 
     stack MirValueId pointerStorage = MirStackAlloc(instrs, SourceRawPointerStorageByteExtent(), SourceRawPointerStorageByteAlignment());
-    stack u32[0 max] pointerLocalIndex = ResolveParamWithRawPointerElementFacts(
+    stack u32[0 max] pointerLocalIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
         params,
         source,
         nameStart,
@@ -3672,7 +3814,15 @@ internal fn bool TryDeclareUninitializedRawPointerStorageLocal(
         rawPointerMutable,
         fieldTypeCode,
         elementSize,
-        elementAlignment);
+        elementAlignment,
+        false,
+        false,
+        0,
+        0,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
     if (localRoots.Add(0) == 0
         || localTypes.Add(SourceLocalTypeCodeStoredPointer()) == 0
         || localOverrideValues.Add(pointerStorage.Index()) == 0
@@ -3736,7 +3886,11 @@ internal fn bool TryDeclareInitializedRawPointerStorageLocal(
     stack mut u32[0 max] elementAlignment = 0;
     stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut bool rawPointerMutable = false;
-    if (!TryReadSourceLocalRawPointerScalarElementFacts(
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    if (!TryReadSourceLocalRawPointerElementFacts(
         stream,
         source,
         typeToken,
@@ -3744,7 +3898,11 @@ internal fn bool TryDeclareInitializedRawPointerStorageLocal(
         elementSize,
         elementAlignment,
         fieldTypeCode,
-        rawPointerMutable))
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
     {
         return false;
     }
@@ -3775,23 +3933,39 @@ internal fn bool TryDeclareInitializedRawPointerStorageLocal(
     stack mut u32[0 max] initializerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] initializerElementSize = 0;
     stack mut u32[0 max] initializerElementAlignment = 0;
-    if (!TryGetRawPointerFactsForNode(
+    stack mut bool initializerNestedMutable = false;
+    stack mut u32[0 max] initializerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] initializerNestedElementSize = 0;
+    stack mut u32[0 max] initializerNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
         nodes,
         params,
         pointerExpr.NodeId,
         initializerMutable,
         initializerFieldTypeCode,
         initializerElementSize,
-        initializerElementAlignment)
+        initializerElementAlignment,
+        initializerNestedMutable,
+        initializerNestedFieldTypeCode,
+        initializerNestedElementSize,
+        initializerNestedElementAlignment)
         || !RawPointerInitializerFactsMatchDeclaration(
             rawPointerMutable,
             fieldTypeCode,
             elementSize,
             elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment,
             initializerMutable,
             initializerFieldTypeCode,
             initializerElementSize,
-            initializerElementAlignment))
+            initializerElementAlignment,
+            initializerNestedMutable,
+            initializerNestedFieldTypeCode,
+            initializerNestedElementSize,
+            initializerNestedElementAlignment))
     {
         return false;
     }
@@ -3814,7 +3988,7 @@ internal fn bool TryDeclareInitializedRawPointerStorageLocal(
         initializerHasElementCount = false;
     }
 
-    stack u32[0 max] pointerLocalIndex = ResolveParamWithRawPointerElementAndCountFacts(
+    stack u32[0 max] pointerLocalIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
         params,
         source,
         nameStart,
@@ -3826,7 +4000,11 @@ internal fn bool TryDeclareInitializedRawPointerStorageLocal(
         initializerHasElementCount,
         initializerElementCountIsParam,
         initializerElementCountLiteral,
-        initializerElementCountParamIndex);
+        initializerElementCountParamIndex,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
     stack u32[0 max] pointerLocalOrdinal = localRoots.Add(0);
     if (pointerLocalOrdinal == 0
         || localTypes.Add(SourceLocalTypeCodeStoredPointer()) == 0
@@ -4055,7 +4233,771 @@ internal finite law u32[0 max] SourceResolvedFieldTypeCodeForTypedEnumPayload(Ty
     return SourceResolvedFieldTypeCodeInvalid();
 }
 
+public struct SourceTryPropagationRoleFacts
+{
+    bool ValidValue;
+    u32[0 max] OkVariantOrdinalValue;
+    u32[0 max] OkVariantTagValue;
+    u32[0 max] OkPayloadCountValue;
+    u32[0 max] OkPayloadTypeCodeValue;
+    u32[0 max] ErrVariantOrdinalValue;
+    u32[0 max] ErrVariantTagValue;
+    u32[0 max] ErrPayloadCountValue;
+    u32[0 max] ErrPayloadTypeCodeValue;
+
+    SourceTryPropagationRoleFacts()
+    {
+        self.ValidValue = false;
+        self.OkVariantOrdinalValue = 0;
+        self.OkVariantTagValue = 0;
+        self.OkPayloadCountValue = 0;
+        self.OkPayloadTypeCodeValue = SourceResolvedFieldTypeCodeInvalid();
+        self.ErrVariantOrdinalValue = 0;
+        self.ErrVariantTagValue = 0;
+        self.ErrPayloadCountValue = 0;
+        self.ErrPayloadTypeCodeValue = SourceResolvedFieldTypeCodeInvalid();
+    }
+
+    public inline finite law bool IsValid(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.ValidValue;
+    }
+
+    public inline finite law u32[0 max] OkVariantOrdinal(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.OkVariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] OkVariantTag(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.OkVariantTagValue;
+    }
+
+    public inline finite law u32[0 max] OkPayloadCount(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.OkPayloadCountValue;
+    }
+
+    public inline finite law u32[0 max] OkPayloadTypeCode(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.OkPayloadTypeCodeValue;
+    }
+
+    public inline finite law u32[0 max] ErrVariantOrdinal(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.ErrVariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ErrVariantTag(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.ErrVariantTagValue;
+    }
+
+    public inline finite law u32[0 max] ErrPayloadCount(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.ErrPayloadCountValue;
+    }
+
+    public inline finite law u32[0 max] ErrPayloadTypeCode(borrow SourceTryPropagationRoleFacts self)
+    {
+        return self.ErrPayloadTypeCodeValue;
+    }
+}
+
+public enum SourceTryPropagationErrorCompatibilityKind
+{
+    Invalid,
+    UnitFailure,
+    SameFailurePayloadType,
+    FunnelFailurePayloadType,
+}
+
+public struct SourceTryPropagationCompatibilityFacts
+{
+    bool ValidValue;
+    SourceTryPropagationErrorCompatibilityKind ErrorCompatibilityKindValue;
+    SourceTryPropagationRoleFacts OperandRolesValue;
+    SourceTryPropagationRoleFacts ReturnRolesValue;
+    u32[0 max] ErrorFunnelOwnerDeclarationIndexValue;
+    u32[0 max] ErrorFunnelVariantOrdinalValue;
+    u32[0 max] ErrorFunnelVariantTagValue;
+
+    SourceTryPropagationCompatibilityFacts()
+    {
+        self.ValidValue = false;
+        self.ErrorCompatibilityKindValue = SourceTryPropagationErrorCompatibilityKind.Invalid;
+        self.OperandRolesValue = new();
+        self.ReturnRolesValue = new();
+        self.ErrorFunnelOwnerDeclarationIndexValue = 0;
+        self.ErrorFunnelVariantOrdinalValue = 0;
+        self.ErrorFunnelVariantTagValue = 0;
+    }
+
+    public inline finite law bool IsValid(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.ValidValue;
+    }
+
+    public inline finite law SourceTryPropagationErrorCompatibilityKind ErrorCompatibilityKind(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.ErrorCompatibilityKindValue;
+    }
+
+    public inline finite law SourceTryPropagationRoleFacts OperandRoles(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.OperandRolesValue;
+    }
+
+    public inline finite law SourceTryPropagationRoleFacts ReturnRoles(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.ReturnRolesValue;
+    }
+
+    public inline finite law u32[0 max] ErrorFunnelOwnerDeclarationIndex(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.ErrorFunnelOwnerDeclarationIndexValue;
+    }
+
+    public inline finite law u32[0 max] ErrorFunnelVariantOrdinal(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.ErrorFunnelVariantOrdinalValue;
+    }
+
+    public inline finite law u32[0 max] ErrorFunnelVariantTag(borrow SourceTryPropagationCompatibilityFacts self)
+    {
+        return self.ErrorFunnelVariantTagValue;
+    }
+}
+
+public struct SourceTryPropagationLoweringResult
+{
+    bool ValidValue;
+    MirBlockId EntryBlockValue;
+    MirBlockId ErrorBlockValue;
+    MirBlockId ContinueBlockValue;
+    MirValueId ConditionValue;
+    MirValueId ErrorReturnValue;
+    MirValueId SuccessValueValue;
+
+    SourceTryPropagationLoweringResult()
+    {
+        self.ValidValue = false;
+        self.EntryBlockValue = MirBlockIdOf(0);
+        self.ErrorBlockValue = MirBlockIdOf(0);
+        self.ContinueBlockValue = MirBlockIdOf(0);
+        self.ConditionValue = MirValueIdOf(0);
+        self.ErrorReturnValue = MirValueIdOf(0);
+        self.SuccessValueValue = MirValueIdOf(0);
+    }
+
+    public inline finite law bool IsValid(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.ValidValue;
+    }
+
+    public inline finite law MirBlockId EntryBlock(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.EntryBlockValue;
+    }
+
+    public inline finite law MirBlockId ErrorBlock(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.ErrorBlockValue;
+    }
+
+    public inline finite law MirBlockId ContinueBlock(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.ContinueBlockValue;
+    }
+
+    public inline finite law MirValueId Condition(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.ConditionValue;
+    }
+
+    public inline finite law MirValueId ErrorReturn(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.ErrorReturnValue;
+    }
+
+    public inline finite law MirValueId SuccessValue(borrow SourceTryPropagationLoweringResult self)
+    {
+        return self.SuccessValueValue;
+    }
+}
+
+public fn bool TryResolveSourceTryPropagationRoleFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u32[0 max] ownerDeclarationIndex,
+    out SourceTryPropagationRoleFacts facts)
+{
+    facts = new();
+    stack mut SourceTryPropagationRoleFacts resolved = new();
+    stack mut bool okSeen = false;
+    stack mut bool errSeen = false;
+    stack mut u32[0 max] variantRows = 0;
+
+    stack u64[0 2 ** 63 - 1] count = enumLayouts.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (enumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && enumLayouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant)
+        {
+            variantRows = variantRows + 1;
+            if (variantRows > 2)
+            {
+                return false;
+            }
+
+            stack u32[0 max] payloadCount = enumLayouts.PayloadCountAt(index);
+            if (payloadCount > 1)
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (payloadCount == 1
+                && !TryGetSourceEnumPayloadTypeCode(
+                    stream,
+                    source,
+                    declarations,
+                    enumLayouts,
+                    ownerDeclarationIndex,
+                    enumLayouts.VariantOrdinalAt(index),
+                    0,
+                    payloadTypeCode))
+            {
+                return false;
+            }
+
+            stack TypedEnumVariantRole role = enumLayouts.VariantRoleAt(index);
+            if (role == TypedEnumVariantRole.Ok)
+            {
+                if (okSeen)
+                {
+                    return false;
+                }
+
+                okSeen = true;
+                resolved.OkVariantOrdinalValue = enumLayouts.VariantOrdinalAt(index);
+                resolved.OkVariantTagValue = enumLayouts.VariantTagAt(index);
+                resolved.OkPayloadCountValue = payloadCount;
+                resolved.OkPayloadTypeCodeValue = payloadTypeCode;
+            }
+            else if (role == TypedEnumVariantRole.Err)
+            {
+                if (errSeen)
+                {
+                    return false;
+                }
+
+                errSeen = true;
+                resolved.ErrVariantOrdinalValue = enumLayouts.VariantOrdinalAt(index);
+                resolved.ErrVariantTagValue = enumLayouts.VariantTagAt(index);
+                resolved.ErrPayloadCountValue = payloadCount;
+                resolved.ErrPayloadTypeCodeValue = payloadTypeCode;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        index = index + 1;
+    }
+
+    if (variantRows != 2 || !okSeen || !errSeen)
+    {
+        return false;
+    }
+
+    resolved.ValidValue = true;
+    facts = resolved;
+    return true;
+}
+
+public fn bool TryLowerSameFamilySourceTryPropagation(
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    borrow SourceTryPropagationCompatibilityFacts facts,
+    MirValueId operandValue,
+    u32[0 max] operandOwnerDeclarationIndex,
+    u32[0 max] returnOwnerDeclarationIndex,
+    MirBlockId continuationTarget,
+    u32[0 max] entryFirst,
+    MirType tagType,
+    bool recordRanges,
+    out SourceTryPropagationLoweringResult result)
+{
+    result = new();
+    if (!facts.IsValid()
+        || !operandValue.IsValid()
+        || !continuationTarget.IsValid()
+        || facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.Invalid)
+    {
+        return false;
+    }
+
+    stack SourceTryPropagationRoleFacts operandRoles = facts.OperandRoles();
+    stack SourceTryPropagationRoleFacts returnRoles = facts.ReturnRoles();
+    if (!operandRoles.IsValid() || !returnRoles.IsValid())
+    {
+        return false;
+    }
+
+    stack TypeId operandOwnerType = TypeIdOf(operandOwnerDeclarationIndex + 1);
+    stack TypeId returnOwnerType = TypeIdOf(returnOwnerDeclarationIndex + 1);
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack MirValueId tagValue = MirEnumTagRead(instrs, operandOwnerType, operandValue, tagType);
+    stack MirValueId errTagValue = MirConstIntTyped(instrs, tagType, (i64[min max])operandRoles.ErrVariantTag());
+    stack MirValueId isErr = MirCmpEq(instrs, tagValue, errTagValue);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+
+    stack u32[0 max] errorFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId errorReturn = operandValue;
+    if (operandOwnerDeclarationIndex != returnOwnerDeclarationIndex)
+    {
+        errorReturn = MirEnumVariantTag(instrs, returnOwnerType, returnRoles.ErrVariantOrdinal());
+        if (facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.SameFailurePayloadType)
+        {
+            stack MirType failurePayloadType = MirTypeForResolvedFieldTypeCode(operandRoles.ErrPayloadTypeCode());
+            stack MirValueId failurePayload = MirEnumPayloadExtract(
+                instrs,
+                operandOwnerType,
+                operandRoles.ErrVariantOrdinal(),
+                0,
+                operandValue,
+                failurePayloadType);
+            errorReturn = MirEnumPayloadInsert(
+                instrs,
+                returnOwnerType,
+                returnRoles.ErrVariantOrdinal(),
+                0,
+                errorReturn,
+                failurePayload);
+        }
+        else if (facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.FunnelFailurePayloadType)
+        {
+            stack TypeId funnelOwnerType = TypeIdOf(facts.ErrorFunnelOwnerDeclarationIndex() + 1);
+            stack MirType failurePayloadType = MirTypeForResolvedFieldTypeCode(operandRoles.ErrPayloadTypeCode());
+            stack MirValueId failurePayload = MirEnumPayloadExtract(
+                instrs,
+                operandOwnerType,
+                operandRoles.ErrVariantOrdinal(),
+                0,
+                operandValue,
+                failurePayloadType);
+            stack MirValueId funnelTag = MirEnumVariantTag(
+                instrs,
+                funnelOwnerType,
+                facts.ErrorFunnelVariantOrdinal());
+            stack MirValueId funnelValue = MirEnumPayloadInsert(
+                instrs,
+                funnelOwnerType,
+                facts.ErrorFunnelVariantOrdinal(),
+                0,
+                funnelTag,
+                failurePayload);
+            errorReturn = MirEnumPayloadInsert(
+                instrs,
+                returnOwnerType,
+                returnRoles.ErrVariantOrdinal(),
+                0,
+                errorReturn,
+                funnelValue);
+        }
+    }
+
+    stack u32[0 max] errorCount = (u32[0 max])instrs.Count() - (errorFirst - 1);
+    stack u32[0 max] continueFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId successValue = MirConstIntTyped(instrs, tagType, 0);
+    if (operandRoles.OkPayloadCount() == 1)
+    {
+        stack MirType successPayloadType = MirTypeForResolvedFieldTypeCode(operandRoles.OkPayloadTypeCode());
+        successValue = MirEnumPayloadExtract(
+            instrs,
+            operandOwnerType,
+            operandRoles.OkVariantOrdinal(),
+            0,
+            operandValue,
+            successPayloadType);
+    }
+
+    stack u32[0 max] continueCount = (u32[0 max])instrs.Count() - (continueFirst - 1);
+
+    stack MirBlockId entry = MirCondBlock(blocks, isErr, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 2));
+    stack MirBlockId errorBlock = MirReturnBlock(blocks, errorReturn);
+    stack MirBlockId continueBlock = MirBranchBlock(blocks, continuationTarget);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] errorRange = ranges.Add(MakeBlockEmit(errorBlock.Index(), errorFirst, errorCount));
+        stack u32[0 max] continueRange = ranges.Add(MakeBlockEmit(continueBlock.Index(), continueFirst, continueCount));
+        if (entryRange == 0 || errorRange == 0 || continueRange == 0)
+        {
+            return false;
+        }
+    }
+
+    stack mut SourceTryPropagationLoweringResult lowered = new();
+    lowered.ValidValue = true;
+    lowered.EntryBlockValue = entry;
+    lowered.ErrorBlockValue = errorBlock;
+    lowered.ContinueBlockValue = continueBlock;
+    lowered.ConditionValue = isErr;
+    lowered.ErrorReturnValue = errorReturn;
+    lowered.SuccessValueValue = successValue;
+    result = lowered;
+    return true;
+}
+
+internal fn bool SourceLocalAsciiTokenTextEqualsToken(
+    borrow TokenStream stream,
+    ascii source,
+    u32[0 max] left,
+    u32[0 max] right)
+{
+    stack ascii leftText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])left);
+    stack ascii rightText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])right);
+    return System.Text.Equals(leftText, rightText);
+}
+
+internal fn bool TryGetSourceEnumOwnerDeclarationForAsciiToken(
+    borrow TokenStream stream,
+    ascii source,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    u32[0 max] ownerToken,
+    out u32[0 max] ownerDeclarationIndex,
+    out Compiler.Parsing.DeclItem enumItem)
+{
+    ownerDeclarationIndex = 0;
+    enumItem = new();
+
+    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack Compiler.Parsing.DeclItem item = declarations.ItemAt(index);
+        if (item.Kind == Compiler.Parsing.DeclarationKind.Enum
+            && item.NameToken != 0
+            && SourceLocalAsciiTokenTextEqualsToken(stream, source, ownerToken, item.NameToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            enumItem = item;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceLocalTypeSpansCompatible(
+    borrow TokenStream stream,
+    ascii source,
+    u32[0 max] leftStart,
+    u32[0 max] leftEnd,
+    u32[0 max] rightStart,
+    u32[0 max] rightEnd)
+{
+    if (leftStart >= leftEnd || rightStart >= rightEnd)
+    {
+        return leftStart >= leftEnd && rightStart >= rightEnd;
+    }
+
+    stack u32[0 max] leftLength = (u32[0 max])(leftEnd - leftStart);
+    stack u32[0 max] rightLength = (u32[0 max])(rightEnd - rightStart);
+    if (leftLength != rightLength)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < leftLength)
+    {
+        stack u32[0 max] left = (u32[0 max])(leftStart + offset);
+        stack u32[0 max] right = (u32[0 max])(rightStart + offset);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])left) != stream.KindAt((u64[0 2 ** 63 - 1])right)
+            || !SourceLocalAsciiTokenTextEqualsToken(stream, source, left, right))
+        {
+            return false;
+        }
+
+        offset = (u32[0 max])(offset + 1);
+    }
+
+    return true;
+}
+
+internal fn bool TryGetSourceTryPayloadTypeSpan(
+    borrow TypedEnumPayloadTable enumPayloads,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    out TypedSignatureTypeKind payloadTypeKind,
+    out u32[0 max] payloadTypeHeadToken,
+    out u32[0 max] payloadTypeStartToken,
+    out u32[0 max] payloadTypeEndToken)
+{
+    payloadTypeKind = TypedSignatureTypeKind.Unknown;
+    payloadTypeHeadToken = 0;
+    payloadTypeStartToken = 0;
+    payloadTypeEndToken = 0;
+
+    stack u64[0 2 ** 63 - 1] count = enumPayloads.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (enumPayloads.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && enumPayloads.VariantOrdinalAt(index) == variantOrdinal
+            && enumPayloads.PayloadOrdinalAt(index) == payloadOrdinal)
+        {
+            payloadTypeKind = enumPayloads.TypeKindAt(index);
+            payloadTypeHeadToken = enumPayloads.TypeHeadTokenAt(index);
+            payloadTypeStartToken = enumPayloads.TypeStartTokenAt(index);
+            payloadTypeEndToken = enumPayloads.TypeEndTokenAt(index);
+            return payloadTypeStartToken != 0 && payloadTypeStartToken < payloadTypeEndToken;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetSourceTryVariantTag(
+    borrow TypedEnumLayoutTable enumLayouts,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    out u32[0 max] variantTag)
+{
+    variantTag = 0;
+    stack u64[0 2 ** 63 - 1] count = enumLayouts.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (enumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && enumLayouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant
+            && enumLayouts.VariantOrdinalAt(index) == variantOrdinal)
+        {
+            variantTag = enumLayouts.VariantTagAt(index);
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryResolveSourceTryErrorFunnelVariant(
+    borrow TokenStream stream,
+    ascii source,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    borrow TypedEnumPayloadTable enumPayloads,
+    u32[0 max] enclosingFailureTypeHeadToken,
+    u32[0 max] operandFailureTypeStartToken,
+    u32[0 max] operandFailureTypeEndToken,
+    out u32[0 max] funnelOwnerDeclarationIndex,
+    out u32[0 max] funnelVariantOrdinal,
+    out u32[0 max] funnelVariantTag)
+{
+    funnelOwnerDeclarationIndex = 0;
+    funnelVariantOrdinal = 0;
+    funnelVariantTag = 0;
+
+    if (enclosingFailureTypeHeadToken == 0)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.DeclItem ignoredOwner = new();
+    stack mut u32[0 max] resolvedFunnelOwnerDeclarationIndex = 0;
+    if (!TryGetSourceEnumOwnerDeclarationForAsciiToken(
+        stream,
+        source,
+        declarations,
+        enclosingFailureTypeHeadToken,
+        resolvedFunnelOwnerDeclarationIndex,
+        ignoredOwner))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = enumPayloads.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        if (enumPayloads.OwnerDeclarationIndexAt(index) == resolvedFunnelOwnerDeclarationIndex
+            && enumPayloads.IsErrorFunnelAt(index)
+            && SourceLocalTypeSpansCompatible(
+                stream,
+                source,
+                enumPayloads.TypeStartTokenAt(index),
+                enumPayloads.TypeEndTokenAt(index),
+                operandFailureTypeStartToken,
+                operandFailureTypeEndToken))
+        {
+            stack mut u32[0 max] resolvedFunnelVariantOrdinal = enumPayloads.VariantOrdinalAt(index);
+            stack mut u32[0 max] resolvedFunnelVariantTag = 0;
+            if (!TryGetSourceTryVariantTag(
+                enumLayouts,
+                resolvedFunnelOwnerDeclarationIndex,
+                resolvedFunnelVariantOrdinal,
+                resolvedFunnelVariantTag))
+            {
+                return false;
+            }
+
+            funnelOwnerDeclarationIndex = resolvedFunnelOwnerDeclarationIndex;
+            funnelVariantOrdinal = resolvedFunnelVariantOrdinal;
+            funnelVariantTag = resolvedFunnelVariantTag;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+public fn bool TryResolveSourceTryPropagationCompatibility(
+    borrow TokenStream stream,
+    ascii sourceText,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    borrow TypedEnumPayloadTable enumPayloads,
+    u32[0 max] operandOwnerDeclarationIndex,
+    u32[0 max] returnOwnerDeclarationIndex,
+    out SourceTryPropagationCompatibilityFacts facts)
+    where overlap(sourceText, source)
+{
+    facts = new();
+
+    stack mut SourceTryPropagationRoleFacts operandRoles = new();
+    if (!TryResolveSourceTryPropagationRoleFacts(stream, source, declarations, enumLayouts, operandOwnerDeclarationIndex, operandRoles))
+    {
+        return false;
+    }
+
+    stack mut SourceTryPropagationRoleFacts returnRoles = new();
+    if (!TryResolveSourceTryPropagationRoleFacts(stream, source, declarations, enumLayouts, returnOwnerDeclarationIndex, returnRoles))
+    {
+        return false;
+    }
+
+    stack mut SourceTryPropagationCompatibilityFacts resolved = new();
+    resolved.OperandRolesValue = operandRoles;
+    resolved.ReturnRolesValue = returnRoles;
+
+    if (operandRoles.ErrPayloadCount() == 0 && returnRoles.ErrPayloadCount() == 0)
+    {
+        resolved.ValidValue = true;
+        resolved.ErrorCompatibilityKindValue = SourceTryPropagationErrorCompatibilityKind.UnitFailure;
+        facts = resolved;
+        return true;
+    }
+
+    if (operandRoles.ErrPayloadCount() != 1 || returnRoles.ErrPayloadCount() != 1)
+    {
+        return false;
+    }
+
+    stack mut TypedSignatureTypeKind operandFailureTypeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] operandFailureTypeHeadToken = 0;
+    stack mut u32[0 max] operandFailureTypeStartToken = 0;
+    stack mut u32[0 max] operandFailureTypeEndToken = 0;
+    if (!TryGetSourceTryPayloadTypeSpan(
+        enumPayloads,
+        operandOwnerDeclarationIndex,
+        operandRoles.ErrVariantOrdinal(),
+        0,
+        operandFailureTypeKind,
+        operandFailureTypeHeadToken,
+        operandFailureTypeStartToken,
+        operandFailureTypeEndToken))
+    {
+        return false;
+    }
+
+    stack mut TypedSignatureTypeKind returnFailureTypeKind = TypedSignatureTypeKind.Unknown;
+    stack mut u32[0 max] returnFailureTypeHeadToken = 0;
+    stack mut u32[0 max] returnFailureTypeStartToken = 0;
+    stack mut u32[0 max] returnFailureTypeEndToken = 0;
+    if (!TryGetSourceTryPayloadTypeSpan(
+        enumPayloads,
+        returnOwnerDeclarationIndex,
+        returnRoles.ErrVariantOrdinal(),
+        0,
+        returnFailureTypeKind,
+        returnFailureTypeHeadToken,
+        returnFailureTypeStartToken,
+        returnFailureTypeEndToken))
+    {
+        return false;
+    }
+
+    if (operandFailureTypeKind == returnFailureTypeKind
+        && SourceLocalTypeSpansCompatible(
+            stream,
+            sourceText,
+            operandFailureTypeStartToken,
+            operandFailureTypeEndToken,
+            returnFailureTypeStartToken,
+            returnFailureTypeEndToken))
+    {
+        resolved.ValidValue = true;
+        resolved.ErrorCompatibilityKindValue = SourceTryPropagationErrorCompatibilityKind.SameFailurePayloadType;
+        facts = resolved;
+        return true;
+    }
+
+    if (returnFailureTypeKind != TypedSignatureTypeKind.Named)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] funnelOwnerDeclarationIndex = 0;
+    stack mut u32[0 max] funnelVariantOrdinal = 0;
+    stack mut u32[0 max] funnelVariantTag = 0;
+    if (!TryResolveSourceTryErrorFunnelVariant(
+        stream,
+        sourceText,
+        declarations,
+        enumLayouts,
+        enumPayloads,
+        returnFailureTypeHeadToken,
+        operandFailureTypeStartToken,
+        operandFailureTypeEndToken,
+        funnelOwnerDeclarationIndex,
+        funnelVariantOrdinal,
+        funnelVariantTag))
+    {
+        return false;
+    }
+
+    resolved.ValidValue = true;
+    resolved.ErrorCompatibilityKindValue = SourceTryPropagationErrorCompatibilityKind.FunnelFailurePayloadType;
+    resolved.ErrorFunnelOwnerDeclarationIndexValue = funnelOwnerDeclarationIndex;
+    resolved.ErrorFunnelVariantOrdinalValue = funnelVariantOrdinal;
+    resolved.ErrorFunnelVariantTagValue = funnelVariantTag;
+    facts = resolved;
+    return true;
+}
+
 internal fn bool TryGetSourceEnumPayloadTypeCode(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.DeclarationList declarations,
     borrow TypedEnumLayoutTable enumLayouts,
     u32[0 max] ownerDeclarationIndex,
     u32[0 max] variantOrdinal,
@@ -4074,7 +5016,20 @@ internal fn bool TryGetSourceEnumPayloadTypeCode(
             && enumLayouts.PayloadOrdinalAt(index) == payloadOrdinal)
         {
             payloadTypeCode = SourceResolvedFieldTypeCodeForTypedEnumPayload(enumLayouts.TypeKindAt(index), enumLayouts.BitWidthAt(index));
-            return payloadTypeCode != SourceResolvedFieldTypeCodeInvalid();
+            if (payloadTypeCode != SourceResolvedFieldTypeCodeInvalid())
+            {
+                return true;
+            }
+
+            stack mut MirType ignoredFieldType = MirType.I64;
+            return TryGetSourceValueTypeCodeWithEnums(
+                stream,
+                source,
+                declarations,
+                enumLayouts,
+                enumLayouts.TypePrimaryTokenAt(index),
+                ignoredFieldType,
+                payloadTypeCode);
         }
 
         index = index + 1;
@@ -4086,6 +5041,7 @@ internal fn bool TryGetSourceEnumPayloadTypeCode(
 internal fn bool TryGetSourceNamedEnumPayloadTypeCode(
     borrow TokenStream stream,
     borrow i8[min max][] source,
+    borrow Compiler.Parsing.DeclarationList declarations,
     borrow TypedEnumLayoutTable enumLayouts,
     u32[0 max] ownerDeclarationIndex,
     u32[0 max] variantOrdinal,
@@ -4110,7 +5066,20 @@ internal fn bool TryGetSourceNamedEnumPayloadTypeCode(
         {
             payloadOrdinal = enumLayouts.PayloadOrdinalAt(index);
             payloadTypeCode = SourceResolvedFieldTypeCodeForTypedEnumPayload(enumLayouts.TypeKindAt(index), enumLayouts.BitWidthAt(index));
-            return payloadTypeCode != SourceResolvedFieldTypeCodeInvalid();
+            if (payloadTypeCode != SourceResolvedFieldTypeCodeInvalid())
+            {
+                return true;
+            }
+
+            stack mut MirType ignoredFieldType = MirType.I64;
+            return TryGetSourceValueTypeCodeWithEnums(
+                stream,
+                source,
+                declarations,
+                enumLayouts,
+                enumLayouts.TypePrimaryTokenAt(index),
+                ignoredFieldType,
+                payloadTypeCode);
         }
 
         index = index + 1;
@@ -4151,6 +5120,11 @@ internal finite law bool SourceExpressionTypeMatchesEnumPayloadTypeCode(ExprType
         || payloadTypeCode == SourceResolvedFieldTypeCodeI64())
     {
         return exprType == ExprType.IntType;
+    }
+
+    if (SourceResolvedFieldTypeCodeIsEnum(payloadTypeCode))
+    {
+        return exprType == ExprType.EnumType;
     }
 
     return false;
@@ -4229,6 +5203,7 @@ internal fn ExprParseResult TryParseSourceEnumConstructorPrimaryIn(
             if (!TryGetSourceNamedEnumPayloadTypeCode(
                     stream,
                     source,
+                    declarations,
                     enumLayouts,
                     ownerDeclarationIndex,
                     variantOrdinal,
@@ -4317,7 +5292,7 @@ internal fn ExprParseResult TryParseSourceEnumConstructorPrimaryIn(
         }
 
         stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
-        if (!TryGetSourceEnumPayloadTypeCode(enumLayouts, ownerDeclarationIndex, variantOrdinal, payloadOrdinal, payloadTypeCode)
+        if (!TryGetSourceEnumPayloadTypeCode(stream, source, declarations, enumLayouts, ownerDeclarationIndex, variantOrdinal, payloadOrdinal, payloadTypeCode)
             || !SourceExpressionTypeMatchesEnumPayloadTypeCode(TypeOfNodeWithLocals(nodes, payloadExpr.NodeId, localTypes), payloadTypeCode))
         {
             return MakeParseResult(0, cursor);
@@ -4334,6 +5309,122 @@ internal fn ExprParseResult TryParseSourceEnumConstructorPrimaryIn(
     }
 
     return MakeParseResult(currentEnumValue, argCursor + 1);
+}
+
+internal fn ExprParseResult TryParseRawPointerAggregateFieldPrimaryWithEnumsAndSlicesIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts),
+          overlap(nodes, sourceValueFacts),
+          overlap(params, sourceValueFacts),
+          overlap(funcNames, sourceValueFacts),
+          overlap(objectLocals, sourceValueFacts),
+          overlap(sliceDescriptorLocals, sourceValueFacts),
+          overlap(localTypes, sourceValueFacts),
+          overlap(declarations, sourceValueFacts),
+          overlap(enumLayouts, sourceValueFacts)
+{
+    if (stream.KindAt(cursor) != TokenKind.LParen
+        || stream.KindAt(cursor + 1) != TokenKind.Star)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])cursor);
+    if (closeParen == (u32[0 max])cursor
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.Dot
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 2) != TokenKind.Identifier)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack ExprParseResult pointerExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        objectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
+        cursor + 2);
+    if (pointerExpr.NodeId == 0 || pointerExpr.Next != (u64[0 2 ** 63 - 1])closeParen)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut bool pointerMutable = false;
+    stack mut u32[0 max] pointerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerElementSize = 0;
+    stack mut u32[0 max] pointerElementAlignment = 0;
+    stack mut bool pointerNestedMutable = false;
+    stack mut u32[0 max] pointerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerNestedElementSize = 0;
+    stack mut u32[0 max] pointerNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        pointerExpr.NodeId,
+        pointerMutable,
+        pointerFieldTypeCode,
+        pointerElementSize,
+        pointerElementAlignment,
+        pointerNestedMutable,
+        pointerNestedFieldTypeCode,
+        pointerNestedElementSize,
+        pointerNestedElementAlignment)
+        || !SourceResolvedFieldTypeCodeIsAggregate(pointerFieldTypeCode))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack u32[0 max] rootTypeToken = SourceResolvedFieldTypeCodeAggregateTypeToken(pointerFieldTypeCode);
+    if (rootTypeToken == 0)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] nextToken = (u64[0 2 ** 63 - 1])closeParen + 2;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    if (!TryResolveConstructedObjectMemberChainStorageField(
+        stream,
+        source,
+        declarations,
+        enumLayouts,
+        rootTypeToken,
+        (u64[0 2 ** 63 - 1])closeParen + 2,
+        nextToken,
+        fieldOffset,
+        fieldAlignment,
+        fieldTypeToken))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut MirType fieldType = MirType.I64;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    if (!TryGetSourceValueTypeCodeWithEnums(stream, source, declarations, enumLayouts, fieldTypeToken, fieldType, fieldTypeCode))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    return MakeParseResult(MakeRawPointerFieldRead(nodes, pointerExpr.NodeId, fieldOffset, fieldAlignment, fieldTypeCode), nextToken);
 }
 
 internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
@@ -4397,18 +5488,71 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
         stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
         stack mut u32[0 max] elementSize = 0;
         stack mut u32[0 max] elementAlignment = 0;
-        if (!TryGetRawPointerDerefFactsForNode(nodes, params, operand.NodeId, fieldTypeCode, elementSize, elementAlignment))
+        stack mut bool nestedMutable = false;
+        stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] nestedElementSize = 0;
+        stack mut u32[0 max] nestedElementAlignment = 0;
+        if (!TryGetRawPointerDerefFactsForNodeWithNested(
+            nodes,
+            params,
+            operand.NodeId,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
         {
             fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
             elementSize = 0;
             elementAlignment = 0;
+            nestedMutable = false;
+            nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            nestedElementSize = 0;
+            nestedElementAlignment = 0;
         }
 
-        return MakeParseResult(MakeDeref(nodes, operand.NodeId, fieldTypeCode, elementSize, elementAlignment), operand.Next);
+        return MakeParseResult(
+            MakeDerefWithNested(
+                nodes,
+                operand.NodeId,
+                fieldTypeCode,
+                elementSize,
+                elementAlignment,
+                nestedMutable,
+                nestedFieldTypeCode,
+                nestedElementSize,
+                nestedElementAlignment),
+            operand.Next);
+    }
+
+    if (k == TokenKind.Try)
+    {
+        stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, cursor + 1);
+        return MakeParseResult(MakeTry(nodes, operand.NodeId), operand.Next);
     }
 
     if (k == TokenKind.LParen)
     {
+        stack ExprParseResult rawPointerField = TryParseRawPointerAggregateFieldPrimaryWithEnumsAndSlicesIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            objectLocals,
+            sliceDescriptorLocals,
+            localTypes,
+            sourceValueFacts,
+            declarations,
+            enumLayouts,
+            cursor);
+        if (rawPointerField.NodeId != 0)
+        {
+            return rawPointerField;
+        }
+
         stack ExprParseResult inner = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, cursor + 1);
         return MakeParseResult(inner.NodeId, inner.Next + 1);
     }
@@ -4490,8 +5634,7 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
 
     if (k == TokenKind.Identifier
         && stream.KindAt(cursor + 1) == TokenKind.Dot
-        && stream.KindAt(cursor + 2) == TokenKind.Identifier
-        && stream.KindAt(cursor + 3) == TokenKind.Dot)
+        && stream.KindAt(cursor + 2) == TokenKind.Identifier)
     {
         stack mut ConstructedObjectLocal objectLocal = new();
         if (TryFindConstructedObjectLocal(objectLocals, source, stream.StartAt(cursor), stream.LengthAt(cursor), objectLocal))
@@ -4717,13 +5860,17 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
                     {
                         stack u32[0 max] pointerNode = MakeName(nodes, (u32[0 max])rawPointerParamIndex);
                         return MakeParseResult(
-                            MakeRawPointerIndexedElementRead(
+                            MakeRawPointerIndexedElementReadWithNested(
                                 nodes,
                                 pointerNode,
                                 indexExpr.NodeId,
                                 pointerParam.RawPointerElementSizeValue(),
                                 pointerParam.RawPointerElementAlignmentValue(),
-                                pointerParam.RawPointerFieldTypeCodeValue()),
+                                pointerParam.RawPointerFieldTypeCodeValue(),
+                                pointerParam.RawPointerNestedMutableValue(),
+                                pointerParam.RawPointerNestedFieldTypeCodeValue(),
+                                pointerParam.RawPointerNestedElementSizeValue(),
+                                pointerParam.RawPointerNestedElementAlignmentValue()),
                             (u64[0 2 ** 63 - 1])closeBracket + 1);
                     }
                 }
@@ -5045,6 +6192,7 @@ internal fn bool TryParseStackObjectFieldInitializers(
     u32[0 max] bodyOpen,
     u32[0 max] bodyClose,
     u32[0 max] localOrdinal,
+    u32[0 max] paramIndex,
     MirValueId objectPointer,
     mut borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<ParamName> params,
@@ -5114,6 +6262,7 @@ internal fn bool TryParseStackObjectFieldInitializers(
 
         stack mut StackObjectFieldInitializer initializer = new();
         initializer.LocalOrdinal = localOrdinal;
+        initializer.ParamIndex = paramIndex;
         initializer.ObjectPointerValue = objectPointer.Index();
         initializer.FieldOffset = fieldOffset;
         initializer.FieldAlignment = fieldAlignment;
@@ -5141,6 +6290,7 @@ internal fn bool TryParseStackObjectPositionalRecordConstructorInitializers(
     u32[0 max] argsOpen,
     u32[0 max] argsClose,
     u32[0 max] localOrdinal,
+    u32[0 max] paramIndex,
     MirValueId objectPointer,
     mut borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<ParamName> params,
@@ -5205,6 +6355,7 @@ internal fn bool TryParseStackObjectPositionalRecordConstructorInitializers(
 
         stack mut StackObjectFieldInitializer initializer = new();
         initializer.LocalOrdinal = localOrdinal;
+        initializer.ParamIndex = paramIndex;
         initializer.ObjectPointerValue = objectPointer.Index();
         initializer.FieldOffset = fieldOffset;
         initializer.FieldAlignment = fieldAlignment;
@@ -5248,7 +6399,23 @@ internal fn u32[0 max] LowerStackObjectFieldInitializersForLocalWithCallContext(
             return cursor;
         }
 
-        stack MirValueId basePointer = MirValueIdOf(initializer.ObjectPointerValue);
+        stack mut u32[0 max] objectPointerValue = initializer.ObjectPointerValue;
+        if (objectPointerValue == 0)
+        {
+            if (!localOverrides.Contains(initializer.ParamIndex + 1))
+            {
+                return cursor;
+            }
+
+            objectPointerValue = localOverrides.Get(initializer.ParamIndex + 1);
+        }
+
+        if (objectPointerValue == 0)
+        {
+            return cursor;
+        }
+
+        stack MirValueId basePointer = MirValueIdOf(objectPointerValue);
         stack MirValueId fieldPointer = MirPtrOffset(instrs, basePointer, initializer.FieldOffset, initializer.FieldAlignment);
         if (SourceResolvedFieldTypeCodeIsEnum(initializer.FieldTypeCode))
         {
@@ -5565,23 +6732,39 @@ internal fn bool TryParseScalarStorageAssignmentStatement(
         stack mut u32[0 max] initializerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
         stack mut u32[0 max] initializerElementSize = 0;
         stack mut u32[0 max] initializerElementAlignment = 0;
-        if (!TryGetRawPointerFactsForNode(
+        stack mut bool initializerNestedMutable = false;
+        stack mut u32[0 max] initializerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] initializerNestedElementSize = 0;
+        stack mut u32[0 max] initializerNestedElementAlignment = 0;
+        if (!TryGetRawPointerFactsForNodeWithNested(
             nodes,
             params,
             expr.NodeId,
             initializerMutable,
             initializerFieldTypeCode,
             initializerElementSize,
-            initializerElementAlignment)
+            initializerElementAlignment,
+            initializerNestedMutable,
+            initializerNestedFieldTypeCode,
+            initializerNestedElementSize,
+            initializerNestedElementAlignment)
             || !RawPointerInitializerFactsMatchDeclaration(
                 localParam.RawPointerMutableValue(),
                 localParam.RawPointerFieldTypeCodeValue(),
                 localParam.RawPointerElementSizeValue(),
                 localParam.RawPointerElementAlignmentValue(),
+                localParam.RawPointerNestedMutableValue(),
+                localParam.RawPointerNestedFieldTypeCodeValue(),
+                localParam.RawPointerNestedElementSizeValue(),
+                localParam.RawPointerNestedElementAlignmentValue(),
                 initializerMutable,
                 initializerFieldTypeCode,
                 initializerElementSize,
-                initializerElementAlignment))
+                initializerElementAlignment,
+                initializerNestedMutable,
+                initializerNestedFieldTypeCode,
+                initializerNestedElementSize,
+                initializerNestedElementAlignment))
         {
             return false;
         }
@@ -5645,14 +6828,22 @@ internal fn bool TryParseRawPointerStorageAssignmentStatement(
     stack mut u32[0 max] pointerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] pointerElementSize = 0;
     stack mut u32[0 max] pointerElementAlignment = 0;
-    if (!TryGetRawPointerFactsForNode(
+    stack mut bool pointerNestedMutable = false;
+    stack mut u32[0 max] pointerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerNestedElementSize = 0;
+    stack mut u32[0 max] pointerNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
         nodes,
         params,
         pointerExpr.NodeId,
         pointerMutable,
         pointerFieldTypeCode,
         pointerElementSize,
-        pointerElementAlignment)
+        pointerElementAlignment,
+        pointerNestedMutable,
+        pointerNestedFieldTypeCode,
+        pointerNestedElementSize,
+        pointerNestedElementAlignment)
         || !pointerMutable
         || pointerFieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
         || pointerElementSize == 0
@@ -5675,12 +6866,169 @@ internal fn bool TryParseRawPointerStorageAssignmentStatement(
         return false;
     }
 
+    if (fieldType == MirType.Ptr)
+    {
+        stack mut bool exprMutable = false;
+        stack mut u32[0 max] exprFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] exprElementSize = 0;
+        stack mut u32[0 max] exprElementAlignment = 0;
+        stack mut bool exprNestedMutable = false;
+        stack mut u32[0 max] exprNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] exprNestedElementSize = 0;
+        stack mut u32[0 max] exprNestedElementAlignment = 0;
+        if (!TryGetRawPointerFactsForNodeWithNested(
+            nodes,
+            params,
+            expr.NodeId,
+            exprMutable,
+            exprFieldTypeCode,
+            exprElementSize,
+            exprElementAlignment,
+            exprNestedMutable,
+            exprNestedFieldTypeCode,
+            exprNestedElementSize,
+            exprNestedElementAlignment)
+            || !RawPointerInitializerFactsMatchDeclaration(
+                pointerNestedMutable,
+                pointerNestedFieldTypeCode,
+                pointerNestedElementSize,
+                pointerNestedElementAlignment,
+                false,
+                SourceResolvedFieldTypeCodeInvalid(),
+                0,
+                0,
+                exprMutable,
+                exprFieldTypeCode,
+                exprElementSize,
+                exprElementAlignment,
+                exprNestedMutable,
+                exprNestedFieldTypeCode,
+                exprNestedElementSize,
+                exprNestedElementAlignment))
+        {
+            return false;
+        }
+    }
+
     stack mut ScalarStorageAssignment assignment = new();
     assignment.FieldAlignment = pointerElementAlignment;
     assignment.FieldType = fieldType;
     assignment.ExprRoot = expr.NodeId;
     assignment.RawPointerTarget = true;
     assignment.RawPointerRoot = pointerExpr.NodeId;
+    stack u32[0 max] added = assignments.Add(assignment);
+    return added != 0;
+}
+
+internal fn bool TryParseRawPointerAggregateFieldAssignmentStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u64[0 2 ** 63 - 1] statementStart,
+    u64[0 2 ** 63 - 1] statementEnd,
+    mut borrow IrTable<ScalarStorageAssignment> assignments)
+    where overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts),
+          overlap(nodes, sourceValueFacts),
+          overlap(params, sourceValueFacts),
+          overlap(funcNames, sourceValueFacts),
+          overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(sliceDescriptorLocals, sourceValueFacts),
+          overlap(localTypes, sourceValueFacts),
+          overlap(declarations, sourceValueFacts),
+          overlap(enumLayouts, sourceValueFacts),
+          overlap(assignments, sourceValueFacts)
+{
+    stack ExprParseResult target = TryParseRawPointerAggregateFieldPrimaryWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
+        statementStart);
+    if (target.NodeId == 0
+        || target.Next >= statementEnd
+        || stream.KindAt(target.Next) != TokenKind.Assign
+        || !nodes.Contains(target.NodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode targetNode = nodes.Get(target.NodeId);
+    if (targetNode.Kind != Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr)
+    {
+        return false;
+    }
+
+    stack mut bool pointerMutable = false;
+    stack mut u32[0 max] pointerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerElementSize = 0;
+    stack mut u32[0 max] pointerElementAlignment = 0;
+    stack mut bool pointerNestedMutable = false;
+    stack mut u32[0 max] pointerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerNestedElementSize = 0;
+    stack mut u32[0 max] pointerNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        targetNode.Left,
+        pointerMutable,
+        pointerFieldTypeCode,
+        pointerElementSize,
+        pointerElementAlignment,
+        pointerNestedMutable,
+        pointerNestedFieldTypeCode,
+        pointerNestedElementSize,
+        pointerNestedElementAlignment)
+        || !pointerMutable
+        || !SourceResolvedFieldTypeCodeIsAggregate(pointerFieldTypeCode)
+        || SourceResolvedFieldTypeCodeIsEnum(targetNode.Arg3))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+    stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
+        target.Next + 1);
+    if (params.Count() != beforeExpr
+        || expr.NodeId == 0
+        || expr.Next != statementEnd
+        || !FieldInitializerExpressionMatchesTypeCode(targetNode.Arg3, nodes, expr.NodeId, localTypes))
+    {
+        return false;
+    }
+
+    stack mut ScalarStorageAssignment assignment = new();
+    assignment.FieldAlignment = targetNode.Arg2;
+    assignment.FieldType = MirTypeForResolvedFieldTypeCode(targetNode.Arg3);
+    assignment.ExprRoot = expr.NodeId;
+    assignment.RawPointerTarget = true;
+    assignment.RawPointerRoot = MakeAddressOf(nodes, target.NodeId);
     stack u32[0 max] added = assignments.Add(assignment);
     return added != 0;
 }
@@ -6029,6 +7377,121 @@ internal fn bool TryParseSourceSliceElementAssignmentStatement(
     return added != 0;
 }
 
+internal fn bool TryParseSourceSliceElementTryAssignmentStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u64[0 2 ** 63 - 1] statementStart,
+    u64[0 2 ** 63 - 1] statementEnd,
+    out ConstructedObjectFieldAssignment assignment)
+    where overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts),
+          overlap(nodes, sourceValueFacts),
+          overlap(params, sourceValueFacts),
+          overlap(funcNames, sourceValueFacts),
+          overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(sliceDescriptorLocals, sourceValueFacts),
+          overlap(localTypes, sourceValueFacts),
+          overlap(declarations, sourceValueFacts),
+          overlap(enumLayouts, sourceValueFacts)
+{
+    assignment = new();
+    if (statementStart + 4 >= statementEnd
+        || stream.KindAt(statementStart) != TokenKind.Identifier
+        || stream.KindAt(statementStart + 1) != TokenKind.LBrack)
+    {
+        return false;
+    }
+
+    stack mut SourceSliceDescriptorLocal sliceLocal = new();
+    if (!TryFindSourceSliceDescriptorLocal(
+        sliceDescriptorLocals,
+        source,
+        stream.StartAt(statementStart),
+        stream.LengthAt(statementStart),
+        sliceLocal))
+    {
+        return false;
+    }
+
+    if (!sliceLocal.Mutable)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(statementStart + 1));
+    if (closeBracket == (u32[0 max])(statementStart + 1)
+        || (u64[0 2 ** 63 - 1])(closeBracket + 2) >= statementEnd
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 1) != TokenKind.Assign
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 2) != TokenKind.Try)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeIndex = params.Count();
+    stack ExprParseResult indexExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
+        statementStart + 2);
+    if (params.Count() != beforeIndex
+        || indexExpr.NodeId == 0
+        || indexExpr.Next != (u64[0 2 ** 63 - 1])closeBracket
+        || TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) != ExprType.IntType
+        || (sliceLocal.SliceLength != 0 && !SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, sliceLocal.SliceLength)))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+    stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
+        (u64[0 2 ** 63 - 1])closeBracket + 2);
+    if (params.Count() != beforeExpr
+        || expr.NodeId == 0
+        || expr.Next != statementEnd)
+    {
+        return false;
+    }
+
+    assignment.ReceiverParamIndex = sliceLocal.ReceiverParamIndex;
+    assignment.FieldOffset = sliceLocal.BaseByteOffset;
+    assignment.IndexRoot = indexExpr.NodeId;
+    assignment.ElementSize = sliceLocal.ElementSize;
+    assignment.FieldAlignment = sliceLocal.Alignment;
+    assignment.FieldType = sliceLocal.ElementType;
+    assignment.FieldTypeCode = sliceLocal.FieldTypeCode;
+    assignment.ExprRoot = expr.NodeId;
+    assignment.IndexHasKnownBounds = sliceLocal.SliceLength != 0;
+    return true;
+}
+
 internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -6078,7 +7541,9 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
     stack mut bool indexHasKnownBounds = false;
     stack mut u64[0 2 ** 63 - 1] exprStart = statementStart + 4;
     stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
-    if (stream.KindAt(statementStart + 3) == TokenKind.Dot)
+    if (stream.KindAt(statementStart + 3) == TokenKind.Dot
+        || stream.KindAt(statementStart + 3) == TokenKind.Assign
+        || stream.KindAt(statementStart + 3) == TokenKind.LBrack)
     {
         stack mut u64[0 2 ** 63 - 1] nextToken = statementStart;
         stack mut u32[0 max] fieldTypeToken = 0;
@@ -6265,6 +7730,272 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
     return added != 0;
 }
 
+internal fn bool TryParseConstructedObjectFieldTryAssignmentStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow Compiler.Parsing.DeclarationList declarations,
+    borrow TypedEnumLayoutTable enumLayouts,
+    u64[0 2 ** 63 - 1] statementStart,
+    u64[0 2 ** 63 - 1] statementEnd,
+    out ConstructedObjectFieldAssignment assignment)
+    where overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts),
+          overlap(nodes, sourceValueFacts),
+          overlap(params, sourceValueFacts),
+          overlap(funcNames, sourceValueFacts),
+          overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(localTypes, sourceValueFacts),
+          overlap(declarations, sourceValueFacts),
+          overlap(enumLayouts, sourceValueFacts)
+{
+    assignment = new();
+    if (!StatementStartsConstructedObjectFieldAssignment(stream, statementStart, statementEnd))
+    {
+        return false;
+    }
+
+    stack mut ConstructedObjectLocal objectLocal = new();
+    if (!TryFindConstructedObjectLocal(
+        constructedObjectLocals,
+        source,
+        stream.StartAt(statementStart),
+        stream.LengthAt(statementStart),
+        objectLocal))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut MirType fieldType = MirType.I64;
+    stack mut u32[0 max] indexRoot = 0;
+    stack mut u32[0 max] elementSize = 0;
+    stack mut bool indexHasKnownBounds = false;
+    stack mut u64[0 2 ** 63 - 1] exprStart = statementStart + 4;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    if (stream.KindAt(statementStart + 3) == TokenKind.Dot
+        || stream.KindAt(statementStart + 3) == TokenKind.Assign
+        || stream.KindAt(statementStart + 3) == TokenKind.LBrack)
+    {
+        stack mut u64[0 2 ** 63 - 1] nextToken = statementStart;
+        stack mut u32[0 max] fieldTypeToken = 0;
+        if (!TryResolveConstructedObjectMemberChainStorageField(
+            stream,
+            source,
+            declarations,
+            enumLayouts,
+            objectLocal.TypeToken,
+            statementStart + 2,
+            nextToken,
+            fieldOffset,
+            fieldAlignment,
+            fieldTypeToken)
+            || (stream.KindAt(nextToken) != TokenKind.Assign && stream.KindAt(nextToken) != TokenKind.LBrack))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(nextToken) == TokenKind.Assign)
+        {
+            if (!TryGetSourceValueTypeCodeWithEnums(stream, source, declarations, enumLayouts, fieldTypeToken, fieldType, fieldTypeCode))
+            {
+                return false;
+            }
+
+            exprStart = nextToken + 1;
+        }
+        else
+        {
+            stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])nextToken);
+            if (closeBracket == (u32[0 max])nextToken
+                || (u64[0 2 ** 63 - 1])(closeBracket + 1) >= statementEnd
+                || stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 1) != TokenKind.Assign)
+            {
+                return false;
+            }
+
+            stack u32[0 max] nestedFieldOffset = fieldOffset;
+            if (stream.KindAt(nextToken + 1) == TokenKind.IntegerLiteral
+                && closeBracket == (u32[0 max])(nextToken + 2))
+            {
+                if (!TryResolveFixedArrayElementLayoutAtField(
+                    stream,
+                    source,
+                    fieldTypeToken,
+                    (u32[0 max])(nextToken + 1),
+                    nestedFieldOffset,
+                    fieldOffset,
+                    fieldAlignment,
+                    fieldType))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack mut u32[0 max] arrayLength = 0;
+                if (!TryResolveFixedArrayFieldLayoutAtField(
+                    stream,
+                    source,
+                    fieldTypeToken,
+                    nestedFieldOffset,
+                    fieldOffset,
+                    elementSize,
+                    fieldAlignment,
+                    fieldType,
+                    arrayLength))
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] beforeIndex = params.Count();
+                stack ExprParseResult indexExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, nextToken + 1);
+                if (params.Count() != beforeIndex
+                    || indexExpr.NodeId == 0
+                    || indexExpr.Next != (u64[0 2 ** 63 - 1])closeBracket
+                    || TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) != ExprType.IntType
+                    || !SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, arrayLength))
+                {
+                    return false;
+                }
+
+                indexRoot = indexExpr.NodeId;
+                indexHasKnownBounds = true;
+            }
+
+            exprStart = (u64[0 2 ** 63 - 1])closeBracket + 2;
+            fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(fieldType);
+        }
+    }
+    else if (stream.KindAt(statementStart + 3) == TokenKind.Assign)
+    {
+        if (!TryFindStructFieldLayout(
+            stream,
+            source,
+            declarations,
+            enumLayouts,
+            objectLocal.TypeToken,
+            (u32[0 max])(statementStart + 2),
+            fieldOffset,
+            fieldAlignment,
+            fieldType,
+            fieldTypeCode))
+        {
+            return false;
+        }
+    }
+    else if (stream.KindAt(statementStart + 3) == TokenKind.LBrack)
+    {
+        stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(statementStart + 3));
+        if (closeBracket == (u32[0 max])(statementStart + 3)
+            || (u64[0 2 ** 63 - 1])(closeBracket + 1) >= statementEnd
+            || stream.KindAt((u64[0 2 ** 63 - 1])closeBracket + 1) != TokenKind.Assign)
+        {
+            return false;
+        }
+
+        if (stream.KindAt(statementStart + 4) == TokenKind.IntegerLiteral
+            && closeBracket == (u32[0 max])(statementStart + 5))
+        {
+            if (!TryFindStructFixedArrayElementLayout(
+                stream,
+                source,
+                objectLocal.TypeToken,
+                (u32[0 max])(statementStart + 2),
+                (u32[0 max])(statementStart + 4),
+                fieldOffset,
+                fieldAlignment,
+                fieldType))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack mut u32[0 max] arrayLength = 0;
+            if (!TryFindStructFixedArrayFieldLayout(
+                stream,
+                source,
+                objectLocal.TypeToken,
+                (u32[0 max])(statementStart + 2),
+                fieldOffset,
+                elementSize,
+                fieldAlignment,
+                fieldType,
+                arrayLength))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeIndex = params.Count();
+            stack ExprParseResult indexExpr = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, statementStart + 4);
+            if (params.Count() != beforeIndex
+                || indexExpr.NodeId == 0
+                || indexExpr.Next != (u64[0 2 ** 63 - 1])closeBracket
+                || TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) != ExprType.IntType
+                || !SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, arrayLength))
+            {
+                return false;
+            }
+
+            indexRoot = indexExpr.NodeId;
+            indexHasKnownBounds = true;
+        }
+
+        exprStart = (u64[0 2 ** 63 - 1])closeBracket + 2;
+        fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(fieldType);
+    }
+    else
+    {
+        return false;
+    }
+
+    if (fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    if (stream.KindAt(exprStart) != TokenKind.Try)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+    stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
+        exprStart);
+    if (params.Count() != beforeExpr || expr.NodeId == 0 || expr.Next != statementEnd)
+    {
+        return false;
+    }
+
+    assignment.ReceiverParamIndex = objectLocal.ParamIndex;
+    assignment.FieldOffset = fieldOffset;
+    assignment.IndexRoot = indexRoot;
+    assignment.ElementSize = elementSize;
+    assignment.FieldAlignment = fieldAlignment;
+    assignment.FieldType = fieldType;
+    assignment.FieldTypeCode = fieldTypeCode;
+    assignment.ExprRoot = expr.NodeId;
+    assignment.IndexHasKnownBounds = indexHasKnownBounds;
+    return true;
+}
+
 internal fn bool TryParseSourceStorageMutationStatement(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -6333,6 +8064,28 @@ internal fn bool TryParseSourceStorageMutationStatement(
         constructedObjectLocals,
         localTypes,
         sourceValueFacts,
+        statementStart,
+        statementEnd,
+        scalarAssignments))
+    {
+        stack mut SourceStorageMutationStatement mutation = new();
+        mutation.Kind = SourceStorageMutationKindScalar();
+        mutation.AssignmentIndex = (u32[0 max])scalarAssignments.Count();
+        return mutationStatements.Add(mutation) != 0;
+    }
+
+    if (TryParseRawPointerAggregateFieldAssignmentStatement(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        declarations,
+        enumLayouts,
         statementStart,
         statementEnd,
         scalarAssignments))
@@ -6417,8 +8170,9 @@ internal fn bool TryParseSourceStorageMutationStatement(
     return false;
 }
 
-internal fn bool LowerConstructedObjectFieldAssignmentWithCallContext(
+internal fn bool LowerConstructedObjectFieldAssignmentValueWithCallContext(
     ConstructedObjectFieldAssignment assignment,
+    MirValueId value,
     borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<MirInstruction> instrs,
     borrow IrTable<u32[0 max]> localTypes,
@@ -6427,7 +8181,7 @@ internal fn bool LowerConstructedObjectFieldAssignmentWithCallContext(
     borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
     where overlap(functionCallContractFacts, sliceArgumentLocals)
 {
-    if (!localOverrides.Contains(assignment.ReceiverParamIndex + 1))
+    if (!value.IsValid() || !localOverrides.Contains(assignment.ReceiverParamIndex + 1))
     {
         return false;
     }
@@ -6439,37 +8193,75 @@ internal fn bool LowerConstructedObjectFieldAssignmentWithCallContext(
     }
 
     stack MirValueId basePointer = MirValueIdOf(basePointerValue);
-    stack mut MirValueId fieldPointer = new();
+    stack mut MirValueId indexValue = MirValueIdOf(0);
     if (assignment.IndexRoot != 0)
     {
-        stack MirValueId indexValue = LowerExprNodeAsTypeWithCallContext(nodes, assignment.IndexRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, MirType.I64);
-        if (assignment.IndexHasKnownBounds)
+        indexValue = LowerExprNodeAsTypeWithCallContext(nodes, assignment.IndexRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, MirType.I64);
+        if (!indexValue.IsValid())
         {
-            fieldPointer = MirPtrIndexOffset(instrs, basePointer, indexValue, assignment.ElementSize, assignment.FieldOffset, assignment.FieldAlignment);
-        }
-        else
-        {
-            fieldPointer = MirPtrIndexOffsetUnbounded(instrs, basePointer, indexValue, assignment.ElementSize, assignment.FieldOffset, assignment.FieldAlignment);
+            return false;
         }
     }
-    else
+
+    stack MirValueId fieldPointer = LowerResolvedStoragePlaceAddress(
+        instrs,
+        basePointer,
+        indexValue,
+        assignment.IndexRoot,
+        assignment.FieldOffset,
+        assignment.ElementSize,
+        assignment.FieldAlignment,
+        assignment.IndexHasKnownBounds);
+    if (!fieldPointer.IsValid())
     {
-        fieldPointer = MirPtrOffset(instrs, basePointer, assignment.FieldOffset, assignment.FieldAlignment);
+        return false;
     }
 
     if (SourceResolvedFieldTypeCodeIsEnum(assignment.FieldTypeCode))
     {
         stack u32[0 max] ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(assignment.FieldTypeCode) + 1;
-        stack MirValueId value = LowerExprNodeWithCallContext(nodes, assignment.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
         stack MirValueId store = MirStoreEnumPtrAligned(instrs, TypeIdOf(ownerTypeIndex), fieldPointer, value, assignment.FieldAlignment);
-    }
-    else
-    {
-        stack MirValueId value = LowerExprNodeAsTypeWithCallContext(nodes, assignment.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, assignment.FieldType);
-        stack MirValueId store = MirStorePtrAlignedTyped(instrs, assignment.FieldType, fieldPointer, value, assignment.FieldAlignment);
+        return store.IsValid();
     }
 
-    return true;
+    stack MirValueId store = MirStorePtrAlignedTyped(instrs, assignment.FieldType, fieldPointer, value, assignment.FieldAlignment);
+    return store.IsValid();
+}
+
+internal fn bool LowerConstructedObjectFieldAssignmentWithCallContext(
+    ConstructedObjectFieldAssignment assignment,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    if (SourceResolvedFieldTypeCodeIsEnum(assignment.FieldTypeCode))
+    {
+        stack MirValueId value = LowerExprNodeWithCallContext(nodes, assignment.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+        return LowerConstructedObjectFieldAssignmentValueWithCallContext(
+            assignment,
+            value,
+            nodes,
+            instrs,
+            localTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+    }
+
+    stack MirValueId value = LowerExprNodeAsTypeWithCallContext(nodes, assignment.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, assignment.FieldType);
+    return LowerConstructedObjectFieldAssignmentValueWithCallContext(
+        assignment,
+        value,
+        nodes,
+        instrs,
+        localTypes,
+        localOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals);
 }
 
 internal fn bool LowerConstructedObjectFieldAssignment(
@@ -6527,51 +8319,21 @@ internal fn bool LowerSourceStorageMutationStatementsWithCallContext(
     borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
     where overlap(functionCallContractFacts, sliceArgumentLocals)
 {
-    stack u64[0 2 ** 63 - 1] total = statements.Count();
     stack mut u32[0 max] cursor = 1;
-    while willexit ((u64[0 2 ** 63 - 1])cursor <= total)
+    while willexit ((u64[0 2 ** 63 - 1])cursor <= statements.Count())
     {
-        stack SourceStorageMutationStatement statement = statements.Get(cursor);
-        if (statement.Kind == SourceStorageMutationKindScalar())
-        {
-            if (!scalarAssignments.Contains(statement.AssignmentIndex))
-            {
-                return false;
-            }
-
-            stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
-            if (!LowerScalarStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
-            {
-                return false;
-            }
-        }
-        else if (statement.Kind == SourceStorageMutationKindEnum())
-        {
-            if (!enumAssignments.Contains(statement.AssignmentIndex))
-            {
-                return false;
-            }
-
-            stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
-            if (!LowerEnumStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
-            {
-                return false;
-            }
-        }
-        else if (statement.Kind == SourceStorageMutationKindConstructedObjectField())
-        {
-            if (!objectAssignments.Contains(statement.AssignmentIndex))
-            {
-                return false;
-            }
-
-            stack ConstructedObjectFieldAssignment assignment = objectAssignments.Get(statement.AssignmentIndex);
-            if (!LowerConstructedObjectFieldAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
-            {
-                return false;
-            }
-        }
-        else
+        if (!LowerSourceStorageMutationStatementWithCallContext(
+            statements,
+            scalarAssignments,
+            enumAssignments,
+            objectAssignments,
+            cursor,
+            nodes,
+            instrs,
+            localTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals))
         {
             return false;
         }
@@ -6580,6 +8342,62 @@ internal fn bool LowerSourceStorageMutationStatementsWithCallContext(
     }
 
     return true;
+}
+
+internal fn bool LowerSourceStorageMutationStatementWithCallContext(
+    borrow IrTable<SourceStorageMutationStatement> statements,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> objectAssignments,
+    u32[0 max] statementIndex,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    if (!statements.Contains(statementIndex))
+    {
+        return false;
+    }
+
+    stack SourceStorageMutationStatement statement = statements.Get(statementIndex);
+    if (statement.Kind == SourceStorageMutationKindScalar())
+    {
+        if (!scalarAssignments.Contains(statement.AssignmentIndex))
+        {
+            return false;
+        }
+
+        stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
+        return LowerScalarStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+    }
+
+    if (statement.Kind == SourceStorageMutationKindEnum())
+    {
+        if (!enumAssignments.Contains(statement.AssignmentIndex))
+        {
+            return false;
+        }
+
+        stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
+        return LowerEnumStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+    }
+
+    if (statement.Kind == SourceStorageMutationKindConstructedObjectField())
+    {
+        if (!objectAssignments.Contains(statement.AssignmentIndex))
+        {
+            return false;
+        }
+
+        stack ConstructedObjectFieldAssignment assignment = objectAssignments.Get(statement.AssignmentIndex);
+        return LowerConstructedObjectFieldAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+    }
+
+    return false;
 }
 
 internal fn bool LowerSourceStorageMutationStatements(

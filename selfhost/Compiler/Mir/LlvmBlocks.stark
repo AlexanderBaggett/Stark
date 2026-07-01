@@ -181,9 +181,29 @@ internal inline finite law u32[0 max] LlvmLoopMetadataBase()
     return 100000;
 }
 
+internal inline finite law u32[0 max] LlvmLoopMetadataBaseForFunction(u32[0 max] functionNumber)
+{
+    return LlvmLoopMetadataBase() + functionNumber * 10000;
+}
+
 internal inline finite law u32[0 max] LlvmLoopMetadataNodeId(u32[0 max] base, u32[0 max] blockIndex)
 {
-    return base + blockIndex * 2;
+    return base + blockIndex * 4;
+}
+
+internal inline finite law u32[0 max] LlvmLoopVectorizeMetadataNodeId(u32[0 max] base, u32[0 max] blockIndex)
+{
+    return LlvmLoopMetadataNodeId(base, blockIndex) + 1;
+}
+
+internal inline finite law u32[0 max] LlvmLoopParallelAccessesMetadataNodeId(u32[0 max] base, u32[0 max] blockIndex)
+{
+    return LlvmLoopMetadataNodeId(base, blockIndex) + 2;
+}
+
+internal inline finite law u32[0 max] LlvmLoopAccessGroupMetadataNodeId(u32[0 max] base, u32[0 max] blockIndex)
+{
+    return LlvmLoopMetadataNodeId(base, blockIndex) + 3;
 }
 
 internal fn MemoryStatus EmitLlvmIndependentLoopMetadataAttachment(
@@ -216,15 +236,26 @@ internal fn MemoryStatus EmitLlvmIndependentLoopMetadataDefinitions(
         if (MirBlockHasIndependentLoopBackedge(blocks, MirBlockIdOf(blockIndex)))
         {
             stack u32[0 max] nodeId = LlvmLoopMetadataNodeId(metadataBase, blockIndex);
+            stack u32[0 max] vectorizeNodeId = LlvmLoopVectorizeMetadataNodeId(metadataBase, blockIndex);
+            stack u32[0 max] parallelAccessesNodeId = LlvmLoopParallelAccessesMetadataNodeId(metadataBase, blockIndex);
+            stack u32[0 max] accessGroupNodeId = LlvmLoopAccessGroupMetadataNodeId(metadataBase, blockIndex);
             try sink.AppendConstAscii("!");
             try sink.AppendU64((u64[0 max])nodeId);
             try sink.AppendConstAscii(" = distinct !{!");
             try sink.AppendU64((u64[0 max])nodeId);
             try sink.AppendConstAscii(", !");
-            try sink.AppendU64((u64[0 max])(nodeId + 1));
+            try sink.AppendU64((u64[0 max])vectorizeNodeId);
+            try sink.AppendConstAscii(", !");
+            try sink.AppendU64((u64[0 max])parallelAccessesNodeId);
             try sink.AppendConstAscii("}\n!");
-            try sink.AppendU64((u64[0 max])(nodeId + 1));
-            try sink.AppendConstAscii(" = !{!\"llvm.loop.vectorize.enable\", i1 true}\n");
+            try sink.AppendU64((u64[0 max])vectorizeNodeId);
+            try sink.AppendConstAscii(" = !{!\"llvm.loop.vectorize.enable\", i1 true}\n!");
+            try sink.AppendU64((u64[0 max])parallelAccessesNodeId);
+            try sink.AppendConstAscii(" = !{!\"llvm.loop.parallel_accesses\", !");
+            try sink.AppendU64((u64[0 max])accessGroupNodeId);
+            try sink.AppendConstAscii("}\n!");
+            try sink.AppendU64((u64[0 max])accessGroupNodeId);
+            try sink.AppendConstAscii(" = distinct !{}\n");
         }
 
         i = i + 1;
@@ -326,9 +357,11 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
     borrow IrTable<MirBlock> blocks,
     MirBlockId b,
     u32[0 max] loopMetadataBase,
+    u32[0 max] scopedNoAliasMetadataBase,
     mut borrow OwnedAscii sink)
 {
     if (!blocks.Contains(b.Index()))
@@ -419,6 +452,14 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
             }
             try EmitLlvmCallSiteEffectAttributes(functionEffectFacts, (u32[0 max])tailCall.Immediate(), sink);
             try EmitLlvmRangeMetadataAttachment(tailCall.ResultType(), FactAt(functionReturnFacts, (u32[0 max])tailCall.Immediate()), rangeMetadata, sink);
+            try EmitLlvmScopedNoAliasAttachmentForCall(
+                instrs,
+                tailCall,
+                calleeFacts,
+                separateStorageFacts,
+                scopedNoAliasMetadataBase,
+                blk.Slot0Index(),
+                sink);
             try sink.AppendConstAscii("\n  ret ");
             try EmitLlvmTypeName(tailCall.ResultType(), sink);
             try sink.AppendConstAscii(" ");
@@ -558,6 +599,12 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
         try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
     }
 
+    stack mut u32[0 max] independentLoopAccessGroupMetadataId = 0;
+    if (MirBlockHasIndependentLoopBackedge(blocks, MirBlockIdOf(blockIndex)))
+    {
+        independentLoopAccessGroupMetadataId = LlvmLoopAccessGroupMetadataNodeId(loopMetadataBase, blockIndex);
+    }
+
     stack mut u32[0 max] index = firstInstr;
     stack mut u32[0 max] remaining = instrCount;
     while willexit (remaining > 0)
@@ -575,6 +622,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
             rangeMetadata,
             separateStorageFacts,
             scopedNoAliasMetadataBase,
+            independentLoopAccessGroupMetadataId,
             sink,
             index);
         index = index + 1;
@@ -591,9 +639,11 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        separateStorageFacts,
         blocks,
         MirBlockIdOf(blockIndex),
         loopMetadataBase,
+        scopedNoAliasMetadataBase,
         sink);
     return MemoryStatus.Ok;
 }
@@ -628,6 +678,12 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparat
         try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
     }
 
+    stack mut u32[0 max] independentLoopAccessGroupMetadataId = 0;
+    if (MirBlockHasIndependentLoopBackedge(blocks, MirBlockIdOf(blockIndex)))
+    {
+        independentLoopAccessGroupMetadataId = LlvmLoopAccessGroupMetadataNodeId(loopMetadataBase, blockIndex);
+    }
+
     stack mut u32[0 max] index = firstInstr;
     stack mut u32[0 max] remaining = instrCount;
     while willexit (remaining > 0)
@@ -646,6 +702,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparat
             rangeMetadata,
             separateStorageFacts,
             scopedNoAliasMetadataBase,
+            independentLoopAccessGroupMetadataId,
             sink,
             index);
         index = index + 1;
@@ -662,9 +719,11 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparat
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        separateStorageFacts,
         blocks,
         MirBlockIdOf(blockIndex),
         loopMetadataBase,
+        scopedNoAliasMetadataBase,
         sink);
     return MemoryStatus.Ok;
 }

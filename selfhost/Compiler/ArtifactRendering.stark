@@ -516,6 +516,10 @@ public finite law ascii MirOpName(MirOp op)
             return "enum-variant-tag";
         case MirOp.EnumPayloadInsert:
             return "enum-payload-insert";
+        case MirOp.EnumTagRead:
+            return "enum-tag-read";
+        case MirOp.EnumPayloadExtract:
+            return "enum-payload-extract";
         case MirOp.Return:
             return "return";
     }

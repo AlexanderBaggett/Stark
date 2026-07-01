@@ -15,7 +15,9 @@ module Compiler.Mir.LlvmFunctions
 
 internal fn bool LlvmBlockRangesUseScopedNoAliasMetadata(
     borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
     borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<DistinctStoragePair> separateStorageFacts)
 {
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
@@ -23,7 +25,8 @@ internal fn bool LlvmBlockRangesUseScopedNoAliasMetadata(
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
         stack BlockEmit range = ranges.Get(i);
-        if (MirInstructionRangeUsesScopedNoAliasMetadata(instrs, separateStorageFacts, range.First, range.Count))
+        if (MirInstructionRangeUsesScopedNoAliasMetadataWithCalls(instrs, functionCallContractFacts, separateStorageFacts, range.First, range.Count)
+            || LlvmBlockTerminatorUsesScopedNoAliasMetadata(instrs, blocks, range.BlockIndex, functionCallContractFacts, separateStorageFacts))
         {
             return true;
         }
@@ -34,35 +37,147 @@ internal fn bool LlvmBlockRangesUseScopedNoAliasMetadata(
     return false;
 }
 
-internal fn MemoryStatus EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRange(
+internal fn bool LlvmBlockTerminatorUsesScopedNoAliasMetadata(
     borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts)
+{
+    if (separateStorageFacts.Count() == 0 || !blocks.Contains(blockIndex))
+    {
+        return false;
+    }
+
+    stack MirBlock block = blocks.Get(blockIndex);
+    if (block.Terminator() != MirTermKind.TailCall || !instrs.Contains(block.Slot0Index()))
+    {
+        return false;
+    }
+
+    stack MirInstruction tailCall = instrs.Get(block.Slot0Index());
+    if (!MirOpIsTailCall(tailCall.Opcode()))
+    {
+        return false;
+    }
+
+    stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])tailCall.Immediate());
+    return MirCallUsesScopedNoAliasMetadata(instrs, tailCall, calleeFacts, separateStorageFacts);
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasCallMetadataDefinitionsForBlockTerminator(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    if (!blocks.Contains(blockIndex))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirBlock block = blocks.Get(blockIndex);
+    if (block.Terminator() != MirTermKind.TailCall || !instrs.Contains(block.Slot0Index()))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction tailCall = instrs.Get(block.Slot0Index());
+    if (!MirOpIsTailCall(tailCall.Opcode()))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])tailCall.Immediate());
+    return EmitLlvmScopedNoAliasCallMetadataDefinition(
+        instrs,
+        tailCall,
+        calleeFacts,
+        separateStorageFacts,
+        metadataBase,
+        block.Slot0Index(),
+        sink);
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRangeAndTerminator(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     u32[0 max] firstInstr,
     u32[0 max] instrCount,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     u32[0 max] metadataBase,
     mut borrow OwnedAscii sink)
 {
-    if (!MirInstructionRangeUsesScopedNoAliasMetadata(instrs, separateStorageFacts, firstInstr, instrCount))
+    if (!MirInstructionRangeUsesScopedNoAliasMetadataWithCalls(instrs, functionCallContractFacts, separateStorageFacts, firstInstr, instrCount)
+        && !LlvmBlockTerminatorUsesScopedNoAliasMetadata(instrs, blocks, blockIndex, functionCallContractFacts, separateStorageFacts))
     {
         return MemoryStatus.Ok;
     }
 
-    return EmitLlvmScopedNoAliasMetadataDefinitions(separateStorageFacts, metadataBase, sink);
+    try EmitLlvmScopedNoAliasMetadataDefinitions(separateStorageFacts, metadataBase, sink);
+    try EmitLlvmScopedNoAliasCallMetadataDefinitionsForInstructionRange(
+        instrs,
+        functionCallContractFacts,
+        separateStorageFacts,
+        metadataBase,
+        firstInstr,
+        instrCount,
+        sink);
+    return EmitLlvmScopedNoAliasCallMetadataDefinitionsForBlockTerminator(
+        instrs,
+        blocks,
+        blockIndex,
+        functionCallContractFacts,
+        separateStorageFacts,
+        metadataBase,
+        sink);
 }
 
 internal fn MemoryStatus EmitLlvmScopedNoAliasMetadataDefinitionsForBlockRanges(
     borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
     borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     u32[0 max] metadataBase,
     mut borrow OwnedAscii sink)
 {
-    if (!LlvmBlockRangesUseScopedNoAliasMetadata(instrs, ranges, separateStorageFacts))
+    if (!LlvmBlockRangesUseScopedNoAliasMetadata(instrs, blocks, ranges, functionCallContractFacts, separateStorageFacts))
     {
         return MemoryStatus.Ok;
     }
 
-    return EmitLlvmScopedNoAliasMetadataDefinitions(separateStorageFacts, metadataBase, sink);
+    try EmitLlvmScopedNoAliasMetadataDefinitions(separateStorageFacts, metadataBase, sink);
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack BlockEmit range = ranges.Get(i);
+        try EmitLlvmScopedNoAliasCallMetadataDefinitionsForInstructionRange(
+            instrs,
+            functionCallContractFacts,
+            separateStorageFacts,
+            metadataBase,
+            range.First,
+            range.Count,
+            sink);
+        try EmitLlvmScopedNoAliasCallMetadataDefinitionsForBlockTerminator(
+            instrs,
+            blocks,
+            range.BlockIndex,
+            functionCallContractFacts,
+            separateStorageFacts,
+            metadataBase,
+            sink);
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
 }
 
 // Emits an LLVM `define i64 @<name>() { entry: ... }` for the instruction range
@@ -355,8 +470,11 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
         scopedNoAliasMetadataBase,
         sink);
     try sink.AppendConstAscii("}\n");
-    try EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRange(
+    try EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRangeAndTerminator(
         instrs,
+        blocks,
+        entryBlockIndex,
+        functionCallContractFacts,
         firstInstr,
         instrCount,
         separateStorageFacts,
@@ -727,7 +845,9 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
     try EmitLlvmIndependentLoopMetadataDefinitions(blocks, ranges, LlvmLoopMetadataBase(), sink);
     try EmitLlvmScopedNoAliasMetadataDefinitionsForBlockRanges(
         instrs,
+        blocks,
         ranges,
+        functionCallContractFacts,
         separateStorageFacts,
         scopedNoAliasMetadataBase,
         sink);
@@ -1071,7 +1191,7 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
                 range.BlockIndex,
                 range.First,
                 range.Count,
-                LlvmLoopMetadataBase() + number * 1000,
+                LlvmLoopMetadataBaseForFunction(number),
                 scopedNoAliasMetadataBase,
                 sink);
             i = i + 1;
@@ -1079,10 +1199,12 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
     }
 
     try sink.AppendConstAscii("}\n");
-    try EmitLlvmIndependentLoopMetadataDefinitions(blocks, ranges, LlvmLoopMetadataBase() + number * 1000, sink);
+    try EmitLlvmIndependentLoopMetadataDefinitions(blocks, ranges, LlvmLoopMetadataBaseForFunction(number), sink);
     try EmitLlvmScopedNoAliasMetadataDefinitionsForBlockRanges(
         instrs,
+        blocks,
         ranges,
+        functionCallContractFacts,
         separateStorageFacts,
         scopedNoAliasMetadataBase,
         sink);
@@ -1396,12 +1518,15 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
         entryBlock,
         firstInstr,
         instrCount,
-        LlvmLoopMetadataBase() + number * 1000,
+        LlvmLoopMetadataBaseForFunction(number),
         scopedNoAliasMetadataBase,
         sink);
     try sink.AppendConstAscii("}\n");
-    try EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRange(
+    try EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRangeAndTerminator(
         instrs,
+        blocks,
+        entryBlock,
+        functionCallContractFacts,
         firstInstr,
         instrCount,
         separateStorageFacts,

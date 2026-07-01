@@ -286,6 +286,8 @@ internal fn u8[0 max] MirOpToByte(MirOp op)
         case MirOp.FixedArrayParamElement: return 56;
         case MirOp.FixedArrayParamSlot: return 57;
         case MirOp.FixedArrayLoad: return 58;
+        case MirOp.EnumTagRead: return 59;
+        case MirOp.EnumPayloadExtract: return 60;
     }
 }
 
@@ -351,6 +353,8 @@ internal fn MirOp MirOpFromByte(u8[0 max] b)
         case 56: return MirOp.FixedArrayParamElement;
         case 57: return MirOp.FixedArrayParamSlot;
         case 58: return MirOp.FixedArrayLoad;
+        case 59: return MirOp.EnumTagRead;
+        case 60: return MirOp.EnumPayloadExtract;
         default: return MirOp.ConstInt;
     }
 }

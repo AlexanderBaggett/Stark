@@ -157,6 +157,13 @@ public enum MirOp
     // operand B is the payload value, operand C is the enum owner TypeId index, operand D
     // is the layout-backed variant ordinal, and Imm is the payload ordinal.
     EnumPayloadInsert,
+    // Extracts the active enum tag field from enum value operand A. Operand B is the enum
+    // owner TypeId index, and ResType is the exact integer type of the stored tag.
+    EnumTagRead,
+    // Extracts a payload field from enum value operand A. Operand B is the enum owner
+    // TypeId index, C is the layout-backed variant ordinal, D is the payload ordinal, and
+    // ResType is the exact payload value type.
+    EnumPayloadExtract,
     // Returns operand A from the function.
     Return,
 }
