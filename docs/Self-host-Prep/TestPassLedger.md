@@ -11,6 +11,81 @@ failure evidence, run logs, or status-update prose.
 
 ---
 
+## 2026-06-30 MIR Bounded Raw Pointer Local Region Facts
+
+- Bounded raw-pointer element-count facts now propagate through raw-pointer `var` aliases.
+- Immutable declared raw-pointer locals initialized from bounded pointer names now keep the same region count facts.
+- Initialized mutable raw-pointer locals now keep bounded region facts from bounded pointer-name initializers.
+- Straight-line mutable raw-pointer local assignments now update bounded region facts and clear stale facts after unbounded assignments.
+- Assigned mutable raw-pointer local facts are preserved through terminal-if returns and switch mutation uses.
+- Pointer-valued if-expression and if-statement joins now merge compatible raw-pointer element and count facts.
+- Pointer-valued switch assignment joins now merge compatible raw-pointer element and count facts.
+- Branch and switch joins keep bounded element counts only when every assigned root has matching count facts.
+- Branch and switch joins reject incompatible raw-pointer arms instead of silently dropping pointee facts.
+- `IrTable.Replace` now supports updating source symbol rows without rebuilding the table.
+- Indexed alias, immutable local, and mutable local dereferences reuse the existing inbounds pointer-offset lowering, preserving element size and alignment facts.
+- Added focused IR facts for fixed-count aliases, count-parameter aliases, alias stores, unbounded alias rejection, immutable declared locals, initialized mutable locals, assigned mutable locals, count-bounded assigned locals, terminal-if use, switch-arm stores, stale-bound clearing, if-expression joins, if-statement joins, switch joins, and unbounded branch/switch arm rejection.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionIfExpressionBoundedRawPointerAliasIndexedDerefLoadsI32 --filter CompileFunctionIfStatementBoundedRawPointerAliasIndexedDerefLoadsI32 --filter CompileFunctionSwitchBoundedRawPointerAliasIndexedDerefLoadsI32 --filter CompileFunctionIfStatementRawPointerAliasClearsBoundsAfterUnboundedArm --filter CompileFunctionSwitchRawPointerAliasClearsBoundsAfterUnboundedArm --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 10 minutes because the focused project test runner stayed silent while CPU-bound.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Declared Raw Pointer Locals
+
+- Declared scalar `rawptr` and `rawmutptr` stack locals now allocate stored pointer slots.
+- Raw-pointer local declarations copy pointee type, size, alignment, and mutability facts onto the local symbol row.
+- Stored raw-pointer local reads load the pointer value before dereference lowering.
+- Declared `rawmutptr` local dereference stores lower through typed aligned MIR stores.
+- Declared `rawptr` local dereference stores and readonly-to-mutable pointer initialization or assignment are rejected.
+- Local-prefixed terminal-if and switch mutation paths now accept declared raw-pointer locals.
+- Focused verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter DeclaredRawPointer --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after 90 seconds with no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Raw Pointer Alias Dereferences
+
+- Scalar raw-pointer parameter facts now propagate through raw-pointer `var` aliases.
+- Scalar raw-pointer alias dereference loads lower through typed aligned MIR loads without temporary stack storage.
+- Scalar `rawmutptr` alias dereference stores lower through typed aligned MIR stores without temporary stack storage.
+- Scalar `rawptr` alias dereference stores are rejected before MIR lowering.
+- Local-prefixed terminal-if and switch mutation paths now preserve raw-pointer alias facts.
+- Focused verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter RawPointerAlias --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after 180 seconds with no test output; the timeout wrapper then reported zsh's read-only `status` variable name.
+- No broad test sweep was run.
+
+---
+
+## 2026-06-30 Selfhost Raw Pointer Dereference Stores
+
+- Scalar raw-pointer parameter facts now carry mutability into source symbol rows and ABI facts.
+- Scalar `rawmutptr` parameter dereference assignments now lower through typed aligned MIR stores.
+- Scalar `rawptr` parameter dereference assignments are rejected before MIR lowering.
+- Straight-line, terminal-if-prefixed, and switch-arm mutation paths now route scalar raw-pointer stores.
+- Focused verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- `../../stark test --filter RawPointerParameterDeref --filter RawPointerReadonlyDerefStoreRejected --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir` was stopped after 300 seconds with no output.
+- No broad test sweep was run.
+
+---
+
 ## 2026-06-30 Selfhost Object Enum Field Storage
 
 - Struct and record object layout now accounts for enum field size and alignment when enum layout rows are available.
@@ -3307,4 +3382,300 @@ comments explaining which platform is required.
   - `scripts/check-selfhost-mir-dependencies.sh`: passed.
   - `../../stark test --filter EnumPointerMemory --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped at the 120-second alarm with no output.
   - `git diff --check`: passed.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Uninitialized Scalar Storage Slice
+
+- Lowered uninitialized mutable stack scalar locals into typed stack storage after definite-assignment validation.
+- Reused the storage-backed scalar local assignment and load paths so scalar width, alignment, and range facts continue through LLVM IR emission.
+- Wired the declaration path through straight-line, terminal `if`, and switch-local MIR lowering.
+- Added focused IR tests for straight-line, terminal `if`, switch, bool storage, and forward-reference rejection cases.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter Uninitialized` in `tests-stark/selfhost.Ir`: stopped after about two minutes because the filtered project test runner remained silent.
+  - `../../stark test IrTests.stark --filter CompileFunctionUninitializedMutableStackScalarAssignmentStoresTypedValue` in `tests-stark/selfhost.Ir`: stopped after about one minute because the single-filter test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Compact Integer Parameter Width Slice
+
+- Added non-storage source-local type codes for i8, i16, i32, and i64 values.
+- Seeded source-local parameter type tables from signature integer widths instead of collapsing every non-bool scalar to i64.
+- Lowered typed parameter references and SSA local aliases through `MirParamTyped` so compact integer facts reach LLVM IR.
+- Propagated compact integer source-local codes through scalar field reads, indexed field reads, and matching typed `if`/switch phis.
+- Added focused IR tests for direct i32 parameter returns and `var` aliases of i32 parameters.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionTypedIntegerParameterPreservesI32ReturnType --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project test runner remained silent.
+  - A temporary one-off executable that called `CompileFunctionWithLocalsToLlvm` directly was stopped after about 90 seconds because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Declared Scalar Return Width Slice
+
+- Added scalar return expression lowering that targets the declared function return MIR type for integer and bool returns.
+- Wired straight-line source function returns through the declared scalar return type before creating the MIR return block.
+- Added focused IR facts for i32 literal returns, i16 literal arithmetic returns, and bool literal returns.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed before ledger edits.
+  - `../../stark test IrTests.stark --filter CompileFunctionI32LiteralReturnPreservesDeclaredReturnType --filter CompileFunctionI16LiteralArithmeticReturnPreservesDeclaredReturnType --filter CompileFunctionBoolLiteralReturnPreservesDeclaredReturnType --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped by a 120-second alarm after remaining silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Branch Declared Scalar Return Width Slice
+
+- Reused declared scalar return targeting for `return if`, terminal `if`, local-prefixed terminal `if`, and terminal switch return arms.
+- Threaded declared scalar return MIR types through terminal integer, enum, boolean, and local-prefixed switch lowering helpers.
+- Added focused IR facts for compact integer and bool returns through `return if`, terminal `if`, local-prefixed terminal `if`, integer switches, boolean switches, and local-prefixed switches.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `../../stark test IrTests.stark --filter ReturnIfExpressionPreservesDeclaredI16ReturnType --filter BooleanTerminalIfPreservesDeclaredBoolReturnType --filter TerminalIfPreservesDeclaredI32ReturnType --filter LocalPrefixedTerminalIfPreservesDeclaredI8ReturnType --filter TerminalIntegerSwitchPreservesDeclaredI16ReturnType --filter BooleanTerminalIntegerSwitchPreservesDeclaredBoolReturnType --filter LocalPrefixedTerminalIntegerSwitchPreservesDeclaredI8ReturnType --filter TerminalBooleanSwitchPreservesDeclaredI8ReturnType --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped by a 120-second alarm after remaining silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Compact Integer Expression Width Slice
+
+- Propagated concrete source-local integer widths through binary expression type-code inference.
+- Lowered inferred-width binary expressions through typed MIR arithmetic instead of defaulting to i64.
+- Lowered integer comparison operands with the inferred operand width so LLVM comparisons keep compact integer facts.
+- Added focused IR facts for i32 parameter arithmetic, parameter-plus-literal arithmetic, var aliases of typed arithmetic, direct comparison, and arithmetic feeding comparison.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionTypedInteger --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project test runner remained silent.
+  - A tiny stdin-fed executable that called `CompileFunctionWithLocalsToLlvm` for the new width cases was stopped after about 90 seconds because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Loop Declared Scalar Return Width Slice
+
+- Resolved the declared integer return MIR type for module counting and accumulator loop lowerers.
+- Lowered loop constants, phis, comparisons, updates, and return values through typed MIR builders instead of defaulting to i64.
+- Added focused IR facts for typed counting `while`, accumulator `while`, counting `for`, and header counting `for` returns.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceLoopLowering.stark` through `lower-mir`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` for `tests-stark/selfhost.Ir/IrTests.stark` through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter ModuleCountingWhileLoopPreservesDeclaredI32ReturnType --filter ModuleAccumulatorWhileLoopPreservesDeclaredI16ReturnType --filter ModuleCountingForLoopPreservesDeclaredI8ReturnType --filter ModuleHeaderCountingForLoopPreservesDeclaredI32ReturnType --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped by a 180-second alarm after remaining silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Storage Member Chain Slice
+
+- Added a storage field layout resolver that allows aggregate-typed intermediate fields while preserving final scalar and enum leaf facts.
+- Lowered nested scalar and enum member-chain reads through the existing typed pointer load path.
+- Lowered nested scalar and enum member-chain assignments through the existing typed pointer store path.
+- Added focused IR facts for stack and heap nested field reads, nested field reassignment, and invalid nested path rejection.
+- Split the remaining member-chain and slice descriptor work in `TASKS.md` so the unfinished fixed-array and HIR-row pieces stay visible.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceLocalLowering.stark` through `lower-mir`: passed with 0 errors and existing recursion warnings.
+  - `./stark --host-test-inspect` for `tests-stark/selfhost.Ir/IrTests.stark` through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter NestedObject --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 150 seconds because the filtered project test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Nested Fixed-Array Member Chain Slice
+
+- Reused the nested storage-field resolver for fixed-array leaves reached through aggregate member chains.
+- Lowered constant nested fixed-array element reads and assignments through direct byte offsets.
+- Lowered dynamic nested fixed-array element reads and assignments through `MirPtrIndexOffset` with preserved base offset, element size, bounds, and alignment facts.
+- Added focused IR facts for nested constant element reads, dynamic element reads, dynamic element assignments, and invalid nested array paths.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceLocalLowering.stark` through `lower-mir`: passed with 0 errors and existing recursion warnings.
+  - `./stark --host-test-inspect` for `tests-stark/selfhost.Ir/IrTests.stark` through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - A stdin-fed ad hoc executable that called `CompileFunctionWithLocalsToLlvm` for the new nested fixed-array snippets was stopped after about 90 seconds because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Descriptor-Backed Slice Indexing Slice
+
+- Added source slice descriptors for stack slice locals initialized from storage-backed fixed-array fields.
+- Resolved descriptor-backed `view[index]` reads through `MirPtrIndexOffset` while preserving base pointer, element size, bounds, alignment, and scalar type facts.
+- Added focused IR facts for nested fixed-array-to-slice loads and invalid descriptor/index rejection.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionSliceFromNestedFixedArrayReadUsesIndexedPointer --filter RejectsInvalidFixedArraySliceDescriptorsAndIndexes` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Standalone Fixed-Array Slice Descriptor Slice
+
+- Added MIR source records for scalar fixed-array storage locals and their initializer rows.
+- Lowered standalone scalar fixed-array initializers into typed stack stores, including zero stores for omitted trailing elements.
+- Resolved `stack T[] view = values` from standalone fixed-array locals into descriptor-backed slice facts.
+- Kept descriptor-backed `view[index]` reads on `MirPtrIndexOffset`, preserving base pointer, element size, range-proven bounds, alignment, and scalar type facts.
+- Added focused IR facts for standalone fixed-array-to-slice reads and invalid standalone descriptor/index cases.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionSliceFromStandaloneFixedArrayReadUsesIndexedPointer --filter RejectsInvalidFixedArraySliceDescriptorsAndIndexes` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+  - A stdin-fed ad hoc executable that called `CompileFunctionWithLocalsToLlvm` for the standalone fixed-array slice snippets was stopped after about 120 seconds because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Slice Descriptor Assignment Slice
+
+- Added mutability facts to source slice descriptors and rejected descriptor-backed writes through readonly slice locals.
+- Lowered straight-line `view[index] = expr` statements through the existing indexed pointer store path.
+- Preserved descriptor base pointer, byte offset, element size, range-proven bounds, alignment, and scalar type facts through the store.
+- Added focused IR facts for nested and standalone fixed-array-backed slice assignments plus invalid readonly, out-of-range, and wrong-type writes.
+- Split the remaining ABI slice and fixed-array parameter work in `TASKS.md` into explicit aggregate-carrier subtasks.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceLocalLowering.stark` through `lower-mir`: passed with 0 errors and existing recursion warnings.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceModuleLowering.stark` through `lower-mir`: passed with 0 diagnostics.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionSliceFromNestedFixedArrayAssignmentStoresThroughIndexedPointer --filter CompileFunctionSliceFromStandaloneFixedArrayAssignmentStoresThroughIndexedPointer --filter RejectsInvalidFixedArraySliceDescriptorsAndIndexes --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Branch Slice Descriptor Assignment Slice
+
+- Routed terminal-if and switch storage mutation parsing through the shared descriptor-aware mutation parser.
+- Added fixed-array storage locals and slice descriptor locals to the terminal-if and switch storage-assignment lowering paths.
+- Lowered descriptor-backed `view[index] = expr` before terminal `if` branches and inside switch arms through the indexed pointer store path.
+- Preserved descriptor base pointer, byte offset, element size, range-proven bounds, alignment, scalar type facts, and branch-local expression facts through lowering.
+- Added focused IR facts for terminal-if slice assignment and integer-switch slice assignment.
+- Narrow verification:
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceLocalLowering.stark`, `SourceIfLowering.stark`, and `SourceSwitchLowering.stark` through `lower-mir`: passed with 0 errors; `SourceLocalLowering` and `SourceIfLowering` reported existing recursion warnings.
+  - `./stark --host-test-inspect` for `selfhost/Compiler/Mir/SourceSwitchLowering.stark` through `lower-mir`: passed with 0 diagnostics.
+  - `../../stark test --filter CompileFunctionSliceAssignmentBeforeTerminalIfStoresThroughIndexedPointer --filter CompileIntegerSwitchSliceAssignmentStoresThroughIndexedPointer --target arm64-apple-macosx26.0.0 --stage stage0` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+  - A temporary smoke executable that called the two new helper snippets directly was stopped after about 180 seconds because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Slice Parameter ABI Slice
+
+- Added MIR slice parameter base and length extraction ops for concrete `{ ptr, i64 }` slice ABI carriers.
+- Emitted slice parameters as LLVM aggregate carriers and extracted the base and length in function bodies.
+- Lowered slice parameter reads and writes through source slice descriptors with element size, alignment, alias, and mutability facts preserved.
+- Used non-inbounds indexed pointer emission for dynamic slice parameter indexes because runtime length is carried but not yet a dominating bounds proof.
+- Kept concrete slice call arguments open as the remaining aggregate-carrier work.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost -I ../../stdlib/src --target arm64-apple-macosx26.0.0 --diagnostic-format text` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileFunctionSliceParameterReadUsesConcreteSliceAbiAndUnboundedIndex --filter CompileFunctionSliceParameterAssignmentStoresThroughUnboundedIndex` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+  - `./stark --host-test-inspect` for the touched selfhost MIR modules through `lower-mir`: stopped after about 90 seconds because the focused inspector batch remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Slice Call Argument ABI Slice
+
+- Added a MIR slice aggregate value op that lowers call arguments to concrete `{ ptr, i64 }` LLVM carriers.
+- Validated slice call arguments against descriptor element type, size, alignment, and field type facts before lowering.
+- Lowered fixed-array-backed slice arguments and forwarded slice parameters through aggregate call carriers.
+- Preserved slice base pointers for `separate_storage` assumptions instead of emitting aggregate operands as pointers.
+- Wired descriptor-aware slice calls through straight-line module lowering and the full local/slice terminal-if path.
+- Added focused IR facts for fixed-array slice calls, slice-parameter forwarding, terminal-if slice calls, and mismatched element-type rejection.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter SliceCallArgument --filter SliceParameterForwarding --filter MismatchedElementType` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Switch Slice Call Carrier Slice
+
+- Threaded slice call argument context through descriptor-aware switch field-assignment validation and lowering.
+- Lowered storage initializers and storage mutations through call-context-aware helpers in straight-line, terminal-if, and switch paths.
+- Preserved slice descriptor element type, element size, alignment, base pointer, and length facts through calls nested inside storage assignments.
+- Added a focused IR fact for a slice call argument inside a switch object-field assignment.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter SwitchFieldAssignmentUsesConcreteSliceAbiCarrier` in `tests-stark/selfhost.Ir`: stopped after about 60 seconds because the exact filtered project test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Fixed Array Parameter ABI Slice
+
+- Added fixed-array by-value parameter ABI facts and emitted `[N x T]` LLVM parameter and call carriers.
+- Lowered constant fixed-array parameter element reads through direct `extractvalue` without materializing storage.
+- Lowered dynamic fixed-array parameter element reads and slice views through addressable parameter slots with element size, alignment, and bounds facts preserved.
+- Allowed fixed-array parameters to feed both fixed-array by-value callees and concrete slice callees without losing ABI carrier facts.
+- Added focused IR facts for fixed-array parameter direct reads, dynamic reads, slice views, and fixed-array/slice call forwarding.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --emit-llvm -I ../../selfhost --target arm64-apple-macosx26.0.0 -o /tmp/selfhost-ir-tests.ll` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter FixedArrayParameter --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after several minutes because the filtered project test runner remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Address-Taking Place Slice
+
+- Added a selfhost expression AST node for unary address-of expressions.
+- Parsed `&place` through the simple expression parser and descriptor-aware local parser.
+- Lowered address-taking for storage-backed scalar locals, constructed-object fields, slice elements, and fixed-array parameter elements.
+- Reused `MirPtrOffset` and indexed pointer ops so byte offsets, element sizes, bounds proofs, and alignment facts survive to LLVM IR.
+- Added focused IR facts for stack scalar, object field, slice element, and fixed-array parameter element addresses passed to raw-pointer callees.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --emit-llvm -I ../../selfhost --target arm64-apple-macosx26.0.0 -o /tmp/selfhost-ir-tests-address-of.ll` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter AddressOf --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about three minutes because the focused project test runner remained silent.
+  - A temporary one-off executable that called the four new helper snippets directly was stopped after about three minutes because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Scalar Parameter Address Slot Slice
+
+- Derived lowering-local type rows that mark address-taken scalar parameters as stored scalar locals.
+- Materialized addressable scalar parameter slots once during signature override seeding and stored the typed parameter value into the slot.
+- Threaded the derived lowering-local type table through straight-line, terminal-if, and switch source lowering.
+- Added focused IR facts for passing `&param` to raw-pointer callees and for later reads loading from the same slot.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark AddressParamProbe.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed before the temporary probe file was removed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark IrTests.stark --emit-llvm -I ../../selfhost --target arm64-apple-macosx26.0.0 -o /tmp/selfhost-ir-tests-scalar-param-address.ll` in `tests-stark/selfhost.Ir`: stopped after about two minutes because the focused file emit remained silent.
+  - `../../stark test --filter CompileFunctionAddressOfScalarParameter --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project test runner remained silent.
+  - `../../stark AddressParamProbe.stark -I ../../selfhost --target arm64-apple-macosx26.0.0 -o /tmp/address-param-probe` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because executable compilation remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Scalar Raw Pointer Dereference Slice
+
+- Carried scalar raw-pointer parameter pointee type, size, and alignment facts into source parameter symbol rows.
+- Classified scalar raw-pointer ABI facts so the same pointee metadata is available beside pointer ABI attributes.
+- Parsed prefix raw-pointer dereference expressions and rejected dereferences without scalar pointee facts.
+- Lowered scalar raw-pointer parameter dereferences through typed aligned MIR pointer loads.
+- Added focused IR facts for bool, i8, i16, i32, and i64 raw-pointer parameter loads.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --target arm64-apple-macosx26.0.0 --filter RawPointerParameterDeref` in `tests-stark/selfhost.Ir`: stopped after about 120 seconds because the filtered project test runner remained silent.
+  - A temporary one-off executable probe for the five new dereference snippets was stopped after about two minutes because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-06-30 MIR Bounded Raw Pointer Indexed Dereference Slice
+
+- Carried bounded raw-pointer element-count facts into source parameter symbol rows.
+- Parsed fixed-count and count-parameter bounded scalar raw-pointer indexed element expressions.
+- Proved indexed raw-pointer bounds from source integer ranges before emitting inbounds pointer offsets.
+- Lowered bounded scalar `rawptr` indexed loads and `rawmutptr` indexed stores through typed aligned MIR load/store operations.
+- Rejected unbounded and insufficiently proven indexed raw-pointer dereference patterns.
+- Added focused IR facts for fixed-count loads, count-parameter loads, indexed stores, readonly-store rejection, unbounded rejection, and insufficient-count rejection.
+- Narrow verification:
+  - `../../stark ../../selfhost/Compiler/Mir.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
+  - `../../stark test --filter RawPointerIndexed --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project test runner remained silent.
+  - A temporary one-off executable probe for the first indexed-load snippet was stopped after about 90 seconds because compiling the selfhost imports remained silent.
 - No broad test sweep was run.

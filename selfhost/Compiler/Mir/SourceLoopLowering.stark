@@ -36,6 +36,21 @@ internal fn i64[min max] FirstIntLiteralIndex(borrow TokenStream stream)
     return -1;
 }
 
+internal fn MirType LoopIntegerTypeFromDeclaredReturn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature)
+{
+    stack mut MirType declaredReturnType = MirType.I64;
+    if (MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType)
+        && MirTypeIsIntegerScalar(declaredReturnType))
+    {
+        return declaredReturnType;
+    }
+
+    return MirType.I64;
+}
+
 // True when `stream` contains any identifier token (so the function takes a parameter).
 
 // Lowers a counting loop `var <i> = <init>; while <i> <cmp> <bound> { <i> = <i> <op>
@@ -388,22 +403,23 @@ internal fn bool LowerModuleCountingLoopFunctionToBlocks(
         return false;
     }
 
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
     stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId initConst = MirConstInt(instrs, loopInit);
-    stack MirValueId boundConst = MirConstInt(instrs, bound);
-    stack MirValueId stepConst = MirConstInt(instrs, step);
+    stack MirValueId initConst = MirConstIntTyped(instrs, loopType, loopInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
     stack MirValueId backEdgeValue = MirValueIdOf(headerFirst + 2);
-    stack MirValueId iVar = MirPhi2(instrs, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId iVar = MirPhi2Typed(instrs, loopType, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
     stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
     stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
 
     stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId iNext = LowerBinOp(instrs, updateOp, iVar, stepConst);
+    stack MirValueId iNext = LowerBinOpTyped(instrs, updateOp, loopType, iVar, stepConst);
     stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
 
     stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
@@ -834,22 +850,23 @@ internal fn bool LowerModuleCountingForLoopFunctionToBlocks(
         return false;
     }
 
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
     stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId initConst = MirConstInt(instrs, loopInit);
-    stack MirValueId boundConst = MirConstInt(instrs, bound);
-    stack MirValueId stepConst = MirConstInt(instrs, step);
+    stack MirValueId initConst = MirConstIntTyped(instrs, loopType, loopInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
     stack MirValueId backEdgeValue = MirValueIdOf(headerFirst + 2);
-    stack MirValueId iVar = MirPhi2(instrs, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId iVar = MirPhi2Typed(instrs, loopType, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
     stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
     stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
 
     stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId iNext = LowerBinOp(instrs, updateOp, iVar, stepConst);
+    stack MirValueId iNext = LowerBinOpTyped(instrs, updateOp, loopType, iVar, stepConst);
     stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
 
     stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
@@ -955,22 +972,23 @@ internal fn bool LowerModuleHeaderCountingForLoopFunctionToBlocks(
         return false;
     }
 
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
     stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId initConst = MirConstInt(instrs, loopInit);
-    stack MirValueId boundConst = MirConstInt(instrs, bound);
-    stack MirValueId stepConst = MirConstInt(instrs, step);
+    stack MirValueId initConst = MirConstIntTyped(instrs, loopType, loopInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
     stack MirValueId backEdgeValue = MirValueIdOf(headerFirst + 2);
-    stack MirValueId iVar = MirPhi2(instrs, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId iVar = MirPhi2Typed(instrs, loopType, initConst, MirBlockIdOf(firstBlock), backEdgeValue, MirBlockIdOf(firstBlock + 2));
     stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
     stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
 
     stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId iNext = LowerBinOp(instrs, updateOp, iVar, stepConst);
+    stack MirValueId iNext = LowerBinOpTyped(instrs, updateOp, loopType, iVar, stepConst);
     stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
 
     stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;
@@ -1219,26 +1237,27 @@ internal fn bool LowerModuleAccumulatorLoopFunctionToBlocks(
         return false;
     }
 
+    stack MirType loopType = LoopIntegerTypeFromDeclaredReturn(stream, source, signature);
     stack u64[0 2 ** 63 - 1] signatureParamCount = signature.ParamCount();
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId counterInitConst = MirConstInt(instrs, counterInit);
-    stack MirValueId accumulatorInitConst = MirConstInt(instrs, accumulatorInit);
-    stack MirValueId boundConst = MirConstInt(instrs, bound);
-    stack MirValueId stepConst = MirConstInt(instrs, step);
+    stack MirValueId counterInitConst = MirConstIntTyped(instrs, loopType, counterInit);
+    stack MirValueId accumulatorInitConst = MirConstIntTyped(instrs, loopType, accumulatorInit);
+    stack MirValueId boundConst = MirConstIntTyped(instrs, loopType, bound);
+    stack MirValueId stepConst = MirConstIntTyped(instrs, loopType, step);
     stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
 
     stack u32[0 max] headerFirst = (u32[0 max])instrs.Count() + 1;
     stack MirValueId accumulatorBackEdgeValue = MirValueIdOf(headerFirst + 3);
     stack MirValueId counterBackEdgeValue = MirValueIdOf(headerFirst + 4);
-    stack MirValueId counterVar = MirPhi2(instrs, counterInitConst, MirBlockIdOf(firstBlock), counterBackEdgeValue, MirBlockIdOf(firstBlock + 2));
-    stack MirValueId accumulatorVar = MirPhi2(instrs, accumulatorInitConst, MirBlockIdOf(firstBlock), accumulatorBackEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId counterVar = MirPhi2Typed(instrs, loopType, counterInitConst, MirBlockIdOf(firstBlock), counterBackEdgeValue, MirBlockIdOf(firstBlock + 2));
+    stack MirValueId accumulatorVar = MirPhi2Typed(instrs, loopType, accumulatorInitConst, MirBlockIdOf(firstBlock), accumulatorBackEdgeValue, MirBlockIdOf(firstBlock + 2));
     stack MirValueId cond = LowerComparison(instrs, cmpOp, counterVar, boundConst);
     stack u32[0 max] headerCount = (u32[0 max])instrs.Count() - (headerFirst - 1);
 
     stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
-    stack MirValueId accumulatorNext = LowerBinOp(instrs, accOp, accumulatorVar, counterVar);
-    stack MirValueId counterNext = LowerBinOp(instrs, counterOp, counterVar, stepConst);
+    stack MirValueId accumulatorNext = LowerBinOpTyped(instrs, accOp, loopType, accumulatorVar, counterVar);
+    stack MirValueId counterNext = LowerBinOpTyped(instrs, counterOp, loopType, counterVar, stepConst);
     stack u32[0 max] bodyCount = (u32[0 max])instrs.Count() - (bodyFirst - 1);
 
     stack u32[0 max] exitFirst = (u32[0 max])instrs.Count() + 1;

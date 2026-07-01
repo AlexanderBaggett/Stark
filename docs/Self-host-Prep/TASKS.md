@@ -460,9 +460,10 @@ Execution constraints:
     - [x] Bind SSA local aliases without emitting extra MIR.
     - [x] Validate carried value facts before binding SSA local aliases.
     - [x] Lower typed non-i64 parameters once MIR models parameter result types.
+    - [x] Preserve compact integer widths for typed parameter references and SSA local aliases.
     - [~] Lower mutable and storage-backed locals.
       - [x] Lower initialized straight-line stack scalar locals with typed storage-backed loads before terminal returns.
-      - [ ] Lower uninitialized storage-backed scalar locals after definite-assignment checks exist.
+      - [x] Lower uninitialized storage-backed scalar locals after definite-assignment checks exist.
       - [x] Lower storage-backed scalar locals through terminal `if` branches.
       - [x] Lower storage-backed scalar locals through switch arms.
     - [ ] Lower local lifetime, move, and drop facts.
@@ -476,16 +477,22 @@ Execution constraints:
         - [x] Lower scalar stack local assignments before terminal `if` branches.
         - [x] Lower scalar stack local assignments inside switch arms.
         - [x] Lower storage-backed switch-arm assignments.
+        - [x] Lower scalar and enum member-chain assignments on storage-backed constructed object fields.
       - [~] Lower indexed and sliced storage-backed assignments.
         - [x] Lower constant fixed-array element assignments on storage-backed constructed object fields.
         - [x] Lower dynamic fixed-array element assignments on storage-backed constructed object fields.
-        - [ ] Lower slice element assignments on storage-backed places.
+        - [~] Lower slice element assignments on storage-backed places.
+          - [x] Lower straight-line descriptor-backed slice element assignments.
+          - [x] Lower descriptor-backed slice element assignments before terminal `if` branches.
+          - [x] Lower descriptor-backed slice element assignments in switch arms.
+          - [x] Lower ABI slice parameter element assignments after slice ABI carriers exist.
       - [x] Lower compound assignments with checked, wrapping, and saturating arithmetic semantics.
         - [x] Validate carried operand facts before emitting compound assignment operations.
       - [x] Lower assignment expressions in enclosing value contexts.
   - [~] Lower arithmetic and comparisons.
     - [x] Lower typed integer add/sub/mul and signed comparisons with recomputed value facts.
       - [x] Validate carried operand facts before interpreting binary operation facts.
+      - [x] Preserve compact integer widths through inferred binary-expression and comparison operand lowering.
     - [x] Lower integer division, remainder, bitwise, and shift operators with checked backend facts.
     - [x] Lower wrapping and saturating arithmetic operators with explicit overflow semantics.
     - [ ] Lower floating-point arithmetic and comparisons after MIR has typed float operations.
@@ -504,28 +511,101 @@ Execution constraints:
   - [~] Lower returns.
     - [x] Lower value returns to MIR return blocks without dropping value facts.
       - [x] Validate carried value facts before emitting MIR return blocks.
+      - [x] Preserve declared scalar return widths for straight-line literal, arithmetic, and bool returns.
+      - [x] Preserve declared scalar return widths for `return if` and terminal `if` return arms.
+      - [x] Preserve declared scalar return widths for terminal integer, enum, and boolean `switch` return arms.
+      - [x] Preserve declared scalar return widths for loop induction and accumulator return values.
     - [x] Lower bare void returns once MIR has a void-return terminator.
     - [ ] Lower return-time cleanup edges after ownership cleanup lowering exists.
   - [~] Lower places and member access.
     - [x] Lower scalar field reads from storage-backed constructed objects.
     - [x] Lower constant fixed-array element reads from storage-backed constructed object fields.
-    - [ ] Lower general typed member chains from HIR.
-    - [ ] Lower address-taking place reads for locals, fields, and parameters.
-  - [~] Lower indexing and slicing.
+    - [~] Lower general typed member chains from HIR.
+      - [x] Lower scalar and enum leaf chains on storage-backed constructed object locals.
+      - [x] Lower fixed-array leaves reached through nested member chains.
+      - [ ] Lower typed HIR member path rows through the shared place-address resolver.
+    - [~] Lower address-taking place reads for locals, fields, and parameters.
+      - [x] Lower address-taking for storage-backed scalar and aggregate locals.
+      - [x] Lower address-taking for storage-backed field and indexed element places.
+      - [x] Lower address-taking for descriptor-backed slice elements.
+      - [x] Lower address-taking for fixed-array parameter elements.
+      - [x] Lower address-taking for by-value scalar parameters that need temporary storage slots.
+  - [x] Lower indexing and slicing.
     - [x] Lower constant fixed-array element reads from storage-backed constructed object fields.
     - [x] Lower dynamic fixed-array indexing through a MIR address operation that preserves element size, bounds, and alignment facts.
       - [x] Add a MIR indexed pointer offset operation that preserves pointer provenance, element size, index value facts, and derived alignment.
       - [x] Validate source dynamic fixed-array index bounds before emitting the indexed pointer operation.
       - [x] Lower dynamic fixed-array element reads from storage-backed constructed object fields.
-    - [ ] Lower slice indexing through a MIR address operation that preserves base, length, element size, and alias facts.
-    - [ ] Lower slice creation from fixed arrays and storage-backed places.
+    - [x] Lower slice indexing through a MIR address operation that preserves base, length, element size, and alias facts.
+      - [x] Add a source slice descriptor for storage-backed fixed-array views.
+      - [x] Build checked slice element addresses from descriptor facts for range-proven indexes.
+      - [x] Lower descriptor-backed slice element loads through typed pointer loads.
+      - [x] Lower ABI slice parameter element loads through descriptor facts.
+        - [x] Add MIR ABI carrier metadata for concrete slice `{ ptr, i64 }` parameters.
+        - [x] Emit concrete slice parameters as aggregate ABI carriers.
+        - [x] Emit concrete slice call arguments as aggregate ABI carriers.
+          - [x] Emit slice call carriers for straight-line module lowering.
+          - [x] Emit slice call carriers for the descriptor-aware terminal-if lowerer.
+          - [x] Thread slice call carrier context through switch lowerer helper paths.
+        - [x] Extract slice parameter base and length values into source descriptors.
+        - [x] Lower dynamic slice parameter element loads through extracted descriptor facts.
+    - [x] Lower slice creation from fixed arrays and storage-backed places.
+      - [x] Create slice descriptors from fixed arrays.
+        - [x] Create descriptors from storage-backed fixed-array fields.
+        - [x] Create descriptors from standalone fixed-array locals.
+      - [x] Create slice descriptors from storage-backed places.
+        - [x] Create descriptors from storage-backed constructed object fields.
+        - [x] Create descriptors from scalar fixed-array storage locals.
+        - [x] Create descriptors from fixed-array parameters.
+          - [x] Add MIR ABI carrier metadata for fixed-array by-value parameters.
+          - [x] Emit fixed-array parameters and calls as `[N x T]` ABI values.
+          - [x] Materialize addressable fixed-array parameter slots for indexed and addressed uses.
+          - [x] Create source slice descriptors from fixed-array parameter slots.
   - [x] Lower globals.
     - [x] Lower i64 global references and stores through MIR load/store while preserving declared facts.
     - [x] Lower typed global definitions and typed global load/store once MIR global storage records value types.
     - [x] Lower module-scope global declarations and initializers from HIR.
     - [x] Validate stored value fact rows before emitting global stores.
-  - [ ] Lower raw pointers.
-  - [ ] Lower address-taking.
+  - [~] Lower raw pointers.
+  - [~] Lower address-taking.
+    - [x] Parse unary address-of expressions in selfhost expression lowering.
+    - [x] Lower address-of place expressions to MIR pointer values without losing layout facts.
+    - [~] Lower raw-pointer dereference expressions after pointee type facts are modeled.
+      - [x] Model scalar raw-pointer parameter pointee type, size, and alignment facts for source lowering.
+      - [x] Parse scalar raw-pointer parameter dereference expressions.
+      - [x] Lower scalar raw-pointer parameter dereference loads through typed aligned MIR loads.
+      - [x] Propagate scalar raw-pointer parameter facts through raw-pointer `var` aliases.
+      - [x] Lower raw-pointer dereference stores.
+        - [x] Track scalar raw-pointer parameter mutability facts for source and ABI lowering.
+        - [x] Lower scalar `rawmutptr` parameter dereference stores through typed aligned MIR stores.
+        - [x] Reject scalar `rawptr` parameter dereference stores.
+        - [x] Route scalar raw-pointer parameter dereference stores through terminal-if and switch mutation paths.
+        - [x] Lower raw-pointer local dereference stores after local pointer element facts are tracked.
+          - [x] Lower scalar `rawmutptr` alias dereference stores through typed aligned MIR stores.
+          - [x] Reject scalar `rawptr` alias dereference stores.
+          - [x] Model declared raw-pointer stack locals as stored pointer slots with copied element facts.
+          - [x] Lower declared `rawmutptr` local dereference stores through typed aligned MIR stores.
+          - [x] Reject declared `rawptr` local dereference stores and readonly-to-mutable pointer assignment.
+      - [x] Lower raw-pointer local dereference loads after local pointer element facts are tracked.
+        - [x] Lower scalar raw-pointer alias dereference loads through typed aligned MIR loads.
+        - [x] Lower declared raw-pointer local dereference loads after typed raw-pointer locals are modeled.
+      - [ ] Lower aggregate and nested-pointer dereferences after pointee layout facts are tracked.
+      - [~] Lower indexed raw-pointer dereference patterns through bounded pointer-region facts.
+        - [x] Parse bounded scalar raw-pointer parameter indexed element expressions.
+        - [x] Prove fixed-count bounded parameter indexes from source integer ranges.
+        - [x] Prove count-parameter bounded indexes from count lower bounds.
+        - [x] Lower bounded scalar raw-pointer parameter indexed loads through inbounds indexed MIR pointer offsets.
+        - [x] Lower bounded scalar `rawmutptr` parameter indexed stores through inbounds indexed MIR pointer offsets.
+        - [x] Reject unbounded and insufficiently proven indexed raw-pointer dereferences.
+        - [~] Track bounded raw-pointer region facts for declared pointer locals and aliases.
+          - [x] Propagate bounded region facts through raw-pointer `var` aliases.
+          - [x] Propagate bounded region facts into immutable declared raw-pointer locals initialized from bounded pointer names.
+          - [x] Propagate bounded region facts into initialized mutable raw-pointer locals.
+          - [x] Update mutable raw-pointer local bounds on straight-line pointer assignments.
+          - [x] Clear mutable raw-pointer local bounds after unbounded pointer assignments.
+          - [x] Preserve mutable raw-pointer assignment facts through terminal-if and switch mutation uses.
+          - [x] Merge bounded raw-pointer region facts across branch and switch assignments.
+        - [ ] Attach raw-pointer indexed region alias facts to calls, loops, and scoped noalias metadata.
   - [~] Lower if expressions and statements.
     - [x] Validate conditional branch conditions before emitting MIR conditional blocks.
     - [x] Lower HIR if branch terminators from block symbols to validated MIR conditional blocks.

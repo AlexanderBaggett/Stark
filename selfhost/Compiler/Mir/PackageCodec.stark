@@ -279,6 +279,13 @@ internal fn u8[0 max] MirOpToByte(MirOp op)
         case MirOp.EnumPayloadInsert: return 49;
         case MirOp.LoadEnumPtr: return 50;
         case MirOp.StoreEnumPtr: return 51;
+        case MirOp.SliceParamBase: return 52;
+        case MirOp.SliceParamLength: return 53;
+        case MirOp.PtrIndexOffsetUnbounded: return 54;
+        case MirOp.SliceValue: return 55;
+        case MirOp.FixedArrayParamElement: return 56;
+        case MirOp.FixedArrayParamSlot: return 57;
+        case MirOp.FixedArrayLoad: return 58;
     }
 }
 
@@ -337,6 +344,13 @@ internal fn MirOp MirOpFromByte(u8[0 max] b)
         case 49: return MirOp.EnumPayloadInsert;
         case 50: return MirOp.LoadEnumPtr;
         case 51: return MirOp.StoreEnumPtr;
+        case 52: return MirOp.SliceParamBase;
+        case 53: return MirOp.SliceParamLength;
+        case 54: return MirOp.PtrIndexOffsetUnbounded;
+        case 55: return MirOp.SliceValue;
+        case 56: return MirOp.FixedArrayParamElement;
+        case 57: return MirOp.FixedArrayParamSlot;
+        case 58: return MirOp.FixedArrayLoad;
         default: return MirOp.ConstInt;
     }
 }

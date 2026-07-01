@@ -430,6 +430,12 @@ internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
         return false;
     }
 
+    stack mut u32[0 max] switchCaseCount = (u32[0 max])caseValues.Count();
+    if (SwitchFirstCaseLabelIsBoolean(stream, cursor))
+    {
+        switchCaseCount = (u32[0 max])booleanCaseValues.Count();
+    }
+
     stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
     while willexit (targetIndex < targetNameTokens.Count())
     {
@@ -437,6 +443,20 @@ internal fn bool FunctionBodyStartsWithLocalSwitchStatementAssignment(
         stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])targetNameToken);
         stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])targetNameToken);
         if (ResolveParam(params, source, nameStart, nameLength) != (u32[0 max])(signatureParamCount + targetIndex))
+        {
+            return false;
+        }
+
+        if (!UpdateSwitchAssignmentTargetRawPointerFacts(
+            params,
+            nodes,
+            caseArms,
+            assignedRoots,
+            assignedTargetOffsets,
+            defaultArm,
+            (u32[0 max])(signatureParamCount + targetIndex),
+            (u32[0 max])targetIndex,
+            switchCaseCount))
         {
             return false;
         }
@@ -1169,6 +1189,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
     mut borrow IrTable<ParamName> params,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
@@ -1194,6 +1215,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
           overlap(params, sourceValueFacts),
           overlap(funcNames, sourceValueFacts),
           overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(sliceDescriptorLocals, sourceValueFacts),
           overlap(scalarStorageLocals, sourceValueFacts),
           overlap(enumStorageLocals, sourceValueFacts),
           overlap(localTypes, sourceValueFacts),
@@ -1218,7 +1240,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
     }
 
     stack u64[0 2 ** 63 - 1] beforeScrutinee = params.Count();
-    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
+    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
     if (params.Count() != beforeScrutinee
         || stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
         || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
@@ -1256,6 +1278,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
             baseParamCount,
             funcNames,
             constructedObjectLocals,
+            sliceDescriptorLocals,
             scalarStorageLocals,
             enumStorageLocals,
             localTypes,
@@ -1305,6 +1328,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
         baseParamCount,
         funcNames,
         constructedObjectLocals,
+        sliceDescriptorLocals,
         scalarStorageLocals,
         enumStorageLocals,
         localTypes,
@@ -1344,6 +1368,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
     mut borrow IrTable<ParamName> params,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
@@ -1366,6 +1391,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
           overlap(params, sourceValueFacts),
           overlap(funcNames, sourceValueFacts),
           overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(sliceDescriptorLocals, sourceValueFacts),
           overlap(scalarStorageLocals, sourceValueFacts),
           overlap(enumStorageLocals, sourceValueFacts),
           overlap(localTypes, sourceValueFacts),
@@ -1387,7 +1413,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
     }
 
     stack u64[0 2 ** 63 - 1] beforeScrutinee = params.Count();
-    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
+    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
     if (params.Count() != beforeScrutinee
         || stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
         || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
@@ -1424,6 +1450,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
             baseParamCount,
             funcNames,
             constructedObjectLocals,
+            sliceDescriptorLocals,
             scalarStorageLocals,
             enumStorageLocals,
             localTypes,
@@ -1471,6 +1498,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
         baseParamCount,
         funcNames,
         constructedObjectLocals,
+        sliceDescriptorLocals,
         scalarStorageLocals,
         enumStorageLocals,
         localTypes,
@@ -1507,6 +1535,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
     mut borrow IrTable<ParamName> params,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
@@ -1531,6 +1560,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
           overlap(params, sourceValueFacts),
           overlap(funcNames, sourceValueFacts),
           overlap(constructedObjectLocals, sourceValueFacts),
+          overlap(sliceDescriptorLocals, sourceValueFacts),
           overlap(scalarStorageLocals, sourceValueFacts),
           overlap(enumStorageLocals, sourceValueFacts),
           overlap(localTypes, sourceValueFacts),
@@ -1554,7 +1584,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
     }
 
     stack u64[0 2 ** 63 - 1] beforeScrutinee = params.Count();
-    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
+    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
     if (params.Count() != beforeScrutinee
         || stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
         || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
@@ -1591,6 +1621,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
             baseParamCount,
             funcNames,
             constructedObjectLocals,
+            sliceDescriptorLocals,
             scalarStorageLocals,
             enumStorageLocals,
             localTypes,
@@ -1638,6 +1669,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
         baseParamCount,
         funcNames,
         constructedObjectLocals,
+        sliceDescriptorLocals,
         scalarStorageLocals,
         enumStorageLocals,
         localTypes,
@@ -2270,6 +2302,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
     u64[0 2 ** 63 - 1] baseParamCount,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> baseLocalTypes,
@@ -2290,6 +2323,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
           overlap(baseParams, baseSourceValueFacts),
           overlap(funcNames, baseSourceValueFacts),
           overlap(constructedObjectLocals, baseSourceValueFacts),
+          overlap(sliceDescriptorLocals, baseSourceValueFacts),
           overlap(scalarStorageLocals, baseSourceValueFacts),
           overlap(enumStorageLocals, baseSourceValueFacts),
           overlap(baseLocalTypes, baseSourceValueFacts),
@@ -2383,7 +2417,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
             }
 
             stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
-            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, armLocalTypes, armSourceValueFacts, declarations, enumLayouts, localAssignToken + 1);
+            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, declarations, enumLayouts, localAssignToken + 1);
             if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
             {
                 return false;
@@ -2422,88 +2456,26 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
                 return false;
             }
 
-            if (StatementStartsConstructedObjectFieldAssignment(stream, cursor, statementEnd))
-            {
-                if (!TryParseConstructedObjectFieldAssignmentStatement(
-                    stream,
-                    source,
-                    nodes,
-                    armParams,
-                    funcNames,
-                    constructedObjectLocals,
-                    armLocalTypes,
-                    armSourceValueFacts,
-                    declarations,
-                    enumLayouts,
-                    cursor,
-                    statementEnd,
-                    fieldAssignments))
-                {
-                    return false;
-                }
-
-                stack mut SourceStorageMutationStatement mutation = new();
-                mutation.Kind = SourceStorageMutationKindConstructedObjectField();
-                mutation.AssignmentIndex = (u32[0 max])fieldAssignments.Count();
-                if (storageMutationStatements.Add(mutation) == 0)
-                {
-                    return false;
-                }
-            }
-            else if (StatementStartsScalarStorageAssignment(stream, cursor, statementEnd))
-            {
-                if (TryParseScalarStorageAssignmentStatement(
-                    stream,
-                    source,
-                    nodes,
-                    armParams,
-                    funcNames,
-                    constructedObjectLocals,
-                    scalarStorageLocals,
-                    armLocalTypes,
-                    armSourceValueFacts,
-                    cursor,
-                    statementEnd,
-                    scalarAssignments))
-                {
-                    stack mut SourceStorageMutationStatement mutation = new();
-                    mutation.Kind = SourceStorageMutationKindScalar();
-                    mutation.AssignmentIndex = (u32[0 max])scalarAssignments.Count();
-                    if (storageMutationStatements.Add(mutation) == 0)
-                    {
-                        return false;
-                    }
-                }
-                else if (TryParseEnumStorageAssignmentStatement(
-                    stream,
-                    source,
-                    nodes,
-                    armParams,
-                    funcNames,
-                    constructedObjectLocals,
-                    enumStorageLocals,
-                    armLocalTypes,
-                    armSourceValueFacts,
-                    declarations,
-                    enumLayouts,
-                    cursor,
-                    statementEnd,
-                    enumAssignments))
-                {
-                    stack mut SourceStorageMutationStatement mutation = new();
-                    mutation.Kind = SourceStorageMutationKindEnum();
-                    mutation.AssignmentIndex = (u32[0 max])enumAssignments.Count();
-                    if (storageMutationStatements.Add(mutation) == 0)
-                    {
-                        return false;
-                    }
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else
+            if (!TryParseSourceStorageMutationStatement(
+                stream,
+                source,
+                nodes,
+                armParams,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                scalarStorageLocals,
+                enumStorageLocals,
+                armLocalTypes,
+                armSourceValueFacts,
+                declarations,
+                enumLayouts,
+                cursor,
+                statementEnd,
+                scalarAssignments,
+                enumAssignments,
+                fieldAssignments,
+                storageMutationStatements))
             {
                 return false;
             }
@@ -2531,88 +2503,26 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
         return false;
     }
 
-    if (StatementStartsConstructedObjectFieldAssignment(stream, armStart, compactEnd))
-    {
-        if (!TryParseConstructedObjectFieldAssignmentStatement(
-            stream,
-            source,
-            nodes,
-            armParams,
-            funcNames,
-            constructedObjectLocals,
-            armLocalTypes,
-            armSourceValueFacts,
-            declarations,
-            enumLayouts,
-            armStart,
-            compactEnd,
-            fieldAssignments))
-        {
-            return false;
-        }
-
-        stack mut SourceStorageMutationStatement mutation = new();
-        mutation.Kind = SourceStorageMutationKindConstructedObjectField();
-        mutation.AssignmentIndex = (u32[0 max])fieldAssignments.Count();
-        if (storageMutationStatements.Add(mutation) == 0)
-        {
-            return false;
-        }
-    }
-    else if (StatementStartsScalarStorageAssignment(stream, armStart, compactEnd))
-    {
-        if (TryParseScalarStorageAssignmentStatement(
-            stream,
-            source,
-            nodes,
-            armParams,
-            funcNames,
-            constructedObjectLocals,
-            scalarStorageLocals,
-            armLocalTypes,
-            armSourceValueFacts,
-            armStart,
-            compactEnd,
-            scalarAssignments))
-        {
-            stack mut SourceStorageMutationStatement mutation = new();
-            mutation.Kind = SourceStorageMutationKindScalar();
-            mutation.AssignmentIndex = (u32[0 max])scalarAssignments.Count();
-            if (storageMutationStatements.Add(mutation) == 0)
-            {
-                return false;
-            }
-        }
-        else if (TryParseEnumStorageAssignmentStatement(
-            stream,
-            source,
-            nodes,
-            armParams,
-            funcNames,
-            constructedObjectLocals,
-            enumStorageLocals,
-            armLocalTypes,
-            armSourceValueFacts,
-            declarations,
-            enumLayouts,
-            armStart,
-            compactEnd,
-            enumAssignments))
-        {
-            stack mut SourceStorageMutationStatement mutation = new();
-            mutation.Kind = SourceStorageMutationKindEnum();
-            mutation.AssignmentIndex = (u32[0 max])enumAssignments.Count();
-            if (storageMutationStatements.Add(mutation) == 0)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            return false;
-        }
-    }
-    else
+    if (!TryParseSourceStorageMutationStatement(
+        stream,
+        source,
+        nodes,
+        armParams,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        armLocalTypes,
+        armSourceValueFacts,
+        declarations,
+        enumLayouts,
+        armStart,
+        compactEnd,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements))
     {
         return false;
     }
@@ -2637,6 +2547,7 @@ internal fn bool ValidateSwitchFieldAssignmentArmModuleCalls(
     u32[0 max] baseLocalCount,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
 {
     stack mut IrTable<u32[0 max]> armLocalTypes = new();
@@ -2650,7 +2561,7 @@ internal fn bool ValidateSwitchFieldAssignmentArmModuleCalls(
     {
         stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
         stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
-        if (!ValidateModuleCallsForRoot(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        if (!ValidateModuleCallsForRootWithSlices(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
         {
             return false;
         }
@@ -2676,7 +2587,7 @@ internal fn bool ValidateSwitchFieldAssignmentArmModuleCalls(
             }
 
             stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
-            if (!ValidateModuleCallsForRoot(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
             {
                 return false;
             }
@@ -2689,7 +2600,7 @@ internal fn bool ValidateSwitchFieldAssignmentArmModuleCalls(
             }
 
             stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
-            if (!ValidateModuleCallsForRoot(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
             {
                 return false;
             }
@@ -2703,12 +2614,12 @@ internal fn bool ValidateSwitchFieldAssignmentArmModuleCalls(
 
             stack ConstructedObjectFieldAssignment assignment = fieldAssignments.Get(statement.AssignmentIndex);
             if (assignment.IndexRoot != 0
-                && !ValidateModuleCallsForRoot(nodes, assignment.IndexRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+                && !ValidateModuleCallsForRootWithSlices(nodes, assignment.IndexRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
             {
                 return false;
             }
 
-            if (!ValidateModuleCallsForRoot(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
             {
                 return false;
             }
@@ -2734,7 +2645,10 @@ internal fn bool LowerSwitchFieldAssignmentArmStores(
     borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<u32[0 max]> baseLocalOverrides,
-    mut borrow IrTable<MirInstruction> instrs)
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
 {
     stack mut IrTable<u32[0 max]> localOverrides = new();
     stack mut u64[0 2 ** 63 - 1] overrideIndex = 0;
@@ -2759,7 +2673,7 @@ internal fn bool LowerSwitchFieldAssignmentArmStores(
         }
 
         stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
-        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
+        stack MirValueId localValue = LowerExprNodeWithCallContext(nodes, localRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (localOverrides.Add(localValue.Index()) == 0)
         {
             return false;
@@ -2786,7 +2700,7 @@ internal fn bool LowerSwitchFieldAssignmentArmStores(
             }
 
             stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
-            if (!LowerScalarStorageAssignment(assignment, nodes, instrs, localTypes, localOverrides))
+            if (!LowerScalarStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
             {
                 return false;
             }
@@ -2799,7 +2713,7 @@ internal fn bool LowerSwitchFieldAssignmentArmStores(
             }
 
             stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
-            if (!LowerEnumStorageAssignment(assignment, nodes, instrs, localTypes, localOverrides))
+            if (!LowerEnumStorageAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
             {
                 return false;
             }
@@ -2812,7 +2726,7 @@ internal fn bool LowerSwitchFieldAssignmentArmStores(
             }
 
             stack ConstructedObjectFieldAssignment assignment = fieldAssignments.Get(statement.AssignmentIndex);
-            if (!LowerConstructedObjectFieldAssignment(assignment, nodes, instrs, localTypes, localOverrides))
+            if (!LowerConstructedObjectFieldAssignmentWithCallContext(assignment, nodes, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals))
             {
                 return false;
             }
@@ -2845,6 +2759,8 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     mut borrow IrTable<MirBlock> blocks,
     mut borrow IrTable<BlockEmit> ranges,
     bool recordRanges,
+    bool hasDeclaredReturnType,
+    MirType declaredReturnType,
     out LoweredBody body)
 {
     body = new();
@@ -2878,7 +2794,6 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
         typeIndex = typeIndex + 1;
     }
 
-    stack bool allBool = defaultType == ExprType.BoolType;
     stack u32[0 max] caseCount = (u32[0 max])caseCountWide;
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack u32[0 max] caseReturnBase = firstBlock + caseCount;
@@ -2920,11 +2835,15 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     {
         stack ExprParseResult caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
         stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
-        stack mut MirValueId caseValue = LowerExprNodeWithTypesAndLocals(nodes, caseArm.NodeId, instrs, localTypes, localOverrides);
-        if (allBool)
-        {
-            caseValue = MirZExt(instrs, caseValue);
-        }
+        stack MirValueId caseValue = LowerScalarReturnExprNodeWithTypesAndLocals(
+            nodes,
+            caseArm.NodeId,
+            instrs,
+            localTypes,
+            localOverrides,
+            defaultType,
+            hasDeclaredReturnType,
+            declaredReturnType);
 
         stack u32[0 max] caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
         if (caseFirsts.Add(caseFirst) == 0
@@ -2938,11 +2857,15 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     }
 
     stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId defaultValue = LowerExprNodeWithTypesAndLocals(nodes, defaultArm.NodeId, instrs, localTypes, localOverrides);
-    if (allBool)
-    {
-        defaultValue = MirZExt(instrs, defaultValue);
-    }
+    stack MirValueId defaultValue = LowerScalarReturnExprNodeWithTypesAndLocals(
+        nodes,
+        defaultArm.NodeId,
+        instrs,
+        localTypes,
+        localOverrides,
+        defaultType,
+        hasDeclaredReturnType,
+        declaredReturnType);
 
     stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
 
@@ -3030,6 +2953,8 @@ internal fn bool LowerTerminalBooleanSwitchCasesToBlocks(
     mut borrow IrTable<MirBlock> blocks,
     mut borrow IrTable<BlockEmit> ranges,
     bool recordRanges,
+    bool hasDeclaredReturnType,
+    MirType declaredReturnType,
     out LoweredBody body)
 {
     body = new();
@@ -3082,7 +3007,6 @@ internal fn bool LowerTerminalBooleanSwitchCasesToBlocks(
         caseIndex = caseIndex + 1;
     }
 
-    stack bool allBool = defaultType == ExprType.BoolType;
     stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
     stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, localOverrides);
     if (MirValueType(instrs, scrutineeValue.Index()) != MirType.I1)
@@ -3094,19 +3018,27 @@ internal fn bool LowerTerminalBooleanSwitchCasesToBlocks(
     if (hasTrue && hasFalse)
     {
         stack u32[0 max] trueFirst = (u32[0 max])instrs.Count() + 1;
-        stack mut MirValueId trueValue = LowerExprNodeWithTypesAndLocals(nodes, trueArm.NodeId, instrs, localTypes, localOverrides);
-        if (allBool)
-        {
-            trueValue = MirZExt(instrs, trueValue);
-        }
+        stack MirValueId trueValue = LowerScalarReturnExprNodeWithTypesAndLocals(
+            nodes,
+            trueArm.NodeId,
+            instrs,
+            localTypes,
+            localOverrides,
+            defaultType,
+            hasDeclaredReturnType,
+            declaredReturnType);
 
         stack u32[0 max] trueCount = (u32[0 max])instrs.Count() - (trueFirst - 1);
         stack u32[0 max] falseFirst = (u32[0 max])instrs.Count() + 1;
-        stack mut MirValueId falseValue = LowerExprNodeWithTypesAndLocals(nodes, falseArm.NodeId, instrs, localTypes, localOverrides);
-        if (allBool)
-        {
-            falseValue = MirZExt(instrs, falseValue);
-        }
+        stack MirValueId falseValue = LowerScalarReturnExprNodeWithTypesAndLocals(
+            nodes,
+            falseArm.NodeId,
+            instrs,
+            localTypes,
+            localOverrides,
+            defaultType,
+            hasDeclaredReturnType,
+            declaredReturnType);
 
         stack u32[0 max] falseCount = (u32[0 max])instrs.Count() - (falseFirst - 1);
 
@@ -3137,19 +3069,27 @@ internal fn bool LowerTerminalBooleanSwitchCasesToBlocks(
     }
 
     stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId caseValue = LowerExprNodeWithTypesAndLocals(nodes, selectedArm.NodeId, instrs, localTypes, localOverrides);
-    if (allBool)
-    {
-        caseValue = MirZExt(instrs, caseValue);
-    }
+    stack MirValueId caseValue = LowerScalarReturnExprNodeWithTypesAndLocals(
+        nodes,
+        selectedArm.NodeId,
+        instrs,
+        localTypes,
+        localOverrides,
+        defaultType,
+        hasDeclaredReturnType,
+        declaredReturnType);
 
     stack u32[0 max] caseCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
     stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
-    stack mut MirValueId defaultValue = LowerExprNodeWithTypesAndLocals(nodes, defaultArm.NodeId, instrs, localTypes, localOverrides);
-    if (allBool)
-    {
-        defaultValue = MirZExt(instrs, defaultValue);
-    }
+    stack MirValueId defaultValue = LowerScalarReturnExprNodeWithTypesAndLocals(
+        nodes,
+        defaultArm.NodeId,
+        instrs,
+        localTypes,
+        localOverrides,
+        defaultType,
+        hasDeclaredReturnType,
+        declaredReturnType);
 
     stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
     stack mut MirBlockId thenBlock = MirBlockIdOf(firstBlock + 1);
@@ -3276,6 +3216,185 @@ internal fn ExprType TypeOfSwitchAssignmentArm(
     }
 
     return ExprType.ErrorType;
+}
+
+internal fn bool TryGetSwitchAssignmentArmAssignedRoot(
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    out u32[0 max] rootNode)
+{
+    rootNode = 0;
+    if (targetOffset >= arm.AssignedRootCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        if (assignedTargetOffsets.Get(rootSlot) == targetOffset)
+        {
+            rootNode = assignedRoots.Get(rootSlot);
+            return true;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return false;
+}
+
+internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    ParsedSwitchAssignmentArm defaultArm,
+    u32[0 max] targetParamIndex,
+    u32[0 max] targetOffset,
+    u32[0 max] caseCount)
+{
+    stack mut u32[0 max] defaultRoot = 0;
+    if (!TryGetSwitchAssignmentArmAssignedRoot(defaultArm, assignedRoots, assignedTargetOffsets, targetOffset, defaultRoot))
+    {
+        return false;
+    }
+
+    stack mut bool mergedMutable = false;
+    stack mut u32[0 max] mergedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] mergedElementSize = 0;
+    stack mut u32[0 max] mergedElementAlignment = 0;
+    stack mut bool defaultMutable = false;
+    stack mut u32[0 max] defaultFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] defaultElementSize = 0;
+    stack mut u32[0 max] defaultElementAlignment = 0;
+    stack bool defaultIsRawPointer = TryGetRawPointerFactsForNode(
+        nodes,
+        params,
+        defaultRoot,
+        defaultMutable,
+        defaultFieldTypeCode,
+        defaultElementSize,
+        defaultElementAlignment);
+
+    stack mut bool anyRawPointer = defaultIsRawPointer;
+    stack mut bool hasElementCount = false;
+    stack mut bool elementCountIsParam = false;
+    stack mut u32[0 max] elementCountLiteral = 0;
+    stack mut u32[0 max] elementCountParamIndex = 0;
+    if (defaultIsRawPointer)
+    {
+        mergedMutable = defaultMutable;
+        mergedFieldTypeCode = defaultFieldTypeCode;
+        mergedElementSize = defaultElementSize;
+        mergedElementAlignment = defaultElementAlignment;
+        if (!TryGetRawPointerElementCountFactsForNameNode(
+            nodes,
+            params,
+            defaultRoot,
+            hasElementCount,
+            elementCountIsParam,
+            elementCountLiteral,
+            elementCountParamIndex))
+        {
+            hasElementCount = false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < (u64[0 2 ** 63 - 1])caseCount)
+    {
+        if (!caseArms.Contains((u32[0 max])(caseIndex + 1)))
+        {
+            return false;
+        }
+
+        stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        stack mut u32[0 max] caseRoot = 0;
+        if (!TryGetSwitchAssignmentArmAssignedRoot(caseArm, assignedRoots, assignedTargetOffsets, targetOffset, caseRoot))
+        {
+            return false;
+        }
+
+        stack mut bool caseMutable = false;
+        stack mut u32[0 max] caseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] caseElementSize = 0;
+        stack mut u32[0 max] caseElementAlignment = 0;
+        stack bool caseIsRawPointer = TryGetRawPointerFactsForNode(
+            nodes,
+            params,
+            caseRoot,
+            caseMutable,
+            caseFieldTypeCode,
+            caseElementSize,
+            caseElementAlignment);
+        anyRawPointer = anyRawPointer || caseIsRawPointer;
+        if (defaultIsRawPointer || caseIsRawPointer)
+        {
+            if (!defaultIsRawPointer
+                || !caseIsRawPointer
+                || mergedMutable != caseMutable
+                || mergedFieldTypeCode != caseFieldTypeCode
+                || mergedElementSize != caseElementSize
+                || mergedElementAlignment != caseElementAlignment)
+            {
+                return false;
+            }
+
+            stack mut bool caseHasElementCount = false;
+            stack mut bool caseElementCountIsParam = false;
+            stack mut u32[0 max] caseElementCountLiteral = 0;
+            stack mut u32[0 max] caseElementCountParamIndex = 0;
+            if (!TryGetRawPointerElementCountFactsForNameNode(
+                nodes,
+                params,
+                caseRoot,
+                caseHasElementCount,
+                caseElementCountIsParam,
+                caseElementCountLiteral,
+                caseElementCountParamIndex)
+                || !RawPointerElementCountFactsEqual(
+                    hasElementCount,
+                    elementCountIsParam,
+                    elementCountLiteral,
+                    elementCountParamIndex,
+                    caseHasElementCount,
+                    caseElementCountIsParam,
+                    caseElementCountLiteral,
+                    caseElementCountParamIndex))
+            {
+                hasElementCount = false;
+            }
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    if (!anyRawPointer)
+    {
+        return true;
+    }
+
+    return ReplaceParamRawPointerFacts(
+        params,
+        targetParamIndex,
+        mergedMutable,
+        mergedFieldTypeCode,
+        mergedElementSize,
+        mergedElementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex);
 }
 
 internal fn bool ValidateSwitchAssignmentArmModuleCalls(
@@ -3483,6 +3602,10 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
         {
             expectedTargetType = ExprType.BoolType;
         }
+        else if (targetTypeCode == SourceLocalTypeCodePointer())
+        {
+            expectedTargetType = ExprType.PtrType;
+        }
 
         if (TypeOfSwitchAssignmentArm(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
         {
@@ -3677,9 +3800,10 @@ internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
             stack u32[0 max] incomingTailValue = tailValues.Get((u32[0 max])(targetPhiIndex + 1));
             stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetPhiIndex + 1));
             stack mut MirType phiType = MirType.I64;
-            if (targetTypeCode == SourceLocalTypeCodeBool())
+            stack mut MirType knownPhiType = MirType.I64;
+            if (TryMirTypeForSourceLocalValueTypeCode(targetTypeCode, knownPhiType))
             {
-                phiType = MirType.I1;
+                phiType = knownPhiType;
             }
 
             stack MirValueId phi = MirPhi2Typed(
@@ -3998,6 +4122,10 @@ internal fn bool LowerAssignedBooleanSwitchCasesToBlocks(
         {
             expectedTargetType = ExprType.BoolType;
         }
+        else if (targetTypeCode == SourceLocalTypeCodePointer())
+        {
+            expectedTargetType = ExprType.PtrType;
+        }
 
         if (TypeOfSwitchAssignmentArm(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
         {
@@ -4157,9 +4285,10 @@ internal fn bool LowerAssignedBooleanSwitchCasesToBlocks(
     {
         stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetTypeIndex + 1));
         stack mut MirType phiType = MirType.I64;
-        if (targetTypeCode == SourceLocalTypeCodeBool())
+        stack mut MirType knownPhiType = MirType.I64;
+        if (TryMirTypeForSourceLocalValueTypeCode(targetTypeCode, knownPhiType))
         {
-            phiType = MirType.I1;
+            phiType = knownPhiType;
         }
 
         stack mut MirValueId phi = MirValueIdOf(0);
@@ -4368,7 +4497,10 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     mut borrow IrTable<MirBlock> blocks,
     mut borrow IrTable<BlockEmit> ranges,
     bool recordRanges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
     out LoweredBody body)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
 {
     body = new();
     stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
@@ -4439,7 +4571,7 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     stack mut IrTable<u32[0 max]> caseFirsts = new();
     stack mut IrTable<u32[0 max]> caseCounts = new();
 
-    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, baseLocalOverrides);
+    stack MirValueId scrutineeValue = LowerExprNodeWithCallContext(nodes, scrutineeNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
     stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
     while willexit (caseIndex < caseCountWide)
     {
@@ -4468,7 +4600,7 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     {
         stack ParsedSwitchFieldAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
         stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
-        if (!LowerSwitchFieldAssignmentArmStores(nodes, caseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs))
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, caseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
         {
             return false;
         }
@@ -4484,7 +4616,7 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     }
 
     stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
-    if (!LowerSwitchFieldAssignmentArmStores(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs))
+    if (!LowerSwitchFieldAssignmentArmStores(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
     {
         return false;
     }
@@ -4509,7 +4641,7 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     while willexit (postLocalIndex < postLocalRoots.Count())
     {
         stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
-        stack MirValueId postLocalValue = LowerExprNodeWithTypesAndLocals(nodes, postLocalRootNode, instrs, localTypes, returnOverrides);
+        stack MirValueId postLocalValue = LowerExprNodeWithCallContext(nodes, postLocalRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (returnOverrides.Add(postLocalValue.Index()) == 0)
         {
             return false;
@@ -4529,11 +4661,11 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     stack mut u32[0 max] terminalIfElseCount = 0;
     if (hasTerminalIf)
     {
-        terminalIfCondValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfCondValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
 
         terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
-        terminalIfThenValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfThenValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (terminalBothBool)
         {
             terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
@@ -4542,7 +4674,7 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
         terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
 
         terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
-        terminalIfElseValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfElseValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (terminalBothBool)
         {
             terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
@@ -4552,7 +4684,7 @@ internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
     }
     else
     {
-        stack mut MirValueId returnValue = LowerExprNodeWithTypesAndLocals(nodes, returnRootNode, instrs, localTypes, returnOverrides);
+        stack mut MirValueId returnValue = LowerExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (rootType == ExprType.BoolType)
         {
             returnValue = MirZExt(instrs, returnValue);
@@ -4692,7 +4824,10 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
     mut borrow IrTable<MirBlock> blocks,
     mut borrow IrTable<BlockEmit> ranges,
     bool recordRanges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
     out LoweredBody body)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
 {
     body = new();
     stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
@@ -4783,7 +4918,7 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
     stack u32[0 max] terminalThenBlockIndex = mergeBlockIndex + 1;
     stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
 
-    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, baseLocalOverrides);
+    stack MirValueId scrutineeValue = LowerExprNodeWithCallContext(nodes, scrutineeNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
     if (MirValueType(instrs, scrutineeValue.Index()) != MirType.I1)
     {
         return false;
@@ -4801,14 +4936,14 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
     if (hasBoth)
     {
         trueFirst = (u32[0 max])instrs.Count() + 1;
-        if (!LowerSwitchFieldAssignmentArmStores(nodes, trueArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs))
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, trueArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
         {
             return false;
         }
 
         trueCount = (u32[0 max])instrs.Count() - (trueFirst - 1);
         falseFirst = (u32[0 max])instrs.Count() + 1;
-        if (!LowerSwitchFieldAssignmentArmStores(nodes, falseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs))
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, falseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
         {
             return false;
         }
@@ -4824,14 +4959,14 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
         }
 
         caseFirst = (u32[0 max])instrs.Count() + 1;
-        if (!LowerSwitchFieldAssignmentArmStores(nodes, selectedArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs))
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, selectedArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
         {
             return false;
         }
 
         caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
         defaultFirst = (u32[0 max])instrs.Count() + 1;
-        if (!LowerSwitchFieldAssignmentArmStores(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs))
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
         {
             return false;
         }
@@ -4857,7 +4992,7 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
     while willexit (postLocalIndex < postLocalRoots.Count())
     {
         stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
-        stack MirValueId postLocalValue = LowerExprNodeWithTypesAndLocals(nodes, postLocalRootNode, instrs, localTypes, returnOverrides);
+        stack MirValueId postLocalValue = LowerExprNodeWithCallContext(nodes, postLocalRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (returnOverrides.Add(postLocalValue.Index()) == 0)
         {
             return false;
@@ -4877,11 +5012,11 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
     stack mut u32[0 max] terminalIfElseCount = 0;
     if (hasTerminalIf)
     {
-        terminalIfCondValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfCondValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
 
         terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
-        terminalIfThenValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfThenValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (terminalBothBool)
         {
             terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
@@ -4890,7 +5025,7 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
         terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
 
         terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
-        terminalIfElseValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfElseValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (terminalBothBool)
         {
             terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
@@ -4900,7 +5035,7 @@ internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
     }
     else
     {
-        stack mut MirValueId returnValue = LowerExprNodeWithTypesAndLocals(nodes, returnRootNode, instrs, localTypes, returnOverrides);
+        stack mut MirValueId returnValue = LowerExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
         if (rootType == ExprType.BoolType)
         {
             returnValue = MirZExt(instrs, returnValue);
@@ -5042,15 +5177,14 @@ internal fn bool FunctionBodyStartsWithConstructedObjectSwitchFieldAssignment(
         stack mut u32[0 max] argsOpen = 0;
         stack mut u32[0 max] argsClose = 0;
         if (localStorage == TokenKind.Stack
-            && hasAssign
             && typeToken != 0)
         {
             stack mut MirType scalarProbeType = MirType.I64;
             if (MirTypeForKnownSourceScalarType(stream, source, typeToken, scalarProbeType))
             {
-                sawStorageBackedLocal = true;
+                sawStorageBackedLocal = hasAssign || SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
             }
-            else
+            else if (hasAssign)
             {
                 sawStorageBackedLocal = true;
             }
@@ -5068,7 +5202,7 @@ internal fn bool FunctionBodyStartsWithConstructedObjectSwitchFieldAssignment(
         cursor = statementEnd + 1;
     }
 
-    if (!sawStorageBackedLocal || cursor >= limit || stream.KindAt(cursor) != TokenKind.Switch)
+    if (cursor >= limit || stream.KindAt(cursor) != TokenKind.Switch)
     {
         return false;
     }
@@ -5124,12 +5258,18 @@ internal fn bool FunctionBodyStartsWithConstructedObjectSwitchFieldAssignment(
         }
 
         return armCursor < (u64[0 2 ** 63 - 1])closeBrace
-            && (StatementStartsConstructedObjectFieldAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
-                || StatementStartsScalarStorageAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace));
+            && (StatementStartsRawPointerDerefAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                || (sawStorageBackedLocal
+                    && (StatementStartsConstructedObjectFieldAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                        || StatementStartsScalarStorageAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                        || StatementStartsSourceSliceElementAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace))));
     }
 
-    return StatementStartsConstructedObjectFieldAssignment(stream, armStart, limit)
-        || StatementStartsScalarStorageAssignment(stream, armStart, limit);
+    return StatementStartsRawPointerDerefAssignment(stream, armStart, limit)
+        || (sawStorageBackedLocal
+            && (StatementStartsConstructedObjectFieldAssignment(stream, armStart, limit)
+                || StatementStartsScalarStorageAssignment(stream, armStart, limit)
+                || StatementStartsSourceSliceElementAssignment(stream, armStart, limit)));
 }
 
 internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBlocks(
@@ -5191,6 +5331,8 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     stack mut IrTable<u32[0 max]> localRoots = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
     stack mut IrTable<StackObjectFieldInitializer> stackObjectFieldInitializers = new();
+    stack mut IrTable<FixedArrayStorageLocal> fixedArrayStorageLocals = new();
+    stack mut IrTable<FixedArrayStorageInitializer> fixedArrayStorageInitializers = new();
     stack mut IrTable<ScalarStorageLocal> scalarStorageLocals = new();
     stack mut IrTable<ScalarStorageInitializer> scalarStorageInitializers = new();
     stack mut IrTable<ScalarStorageAssignment> scalarAssignments = new();
@@ -5198,6 +5340,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     stack mut IrTable<EnumStorageInitializer> enumStorageInitializers = new();
     stack mut IrTable<EnumStorageAssignment> enumAssignments = new();
     stack mut IrTable<ConstructedObjectLocal> constructedObjectLocals = new();
+    stack mut IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals = new();
     stack mut IrTable<SourceStorageMutationStatement> storageMutationStatements = new();
     stack mut IrTable<u32[0 max]> localOverrideValues = new();
     stack mut DeclarationList declarations = new();
@@ -5216,6 +5359,11 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     }
 
     if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    if (!AddSignatureSliceParamDescriptors(stream, source, signature, paramAbiFacts, sliceDescriptorLocals))
     {
         return false;
     }
@@ -5260,19 +5408,69 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
             if (varExpr.Next != statementEnd || params.Count() != beforeInit)
             {
                 return false;
             }
 
             stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
-            if (varType == ExprType.ErrorType || varType == ExprType.PtrType)
+            stack mut bool rawPointerAliasMutable = false;
+            stack mut u32[0 max] rawPointerAliasFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] rawPointerAliasElementSize = 0;
+            stack mut u32[0 max] rawPointerAliasElementAlignment = 0;
+            stack mut bool rawPointerAliasHasElementCount = false;
+            stack mut bool rawPointerAliasElementCountIsParam = false;
+            stack mut u32[0 max] rawPointerAliasElementCountLiteral = 0;
+            stack mut u32[0 max] rawPointerAliasElementCountParamIndex = 0;
+            stack bool rawPointerAlias = varType == ExprType.PtrType
+                && TryGetRawPointerFactsForNode(
+                    nodes,
+                    params,
+                    varExpr.NodeId,
+                    rawPointerAliasMutable,
+                    rawPointerAliasFieldTypeCode,
+                    rawPointerAliasElementSize,
+                    rawPointerAliasElementAlignment);
+            if (varType == ExprType.ErrorType || (varType == ExprType.PtrType && !rawPointerAlias))
             {
                 return false;
             }
 
-            stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack mut u32[0 max] localIndex = 0;
+            if (rawPointerAlias)
+            {
+                if (!TryGetRawPointerElementCountFactsForNameNode(
+                    nodes,
+                    params,
+                    varExpr.NodeId,
+                    rawPointerAliasHasElementCount,
+                    rawPointerAliasElementCountIsParam,
+                    rawPointerAliasElementCountLiteral,
+                    rawPointerAliasElementCountParamIndex))
+                {
+                    rawPointerAliasHasElementCount = false;
+                }
+
+                localIndex = ResolveParamWithRawPointerElementAndCountFacts(
+                    params,
+                    source,
+                    nameStart,
+                    nameLength,
+                    rawPointerAliasMutable,
+                    rawPointerAliasFieldTypeCode,
+                    rawPointerAliasElementSize,
+                    rawPointerAliasElementAlignment,
+                    rawPointerAliasHasElementCount,
+                    rawPointerAliasElementCountIsParam,
+                    rawPointerAliasElementCountLiteral,
+                    rawPointerAliasElementCountParamIndex);
+            }
+            else
+            {
+                localIndex = ResolveParam(params, source, nameStart, nameLength);
+            }
+
             if (localRoots.Add(varExpr.NodeId) == 0 || localOverrideValues.Add(0) == 0)
             {
                 return false;
@@ -5296,6 +5494,241 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         }
 
         stack u32[0 max] scalarTypeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+        if (localStorage == TokenKind.Stack
+            && hasAssign
+            && scalarTypeToken != 0
+            && TryReadSliceSuffix(stream, scalarTypeToken))
+        {
+            stack mut SourceSliceDescriptorLocal sliceDescriptor = new();
+            stack mut bool resolvedSliceDescriptor = TryResolveSliceDescriptorFromConstructedObjectFixedArray(
+                stream,
+                source,
+                declarations,
+                enumLayouts,
+                constructedObjectLocals,
+                scalarTypeToken,
+                assignToken + 1,
+                statementEnd,
+                sliceDescriptor);
+            if (!resolvedSliceDescriptor)
+            {
+                resolvedSliceDescriptor = TryResolveSliceDescriptorFromFixedArrayStorageLocal(
+                    stream,
+                    source,
+                    fixedArrayStorageLocals,
+                    scalarTypeToken,
+                    assignToken + 1,
+                    statementEnd,
+                    sliceDescriptor);
+            }
+
+            if (!resolvedSliceDescriptor)
+            {
+                resolvedSliceDescriptor = TryResolveSliceDescriptorFromSourceSliceDescriptorLocal(
+                    stream,
+                    source,
+                    sliceDescriptorLocals,
+                    scalarTypeToken,
+                    assignToken + 1,
+                    statementEnd,
+                    sliceDescriptor);
+            }
+
+            if (!resolvedSliceDescriptor)
+            {
+                return false;
+            }
+
+            stack u32[0 max] sliceLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] sliceLocalRoot = localRoots.Add(0);
+            stack u32[0 max] sliceLocalType = localTypes.Add(SourceLocalTypeCodeNonValue());
+            stack u32[0 max] sliceOverrideValue = localOverrideValues.Add(0);
+            if (sliceLocalRoot == 0
+                || sliceLocalType == 0
+                || sliceOverrideValue == 0
+                || sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
+
+            sliceDescriptor.Start = nameStart;
+            sliceDescriptor.Length = nameLength;
+            sliceDescriptor.Mutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            sliceDescriptor.ParamIndex = sliceLocalIndex;
+            if (sliceDescriptorLocals.Add(sliceDescriptor) == 0)
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        stack mut u32[0 max] fixedArrayLength = 0;
+        if (localStorage == TokenKind.Stack
+            && scalarTypeToken != 0
+            && TryReadFixedArrayLengthSuffix(stream, source, scalarTypeToken, fixedArrayLength))
+        {
+            stack mut MirType elementType = MirType.I64;
+            if (!MirTypeForKnownSourceScalarTypeHead(stream, source, scalarTypeToken, elementType))
+            {
+                return false;
+            }
+
+            stack u32[0 max] elementSize = ScalarTypeKnownByteExtent(stream, source, scalarTypeToken);
+            stack u32[0 max] elementAlignment = NaturalAlignmentForByteExtent(elementSize);
+            stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+            stack u32[0 max] arrayAllocationSize = TypeKnownByteExtentForLocal(stream, source, scalarTypeToken);
+            stack u32[0 max] arrayAllocationAlign = TypeKnownByteAlignment(stream, source, scalarTypeToken);
+            if (fixedArrayLength == 0
+                || elementSize == 0
+                || elementAlignment == 0
+                || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+                || arrayAllocationSize == 0
+                || arrayAllocationAlign == 0)
+            {
+                return false;
+            }
+
+            stack mut IrTable<u32[0 max]> initializerRoots = new();
+            if (hasAssign)
+            {
+                if (stream.KindAt(assignToken + 1) != TokenKind.LBrace)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] initializerClose = MatchingBraceForMirLowering(stream, (u32[0 max])(assignToken + 1));
+                if (initializerClose == (u32[0 max])(assignToken + 1)
+                    || (u64[0 2 ** 63 - 1])initializerClose + 1 != statementEnd)
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+                if (!TryParseFixedArrayStorageInitializerRoots(
+                    stream,
+                    source,
+                    nodes,
+                    params,
+                    funcNames,
+                    constructedObjectLocals,
+                    sliceDescriptorLocals,
+                    localTypes,
+                    sourceValueFacts,
+                    declarations,
+                    enumLayouts,
+                    fixedArrayLength,
+                    fieldTypeCode,
+                    assignToken + 1,
+                    (u64[0 2 ** 63 - 1])initializerClose,
+                    initializerRoots)
+                    || params.Count() != beforeInit)
+                {
+                    return false;
+                }
+            }
+            else if (!SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd))
+            {
+                return false;
+            }
+
+            stack MirValueId arrayStorage = MirStackAlloc(instrs, arrayAllocationSize, arrayAllocationAlign);
+            stack u32[0 max] arrayLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] arrayLocalOrdinal = localRoots.Add(0);
+            stack u32[0 max] arrayLocalType = localTypes.Add(SourceLocalTypeCodeNonValue());
+            stack u32[0 max] arrayOverrideValue = localOverrideValues.Add(arrayStorage.Index());
+            if (arrayLocalOrdinal == 0
+                || arrayLocalType == 0
+                || arrayOverrideValue == 0
+                || sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
+
+            stack mut FixedArrayStorageLocal fixedArrayLocal = new();
+            fixedArrayLocal.Start = nameStart;
+            fixedArrayLocal.Length = nameLength;
+            fixedArrayLocal.Mutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            fixedArrayLocal.ParamIndex = arrayLocalIndex;
+            fixedArrayLocal.StorageValue = arrayStorage.Index();
+            fixedArrayLocal.ElementSize = elementSize;
+            fixedArrayLocal.Alignment = elementAlignment;
+            fixedArrayLocal.ArrayLength = fixedArrayLength;
+            fixedArrayLocal.ElementType = elementType;
+            fixedArrayLocal.FieldTypeCode = fieldTypeCode;
+            if (fixedArrayStorageLocals.Add(fixedArrayLocal) == 0)
+            {
+                return false;
+            }
+
+            stack SourceSliceDescriptorLocal fixedArrayDescriptor = SourceSliceDescriptorFromFixedArrayStorageLocal(fixedArrayLocal);
+            if (sliceDescriptorLocals.Add(fixedArrayDescriptor) == 0)
+            {
+                return false;
+            }
+
+            if (hasAssign)
+            {
+                stack mut u32[0 max] elementIndex = 0;
+                while willexit (elementIndex < fixedArrayLength)
+                {
+                    stack mut FixedArrayStorageInitializer initializer = new();
+                    initializer.LocalOrdinal = arrayLocalOrdinal;
+                    initializer.ParamIndex = arrayLocalIndex;
+                    initializer.ElementIndex = elementIndex;
+                    initializer.ElementSize = elementSize;
+                    initializer.Alignment = elementAlignment;
+                    initializer.ElementType = elementType;
+                    if (initializerRoots.Contains(elementIndex + 1))
+                    {
+                        initializer.ExprRoot = initializerRoots.Get(elementIndex + 1);
+                    }
+
+                    if (fixedArrayStorageInitializers.Add(initializer) == 0)
+                    {
+                        return false;
+                    }
+
+                    elementIndex = elementIndex + 1;
+                }
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && hasAssign
+            && scalarTypeToken != 0
+            && TryDeclareInitializedRawPointerStorageLocal(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                localTypes,
+                localRoots,
+                localOverrideValues,
+                sourceValueFacts,
+                declarations,
+                enumLayouts,
+                cursor,
+                statementEnd,
+                nameStart,
+                nameLength,
+                scalarTypeToken,
+                assignToken + 1,
+                instrs,
+                scalarStorageLocals,
+                scalarStorageInitializers))
+        {
+            cursor = statementEnd + 1;
+            continue;
+        }
+
         stack mut MirType scalarFieldType = MirType.I64;
         if (localStorage == TokenKind.Stack
             && hasAssign
@@ -5313,7 +5746,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
             if (params.Count() != beforeInit || scalarExpr.NodeId == 0 || scalarExpr.Next != statementEnd)
             {
                 return false;
@@ -5379,6 +5812,58 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             continue;
         }
 
+        if (localStorage == TokenKind.Stack
+            && !hasAssign
+            && scalarTypeToken != 0
+            && TryDeclareUninitializedRawPointerStorageLocal(
+                stream,
+                source,
+                cursor,
+                statementEnd,
+                nameStart,
+                nameLength,
+                scalarTypeToken,
+                params,
+                instrs,
+                localRoots,
+                localTypes,
+                localOverrideValues,
+                sourceValueFacts,
+                scalarStorageLocals))
+        {
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && !hasAssign
+            && scalarTypeToken != 0
+            && MirTypeForKnownSourceScalarType(stream, source, scalarTypeToken, scalarFieldType))
+        {
+            if (!TryDeclareUninitializedScalarStorageLocal(
+                stream,
+                source,
+                cursor,
+                statementEnd,
+                nameStart,
+                nameLength,
+                scalarTypeToken,
+                scalarFieldType,
+                params,
+                instrs,
+                localRoots,
+                localTypes,
+                localOverrideValues,
+                sourceValueFacts,
+                scalarStorageLocals))
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
         stack mut u32[0 max] enumOwnerDeclarationIndex = 0;
         stack mut Compiler.Parsing.DeclItem enumItem = new();
         if (localStorage == TokenKind.Stack
@@ -5394,7 +5879,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
             if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
             {
                 return false;
@@ -5565,7 +6050,13 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         cursor = statementEnd + 1;
     }
 
-    if ((constructedObjectLocals.Count() == 0 && scalarStorageLocals.Count() == 0 && enumStorageLocals.Count() == 0) || cursor >= limit || stream.KindAt(cursor) != TokenKind.Switch)
+    if ((constructedObjectLocals.Count() == 0
+        && fixedArrayStorageLocals.Count() == 0
+        && sliceDescriptorLocals.Count() == 0
+        && scalarStorageLocals.Count() == 0
+        && enumStorageLocals.Count() == 0)
+        || cursor >= limit
+        || stream.KindAt(cursor) != TokenKind.Switch)
     {
         return false;
     }
@@ -5605,6 +6096,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             params,
             funcNames,
             constructedObjectLocals,
+            sliceDescriptorLocals,
             scalarStorageLocals,
             enumStorageLocals,
             localTypes,
@@ -5639,6 +6131,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             params,
             funcNames,
             constructedObjectLocals,
+            sliceDescriptorLocals,
             scalarStorageLocals,
             enumStorageLocals,
             localTypes,
@@ -5671,6 +6164,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         params,
         funcNames,
         constructedObjectLocals,
+        sliceDescriptorLocals,
         scalarStorageLocals,
         enumStorageLocals,
         localTypes,
@@ -5731,7 +6225,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         }
 
         stack u64[0 2 ** 63 - 1] beforePostLocal = params.Count();
-        stack ExprParseResult postLocalRoot = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, postAssignToken + 1);
+        stack ExprParseResult postLocalRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, postAssignToken + 1);
         if (postLocalRoot.Next != postLocalEnd || params.Count() != beforePostLocal)
         {
             return false;
@@ -5776,7 +6270,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
 
     if (stream.KindAt(returnIndex) == TokenKind.Return)
     {
-        returnRoot = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, declarations, enumLayouts, returnIndex + 1);
+        returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, returnIndex + 1);
         stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
         if (stream.KindAt(afterReturn) == TokenKind.Semi)
         {
@@ -5791,7 +6285,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     else if (stream.KindAt(returnIndex) == TokenKind.If)
     {
         hasTerminalIf = true;
-        if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocals(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, returnIndex, terminalIfArms)
+        if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, returnIndex, terminalIfArms)
             || terminalIfArms.ThenBecome
             || terminalIfArms.ElseBecome)
         {
@@ -5814,12 +6308,24 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         return false;
     }
 
+    stack mut IrTable<SourceSliceArgumentLocal> sliceArgumentLocals = new();
+    if (!BuildSourceSliceArgumentLocals(sliceDescriptorLocals, sliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> loweringLocalTypes = new();
+    if (!BuildLoweringLocalTypesWithAddressableScalarParams(stream, source, signature, nodes, localTypes, loweringLocalTypes))
+    {
+        return false;
+    }
+
     stack mut u64[0 2 ** 63 - 1] localCallIndex = 0;
     while willexit (localCallIndex < localRoots.Count())
     {
         stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(localCallIndex + 1));
         if (localRoot != 0
-            && !ValidateModuleCallsForRoot(nodes, localRoot, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+            && !ValidateModuleCallsForRootWithSlices(nodes, localRoot, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
         {
             return false;
         }
@@ -5827,8 +6333,8 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         localCallIndex = localCallIndex + 1;
     }
 
-    if (!ValidateModuleCallsForRoot(nodes, scrutinee.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts)
-        || !ValidateSwitchFieldAssignmentArmModuleCalls(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, (u32[0 max])baseParamCount, funcParamCounts, functionCallContractFacts, distinctStorageFacts))
+    if (!ValidateModuleCallsForRootWithSlices(nodes, scrutinee.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts)
+        || !ValidateSwitchFieldAssignmentArmModuleCalls(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, loweringLocalTypes, (u32[0 max])baseParamCount, funcParamCounts, functionCallContractFacts, sliceDescriptorLocals, distinctStorageFacts))
     {
         return false;
     }
@@ -5837,7 +6343,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     while willexit (callArmIndex < switchCaseCount)
     {
         stack ParsedSwitchFieldAssignmentArm caseArmForCalls = caseArms.Get((u32[0 max])(callArmIndex + 1));
-        if (!ValidateSwitchFieldAssignmentArmModuleCalls(nodes, caseArmForCalls, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, (u32[0 max])baseParamCount, funcParamCounts, functionCallContractFacts, distinctStorageFacts))
+        if (!ValidateSwitchFieldAssignmentArmModuleCalls(nodes, caseArmForCalls, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, loweringLocalTypes, (u32[0 max])baseParamCount, funcParamCounts, functionCallContractFacts, sliceDescriptorLocals, distinctStorageFacts))
         {
             return false;
         }
@@ -5849,7 +6355,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     while willexit (postCallIndex < postLocalRoots.Count())
     {
         stack u32[0 max] postLocalCallRoot = postLocalRoots.Get((u32[0 max])(postCallIndex + 1));
-        if (!ValidateModuleCallsForRoot(nodes, postLocalCallRoot, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+        if (!ValidateModuleCallsForRootWithSlices(nodes, postLocalCallRoot, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
         {
             return false;
         }
@@ -5859,34 +6365,29 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
 
     if (hasTerminalIf)
     {
-        if (!ValidateModuleCallsForRoot(nodes, terminalIfArms.Condition.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts)
-            || !ValidateModuleCallsForRoot(nodes, terminalIfArms.ThenArm.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts)
-            || !ValidateModuleCallsForRoot(nodes, terminalIfArms.ElseArm.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+        if (!ValidateModuleCallsForRootWithSlices(nodes, terminalIfArms.Condition.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts)
+            || !ValidateModuleCallsForRootWithSlices(nodes, terminalIfArms.ThenArm.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts)
+            || !ValidateModuleCallsForRootWithSlices(nodes, terminalIfArms.ElseArm.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
         {
             return false;
         }
     }
-    else if (!ValidateModuleCallsForRoot(nodes, returnRoot.NodeId, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    else if (!ValidateModuleCallsForRootWithSlices(nodes, returnRoot.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
     {
         return false;
     }
 
     stack mut IrTable<u32[0 max]> localOverrides = new();
-    stack mut u64[0 2 ** 63 - 1] p = 0;
-    while willexit (p < signatureParamCount)
+    if (!SeedSignatureParamOverridesForLowering(stream, source, signature, paramAbiFacts, instrs, loweringLocalTypes, localOverrides))
     {
-        if (localOverrides.Add(0) == 0)
-        {
-            return false;
-        }
-
-        p = p + 1;
+        return false;
     }
 
     stack u64[0 2 ** 63 - 1] localCount = localRoots.Count();
     stack mut u64[0 2 ** 63 - 1] v = 0;
     stack mut u32[0 max] nextStackObjectInitializer = 1;
     stack mut u32[0 max] nextScalarStorageInitializer = 1;
+    stack mut u32[0 max] nextFixedArrayStorageInitializer = 1;
     stack mut u32[0 max] nextEnumStorageInitializer = 1;
     while willexit (v < localCount)
     {
@@ -5906,39 +6407,56 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         }
         else
         {
-            stack MirValueId varValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
+            stack MirValueId varValue = LowerExprNodeWithCallContext(nodes, localRoot, instrs, loweringLocalTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
             if (localOverrides.Add(varValue.Index()) == 0)
             {
                 return false;
             }
         }
 
-        nextScalarStorageInitializer = LowerScalarStorageInitializersForLocal(
+        nextScalarStorageInitializer = LowerScalarStorageInitializersForLocalWithCallContext(
             scalarStorageInitializers,
             (u32[0 max])(v + 1),
             nextScalarStorageInitializer,
             nodes,
             instrs,
-            localTypes,
-            localOverrides);
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
 
-        nextEnumStorageInitializer = LowerEnumStorageInitializersForLocal(
+        nextFixedArrayStorageInitializer = LowerFixedArrayStorageInitializersForLocalWithCallContext(
+            fixedArrayStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextFixedArrayStorageInitializer,
+            nodes,
+            instrs,
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+
+        nextEnumStorageInitializer = LowerEnumStorageInitializersForLocalWithCallContext(
             enumStorageInitializers,
             (u32[0 max])(v + 1),
             nextEnumStorageInitializer,
             nodes,
             instrs,
-            localTypes,
-            localOverrides);
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
 
-        nextStackObjectInitializer = LowerStackObjectFieldInitializersForLocal(
+        nextStackObjectInitializer = LowerStackObjectFieldInitializersForLocalWithCallContext(
             stackObjectFieldInitializers,
             (u32[0 max])(v + 1),
             nextStackObjectInitializer,
             nodes,
             instrs,
-            localTypes,
-            localOverrides);
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
         v = v + 1;
     }
 
@@ -5948,6 +6466,11 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     }
 
     if ((u64[0 2 ** 63 - 1])(nextEnumStorageInitializer - 1) != enumStorageInitializers.Count())
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextFixedArrayStorageInitializer - 1) != fixedArrayStorageInitializers.Count())
     {
         return false;
     }
@@ -5969,7 +6492,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             hasTerminalIf,
             terminalIfArms,
             returnRoot.NodeId,
-            localTypes,
+            loweringLocalTypes,
             localOverrides,
             (u32[0 max])signatureParamCount,
             entryFirst,
@@ -5977,6 +6500,8 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             blocks,
             ranges,
             recordRanges,
+            functionCallContractFacts,
+            sliceArgumentLocals,
             body);
     }
 
@@ -5996,7 +6521,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         hasTerminalIf,
         terminalIfArms,
         returnRoot.NodeId,
-        localTypes,
+        loweringLocalTypes,
         localOverrides,
         (u32[0 max])signatureParamCount,
         entryFirst,
@@ -6004,6 +6529,8 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         blocks,
         ranges,
         recordRanges,
+        functionCallContractFacts,
+        sliceArgumentLocals,
         body);
 }
 
@@ -6083,7 +6610,7 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -6101,6 +6628,8 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
 
     stack mut IrTable<u32[0 max]> noOverrides = new();
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
     return LowerTerminalIntegerSwitchCasesToBlocks(
         nodes,
         scrutinee.NodeId,
@@ -6116,6 +6645,8 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
         blocks,
         ranges,
         recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
         body);
 }
 
@@ -6193,7 +6724,7 @@ internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -6211,6 +6742,8 @@ internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
 
     stack mut IrTable<u32[0 max]> noOverrides = new();
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
     return LowerTerminalBooleanSwitchCasesToBlocks(
         nodes,
         scrutinee.NodeId,
@@ -6225,6 +6758,8 @@ internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
         blocks,
         ranges,
         recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
         body);
 }
 
@@ -6364,6 +6899,8 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
 
     stack mut IrTable<u32[0 max]> noOverrides = new();
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
     return LowerTerminalIntegerSwitchCasesToBlocks(
         nodes,
         scrutinee.NodeId,
@@ -6379,6 +6916,8 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
         blocks,
         ranges,
         recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
         body);
 }
 
@@ -6689,6 +7228,20 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
             return false;
         }
 
+        if (!UpdateSwitchAssignmentTargetRawPointerFacts(
+            params,
+            nodes,
+            caseArms,
+            assignedRoots,
+            assignedTargetOffsets,
+            defaultArm,
+            (u32[0 max])(signatureParamCount + targetIndex),
+            (u32[0 max])targetIndex,
+            (u32[0 max])switchCaseCount))
+        {
+            return false;
+        }
+
         targetIndex = targetIndex + 1;
     }
 
@@ -6793,7 +7346,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     }
     else
     {
-        seededLocalTypes = SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes);
+        seededLocalTypes = SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes);
     }
 
     if (!seededLocalTypes)
@@ -6827,6 +7380,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
             (u32[0 max])targetTypeIndex);
         stack mut bool allInt = initType == ExprType.IntType && defaultType == ExprType.IntType;
         stack mut bool allBool = initType == ExprType.BoolType && defaultType == ExprType.BoolType;
+        stack mut bool allPtr = initType == ExprType.PtrType && defaultType == ExprType.PtrType;
         stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
         while willexit (typeIndex < switchCaseCount)
         {
@@ -6842,10 +7396,11 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
                 (u32[0 max])targetTypeIndex);
             allInt = allInt && caseType == ExprType.IntType;
             allBool = allBool && caseType == ExprType.BoolType;
+            allPtr = allPtr && caseType == ExprType.PtrType;
             typeIndex = typeIndex + 1;
         }
 
-        if (!allInt && !allBool)
+        if (!allInt && !allBool && !allPtr)
         {
             return false;
         }
@@ -6854,6 +7409,10 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
         if (allBool)
         {
             localTypeCode = SourceLocalTypeCodeBool();
+        }
+        else if (allPtr)
+        {
+            localTypeCode = SourceLocalTypeCodePointer();
         }
 
         if (localTypes.Add(localTypeCode) == 0)
@@ -7049,7 +7608,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localRoots = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignature(stream, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -7090,12 +7649,62 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         }
 
         stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
-        if (varType == ExprType.ErrorType || varType == ExprType.PtrType)
+        stack mut bool rawPointerAliasMutable = false;
+        stack mut u32[0 max] rawPointerAliasFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] rawPointerAliasElementSize = 0;
+        stack mut u32[0 max] rawPointerAliasElementAlignment = 0;
+        stack mut bool rawPointerAliasHasElementCount = false;
+        stack mut bool rawPointerAliasElementCountIsParam = false;
+        stack mut u32[0 max] rawPointerAliasElementCountLiteral = 0;
+        stack mut u32[0 max] rawPointerAliasElementCountParamIndex = 0;
+        stack bool rawPointerAlias = varType == ExprType.PtrType
+            && TryGetRawPointerFactsForNode(
+                nodes,
+                params,
+                varExpr.NodeId,
+                rawPointerAliasMutable,
+                rawPointerAliasFieldTypeCode,
+                rawPointerAliasElementSize,
+                rawPointerAliasElementAlignment);
+        if (varType == ExprType.ErrorType || (varType == ExprType.PtrType && !rawPointerAlias))
         {
             return false;
         }
 
-        stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+        stack mut u32[0 max] localIndex = 0;
+        if (rawPointerAlias)
+        {
+            if (!TryGetRawPointerElementCountFactsForNameNode(
+                nodes,
+                params,
+                varExpr.NodeId,
+                rawPointerAliasHasElementCount,
+                rawPointerAliasElementCountIsParam,
+                rawPointerAliasElementCountLiteral,
+                rawPointerAliasElementCountParamIndex))
+            {
+                rawPointerAliasHasElementCount = false;
+            }
+
+            localIndex = ResolveParamWithRawPointerElementAndCountFacts(
+                params,
+                source,
+                nameStart,
+                nameLength,
+                rawPointerAliasMutable,
+                rawPointerAliasFieldTypeCode,
+                rawPointerAliasElementSize,
+                rawPointerAliasElementAlignment,
+                rawPointerAliasHasElementCount,
+                rawPointerAliasElementCountIsParam,
+                rawPointerAliasElementCountLiteral,
+                rawPointerAliasElementCountParamIndex);
+        }
+        else
+        {
+            localIndex = ResolveParam(params, source, nameStart, nameLength);
+        }
+
         stack u32[0 max] addedRoot = localRoots.Add(varExpr.NodeId);
         if (varType == ExprType.BoolType)
         {
@@ -7153,6 +7762,9 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         return false;
     }
 
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
+
     stack mut IrTable<u32[0 max]> localOverrides = new();
     stack mut u64[0 2 ** 63 - 1] p = 0;
     while willexit (p < signatureParamCount)
@@ -7187,6 +7799,8 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         blocks,
         ranges,
         recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
         body);
 }
 

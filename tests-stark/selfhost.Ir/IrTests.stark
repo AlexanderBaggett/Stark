@@ -2020,6 +2020,74 @@ fn bool CompileFunctionWholePointerParamsEmitSeparateStorageAssume()
 }
 
 [Fact]
+fn bool EmitsLlvmScopedNoAliasMetadataForParamRootedPointerMemoryOps()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId left = MirParamTyped(instrs, MirType.Ptr, 0);
+    stack MirValueId right = MirParamTyped(instrs, MirType.Ptr, 1);
+    stack MirValueId index = MirConstIntTyped(instrs, MirType.I64, 1);
+    stack MirValueId value = MirConstIntTyped(instrs, MirType.I32, 7);
+    stack MirValueId leftElement = MirPtrIndexOffset(instrs, left, index, 4, 0, 4);
+    stack MirValueId rightElement = MirPtrIndexOffset(instrs, right, index, 4, 0, 4);
+    stack MirValueId store = MirStorePtrAlignedTyped(instrs, MirType.I32, leftElement, value, 4);
+    stack MirValueId load = MirLoadPtrAlignedTyped(instrs, MirType.I32, rightElement, 4);
+    stack MirBlockId entry = MirReturnBlock(blocks, load);
+
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    stack mut IrTable<FunctionEffectFacts> noFunctionEffectFacts = new();
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<FunctionLinkageFacts> noFunctionLinkageFacts = new();
+    stack mut IrTable<FunctionCallingConventionFacts> noFunctionCallingConventionFacts = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    stack mut IrTable<DistinctStoragePair> separateStorageFacts = new();
+    if (!AddDistinctStoragePairIfAbsent(separateStorageFacts, 0, 1))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut ValueFacts returnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFactsCore(
+        instrs,
+        noTailCallees,
+        noFunctionEffectFacts,
+        noFunctionCallContractFacts,
+        noFunctionLinkageFacts,
+        noFunctionCallingConventionFacts,
+        blocks,
+        "scoped",
+        false,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        separateStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        NoFunctionEffectFacts(),
+        2,
+        entry.Index(),
+        1,
+        8,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return store.IsValid()
+                && LlvmTextEquals(sink, "define i32 @scoped(ptr %p0, ptr %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v3 = add i64 0, 1\n  %v4 = add i32 0, 7\n  %v5.scale = mul i64 %v3, 4\n  %v5 = getelementptr inbounds i8, ptr %p0, i64 %v5.scale\n  %v6.scale = mul i64 %v3, 4\n  %v6 = getelementptr inbounds i8, ptr %p1, i64 %v6.scale\n  store i32 %v4, ptr %v5, align 4, !alias.scope !204096, !noalias !208192\n  %v8 = load i32, ptr %v6, align 4, !alias.scope !204097, !noalias !208193\n  ret i32 %v8\n}\n!200000 = distinct !{!200000, !\"stark.noalias.mir\"}\n!200001 = distinct !{!200001, !200000, !\"stark.noalias.param.0\"}\n!200002 = distinct !{!200002, !200000, !\"stark.noalias.param.1\"}\n!204096 = !{!200001}\n!208192 = !{!200002}\n!204097 = !{!200002}\n!208193 = !{!200001}\n")
+                && ClangVerifiesLlvmText(sink);
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool CompileFunctionWholeOverlapSuppressesSeparateStorageAssume()
 {
     stack mut OwnedAscii sink = new();
@@ -5039,6 +5107,23 @@ fn bool CompilesModuleCountingWhileLoopFromAst()
 }
 
 [Fact]
+fn bool ModuleCountingWhileLoopPreservesDeclaredI32ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i32[min max] count() { var i = 0; while i < 5 { i = i + 1; } return i } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i32 @f1()")
+        && System.Text.Contains(s.View(), "%v4 = phi i32 [ %v1, %b1 ], [ %v6, %b3 ]")
+        && System.Text.Contains(s.View(), "%v5 = icmp slt i32 %v4, %v2")
+        && System.Text.Contains(s.View(), "%v6 = add i32 %v4, %v3")
+        && System.Text.Contains(s.View(), "ret i32 %v4")
+        && !System.Text.Contains(s.View(), "define internal dso_local i64 @f1()")
+        && !System.Text.Contains(s.View(), "%v4 = phi i64")
+        && !System.Text.Contains(s.View(), "icmp slt i64 %v4")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
 fn bool ModuleCountingWhileLoopRejectsUnsupportedShapes()
 {
     stack mut OwnedAscii s = new();
@@ -5059,6 +5144,25 @@ fn bool CompilesModuleAccumulatorWhileLoopFromAst()
         && System.Text.Contains(s.View(), "%v8 = add i64 %v6, %v5")
         && System.Text.Contains(s.View(), "%v9 = add i64 %v5, %v4")
         && System.Text.Contains(s.View(), "ret i64 %v6")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool ModuleAccumulatorWhileLoopPreservesDeclaredI16ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i16[min max] sum() { var i = 0; var s = 0; while i < 5 { s = s + i; i = i + 1; } return s } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i16 @f1()")
+        && System.Text.Contains(s.View(), "%v5 = phi i16 [ %v1, %b1 ], [ %v9, %b3 ]")
+        && System.Text.Contains(s.View(), "%v6 = phi i16 [ %v2, %b1 ], [ %v8, %b3 ]")
+        && System.Text.Contains(s.View(), "%v7 = icmp slt i16 %v5, %v3")
+        && System.Text.Contains(s.View(), "%v8 = add i16 %v6, %v5")
+        && System.Text.Contains(s.View(), "%v9 = add i16 %v5, %v4")
+        && System.Text.Contains(s.View(), "ret i16 %v6")
+        && !System.Text.Contains(s.View(), "define internal dso_local i64 @f1()")
+        && !System.Text.Contains(s.View(), "%v5 = phi i64")
+        && !System.Text.Contains(s.View(), "%v6 = phi i64")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -5084,6 +5188,23 @@ fn bool CompilesModuleCountingForLoopFromAst()
         && System.Text.Contains(s.View(), "%v5 = icmp slt i64 %v4, %v2")
         && System.Text.Contains(s.View(), "%v6 = add i64 %v4, %v3")
         && System.Text.Contains(s.View(), "ret i64 %v4")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool ModuleCountingForLoopPreservesDeclaredI8ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i8[min max] count() { var i = 0; for willexit (; i < 5; i += 1) { } return i } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i8 @f1()")
+        && System.Text.Contains(s.View(), "%v4 = phi i8 [ %v1, %b1 ], [ %v6, %b3 ]")
+        && System.Text.Contains(s.View(), "%v5 = icmp slt i8 %v4, %v2")
+        && System.Text.Contains(s.View(), "%v6 = add i8 %v4, %v3")
+        && System.Text.Contains(s.View(), "ret i8 %v4")
+        && !System.Text.Contains(s.View(), "define internal dso_local i64 @f1()")
+        && !System.Text.Contains(s.View(), "%v4 = phi i64")
+        && !System.Text.Contains(s.View(), "icmp slt i64 %v4")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -5122,6 +5243,23 @@ fn bool CompilesModuleHeaderCountingForLoopFromAst()
         && System.Text.Contains(s.View(), "%v5 = icmp slt i64 %v4, %v2")
         && System.Text.Contains(s.View(), "%v6 = add i64 %v4, %v3")
         && System.Text.Contains(s.View(), "ret i64 %v4")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool ModuleHeaderCountingForLoopPreservesDeclaredI32ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i32[min max] count() { for willexit (stack mut i32[min max] i = 0; i < 5; i += 1) { } return i } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i32 @f1()")
+        && System.Text.Contains(s.View(), "%v4 = phi i32 [ %v1, %b1 ], [ %v6, %b3 ]")
+        && System.Text.Contains(s.View(), "%v5 = icmp slt i32 %v4, %v2")
+        && System.Text.Contains(s.View(), "%v6 = add i32 %v4, %v3")
+        && System.Text.Contains(s.View(), "ret i32 %v4")
+        && !System.Text.Contains(s.View(), "define internal dso_local i64 @f1()")
+        && !System.Text.Contains(s.View(), "%v4 = phi i64")
+        && !System.Text.Contains(s.View(), "icmp slt i64 %v4")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -6345,6 +6483,1150 @@ fn bool CompileFunctionObjectFieldAssignmentCanReadPreviousFieldValue()
 }
 
 [Fact]
+fn bool CompileFunctionStackNestedObjectFieldReadLoadsTypedLeaf()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { bool flag; i32[min max] value; } struct Box { bool head; Inner inner; bool tail; } fn i32[min max] main() { stack Box box = new Box(); box.inner.value = 11; return box.inner.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [16 x i8], align 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 8")
+        && System.Text.Contains(sink.View(), "store i32 11")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionHeapNestedObjectFieldReadLoadsTypedLeaf()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { bool flag; i32[min max] value; } struct Box { bool head; Inner inner; bool tail; } fn i64 main() { heap Box box = new Box(); box.inner.flag = true; if box.inner.flag return 1 else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 4 dereferenceable(16) ptr @__stark_heap_alloc(i64 noundef 16, i64 noundef 4)")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 4")
+        && System.Text.Contains(sink.View(), "store i1 true")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "align 1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedObjectFieldAssignmentCanReadPreviousLeafValue()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max] value; bool flag; } struct Box { Inner inner; i64 tail; } fn i32[min max] main() { stack Box box = new Box(); box.inner.value = 9; box.inner.value = box.inner.value + 4; return box.inner.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [16 x i8], align 8")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 0")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "add i32")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool RejectsNestedObjectFieldInvalidTargetsAndValues()
+{
+    stack mut OwnedAscii scalarIntermediate = new();
+    stack mut OwnedAscii missingLeaf = new();
+    stack mut OwnedAscii wrongType = new();
+    stack mut OwnedAscii forward = new();
+    return !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max] value; } struct Box { i64 scalar; Inner inner; } fn i32[min max] main() { stack Box box = new Box(); return box.scalar.value }", scalarIntermediate)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max] value; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); return box.inner.missing }", missingLeaf)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { bool flag; } struct Box { Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.flag = 1; return 0 }", wrongType)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max] value; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); box.inner.value = later; var later = 1; return 0 }", forward);
+}
+
+[Fact]
+fn bool CompileFunctionNestedFixedArrayElementReadUsesFieldOffsetAndStride()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; bool tail; } struct Box { bool prefix; Inner inner; } fn i32[min max] main() { stack Box box = new Box(); box.inner.values[2] = 17; return box.inner.values[2] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [20 x i8], align 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 12")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedDynamicFixedArrayElementReadUsesIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; bool tail; } struct Box { bool prefix; Inner inner; } fn i32[min max] main(i64[0 2] index) { stack Box box = new Box(); box.inner.values[0] = 7; box.inner.values[1] = 11; box.inner.values[2] = 13; return box.inner.values[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionNestedDynamicFixedArrayElementAssignmentStoresThroughIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; bool tail; } struct Box { bool prefix; Inner inner; } fn i32[min max] main(i64[0 2] index) { stack Box box = new Box(); box.inner.values[index] = 19; return box.inner.values[0] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceFromNestedFixedArrayReadUsesIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; bool tail; } struct Box { bool prefix; Inner inner; } fn i32[min max] main(i64[0 2] index) { stack Box box = new Box(); box.inner.values[0] = 7; box.inner.values[1] = 11; box.inner.values[2] = 13; stack i32[min max][] view = box.inner.values; return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [20 x i8], align 4")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceFromStandaloneFixedArrayReadUsesIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 2] index) { stack i32[min max][3] values = { 4, 7, 9 }; stack i32[min max][] view = values; return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceFromNestedFixedArrayAssignmentStoresThroughIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; bool tail; } struct Box { bool prefix; Inner inner; } fn i32[min max] main(i64[0 2] index) { stack Box box = new Box(); box.inner.values[0] = 7; box.inner.values[1] = 11; box.inner.values[2] = 13; stack mut i32[min max][] view = box.inner.values; view[index] = 23; return box.inner.values[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [20 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 23")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceFromStandaloneFixedArrayAssignmentStoresThroughIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 2] index) { stack mut i32[min max][3] values = { 4, 7, 9 }; stack mut i32[min max][] view = values; view[index] = 12; return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "store i32 12")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceAssignmentBeforeTerminalIfStoresThroughIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 2] index, bool flag) { stack mut i32[min max][3] values = { 4, 7, 9 }; stack mut i32[min max][] view = values; view[index] = 12; if flag return view[index] else return values[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "store i32 12")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileIntegerSwitchSliceAssignmentStoresThroughIndexedPointer()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(i64[0 2] index, i64 selector) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; switch (selector) { case 0: view[index] = 10; case 1: { view[index] = 20; } default: view[index] = 30; } return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 1")
+        && System.Text.Contains(sink.View(), "store i32 2")
+        && System.Text.Contains(sink.View(), "store i32 3")
+        && System.Text.Contains(sink.View(), "store i32 10")
+        && System.Text.Contains(sink.View(), "store i32 20")
+        && System.Text.Contains(sink.View(), "store i32 30")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 4")
+        && System.Text.Contains(sink.View(), ".offset = add i64")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionFixedArrayParameterConstantReadsUseDirectValueAbi()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] read(i32[min max][2] values) { return values[0] + values[1] } fn i32[min max] main() { stack i32[min max][2] values = { 4, 7 }; return read(values) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1([2 x i32] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 1")
+        && System.Text.Contains(sink.View(), "load [2 x i32], ptr")
+        && System.Text.Contains(sink.View(), "call i32 @f1([2 x i32] %v")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionFixedArrayParameterDynamicReadUsesParameterSlot()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max][3] values, i64[0 2] index) { return values[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main([3 x i32] %p0, i64")
+        && System.Text.Contains(sink.View(), "alloca [3 x i32], align 4")
+        && System.Text.Contains(sink.View(), "store [3 x i32] %p0, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceFromFixedArrayParameterReadUsesParameterSlot()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max][3] values, i64[0 2] index) { stack i32[min max][] view = values; return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main([3 x i32] %p0, i64")
+        && System.Text.Contains(sink.View(), "alloca [3 x i32], align 4")
+        && System.Text.Contains(sink.View(), "store [3 x i32] %p0, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionFixedArrayParameterCanFeedSliceAndFixedArrayCalls()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] read_slice(i32[min max][] view, i64[0 2] index) { return view[index] } fn i32[min max] read_array(i32[min max][3] values, i64[0 2] index) { return values[index] } fn i32[min max] main(i32[min max][3] values, i64[0 2] index) { return read_slice(values, index) + read_array(values, index) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f2([3 x i32] %p0, i64")
+        && System.Text.Contains(sink.View(), "alloca [3 x i32], align 4")
+        && System.Text.Contains(sink.View(), "store [3 x i32] %p0, ptr")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
+        && System.Text.Contains(sink.View(), "call i32 @f1({ ptr, i64 } %v")
+        && System.Text.Contains(sink.View(), "call i32 @f2([3 x i32] %p0")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAddressOfStackScalarLocalFeedsRawPointerCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] use(rawptr<i64[min max]> p) { return 7 } unsafe fn i64[min max] main() { stack mut i64[min max] value = 4; return use(&value) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca i64, align 8")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAddressOfObjectFieldFeedsRawPointerCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[min max] value; bool flag; } unsafe fn i64[min max] use(rawptr<i64[min max]> p) { return 7 } unsafe fn i64[min max] main() { heap Box box = new Box(); box.value = 4; return use(&box.value) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(16) ptr @__stark_heap_alloc")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 0")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAddressOfSliceElementFeedsRawPointerCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] use(rawptr<i64[min max]> p) { return 7 } unsafe fn i64[min max] main(i64[0 2] index) { stack mut i64[min max][3] values = { 4, 7, 9 }; stack mut i64[min max][] view = values; return use(&view[index]) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p0, 8")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAddressOfFixedArrayParameterElementFeedsRawPointerCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] use(rawptr<i64[min max]> p) { return 7 } unsafe fn i64[min max] main(i64[min max][3] values, i64[0 2] index) { return use(&values[index]) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i64 @main([3 x i64] %p0, i64")
+        && System.Text.Contains(sink.View(), "alloca [3 x i64], align 8")
+        && System.Text.Contains(sink.View(), "store [3 x i64] %p0, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 8")
+        && System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAddressOfScalarParameterFeedsRawPointerCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] use(rawptr<i64[min max]> p) { return 7 } unsafe fn i64[min max] main(i64[min max] value) { return use(&value) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i64 @main(i64 %p0)")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 %p0, ptr")
+        && System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAddressOfScalarParameterKeepsLaterReadsOnSlot()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] use(rawptr<i64[min max]> p) { return 7 } unsafe fn i64[min max] main(i64[min max] value) { stack i64[min max] ignored = use(&value); return value + ignored }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 %p0, ptr")
+        && System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && System.Text.Contains(sink.View(), "load i64, ptr")
+        && System.Text.Contains(sink.View(), "add i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefLoadsI8()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i8[min max] main(rawptr<i8[min max]> p) { return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i8 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load i8, ptr %p0, align 1")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefLoadsI16()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i16[min max] main(rawptr<i16[min max]> p) { return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i16 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load i16, ptr %p0, align 2")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p) { return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefLoadsI64()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] main(rawptr<i64[min max]> p) { return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i64 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load i64, ptr %p0, align 8")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefLoadsBool()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn bool main(rawptr<bool> p) { return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i1 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load i1, ptr %p0, align 1")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresI8()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i8[min max] main(rawmutptr<i8[min max]> p) { *p = 7; return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i8 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i8 7, ptr %p0, align 1")
+        && System.Text.Contains(sink.View(), "load i8, ptr %p0, align 1")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresI16()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i16[min max] main(rawmutptr<i16[min max]> p) { *p = 7; return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i16 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i16 7, ptr %p0, align 2")
+        && System.Text.Contains(sink.View(), "load i16, ptr %p0, align 2")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p) { *p = 7; return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresI64()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i64[min max] main(rawmutptr<i64[min max]> p) { *p = 7; return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i64 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i64 7, ptr %p0, align 8")
+        && System.Text.Contains(sink.View(), "load i64, ptr %p0, align 8")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresBool()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn bool main(rawmutptr<bool> p) { *p = true; return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i1 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i1 true, ptr %p0, align 1")
+        && System.Text.Contains(sink.View(), "load i1, ptr %p0, align 1")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerReadonlyDerefStoreRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p) { *p = 7; return *p }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionBoundedRawPointerParameterIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index) { return *(&p[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionCountBoundedRawPointerParameterIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[count] p, u8[4 10] count, u8[0 3] index) { return *(&p[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p2, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionBoundedRawPointerParameterIndexedDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]>[4] p, u8[0 3] index) { *(&p[index]) = 7; return *(&p[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionReadonlyBoundedRawPointerIndexedDerefStoreRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index) { *(&p[index]) = 7; return *(&p[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionUnboundedRawPointerIndexedDerefRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p, u8[0 3] index) { return *(&p[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerIndexedDerefRejectsInsufficientCountProof()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[count] p, u8[0 2] count, u8[0 3] index) { return *(&p[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index) { var q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionCountBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[count] p, u8[4 10] count, u8[0 3] index) { var q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p2, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionBoundedRawPointerAliasIndexedDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]>[4] p, u8[0 3] index) { var q = p; *(&q[index]) = 7; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionUnboundedRawPointerAliasIndexedDerefRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p, u8[0 3] index) { var q = p; return *(&q[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredBoundedRawPointerLocalIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index) { stack rawptr<i32[min max]> q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionMutableDeclaredBoundedRawPointerLocalIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index) { stack mut rawptr<i32[min max]> q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAssignedMutableRawPointerLocalIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index) { stack mut rawptr<i32[min max]> q; q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAssignedCountBoundedMutableRawPointerLocalIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[count] p, u8[4 10] count, u8[0 3] index) { stack mut rawptr<i32[min max]> q; q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p2, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAssignedMutableRawPointerLocalIndexedDerefBeforeTerminalIf()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { stack mut rawptr<i32[min max]> q; q = p; if flag return *(&q[index]) else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "ret i32 0")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAssignedMutableRawPointerLocalIndexedDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]>[4] p, u8[0 3] index) { stack mut rawmutptr<i32[min max]> q; q = p; *(&q[index]) = 7; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionAssignedMutableRawPointerLocalIndexedDerefStoresInSwitchArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { stack mut rawmutptr<i32[min max]> q; q = p; switch (flag) { case true: *(&q[index]) = 11; case false: *(&q[index]) = 13; default: *(&q[index]) = 17; } return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionMutableRawPointerLocalClearsIndexedBoundsAfterUnboundedAssignment()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, rawptr<i32[min max]> other, u8[0 3] index) { stack mut rawptr<i32[min max]> q = p; q = other; return *(&q[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionIfExpressionBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { var q = if flag p else p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionIfStatementBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { var q = p; if flag q = p else q = p; return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSwitchBoundedRawPointerAliasIndexedDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, u8[0 3] index, bool flag) { var q = p; switch (flag) { case true: q = p; case false: q = p; default: q = p; } return *(&q[index]); }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %p0")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && System.Text.Contains(sink.View(), "align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionIfStatementRawPointerAliasClearsBoundsAfterUnboundedArm()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, rawptr<i32[min max]> other, u8[0 3] index, bool flag) { var q = p; if flag q = p else q = other; return *(&q[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionSwitchRawPointerAliasClearsBoundsAfterUnboundedArm()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]>[4] p, rawptr<i32[min max]> other, u8[0 3] index, bool flag) { var q = p; switch (flag) { case true: q = p; case false: q = other; default: q = p; } return *(&q[index]); }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoreBeforeTerminalIf()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool flag) { *p = 17; if flag return *p else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerParameterDerefStoresInSwitchArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool flag) { switch (flag) { case true: *p = 11; case false: *p = 13; default: *p = 17; } return *p }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerAliasDerefLoadsI8()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i8[min max] main(rawptr<i8[min max]> p) { var q = p; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i8 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "load i8, ptr %p0, align 1")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerAliasDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p) { var q = p; *q = 7; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerAliasDerefStoresBool()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn bool main(rawmutptr<bool> p) { var q = p; *q = true; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i1 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store i1 true, ptr %p0, align 1")
+        && System.Text.Contains(sink.View(), "load i1, ptr %p0, align 1")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerAliasReadonlyDerefStoreRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p) { var q = p; *q = 7; return *q }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerAliasDerefStoreBeforeTerminalIf()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool flag) { var q = p; *q = 17; if flag return *q else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionRawPointerAliasDerefStoresInSwitchArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool flag) { var q = p; switch (flag) { case true: *q = 11; case false: *q = 13; default: *q = 17; } return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr %p0, align 4")
+        && System.Text.Contains(sink.View(), "load i32, ptr %p0, align 4")
+        && !System.Text.Contains(sink.View(), "alloca")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredRawPointerLocalDerefLoadsI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p) { stack rawptr<i32[min max]> q = p; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr readonly %p0)")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredRawPointerLocalDerefStoresI32()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p) { stack rawmutptr<i32[min max]> q = p; *q = 7; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "store i32 7, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionMutableDeclaredRawPointerLocalCanBeAssignedBeforeDerefStore()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p) { stack mut rawmutptr<i32[min max]> q; q = p; *q = 9; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "store i32 9, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && !System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionReadonlyDeclaredRawPointerLocalMayAliasMutableParameterForLoad()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p) { stack rawptr<i32[min max]> q = p; return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0)")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredRawPointerReadonlyDerefStoreRejected()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p) { stack rawptr<i32[min max]> q = p; *q = 7; return *q }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredRawMutablePointerRejectsReadonlyInitializer()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawptr<i32[min max]> p) { stack rawmutptr<i32[min max]> q = p; return *q }", sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredRawPointerLocalDerefStoreBeforeTerminalIf()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool flag) { stack rawmutptr<i32[min max]> q = p; *q = 17; if flag return *q else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionDeclaredRawPointerLocalDerefStoresInSwitchArms()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("unsafe fn i32[min max] main(rawmutptr<i32[min max]> p, bool flag) { stack rawmutptr<i32[min max]> q = p; switch (flag) { case true: *q = 11; case false: *q = 13; default: *q = 17; } return *q }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main(ptr writable %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "store ptr %p0, ptr")
+        && System.Text.Contains(sink.View(), "load ptr, ptr")
+        && System.Text.Contains(sink.View(), "store i32 11, ptr")
+        && System.Text.Contains(sink.View(), "store i32 13, ptr")
+        && System.Text.Contains(sink.View(), "store i32 17, ptr")
+        && System.Text.Contains(sink.View(), "load i32, ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceParameterReadUsesConcreteSliceAbiAndUnboundedIndex()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max][] view, i64[0 max] index) { return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 1")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %v1, i64 %v")
+        && !System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceParameterAssignmentStoresThroughUnboundedIndex()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(mut i32[min max][] view, i64[0 max] index) { view[index] = 9; return view[index] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define i32 @main({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 1")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %p1, 4")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %v1, i64 %v")
+        && !System.Text.Contains(sink.View(), "getelementptr inbounds i8")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "align 4")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceCallArgumentUsesConcreteSliceAbiCarrier()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] read(i32[min max][] view, i64[0 max] index) { return view[index] } fn i32[min max] main(i64[0 2] index) { stack i32[min max][3] values = { 1, 2, 3 }; stack i32[min max][] view = values; return read(view, index) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } %v")
+        && System.Text.Contains(sink.View(), "add i64 0, 3")
+        && System.Text.Contains(sink.View(), "call i32 @f1({ ptr, i64 } %v")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 1")
+        && System.Text.Contains(sink.View(), "getelementptr i8, ptr %v")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceParameterForwardingCarriesExtractedLength()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] read(i32[min max][] view, i64[0 max] index) { return view[index] } fn i32[min max] main(i32[min max][] view, i64[0 max] index) { return read(view, index) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "define i32 @f2({ ptr, i64 } %p0, i64")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { ptr, i64 } %p0, 1")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } %v")
+        && System.Text.Contains(sink.View(), "call i32 @f1({ ptr, i64 } %v")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceCallArgumentInsideTerminalIfUsesConcreteSliceAbiCarrier()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] read(i32[min max][] view, i64[0 max] index) { return view[index] } fn i32[min max] main(bool flag, i64[0 2] index) { stack i32[min max][3] values = { 1, 2, 3 }; stack i32[min max][] view = values; if flag return read(view, index) else return read(view, index) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
+        && System.Text.Contains(sink.View(), "call i32 @f1({ ptr, i64 } %v")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionSliceCallArgumentInsideSwitchFieldAssignmentUsesConcreteSliceAbiCarrier()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[min max] value; } fn i32[min max] read(i32[min max][] view, i64[0 max] index) { return view[index] } fn i32[min max] main(i64 selector, i64[0 2] index) { stack i32[min max][3] values = { 1, 2, 3 }; stack i32[min max][] view = values; stack Box box = new Box(); switch (selector) { case 0: box.value = read(view, index); default: box.value = read(view, index); } return box.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } %v")
+        && System.Text.Contains(sink.View(), "call i32 @f1({ ptr, i64 } %v")
+        && System.Text.Contains(sink.View(), "store i32")
+        && System.Text.Contains(sink.View(), "load i32")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool RejectsSliceCallArgumentWithMismatchedElementType()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAstChecked("fn i32[min max] read(i32[min max][] view, i64[0 max] index) { return view[index] } fn i32[min max] main(i64[min max][] view, i64[0 max] index) { return read(view, index) }", sink);
+}
+
+[Fact]
+fn bool RejectsInvalidFixedArraySliceDescriptorsAndIndexes()
+{
+    stack mut OwnedAscii wideIndex = new();
+    stack mut OwnedAscii scalarSource = new();
+    stack mut OwnedAscii wrongElementType = new();
+    stack mut OwnedAscii localWideIndex = new();
+    stack mut OwnedAscii localWrongElementType = new();
+    stack mut OwnedAscii tooManyInitializers = new();
+    stack mut OwnedAscii readonlyWrite = new();
+    stack mut OwnedAscii sliceWriteWideIndex = new();
+    stack mut OwnedAscii sliceWriteWrongElementType = new();
+    return !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; } struct Box { Inner inner; } fn i32[min max] main(i64[0 3] index) { stack Box box = new Box(); stack i32[min max][] view = box.inner.values; return view[index] }", wideIndex)
+        && !CompileFunctionWithLocalsToLlvm("struct Box { i32[min max] value; } fn i32[min max] main(i64[0 0] index) { stack Box box = new Box(); stack i32[min max][] view = box.value; return view[index] }", scalarSource)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; } struct Box { Inner inner; } fn i64 main(i64[0 2] index) { stack Box box = new Box(); stack i64[min max][] view = box.inner.values; return view[index] }", wrongElementType)
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 3] index) { stack i32[min max][3] values = { 1, 2, 3 }; stack i32[min max][] view = values; return view[index] }", localWideIndex)
+        && !CompileFunctionWithLocalsToLlvm("fn i64 main(i64[0 2] index) { stack i32[min max][3] values = { 1, 2, 3 }; stack i64[min max][] view = values; return view[index] }", localWrongElementType)
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 2] index) { stack i32[min max][2] values = { 1, 2, 3 }; stack i32[min max][] view = values; return view[index] }", tooManyInitializers)
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 2] index) { stack i32[min max][3] values = { 1, 2, 3 }; stack i32[min max][] view = values; view[index] = 4; return view[index] }", readonlyWrite)
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 3] index) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; view[index] = 4; return view[0] }", sliceWriteWideIndex)
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i64[0 2] index) { stack mut i32[min max][3] values = { 1, 2, 3 }; stack mut i32[min max][] view = values; view[index] = true; return view[index] }", sliceWriteWrongElementType);
+}
+
+[Fact]
+fn bool RejectsNestedFixedArrayElementInvalidTargetsAndValues()
+{
+    stack mut OwnedAscii outOfRangeRead = new();
+    stack mut OwnedAscii wideWrite = new();
+    stack mut OwnedAscii scalarIndex = new();
+    stack mut OwnedAscii wrongType = new();
+    stack mut OwnedAscii forward = new();
+    return !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][2] values; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); return box.inner.values[2] }", outOfRangeRead)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][3] values; } struct Box { Inner inner; } fn i32[min max] main(i64[0 3] index) { stack Box box = new Box(); box.inner.values[index] = 1; return 0 }", wideWrite)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max] value; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); return box.inner.value[0] }", scalarIndex)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { bool[2] flags; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); box.inner.flags[1] = 1; return 0 }", wrongType)
+        && !CompileFunctionWithLocalsToLlvm("struct Inner { i32[min max][2] values; } struct Box { Inner inner; } fn i32[min max] main() { stack Box box = new Box(); box.inner.values[1] = later; var later = 1; return 0 }", forward);
+}
+
+[Fact]
 fn bool CompileFunctionStackScalarLocalInitializerStoresAndLoadsTypedValue()
 {
     stack mut OwnedAscii sink = new();
@@ -6357,6 +7639,142 @@ fn bool CompileFunctionStackScalarLocalInitializerStoresAndLoadsTypedValue()
         && System.Text.Contains(sink.View(), "ret i32")
         && !System.Text.Contains(sink.View(), "@__stark_heap_alloc")
         && !System.Text.Contains(sink.View(), "@__stark_arena_alloc")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionTypedIntegerParameterPreservesI32ReturnType()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max] value) { return value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @main(i32 %p0)")
+        && System.Text.Contains(sink.View(), "ret i32 %p0")
+        && !System.Text.Contains(sink.View(), "i64 %p0")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionI32LiteralReturnPreservesDeclaredReturnType()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { return 7 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @main()")
+        && System.Text.Contains(sink.View(), "add i32 0, 7")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "ret i64")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionI16LiteralArithmeticReturnPreservesDeclaredReturnType()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i16[min max] main() { return 2 + 3 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i16 @main()")
+        && System.Text.Contains(sink.View(), "add i16 0, 2")
+        && System.Text.Contains(sink.View(), "add i16 0, 3")
+        && System.Text.Contains(sink.View(), "add i16")
+        && System.Text.Contains(sink.View(), "ret i16")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && !System.Text.Contains(sink.View(), "ret i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionBoolLiteralReturnPreservesDeclaredReturnType()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn bool main() { return true }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i1 @main()")
+        && System.Text.Contains(sink.View(), "ret i1")
+        && !System.Text.Contains(sink.View(), "zext i1")
+        && !System.Text.Contains(sink.View(), "ret i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionVarAliasOfTypedIntegerParameterPreservesI32ReturnType()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max] value) { var copy = value; return copy }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @main(i32 %p0)")
+        && System.Text.Contains(sink.View(), "ret i32 %p0")
+        && !System.Text.Contains(sink.View(), "i64 %p0")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionTypedIntegerParameterArithmeticPreservesI32Ops()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max] value) { return value + value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @main(i32 %p0)")
+        && System.Text.Contains(sink.View(), "add i32 %p0, %p0")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionTypedIntegerParameterLiteralArithmeticPreservesI32Ops()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max] value) { return value + 1 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @main(i32 %p0)")
+        && System.Text.Contains(sink.View(), "add i32 0, 1")
+        && System.Text.Contains(sink.View(), "add i32 %p0")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionVarAliasOfTypedIntegerArithmeticPreservesI32Ops()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main(i32[min max] value) { var copy = value + 1; return copy }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @main(i32 %p0)")
+        && System.Text.Contains(sink.View(), "add i32 0, 1")
+        && System.Text.Contains(sink.View(), "add i32 %p0")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionTypedIntegerComparisonPreservesI32Operands()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i64 main(i32[min max] left, i32[min max] right) { return left < right }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @main(i32 %p0, i32 %p1)")
+        && System.Text.Contains(sink.View(), "icmp slt i32 %p0, %p1")
+        && System.Text.Contains(sink.View(), "zext i1")
+        && !System.Text.Contains(sink.View(), "icmp slt i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionTypedIntegerArithmeticComparisonPreservesI32Operands()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i64 main(i32[min max] value, i32[min max] limit) { return value + 1 < limit }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @main(i32 %p0, i32 %p1)")
+        && System.Text.Contains(sink.View(), "add i32 0, 1")
+        && System.Text.Contains(sink.View(), "add i32 %p0")
+        && System.Text.Contains(sink.View(), "icmp slt i32")
+        && !System.Text.Contains(sink.View(), "add i64")
+        && !System.Text.Contains(sink.View(), "icmp slt i64")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -6390,16 +7808,47 @@ fn bool CompileFunctionStackScalarAssignmentStoresTypedValue()
 }
 
 [Fact]
+fn bool CompileFunctionUninitializedMutableStackScalarAssignmentStoresTypedValue()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { stack mut i32[min max] value; value = 9; return value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "@__stark_heap_alloc")
+        && !System.Text.Contains(sink.View(), "@__stark_arena_alloc")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionUninitializedMutableStackBoolAssignmentStoresI1()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("fn i64 main() { stack mut bool flag; flag = true; return flag == true }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "%v1 = alloca [1 x i8], align 1")
+        && System.Text.Contains(sink.View(), "store i1 true")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "zext i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool RejectsStackScalarLocalInvalidInitializerAndAssignments()
 {
     stack mut OwnedAscii wrongType = new();
     stack mut OwnedAscii immutableAssignment = new();
     stack mut OwnedAscii forwardInitializer = new();
     stack mut OwnedAscii forwardAssignment = new();
+    stack mut OwnedAscii uninitializedForwardAssignment = new();
     return !CompileFunctionWithLocalsToLlvm("fn i64 main() { stack bool flag = 1; return 0 }", wrongType)
         && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { stack i32[min max] value = 1; value = 2; return value }", immutableAssignment)
         && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { stack i32[min max] value = later; var later = 1; return value }", forwardInitializer)
-        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { stack mut i32[min max] value = 0; value = later; var later = 1; return value }", forwardAssignment);
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { stack mut i32[min max] value = 0; value = later; var later = 1; return value }", forwardAssignment)
+        && !CompileFunctionWithLocalsToLlvm("fn i32[min max] main() { stack mut i32[min max] value; value = later; var later = 1; return value }", uninitializedForwardAssignment);
 }
 
 [Fact]
@@ -6554,6 +8003,22 @@ fn bool CompileLocalTerminalIfStackScalarAssignmentStoresBeforeBranch()
 }
 
 [Fact]
+fn bool CompileLocalTerminalIfUninitializedStackScalarAssignmentStoresBeforeBranch()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main() { stack mut i32[min max] value; value = 7; if value == 7 return value else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 7")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "@__stark_heap_alloc")
+        && !System.Text.Contains(sink.View(), "@__stark_arena_alloc")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool RejectsLocalTerminalIfStackScalarInvalidInitializerAndAssignments()
 {
     stack mut OwnedAscii wrongType = new();
@@ -6622,6 +8087,23 @@ fn bool CompileIntegerSwitchStackScalarAssignmentsStoreBeforeMerge()
     return ok
         && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
         && System.Text.Contains(sink.View(), "store i32 0")
+        && System.Text.Contains(sink.View(), "store i32 4")
+        && System.Text.Contains(sink.View(), "store i32 10")
+        && System.Text.Contains(sink.View(), "store i32 20")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "@__stark_heap_alloc")
+        && !System.Text.Contains(sink.View(), "@__stark_arena_alloc")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileIntegerSwitchUninitializedStackScalarAssignmentsStoreBeforeMerge()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[min max] main(i64 x) { stack mut i32[min max] value; switch (x) { case 0: value = 4; case 1: { value = 10; } default: value = 20; } return value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [4 x i8], align 4")
         && System.Text.Contains(sink.View(), "store i32 4")
         && System.Text.Contains(sink.View(), "store i32 10")
         && System.Text.Contains(sink.View(), "store i32 20")
@@ -7851,6 +9333,23 @@ fn bool CompilesReturnIfExpressionFromAst()
 }
 
 [Fact]
+fn bool ReturnIfExpressionPreservesDeclaredI16ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i16[min max] pick(i64[min max] x) { return if x < 10 7 else 11 } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i16 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i16 0, 7")
+        && System.Text.Contains(s.View(), "add i16 0, 11")
+        && System.Text.Contains(s.View(), "ret i16")
+        && !System.Text.Contains(s.View(), "add i64 0, 7")
+        && !System.Text.Contains(s.View(), "add i64 0, 11")
+        && !System.Text.Contains(s.View(), "ret i64 7")
+        && !System.Text.Contains(s.View(), "ret i64 11")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
 fn bool ReturnIfExpressionPreservesBranchRangeFacts()
 {
     stack mut OwnedAscii s = new();
@@ -8200,6 +9699,20 @@ fn bool BooleanTerminalIfPreservesReturnRangeFacts()
 }
 
 [Fact]
+fn bool BooleanTerminalIfPreservesDeclaredBoolReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn bool pick(i64[min max] x) { if x < 10 return x < 5 else return x == 10 } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i1 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "ret i1")
+        && !System.Text.Contains(s.View(), "zext i1")
+        && !System.Text.Contains(s.View(), "ret i64 true")
+        && !System.Text.Contains(s.View(), "ret i64 false")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
 fn bool CompilesBracedTerminalIfFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -8210,6 +9723,21 @@ fn bool CompilesBracedTerminalIfFromAst()
         && System.Text.Contains(s.View(), "label %b2, label %b3")
         && System.Text.Contains(s.View(), "ret i64 %p0")
         && System.Text.Contains(s.View(), "ret i64 %v")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool TerminalIfPreservesDeclaredI32ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i32[min max] pick(i64[min max] x) { if x < 10 { return 7; } else { return 11; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i32 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i32 0, 7")
+        && System.Text.Contains(s.View(), "add i32 0, 11")
+        && System.Text.Contains(s.View(), "ret i32")
+        && !System.Text.Contains(s.View(), "add i64 0, 7")
+        && !System.Text.Contains(s.View(), "add i64 0, 11")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -8227,6 +9755,23 @@ fn bool CompilesTerminalIntegerSwitchFromAst()
         && System.Text.Contains(s.View(), "ret i64")
         && ClangVerifiesLlvmText(s)
         && !CompileModuleFromAst("fn i64[10 29] classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; default: return 30; } } fn main() { return classify(1) }", tooNarrow);
+}
+
+[Fact]
+fn bool TerminalIntegerSwitchPreservesDeclaredI16ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i16[min max] classify(i64[min max] x) { switch (x) { case 0: return 10; case 1: return 20; default: return 30; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i16 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i16 0, 10")
+        && System.Text.Contains(s.View(), "add i16 0, 20")
+        && System.Text.Contains(s.View(), "add i16 0, 30")
+        && System.Text.Contains(s.View(), "ret i16")
+        && !System.Text.Contains(s.View(), "add i64 0, 10")
+        && !System.Text.Contains(s.View(), "add i64 0, 20")
+        && !System.Text.Contains(s.View(), "add i64 0, 30")
+        && ClangVerifiesLlvmText(s);
 }
 
 [Fact]
@@ -8382,6 +9927,23 @@ fn bool CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst()
 }
 
 [Fact]
+fn bool LocalPrefixedTerminalIntegerSwitchPreservesDeclaredI8ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i8[min max] classify(i64[min max] x) { var y = x + 1; switch (y) { case 2: return 10; case 3: return 20; default: return 30; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i8 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i8 0, 10")
+        && System.Text.Contains(s.View(), "add i8 0, 20")
+        && System.Text.Contains(s.View(), "add i8 0, 30")
+        && System.Text.Contains(s.View(), "ret i8")
+        && !System.Text.Contains(s.View(), "add i64 0, 10")
+        && !System.Text.Contains(s.View(), "add i64 0, 20")
+        && !System.Text.Contains(s.View(), "add i64 0, 30")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
 fn bool CompilesLocalPrefixedMultiCaseBooleanTerminalIntegerSwitchFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -8437,6 +9999,22 @@ fn bool CompilesTerminalBooleanSwitchFromAst()
         && System.Text.Contains(s.View(), "br i1 %p0, label %b2, label %b3")
         && !System.Text.Contains(s.View(), "icmp eq i1")
         && !System.Text.Contains(s.View(), "ret i64 30")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool TerminalBooleanSwitchPreservesDeclaredI8ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i8[min max] classify(bool flag) { switch (flag) { case true: return 10; case false: return 20; default: return 30; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i8 @f1(i1 %p0)")
+        && System.Text.Contains(s.View(), "add i8 0, 10")
+        && System.Text.Contains(s.View(), "add i8 0, 20")
+        && !System.Text.Contains(s.View(), "add i8 0, 30")
+        && System.Text.Contains(s.View(), "ret i8")
+        && !System.Text.Contains(s.View(), "add i64 0, 10")
+        && !System.Text.Contains(s.View(), "add i64 0, 20")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -8830,6 +10408,21 @@ fn bool CompilesLocalPrefixedBracedTerminalIfFromAst()
         && System.Text.Contains(s.View(), "br i1")
         && System.Text.Contains(s.View(), "label %b2, label %b3")
         && System.Text.Contains(s.View(), "ret i64 %p0")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool LocalPrefixedTerminalIfPreservesDeclaredI8ReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i8[min max] pick(i64[min max] x) { var y = x + 1; if y < 10 return 7 else return 11 } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i8 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "add i8 0, 7")
+        && System.Text.Contains(s.View(), "add i8 0, 11")
+        && System.Text.Contains(s.View(), "ret i8")
+        && !System.Text.Contains(s.View(), "add i64 0, 7")
+        && !System.Text.Contains(s.View(), "add i64 0, 11")
         && ClangVerifiesLlvmText(s);
 }
 
@@ -9840,6 +11433,18 @@ fn bool PackageTablesPreserveBooleanTerminalIntegerSwitch()
         && MirValueType(instrs, case0Return.Index()) == MirType.I64
         && MirValueType(instrs, case1Return.Index()) == MirType.I64
         && MirValueType(instrs, defaultReturn.Index()) == MirType.I64;
+}
+
+[Fact]
+fn bool BooleanTerminalIntegerSwitchPreservesDeclaredBoolReturnType()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn bool classify(i64[min max] x) { switch (x) { case 0: return x == 0; case 1: return x < 0; default: return x == 2; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local i1 @f1(i64 %p0)")
+        && System.Text.Contains(s.View(), "ret i1")
+        && !System.Text.Contains(s.View(), "zext i1")
+        && ClangVerifiesLlvmText(s);
 }
 
 [Fact]

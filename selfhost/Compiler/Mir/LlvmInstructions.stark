@@ -37,6 +37,104 @@ internal fn MemoryStatus EmitLlvmOperand(borrow IrTable<MirInstruction> instrs, 
     return EmitLlvmRegister(sink, valueIndex);
 }
 
+internal fn MemoryStatus EmitLlvmSliceParamExtractInstruction(
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr,
+    u32[0 max] fieldIndex)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(" = extractvalue { ptr, i64 } %p");
+    try sink.AppendI64(instr.Immediate());
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])fieldIndex);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmSliceValueInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    try sink.AppendConstAscii("  %v");
+    try sink.AppendU64((u64[0 max])index);
+    try sink.AppendConstAscii(".base = insertvalue { ptr, i64 } poison, ptr ");
+    try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+    try sink.AppendConstAscii(", 0\n");
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(" = insertvalue { ptr, i64 } %v");
+    try sink.AppendU64((u64[0 max])index);
+    try sink.AppendConstAscii(".base, i64 ");
+    try EmitLlvmOperand(instrs, sink, instr.OperandBIndex());
+    try sink.AppendConstAscii(", 1\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmFixedArrayParamElementInstruction(
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(" = extractvalue ");
+    try EmitLlvmFixedArrayTypeName(instr.ResultType(), instr.OperandCIndex(), sink);
+    try sink.AppendConstAscii(" %p");
+    try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmFixedArrayParamSlotInstruction(
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    stack MirType elementType = MirTypeFromStorageCode(instr.OperandDIndex());
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(" = alloca ");
+    try EmitLlvmFixedArrayTypeName(elementType, instr.OperandBIndex(), sink);
+    try sink.AppendConstAscii(", align ");
+    try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("  store ");
+    try EmitLlvmFixedArrayTypeName(elementType, instr.OperandBIndex(), sink);
+    try sink.AppendConstAscii(" %p");
+    try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+    try sink.AppendConstAscii(", ptr ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(", align ");
+    try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmFixedArrayLoadInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    stack MirType elementType = MirTypeFromStorageCode(instr.OperandDIndex());
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(" = load ");
+    try EmitLlvmFixedArrayTypeName(elementType, instr.OperandBIndex(), sink);
+    try sink.AppendConstAscii(", ptr ");
+    try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+    try sink.AppendConstAscii(", align ");
+    try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
 internal fn MemoryStatus EmitLlvmEnumVariantTagInstruction(
     borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
     mut borrow OwnedAscii sink,
@@ -482,7 +580,12 @@ internal fn MemoryStatus EmitLlvmIndexedPointerTemp(mut borrow OwnedAscii sink, 
     return MemoryStatus.Ok;
 }
 
-internal fn MemoryStatus EmitLlvmPtrIndexOffsetInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index, MirInstruction instr)
+internal fn MemoryStatus EmitLlvmPtrIndexOffsetInstruction(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr,
+    bool inBounds)
 {
     stack bool hasScale = instr.OperandCIndex() != 1;
     stack bool hasBaseOffset = instr.Immediate() != 0;
@@ -519,7 +622,13 @@ internal fn MemoryStatus EmitLlvmPtrIndexOffsetInstruction(borrow IrTable<MirIns
 
     try sink.AppendConstAscii("  ");
     try EmitLlvmRegister(sink, index);
-    try sink.AppendConstAscii(" = getelementptr inbounds i8, ptr ");
+    try sink.AppendConstAscii(" = getelementptr");
+    if (inBounds)
+    {
+        try sink.AppendConstAscii(" inbounds");
+    }
+
+    try sink.AppendConstAscii(" i8, ptr ");
     try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
     try sink.AppendConstAscii(", i64 ");
     if (hasBaseOffset)
@@ -805,6 +914,21 @@ internal fn MemoryStatus EmitLlvmCallArgWithRangeAndAbiFacts(
         return MemoryStatus.Ok;
     }
 
+    if (abi.IsSlice)
+    {
+        try sink.AppendConstAscii("{ ptr, i64 } ");
+        try EmitLlvmOperand(instrs, sink, valueIndex);
+        return MemoryStatus.Ok;
+    }
+
+    if (abi.IsFixedArray)
+    {
+        try EmitLlvmFixedArrayAbiType(abi, sink);
+        try sink.AppendConstAscii(" ");
+        try EmitLlvmOperand(instrs, sink, valueIndex);
+        return MemoryStatus.Ok;
+    }
+
     stack MirType valueType = MirValueType(instrs, valueIndex);
     try EmitLlvmTypeName(valueType, sink);
     try EmitLlvmRangeAttribute(valueType, facts, sink);
@@ -936,6 +1060,26 @@ internal fn u32[0 max] CallArgumentValueIndexForParam(borrow IrTable<MirInstruct
     return MirCallArgumentValueIndexAt(instrs, instr, paramIndex);
 }
 
+internal fn u32[0 max] CallArgumentMemoryBaseValueIndexForParam(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    FunctionCallContractFacts calleeFacts,
+    u32[0 max] paramIndex)
+{
+    stack u32[0 max] valueIndex = CallArgumentValueIndexForParam(instrs, instr, paramIndex);
+    stack ParamAbiFacts abi = FunctionCallContractParamAbi(calleeFacts, paramIndex);
+    if (abi.IsSlice && instrs.Contains(valueIndex))
+    {
+        stack MirInstruction valueInstr = instrs.Get(valueIndex);
+        if (valueInstr.Opcode() == MirOp.SliceValue)
+        {
+            return valueInstr.OperandAIndex();
+        }
+    }
+
+    return valueIndex;
+}
+
 internal fn MemoryStatus EmitLlvmSeparateStorageAssumeForValues(
     borrow IrTable<MirInstruction> instrs,
     u32[0 max] leftValue,
@@ -965,8 +1109,8 @@ internal fn MemoryStatus EmitLlvmCallSeparateStorageAssumes(
     while willexit (i < calleeFacts.DistinctCount)
     {
         stack DistinctStoragePair pair = FunctionCallContractDistinctPair(calleeFacts, i);
-        stack u32[0 max] leftValue = CallArgumentValueIndexForParam(instrs, instr, pair.LeftParam);
-        stack u32[0 max] rightValue = CallArgumentValueIndexForParam(instrs, instr, pair.RightParam);
+        stack u32[0 max] leftValue = CallArgumentMemoryBaseValueIndexForParam(instrs, instr, calleeFacts, pair.LeftParam);
+        stack u32[0 max] rightValue = CallArgumentMemoryBaseValueIndexForParam(instrs, instr, calleeFacts, pair.RightParam);
         try EmitLlvmSeparateStorageAssumeForValues(instrs, leftValue, rightValue, sink);
         i = i + 1;
     }
@@ -1045,6 +1189,18 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirIn
         case MirOp.Param:
             // Declared in the signature; emits no body line.
             try sink.AppendConstAscii("");
+        case MirOp.SliceParamBase:
+            try EmitLlvmSliceParamExtractInstruction(sink, index, instr, 0);
+        case MirOp.SliceParamLength:
+            try EmitLlvmSliceParamExtractInstruction(sink, index, instr, 1);
+        case MirOp.SliceValue:
+            try EmitLlvmSliceValueInstruction(instrs, sink, index, instr);
+        case MirOp.FixedArrayParamElement:
+            try EmitLlvmFixedArrayParamElementInstruction(sink, index, instr);
+        case MirOp.FixedArrayParamSlot:
+            try EmitLlvmFixedArrayParamSlotInstruction(sink, index, instr);
+        case MirOp.FixedArrayLoad:
+            try EmitLlvmFixedArrayLoadInstruction(instrs, sink, index, instr);
         case MirOp.Add:
             try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Sub:
@@ -1120,7 +1276,9 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirIn
         case MirOp.PtrOffset:
             try EmitLlvmPtrOffsetInstruction(instrs, sink, index, instr);
         case MirOp.PtrIndexOffset:
-            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr);
+            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr, true);
+        case MirOp.PtrIndexOffsetUnbounded:
+            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr, false);
         case MirOp.LoadPtr:
             stack mut ValueFacts simpleLoadPtrFacts = new();
             simpleLoadPtrFacts = MemoryFactsWithInstructionAlignment(simpleLoadPtrFacts, instr.OperandBIndex());
@@ -1211,6 +1369,8 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    u32[0 max] scopedNoAliasMetadataBase,
     mut borrow OwnedAscii sink,
     u32[0 max] index)
 {
@@ -1241,6 +1401,18 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
             }
         case MirOp.Param:
             try sink.AppendConstAscii("");
+        case MirOp.SliceParamBase:
+            try EmitLlvmSliceParamExtractInstruction(sink, index, instr, 0);
+        case MirOp.SliceParamLength:
+            try EmitLlvmSliceParamExtractInstruction(sink, index, instr, 1);
+        case MirOp.SliceValue:
+            try EmitLlvmSliceValueInstruction(instrs, sink, index, instr);
+        case MirOp.FixedArrayParamElement:
+            try EmitLlvmFixedArrayParamElementInstruction(sink, index, instr);
+        case MirOp.FixedArrayParamSlot:
+            try EmitLlvmFixedArrayParamSlotInstruction(sink, index, instr);
+        case MirOp.FixedArrayLoad:
+            try EmitLlvmFixedArrayLoadInstruction(instrs, sink, index, instr);
         case MirOp.Add:
             try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Sub:
@@ -1323,7 +1495,9 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
         case MirOp.PtrOffset:
             try EmitLlvmPtrOffsetInstruction(instrs, sink, index, instr);
         case MirOp.PtrIndexOffset:
-            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr);
+            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr, true);
+        case MirOp.PtrIndexOffsetUnbounded:
+            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr, false);
         case MirOp.LoadPtr:
             stack ValueFacts loadPtrMemoryFacts = PointerMemoryFacts(valueFacts, instr.OperandAIndex(), instr.OperandBIndex());
             stack ValueFacts loadedPtrValueFacts = FactAt(valueFacts, index);
@@ -1335,11 +1509,21 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
             try sink.AppendConstAscii(", ptr ");
             try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
             try EmitLlvmMemoryAlignment(loadPtrMemoryFacts, sink);
+            try EmitLlvmScopedNoAliasAttachmentForPointer(instrs, separateStorageFacts, scopedNoAliasMetadataBase, instr.OperandAIndex(), sink);
             try EmitLlvmRangeMetadataAttachment(instr.ResultType(), loadedPtrValueFacts, rangeMetadata, sink);
             try sink.AppendConstAscii("\n");
         case MirOp.StorePtr:
             stack ValueFacts storePtrMemoryFacts = PointerMemoryFacts(valueFacts, instr.OperandAIndex(), instr.OperandCIndex());
-            try EmitLlvmStorePtrInstruction(instrs, sink, instr, storePtrMemoryFacts);
+            try sink.AppendConstAscii("  store ");
+            try EmitLlvmVolatileMarker(storePtrMemoryFacts, sink);
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandBIndex());
+            try sink.AppendConstAscii(", ptr ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try EmitLlvmMemoryAlignment(storePtrMemoryFacts, sink);
+            try EmitLlvmScopedNoAliasAttachmentForPointer(instrs, separateStorageFacts, scopedNoAliasMetadataBase, instr.OperandAIndex(), sink);
+            try sink.AppendConstAscii("\n");
         case MirOp.ArenaFrameEnter:
             try EmitLlvmArenaInstruction(sink, index, instr);
         case MirOp.ArenaAlloc:
@@ -1487,6 +1671,8 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
     borrow IrTable<ValueFacts> functionReturnFacts,
     borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    u32[0 max] scopedNoAliasMetadataBase,
     mut borrow OwnedAscii sink,
     u32[0 max] index)
 {
@@ -1518,6 +1704,8 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
                 globalFacts,
                 functionReturnFacts,
                 rangeMetadata,
+                separateStorageFacts,
+                scopedNoAliasMetadataBase,
                 sink,
                 index);
     }
@@ -1770,6 +1958,18 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
                 try sink.AppendI64(instr.Immediate());
                 try sink.AppendConstAscii("\n");
             }
+        case MirOp.SliceParamBase:
+            try EmitLlvmSliceParamExtractInstruction(sink, index, instr, 0);
+        case MirOp.SliceParamLength:
+            try EmitLlvmSliceParamExtractInstruction(sink, index, instr, 1);
+        case MirOp.SliceValue:
+            try EmitLlvmSliceValueInstruction(instrs, sink, index, instr);
+        case MirOp.FixedArrayParamElement:
+            try EmitLlvmFixedArrayParamElementInstruction(sink, index, instr);
+        case MirOp.FixedArrayParamSlot:
+            try EmitLlvmFixedArrayParamSlotInstruction(sink, index, instr);
+        case MirOp.FixedArrayLoad:
+            try EmitLlvmFixedArrayLoadInstruction(instrs, sink, index, instr);
         case MirOp.Add:
             try EmitLlvmTypedBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Sub:
@@ -1839,7 +2039,9 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
         case MirOp.PtrOffset:
             try EmitLlvmPtrOffsetInstruction(instrs, sink, index, instr);
         case MirOp.PtrIndexOffset:
-            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr);
+            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr, true);
+        case MirOp.PtrIndexOffsetUnbounded:
+            try EmitLlvmPtrIndexOffsetInstruction(instrs, sink, index, instr, false);
         case MirOp.LoadPtr:
             stack mut ValueFacts typedLoadPtrFacts = new();
             typedLoadPtrFacts = MemoryFactsWithInstructionAlignment(typedLoadPtrFacts, instr.OperandBIndex());

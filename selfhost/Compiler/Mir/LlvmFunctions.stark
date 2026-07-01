@@ -13,6 +13,58 @@ module Compiler.Mir.LlvmFunctions
 
 // LLVM function, definition, block-list, and typed-function emission helpers.
 
+internal fn bool LlvmBlockRangesUseScopedNoAliasMetadata(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack BlockEmit range = ranges.Get(i);
+        if (MirInstructionRangeUsesScopedNoAliasMetadata(instrs, separateStorageFacts, range.First, range.Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRange(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    if (!MirInstructionRangeUsesScopedNoAliasMetadata(instrs, separateStorageFacts, firstInstr, instrCount))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    return EmitLlvmScopedNoAliasMetadataDefinitions(separateStorageFacts, metadataBase, sink);
+}
+
+internal fn MemoryStatus EmitLlvmScopedNoAliasMetadataDefinitionsForBlockRanges(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    u32[0 max] metadataBase,
+    mut borrow OwnedAscii sink)
+{
+    if (!LlvmBlockRangesUseScopedNoAliasMetadata(instrs, ranges, separateStorageFacts))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    return EmitLlvmScopedNoAliasMetadataDefinitions(separateStorageFacts, metadataBase, sink);
+}
+
 // Emits an LLVM `define i64 @<name>() { entry: ... }` for the instruction range
 // [firstInstr, firstInstr+instrCount), in table order, into `sink`.
 public fn MemoryStatus EmitLlvmFunction(borrow IrTable<MirInstruction> instrs, const ascii name, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
@@ -162,7 +214,15 @@ internal fn MemoryStatus EmitLlvmParamListWithRangeAndAbiFacts(
         }
 
         stack ParamAbiFacts abi = AbiFactAt(paramAbiFacts, i + 1);
-        if (abi.IsPointer)
+        if (abi.IsSlice)
+        {
+            try sink.AppendConstAscii("{ ptr, i64 }");
+        }
+        else if (abi.IsFixedArray)
+        {
+            try EmitLlvmFixedArrayAbiType(abi, sink);
+        }
+        else if (abi.IsPointer)
         {
             try sink.AppendConstAscii("ptr");
             try EmitLlvmParamAbiAttributes(abi, sink);
@@ -272,6 +332,7 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
+    stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBase();
     try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorage(
         instrs,
         funcTailFlags,
@@ -291,8 +352,16 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
         firstInstr,
         instrCount,
         LlvmLoopMetadataBase(),
+        scopedNoAliasMetadataBase,
         sink);
     try sink.AppendConstAscii("}\n");
+    try EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRange(
+        instrs,
+        firstInstr,
+        instrCount,
+        separateStorageFacts,
+        scopedNoAliasMetadataBase,
+        sink);
     return MemoryStatus.Ok;
 }
 
@@ -575,6 +644,7 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
+    stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBase();
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -614,6 +684,7 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
                 rangeMetadata,
                 separateStorageFacts,
                 i == 1,
+                scopedNoAliasMetadataBase,
                 range.BlockIndex,
                 switchSetupFirst,
                 switchSetupCount,
@@ -646,6 +717,7 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
                 range.First,
                 range.Count,
                 LlvmLoopMetadataBase(),
+                scopedNoAliasMetadataBase,
                 sink);
             i = i + 1;
         }
@@ -653,6 +725,12 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
 
     try sink.AppendConstAscii("}\n");
     try EmitLlvmIndependentLoopMetadataDefinitions(blocks, ranges, LlvmLoopMetadataBase(), sink);
+    try EmitLlvmScopedNoAliasMetadataDefinitionsForBlockRanges(
+        instrs,
+        ranges,
+        separateStorageFacts,
+        scopedNoAliasMetadataBase,
+        sink);
     return MemoryStatus.Ok;
 }
 
@@ -921,6 +999,7 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
+    stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBaseForFunction(number);
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -960,6 +1039,7 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
                 rangeMetadata,
                 separateStorageFacts,
                 i == 1,
+                scopedNoAliasMetadataBase,
                 range.BlockIndex,
                 switchSetupFirst,
                 switchSetupCount,
@@ -992,6 +1072,7 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
                 range.First,
                 range.Count,
                 LlvmLoopMetadataBase() + number * 1000,
+                scopedNoAliasMetadataBase,
                 sink);
             i = i + 1;
         }
@@ -999,6 +1080,12 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
 
     try sink.AppendConstAscii("}\n");
     try EmitLlvmIndependentLoopMetadataDefinitions(blocks, ranges, LlvmLoopMetadataBase() + number * 1000, sink);
+    try EmitLlvmScopedNoAliasMetadataDefinitionsForBlockRanges(
+        instrs,
+        ranges,
+        separateStorageFacts,
+        scopedNoAliasMetadataBase,
+        sink);
     return MemoryStatus.Ok;
 }
 
@@ -1290,6 +1377,7 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
+    stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBaseForFunction(number);
     try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorage(
         instrs,
         funcTailFlags,
@@ -1309,8 +1397,16 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
         firstInstr,
         instrCount,
         LlvmLoopMetadataBase() + number * 1000,
+        scopedNoAliasMetadataBase,
         sink);
     try sink.AppendConstAscii("}\n");
+    try EmitLlvmScopedNoAliasMetadataDefinitionsForInstructionRange(
+        instrs,
+        firstInstr,
+        instrCount,
+        separateStorageFacts,
+        scopedNoAliasMetadataBase,
+        sink);
     return MemoryStatus.Ok;
 }
 
