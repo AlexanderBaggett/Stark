@@ -8,11 +8,27 @@ public struct ParamName
 {
     u64[0 2 ** 63 - 1] Start;
     u64[0 2 ** 63 - 1] Length;
+    bool RawPointerMutable;
+    u32[0 max] RawPointerFieldTypeCode;
+    u32[0 max] RawPointerElementSize;
+    u32[0 max] RawPointerElementAlignment;
+    bool RawPointerHasElementCount;
+    bool RawPointerElementCountIsParam;
+    u32[0 max] RawPointerElementCountLiteral;
+    u32[0 max] RawPointerElementCountParamIndex;
 
     ParamName()
     {
         self.Start = 0;
         self.Length = 0;
+        self.RawPointerMutable = false;
+        self.RawPointerFieldTypeCode = 0;
+        self.RawPointerElementSize = 0;
+        self.RawPointerElementAlignment = 0;
+        self.RawPointerHasElementCount = false;
+        self.RawPointerElementCountIsParam = false;
+        self.RawPointerElementCountLiteral = 0;
+        self.RawPointerElementCountParamIndex = 0;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] StartIndex(borrow ParamName self)
@@ -23,6 +39,46 @@ public struct ParamName
     public inline finite law u64[0 2 ** 63 - 1] LengthValue(borrow ParamName self)
     {
         return self.Length;
+    }
+
+    public inline finite law u32[0 max] RawPointerFieldTypeCodeValue(borrow ParamName self)
+    {
+        return self.RawPointerFieldTypeCode;
+    }
+
+    public inline finite law bool RawPointerMutableValue(borrow ParamName self)
+    {
+        return self.RawPointerMutable;
+    }
+
+    public inline finite law u32[0 max] RawPointerElementSizeValue(borrow ParamName self)
+    {
+        return self.RawPointerElementSize;
+    }
+
+    public inline finite law u32[0 max] RawPointerElementAlignmentValue(borrow ParamName self)
+    {
+        return self.RawPointerElementAlignment;
+    }
+
+    public inline finite law bool RawPointerHasElementCountValue(borrow ParamName self)
+    {
+        return self.RawPointerHasElementCount;
+    }
+
+    public inline finite law bool RawPointerElementCountIsParamValue(borrow ParamName self)
+    {
+        return self.RawPointerElementCountIsParam;
+    }
+
+    public inline finite law u32[0 max] RawPointerElementCountLiteralValue(borrow ParamName self)
+    {
+        return self.RawPointerElementCountLiteral;
+    }
+
+    public inline finite law u32[0 max] RawPointerElementCountParamIndexValue(borrow ParamName self)
+    {
+        return self.RawPointerElementCountParamIndex;
     }
 }
 

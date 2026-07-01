@@ -292,6 +292,17 @@ public struct IrTable<T>
     {
         return self.Rows.Get((u64[0 2 ** 63 - 1])(index - 1));
     }
+
+    public fn bool Replace(mut borrow IrTable<T> self, u32[0 max] index, T row)
+    {
+        if (!self.Contains(index))
+        {
+            return false;
+        }
+
+        self.Rows.GetMut((u64[0 2 ** 63 - 1])(index - 1)) = row;
+        return true;
+    }
 }
 
 // === Fact categories (doc 24 §4) ===

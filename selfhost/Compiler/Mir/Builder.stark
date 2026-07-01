@@ -157,6 +157,71 @@ public fn MirValueId MirParamTyped(mut borrow IrTable<MirInstruction> instrs, Mi
     return MirEmitTyped(instrs, MirOp.Param, type, 0, 0, (i64[min max])paramIndex);
 }
 
+public fn MirValueId MirSliceParamBase(mut borrow IrTable<MirInstruction> instrs, u32[0 max] paramIndex)
+{
+    return MirEmitTyped(instrs, MirOp.SliceParamBase, MirType.Ptr, 0, 0, (i64[min max])paramIndex);
+}
+
+public fn MirValueId MirSliceParamLength(mut borrow IrTable<MirInstruction> instrs, u32[0 max] paramIndex)
+{
+    return MirEmitTyped(instrs, MirOp.SliceParamLength, MirType.I64, 0, 0, (i64[min max])paramIndex);
+}
+
+public fn MirValueId MirSliceValue(mut borrow IrTable<MirInstruction> instrs, MirValueId base, MirValueId length)
+{
+    return MirEmitTyped(instrs, MirOp.SliceValue, MirType.Ptr, base.Index(), length.Index(), 0);
+}
+
+public fn MirValueId MirFixedArrayParamElement(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] paramIndex,
+    u32[0 max] elementIndex,
+    u32[0 max] arrayLength,
+    MirType elementType)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.FixedArrayParamElement;
+    instr.AIndex = paramIndex;
+    instr.BIndex = elementIndex;
+    instr.CIndex = arrayLength;
+    instr.ResType = elementType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirFixedArrayParamSlot(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] paramIndex,
+    u32[0 max] arrayLength,
+    MirType elementType,
+    u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.FixedArrayParamSlot;
+    instr.AIndex = paramIndex;
+    instr.BIndex = arrayLength;
+    instr.CIndex = alignBytes;
+    instr.DIndex = MirTypeStorageCode(elementType);
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirLoadFixedArray(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId ptr,
+    u32[0 max] arrayLength,
+    MirType elementType,
+    u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.FixedArrayLoad;
+    instr.AIndex = ptr.Index();
+    instr.BIndex = arrayLength;
+    instr.CIndex = alignBytes;
+    instr.DIndex = MirTypeStorageCode(elementType);
+    instr.ResType = elementType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
 // The 0-based parameter index of the param instruction naming `value` (0 when not a
 // param / out of range). Guards on the opcode so the shared `Imm` field is not
 // misread for a ConstInt/Call value that also stores data there.
@@ -272,6 +337,27 @@ public fn MirValueId MirPtrIndexOffset(
 {
     stack mut MirInstruction instr = new();
     instr.Op = MirOp.PtrIndexOffset;
+    instr.AIndex = base.Index();
+    instr.BIndex = index.Index();
+    instr.CIndex = elementSizeBytes;
+    instr.DIndex = alignBytes;
+    instr.Imm = (i64[min max])baseByteOffset;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Computes base + baseOffset + index * elementSize for runtime-validated slice
+// addresses. It deliberately does not promise the index is statically in-bounds.
+public fn MirValueId MirPtrIndexOffsetUnbounded(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId base,
+    MirValueId index,
+    u32[0 max] elementSizeBytes,
+    u32[0 max] baseByteOffset,
+    u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.PtrIndexOffsetUnbounded;
     instr.AIndex = base.Index();
     instr.BIndex = index.Index();
     instr.CIndex = elementSizeBytes;

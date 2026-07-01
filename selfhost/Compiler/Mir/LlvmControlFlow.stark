@@ -297,6 +297,7 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     bool emitSeparateStorageFacts,
+    u32[0 max] scopedNoAliasMetadataBase,
     u32[0 max] blockIndex,
     u32[0 max] setupFirst,
     u32[0 max] setupCount,
@@ -329,6 +330,8 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
             globalFacts,
             functionReturnFacts,
             rangeMetadata,
+            separateStorageFacts,
+            scopedNoAliasMetadataBase,
             sink,
             index);
         index = index + 1;
@@ -352,6 +355,7 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFactsAndEnumLa
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     bool emitSeparateStorageFacts,
+    u32[0 max] scopedNoAliasMetadataBase,
     u32[0 max] blockIndex,
     u32[0 max] setupFirst,
     u32[0 max] setupCount,
@@ -385,6 +389,8 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFactsAndEnumLa
             functionReturnFacts,
             enumLayoutFacts,
             rangeMetadata,
+            separateStorageFacts,
+            scopedNoAliasMetadataBase,
             sink,
             index);
         index = index + 1;

@@ -22,6 +22,24 @@ public enum MirOp
     // A function parameter; its 0-based index rides in the immediate. Declared in the
     // signature, so it emits no body line and is referenced as `%pK` by its uses.
     Param,
+    // Extracts the data pointer from a concrete slice ABI parameter `{ ptr, i64 }`.
+    // The 0-based parameter index rides in the immediate.
+    SliceParamBase,
+    // Extracts the length from a concrete slice ABI parameter `{ ptr, i64 }`.
+    // The 0-based parameter index rides in the immediate.
+    SliceParamLength,
+    // Constructs a concrete slice ABI value `{ ptr, i64 }` from base pointer A
+    // and length B for calls that pass slices by value.
+    SliceValue,
+    // Extracts constant element B from fixed-array parameter A. C is the array
+    // length, and ResType is the element type.
+    FixedArrayParamElement,
+    // Materializes fixed-array parameter A into an addressable stack slot. B is
+    // the array length, C is slot alignment, and D is the element type code.
+    FixedArrayParamSlot,
+    // Loads a by-value fixed-array aggregate from pointer A. B is the array
+    // length, C is load alignment, and D is the element type code.
+    FixedArrayLoad,
     Add,
     Sub,
     Mul,
@@ -76,6 +94,9 @@ public enum MirOp
     // Operand A is the base pointer, operand B is the proven in-bounds index, `Imm`
     // is the base byte offset, C is element byte size, and D is derived alignment.
     PtrIndexOffset,
+    // Computes the same indexed byte address when only runtime slice validity is known.
+    // This preserves element size and alignment without claiming LLVM `inbounds`.
+    PtrIndexOffsetUnbounded,
     // Loads from pointer operand A. The result type is `ResType`; B is alignment.
     LoadPtr,
     // Stores operand B through pointer operand A. `ResType` is the stored type; C is
@@ -151,6 +172,48 @@ public enum MirType
     I64,
     Ptr,
     EnumValue,
+}
+
+public inline finite law u32[0 max] MirTypeStorageCode(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return 1;
+        case MirType.I8:
+            return 2;
+        case MirType.I16:
+            return 3;
+        case MirType.I32:
+            return 4;
+        case MirType.I64:
+            return 5;
+        case MirType.Ptr:
+            return 6;
+        case MirType.EnumValue:
+            return 7;
+    }
+}
+
+public inline finite law MirType MirTypeFromStorageCode(u32[0 max] code)
+{
+    switch (code)
+    {
+        case 1:
+            return MirType.I1;
+        case 2:
+            return MirType.I8;
+        case 3:
+            return MirType.I16;
+        case 4:
+            return MirType.I32;
+        case 6:
+            return MirType.Ptr;
+        case 7:
+            return MirType.EnumValue;
+        default:
+            return MirType.I64;
+    }
 }
 
 // One MIR instruction: an opcode, up to four operand slots (0 = absent), an integer

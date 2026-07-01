@@ -525,6 +525,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFacts(
         firstInstr,
         instrCount,
         LlvmLoopMetadataBase(),
+        LlvmScopedNoAliasMetadataBase(),
         sink);
 }
 
@@ -546,6 +547,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
     u32[0 max] firstInstr,
     u32[0 max] instrCount,
     u32[0 max] loopMetadataBase,
+    u32[0 max] scopedNoAliasMetadataBase,
     mut borrow OwnedAscii sink)
 {
     try sink.AppendConstAscii("b");
@@ -571,6 +573,8 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
             globalFacts,
             functionReturnFacts,
             rangeMetadata,
+            separateStorageFacts,
+            scopedNoAliasMetadataBase,
             sink,
             index);
         index = index + 1;
@@ -613,6 +617,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparat
     u32[0 max] firstInstr,
     u32[0 max] instrCount,
     u32[0 max] loopMetadataBase,
+    u32[0 max] scopedNoAliasMetadataBase,
     mut borrow OwnedAscii sink)
 {
     try sink.AppendConstAscii("b");
@@ -639,6 +644,8 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparat
             functionReturnFacts,
             enumLayoutFacts,
             rangeMetadata,
+            separateStorageFacts,
+            scopedNoAliasMetadataBase,
             sink,
             index);
         index = index + 1;

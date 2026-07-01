@@ -404,6 +404,18 @@ public finite law ascii MirOpName(MirOp op)
             return "const-int";
         case MirOp.Param:
             return "param";
+        case MirOp.SliceParamBase:
+            return "slice-param-base";
+        case MirOp.SliceParamLength:
+            return "slice-param-length";
+        case MirOp.SliceValue:
+            return "slice-value";
+        case MirOp.FixedArrayParamElement:
+            return "fixed-array-param-element";
+        case MirOp.FixedArrayParamSlot:
+            return "fixed-array-param-slot";
+        case MirOp.FixedArrayLoad:
+            return "fixed-array-load";
         case MirOp.Add:
             return "add";
         case MirOp.Sub:
@@ -464,6 +476,8 @@ public finite law ascii MirOpName(MirOp op)
             return "ptr-offset";
         case MirOp.PtrIndexOffset:
             return "ptr-index-offset";
+        case MirOp.PtrIndexOffsetUnbounded:
+            return "ptr-index-offset-unbounded";
         case MirOp.LoadPtr:
             return "load-ptr";
         case MirOp.StorePtr:

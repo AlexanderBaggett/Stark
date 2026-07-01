@@ -32,6 +32,16 @@ internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmFixedArrayTypeName(MirType elementType, u32[0 max] length, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("[");
+    try sink.AppendU64((u64[0 max])length);
+    try sink.AppendConstAscii(" x ");
+    try EmitLlvmTypeName(elementType, sink);
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
 // Appends the LLVM block-label reference (`%bN`) for the block at 1-based `index`.
 internal fn MemoryStatus EmitLlvmBlockRef(mut borrow OwnedAscii sink, u32[0 max] index)
 {

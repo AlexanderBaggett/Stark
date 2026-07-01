@@ -2,8 +2,10 @@ import Compiler.Ir
 import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.TargetFacts
+import Compiler.Mir.Builder
 import Compiler.Mir.Facts
 import Compiler.Mir.LlvmFacts
+import Compiler.Mir.Model
 import Compiler.Mir.SourceExpressions
 import Compiler.Mir.SourceLocalLowering
 import Compiler.Mir.SourceRangeFacts
@@ -101,7 +103,52 @@ internal fn void SeedSignatureParamsFromParsed(borrow TokenStream stream, borrow
         stack u32[0 max] token = signature.ParamNameAt(i);
         if (token != 0)
         {
-            stack u32[0 max] index = ResolveParam(params, source, stream.StartAt((u64[0 2 ** 63 - 1])token), stream.LengthAt((u64[0 2 ** 63 - 1])token));
+            stack mut MirType elementType = MirType.I64;
+            stack mut u32[0 max] elementSize = 0;
+            stack mut u32[0 max] elementAlignment = 0;
+            stack mut u32[0 max] fieldTypeCode = 0;
+            stack mut bool rawPointerMutable = false;
+            stack bool hasRawPointerFacts = TryReadRawPointerScalarElementFacts(stream, source, signature.ParamTypeTokenAt(i), elementType, elementSize, elementAlignment, fieldTypeCode, rawPointerMutable);
+            if (hasRawPointerFacts)
+            {
+                stack mut bool hasElementCount = false;
+                stack mut bool elementCountIsParam = false;
+                stack mut u32[0 max] elementCountLiteral = 0;
+                stack mut u32[0 max] elementCountParamIndex = 0;
+                if (!TryReadRawPointerElementCountFacts(
+                    stream,
+                    source,
+                    signature,
+                    signature.ParamTypeTokenAt(i),
+                    hasElementCount,
+                    elementCountIsParam,
+                    elementCountLiteral,
+                    elementCountParamIndex))
+                {
+                    hasElementCount = false;
+                    elementCountIsParam = false;
+                    elementCountLiteral = 0;
+                    elementCountParamIndex = 0;
+                }
+
+                stack u32[0 max] index = ResolveParamWithRawPointerElementAndCountFacts(
+                    params,
+                    source,
+                    stream.StartAt((u64[0 2 ** 63 - 1])token),
+                    stream.LengthAt((u64[0 2 ** 63 - 1])token),
+                    rawPointerMutable,
+                    fieldTypeCode,
+                    elementSize,
+                    elementAlignment,
+                    hasElementCount,
+                    elementCountIsParam,
+                    elementCountLiteral,
+                    elementCountParamIndex);
+            }
+            else
+            {
+                stack u32[0 max] index = ResolveParam(params, source, stream.StartAt((u64[0 2 ** 63 - 1])token), stream.LengthAt((u64[0 2 ** 63 - 1])token));
+            }
         }
 
         i = i + 1;
@@ -189,6 +236,202 @@ internal fn bool TopLevelParamSpanContainsKind(borrow TokenStream stream, u32[0 
     return false;
 }
 
+internal fn bool IsRawPointerElementQualifier(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Const:
+            return true;
+        case TokenKind.Frozen:
+            return true;
+        case TokenKind.Shared:
+            return true;
+        case TokenKind.Mut:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TryReadRawPointerScalarElementFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out MirType elementType,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out u32[0 max] fieldTypeCode,
+    out bool rawPointerMutable)
+{
+    elementType = MirType.I64;
+    elementSize = 0;
+    elementAlignment = 0;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    rawPointerMutable = false;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind != TokenKind.Rawptr && kind != TokenKind.Rawmutptr)
+    {
+        return false;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])(typeToken + 1)) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elementToken = typeToken + 2;
+    while willexit (IsRawPointerElementQualifier(stream.KindAt((u64[0 2 ** 63 - 1])elementToken)))
+    {
+        elementToken = elementToken + 1;
+    }
+
+    stack mut MirType resolvedElementType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarTypeHead(stream, source, elementToken, resolvedElementType))
+    {
+        return false;
+    }
+
+    stack u32[0 max] resolvedElementSize = ScalarTypeKnownByteExtent(stream, source, elementToken);
+    stack u32[0 max] resolvedElementAlignment = BuiltinTypeKnownByteAlignment(stream, source, elementToken);
+    stack u32[0 max] resolvedFieldTypeCode = SourceResolvedFieldTypeCodeForMirType(resolvedElementType);
+    if (resolvedElementSize == 0
+        || resolvedElementAlignment == 0
+        || resolvedFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    elementType = resolvedElementType;
+    elementSize = resolvedElementSize;
+    elementAlignment = resolvedElementAlignment;
+    fieldTypeCode = resolvedFieldTypeCode;
+    rawPointerMutable = kind == TokenKind.Rawmutptr;
+    return true;
+}
+
+internal fn u32[0 max] RawPointerTypeEndToken(
+    borrow TokenStream stream,
+    u32[0 max] typeToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.Rawptr
+        && stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.Rawmutptr)
+    {
+        return 0;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])(typeToken + 1)) != TokenKind.Lt)
+    {
+        return 0;
+    }
+
+    stack mut u32[0 max] elementToken = typeToken + 2;
+    while willexit (IsRawPointerElementQualifier(stream.KindAt((u64[0 2 ** 63 - 1])elementToken)))
+    {
+        elementToken = elementToken + 1;
+    }
+
+    stack mut u32[0 max] afterElement = elementToken + 1;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])elementToken) == TokenKind.IntegerType
+        && stream.KindAt((u64[0 2 ** 63 - 1])afterElement) == TokenKind.LBrack)
+    {
+        stack u32[0 max] rangeClose = MatchingBracketForMirLowering(stream, afterElement);
+        if (rangeClose == afterElement)
+        {
+            return 0;
+        }
+
+        afterElement = rangeClose + 1;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])afterElement) != TokenKind.Gt)
+    {
+        return 0;
+    }
+
+    return afterElement + 1;
+}
+
+internal fn bool TryFindSignatureParamIndexByNameToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] nameToken,
+    out u32[0 max] paramIndex)
+{
+    paramIndex = 0;
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] current = signature.ParamNameAt(i);
+        if (current != 0 && TokenTextEqualsToken(stream, source, current, nameToken))
+        {
+            paramIndex = (u32[0 max])i;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryReadRawPointerElementCountFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] typeToken,
+    out bool hasElementCount,
+    out bool elementCountIsParam,
+    out u32[0 max] elementCountLiteral,
+    out u32[0 max] elementCountParamIndex)
+{
+    hasElementCount = false;
+    elementCountIsParam = false;
+    elementCountLiteral = 0;
+    elementCountParamIndex = 0;
+
+    stack u32[0 max] afterRawPointerType = RawPointerTypeEndToken(stream, typeToken);
+    if (afterRawPointerType == 0
+        || stream.KindAt((u64[0 2 ** 63 - 1])afterRawPointerType) != TokenKind.LBrack)
+    {
+        return true;
+    }
+
+    stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, afterRawPointerType);
+    if (closeBracket != afterRawPointerType + 2)
+    {
+        return true;
+    }
+
+    stack u32[0 max] countToken = afterRawPointerType + 1;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])countToken) == TokenKind.IntegerLiteral)
+    {
+        stack mut u32[0 max] literal = 0;
+        if (!TryReadNonNegativeIntegerToken(stream, source, (u64[0 2 ** 63 - 1])countToken, literal))
+        {
+            return true;
+        }
+
+        hasElementCount = true;
+        elementCountLiteral = literal;
+        return true;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])countToken) == TokenKind.Identifier)
+    {
+        stack mut u32[0 max] countParamIndex = 0;
+        if (TryFindSignatureParamIndexByNameToken(stream, source, signature, countToken, countParamIndex))
+        {
+            hasElementCount = true;
+            elementCountIsParam = true;
+            elementCountParamIndex = countParamIndex;
+        }
+    }
+
+    return true;
+}
+
 internal fn bool SignatureParamHasDeadOnReturnContract(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -233,8 +476,67 @@ internal fn ParamAbiFacts ClassifySignatureParamAbi(
     stack bool hasRawPtr = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Rawptr)
         || TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Rawmutptr);
     stack bool hasMut = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Mut);
+    stack bool hasSlice = TryReadSliceSuffix(stream, signature.ParamTypeTokenAt(paramIndex));
+    stack mut u32[0 max] fixedArrayLength = 0;
+    stack bool hasFixedArray = TryReadFixedArrayLengthSuffix(stream, source, signature.ParamTypeTokenAt(paramIndex), fixedArrayLength);
 
-    if (hasRetborrow)
+    if (hasSlice)
+    {
+        stack mut MirType elementType = MirType.I64;
+        if (!MirTypeForKnownSourceScalarTypeHead(stream, source, signature.ParamTypeTokenAt(paramIndex), elementType))
+        {
+            return facts;
+        }
+
+        stack u32[0 max] elementSize = ScalarTypeKnownByteExtent(stream, source, signature.ParamTypeTokenAt(paramIndex));
+        stack u32[0 max] elementAlignment = BuiltinTypeKnownByteAlignment(stream, source, signature.ParamTypeTokenAt(paramIndex));
+        stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+        if (elementSize == 0 || elementAlignment == 0 || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return facts;
+        }
+
+        facts.IsSlice = true;
+        facts.SliceElementType = elementType;
+        facts.SliceElementSize = elementSize;
+        facts.SliceElementAlignment = elementAlignment;
+        facts.SliceFieldTypeCode = fieldTypeCode;
+        if (!hasMut)
+        {
+            facts.ReadOnly = true;
+        }
+        else
+        {
+            facts.Writable = true;
+        }
+    }
+    else if (hasFixedArray)
+    {
+        stack mut MirType elementType = MirType.I64;
+        if (!MirTypeForKnownSourceScalarTypeHead(stream, source, signature.ParamTypeTokenAt(paramIndex), elementType))
+        {
+            return facts;
+        }
+
+        stack u32[0 max] elementSize = ScalarTypeKnownByteExtent(stream, source, signature.ParamTypeTokenAt(paramIndex));
+        stack u32[0 max] arrayAlignment = TypeKnownByteAlignment(stream, source, signature.ParamTypeTokenAt(paramIndex));
+        stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+        if (fixedArrayLength == 0
+            || elementSize == 0
+            || arrayAlignment == 0
+            || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+        {
+            return facts;
+        }
+
+        facts.IsFixedArray = true;
+        facts.FixedArrayElementType = elementType;
+        facts.FixedArrayElementSize = elementSize;
+        facts.FixedArrayAlignment = arrayAlignment;
+        facts.FixedArrayLength = fixedArrayLength;
+        facts.FixedArrayFieldTypeCode = fieldTypeCode;
+    }
+    else if (hasRetborrow)
     {
         facts.IsPointer = true;
         if (hasMut)
@@ -280,6 +582,27 @@ internal fn ParamAbiFacts ClassifySignatureParamAbi(
     else if (hasRawPtr)
     {
         facts.IsPointer = true;
+        stack mut MirType elementType = MirType.I64;
+        stack mut u32[0 max] elementSize = 0;
+        stack mut u32[0 max] elementAlignment = 0;
+        stack mut u32[0 max] fieldTypeCode = 0;
+        stack mut bool rawPointerMutable = false;
+        if (TryReadRawPointerScalarElementFacts(stream, source, signature.ParamTypeTokenAt(paramIndex), elementType, elementSize, elementAlignment, fieldTypeCode, rawPointerMutable))
+        {
+            facts.RawPointerElementType = elementType;
+            facts.RawPointerElementSize = elementSize;
+            facts.RawPointerElementAlignment = elementAlignment;
+            facts.RawPointerFieldTypeCode = fieldTypeCode;
+            facts.RawPointerMutable = rawPointerMutable;
+            if (rawPointerMutable)
+            {
+                facts.Writable = true;
+            }
+            else
+            {
+                facts.ReadOnly = true;
+            }
+        }
     }
 
     if (SignatureParamHasDeadOnReturnContract(stream, source, signature, paramIndex))
@@ -309,7 +632,7 @@ internal fn bool DeadOnReturnContractsNamePointerParams(
             if (TokenTextEqualsToken(stream, source, signature.ParamNameAt(p), contractName))
             {
                 found = true;
-                if (!AbiFactAt(paramAbiFacts, (u32[0 max])(p + 1)).IsPointer)
+                if (!ParamAbiFactsIsMemoryBacked(AbiFactAt(paramAbiFacts, (u32[0 max])(p + 1))))
                 {
                     return false;
                 }
@@ -340,7 +663,7 @@ internal fn bool BuildParamAbiFacts(
     while willexit (i < count)
     {
         stack ParamAbiFacts facts = ClassifySignatureParamAbi(stream, source, signature, i);
-        if (facts.DeadOnReturn && !facts.IsPointer)
+        if (facts.DeadOnReturn && !ParamAbiFactsIsMemoryBacked(facts))
         {
             return false;
         }
@@ -929,11 +1252,18 @@ internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
-            return AbiFactAt(paramAbiFacts, node.Left + 1).IsPointer;
+            return ParamAbiFactsIsMemoryBacked(AbiFactAt(paramAbiFacts, node.Left + 1));
         case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
+        case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
             return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
                 || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
@@ -978,24 +1308,199 @@ internal fn bool ExpressionTableUsesPointerParams(borrow IrTable<ExprNode> nodes
     return false;
 }
 
+internal fn bool ExprNodeTakesAddressOfScalarParam(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] id,
+    u32[0 max] paramIndex)
+{
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
+            if (nodes.Contains(node.Left))
+            {
+                stack ExprNode operand = nodes.Get(node.Left);
+                if (operand.Kind == Compiler.Mir.SourceExpressions.ExprKind.NameExpr
+                    && operand.Left == paramIndex
+                    && localTypes.Contains(paramIndex + 1))
+                {
+                    stack u32[0 max] typeCode = localTypes.Get(paramIndex + 1);
+                    return typeCode == SourceLocalTypeCodeBool()
+                        || SourceLocalTypeCodeIsIntegerValue(typeCode);
+                }
+            }
+
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex)
+                || ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex)
+                || ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            stack mut u32[0 max] argIndex = 0;
+            while willexit ((i64[min max])argIndex < node.Imm)
+            {
+                stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, argIndex);
+                if (ExprNodeTakesAddressOfScalarParam(nodes, localTypes, argNode, paramIndex))
+                {
+                    return true;
+                }
+
+                argIndex = argIndex + 1;
+            }
+
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.FixedArrayParamElementExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
+            return ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Left, paramIndex)
+                || ExprNodeTakesAddressOfScalarParam(nodes, localTypes, node.Right, paramIndex);
+        default:
+            return false;
+    }
+}
+
+internal fn bool ExpressionTableTakesAddressOfScalarParam(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramIndex)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (ExprNodeTakesAddressOfScalarParam(nodes, localTypes, (u32[0 max])(i + 1), paramIndex))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryStoredScalarLocalTypeCodeForSignatureParam(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex,
+    out u32[0 max] typeCode)
+{
+    typeCode = SourceLocalTypeCodeNonValue();
+    stack mut MirType paramType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarType(stream, source, signature.ParamTypeTokenAt(paramIndex), paramType))
+    {
+        return false;
+    }
+
+    stack u32[0 max] resolvedTypeCode = SourceLocalStoredScalarTypeCodeForMirType(paramType);
+    typeCode = resolvedTypeCode;
+    return SourceLocalTypeCodeIsStoredScalar(resolvedTypeCode);
+}
+
+internal fn bool BuildLoweringLocalTypesWithAddressableScalarParams(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> localTypes,
+    mut borrow IrTable<u32[0 max]> loweringLocalTypes)
+{
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    stack u64[0 2 ** 63 - 1] count = localTypes.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack mut u32[0 max] typeCode = localTypes.Get((u32[0 max])(i + 1));
+        if (i < paramCount && ExpressionTableTakesAddressOfScalarParam(nodes, localTypes, (u32[0 max])i))
+        {
+            if (!TryStoredScalarLocalTypeCodeForSignatureParam(stream, source, signature, i, typeCode))
+            {
+                return false;
+            }
+        }
+
+        if (loweringLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn u32[0 max] LocalTypeCodeForScalarTypeToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (kind != TokenKind.IntegerType)
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    stack u32[0 max] bits = IntegerTypeBitWidth(stream, source, typeToken);
+    switch (bits)
+    {
+        case 8:
+            return SourceLocalTypeCodeI8();
+        case 16:
+            return SourceLocalTypeCodeI16();
+        case 32:
+            return SourceLocalTypeCodeI32();
+        case 64:
+            return SourceLocalTypeCodeI64();
+        default:
+            return SourceLocalTypeCodeInt();
+    }
+}
+
 internal fn u32[0 max] LocalTypeCodeForSignatureParam(
     borrow TokenStream stream,
+    borrow i8[min max][] source,
     borrow Compiler.Parsing.FunctionSignature signature,
     borrow IrTable<ParamAbiFacts> paramAbiFacts,
     u64[0 2 ** 63 - 1] paramIndex)
 {
     stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(paramIndex + 1));
+    if (facts.IsSlice)
+    {
+        return SourceLocalTypeCodeSlice();
+    }
+
+    if (facts.IsFixedArray)
+    {
+        return SourceLocalTypeCodeFixedArrayParam();
+    }
+
     if (facts.IsPointer)
     {
         return SourceLocalTypeCodePointer();
     }
 
-    if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Bool)
-    {
-        return SourceLocalTypeCodeBool();
-    }
-
-    return SourceLocalTypeCodeInt();
+    return LocalTypeCodeForScalarTypeToken(stream, source, signature.ParamTypeTokenAt(paramIndex));
 }
 
 internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
@@ -1041,14 +1546,19 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
     u64[0 2 ** 63 - 1] paramIndex)
 {
     stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(paramIndex + 1));
+    if (facts.IsSlice)
+    {
+        return SourceLocalTypeCodeSlice();
+    }
+
+    if (facts.IsFixedArray)
+    {
+        return SourceLocalTypeCodeFixedArrayParam();
+    }
+
     if (facts.IsPointer)
     {
         return SourceLocalTypeCodePointer();
-    }
-
-    if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Bool)
-    {
-        return SourceLocalTypeCodeBool();
     }
 
     stack mut u32[0 max] ownerDeclarationIndex = 0;
@@ -1057,11 +1567,12 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
         return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(ownerDeclarationIndex);
     }
 
-    return SourceLocalTypeCodeInt();
+    return LocalTypeCodeForScalarTypeToken(stream, source, signature.ParamTypeTokenAt(paramIndex));
 }
 
 internal fn bool SeedParamLocalTypesFromSignature(
     borrow TokenStream stream,
+    borrow i8[min max][] source,
     borrow Compiler.Parsing.FunctionSignature signature,
     borrow IrTable<ParamAbiFacts> paramAbiFacts,
     u64[0 2 ** 63 - 1] paramCount,
@@ -1070,7 +1581,7 @@ internal fn bool SeedParamLocalTypesFromSignature(
     stack mut u64[0 2 ** 63 - 1] i = 0;
     while willexit (i < paramCount)
     {
-        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParam(stream, signature, paramAbiFacts, i));
+        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParam(stream, source, signature, paramAbiFacts, i));
         if (added == 0)
         {
             return false;
@@ -1106,19 +1617,263 @@ internal fn bool SeedParamLocalTypesFromSignatureWithDeclarations(
     return true;
 }
 
+internal fn bool TryBuildSignatureSliceParamDescriptor(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex,
+    out SourceSliceDescriptorLocal descriptor)
+{
+    descriptor = new();
+    stack u32[0 max] typeToken = signature.ParamTypeTokenAt(paramIndex);
+    stack u32[0 max] nameToken = signature.ParamNameAt(paramIndex);
+    if (typeToken == 0 || nameToken == 0 || !TryReadSliceSuffix(stream, typeToken))
+    {
+        return false;
+    }
+
+    stack mut MirType elementType = MirType.I64;
+    if (!MirTypeForKnownSourceScalarTypeHead(stream, source, typeToken, elementType))
+    {
+        return false;
+    }
+
+    stack u32[0 max] elementSize = ScalarTypeKnownByteExtent(stream, source, typeToken);
+    stack u32[0 max] elementAlignment = BuiltinTypeKnownByteAlignment(stream, source, typeToken);
+    stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+    if (elementSize == 0 || elementAlignment == 0 || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack u32[0 max] start = signature.ParamStartTokenAt(paramIndex);
+    descriptor.Start = stream.StartAt((u64[0 2 ** 63 - 1])nameToken);
+    descriptor.Length = stream.LengthAt((u64[0 2 ** 63 - 1])nameToken);
+    descriptor.Mutable = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Mut);
+    descriptor.ParamIndex = (u32[0 max])paramIndex;
+    descriptor.ReceiverParamIndex = (u32[0 max])paramIndex;
+    descriptor.BaseByteOffset = 0;
+    descriptor.ElementSize = elementSize;
+    descriptor.Alignment = elementAlignment;
+    descriptor.SliceLength = 0;
+    descriptor.ElementType = elementType;
+    descriptor.FieldTypeCode = fieldTypeCode;
+    return true;
+}
+
+internal fn bool TryBuildSignatureFixedArrayParamDescriptor(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    ParamAbiFacts facts,
+    u64[0 2 ** 63 - 1] paramIndex,
+    out SourceSliceDescriptorLocal descriptor)
+{
+    descriptor = new();
+    stack u32[0 max] typeToken = signature.ParamTypeTokenAt(paramIndex);
+    stack u32[0 max] nameToken = signature.ParamNameAt(paramIndex);
+    if (!facts.IsFixedArray
+        || typeToken == 0
+        || nameToken == 0
+        || facts.FixedArrayLength == 0
+        || facts.FixedArrayElementSize == 0
+        || facts.FixedArrayAlignment == 0
+        || facts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack u32[0 max] start = signature.ParamStartTokenAt(paramIndex);
+    descriptor.Start = stream.StartAt((u64[0 2 ** 63 - 1])nameToken);
+    descriptor.Length = stream.LengthAt((u64[0 2 ** 63 - 1])nameToken);
+    descriptor.Mutable = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Mut);
+    descriptor.ParamIndex = (u32[0 max])paramIndex;
+    descriptor.ReceiverParamIndex = (u32[0 max])paramIndex;
+    descriptor.BaseByteOffset = 0;
+    descriptor.ElementSize = facts.FixedArrayElementSize;
+    descriptor.Alignment = facts.FixedArrayAlignment;
+    descriptor.SliceLength = facts.FixedArrayLength;
+    descriptor.ElementType = facts.FixedArrayElementType;
+    descriptor.FieldTypeCode = facts.FixedArrayFieldTypeCode;
+    descriptor.IsFixedArrayParam = true;
+    return true;
+}
+
+internal fn bool AddSignatureSliceParamDescriptors(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(i + 1));
+        if (facts.IsSlice)
+        {
+            stack mut SourceSliceDescriptorLocal descriptor = new();
+            if (!TryBuildSignatureSliceParamDescriptor(stream, source, signature, i, descriptor))
+            {
+                return false;
+            }
+
+            if (sliceDescriptorLocals.Add(descriptor) == 0)
+            {
+                return false;
+            }
+        }
+        else if (facts.IsFixedArray)
+        {
+            stack mut SourceSliceDescriptorLocal descriptor = new();
+            if (!TryBuildSignatureFixedArrayParamDescriptor(stream, source, signature, facts, i, descriptor))
+            {
+                return false;
+            }
+
+            if (sliceDescriptorLocals.Add(descriptor) == 0)
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool SeedSignatureParamOverridesForLowering(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    mut borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamAbiFacts facts = AbiFactAt(paramAbiFacts, (u32[0 max])(i + 1));
+        if (facts.IsSlice)
+        {
+            stack MirValueId base = MirSliceParamBase(instrs, (u32[0 max])i);
+            stack MirValueId length = MirSliceParamLength(instrs, (u32[0 max])i);
+            if (length.Index() == 0 || localOverrides.Add(base.Index()) == 0)
+            {
+                return false;
+            }
+        }
+        else if (localTypes.Contains((u32[0 max])(i + 1))
+            && SourceLocalTypeCodeIsStoredScalar(localTypes.Get((u32[0 max])(i + 1))))
+        {
+            stack u32[0 max] typeToken = signature.ParamTypeTokenAt(i);
+            stack mut MirType paramType = MirType.I64;
+            if (!MirTypeForKnownSourceScalarType(stream, source, typeToken, paramType))
+            {
+                return false;
+            }
+
+            stack u32[0 max] sizeBytes = TypeKnownByteExtentForLocal(stream, source, typeToken);
+            stack u32[0 max] alignBytes = TypeKnownByteAlignment(stream, source, typeToken);
+            if (sizeBytes == 0 || alignBytes == 0)
+            {
+                return false;
+            }
+
+            stack MirValueId slot = MirStackAlloc(instrs, sizeBytes, alignBytes);
+            stack MirValueId value = MirParamTyped(instrs, paramType, (u32[0 max])i);
+            stack MirValueId store = MirStorePtrAlignedTyped(instrs, paramType, slot, value, alignBytes);
+            if (slot.Index() == 0 || store.Index() == 0 || localOverrides.Add(slot.Index()) == 0)
+            {
+                return false;
+            }
+        }
+        else if (localOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
 // True iff every CALL node in the AST is well-formed against the module: (1) its callee
 // resolved to a defined function (a non-0 1-based id — a 0 would emit an invalid `@f0`);
 // (2) its argument count matches the callee's declared parameter count; (3) each argument
-// matches the callee's scalar-or-pointer ABI shape; and (4) memory-backed arguments satisfy
-// the callee's required distinct-storage contract. `funcParamCounts` is indexed by 1-based
-// id. `localTypes` records each name index's type (1 = boolean, 3 = pointer), so a boolean
-// local passed as an integer argument and a scalar local passed as a pointer are caught.
-internal fn bool ValidateCallArgumentType(
+// matches the callee's scalar, pointer, or concrete-slice ABI shape; and (4) memory-backed
+// arguments satisfy the callee's required distinct-storage contract.
+internal fn bool SliceDescriptorMatchesParamAbi(SourceSliceDescriptorLocal descriptor, ParamAbiFacts expected)
+{
+    return expected.IsSlice
+        && descriptor.ElementType == expected.SliceElementType
+        && descriptor.ElementSize == expected.SliceElementSize
+        && descriptor.Alignment == expected.SliceElementAlignment
+        && descriptor.FieldTypeCode == expected.SliceFieldTypeCode;
+}
+
+internal fn bool SliceDescriptorMatchesFixedArrayParamAbi(SourceSliceDescriptorLocal descriptor, ParamAbiFacts expected)
+{
+    return expected.IsFixedArray
+        && descriptor.ParamIndex == descriptor.ReceiverParamIndex
+        && descriptor.BaseByteOffset == 0
+        && descriptor.SliceLength == expected.FixedArrayLength
+        && descriptor.ElementType == expected.FixedArrayElementType
+        && descriptor.ElementSize == expected.FixedArrayElementSize
+        && descriptor.Alignment == expected.FixedArrayAlignment
+        && descriptor.FieldTypeCode == expected.FixedArrayFieldTypeCode;
+}
+
+internal fn bool ValidateCallArgumentTypeWithSlices(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     u32[0 max] argNode,
     ParamAbiFacts expected)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals)
 {
+    if (expected.IsSlice)
+    {
+        if (!nodes.Contains(argNode))
+        {
+            return false;
+        }
+
+        stack ExprNode arg = nodes.Get(argNode);
+        if (arg.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr)
+        {
+            return false;
+        }
+
+        stack mut SourceSliceDescriptorLocal descriptor = new();
+        return TryFindSourceSliceDescriptorLocalByParamIndex(sliceDescriptorLocals, arg.Left, descriptor)
+            && SliceDescriptorMatchesParamAbi(descriptor, expected);
+    }
+
+    if (expected.IsFixedArray)
+    {
+        if (!nodes.Contains(argNode))
+        {
+            return false;
+        }
+
+        stack ExprNode arg = nodes.Get(argNode);
+        if (arg.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr)
+        {
+            return false;
+        }
+
+        stack mut SourceSliceDescriptorLocal descriptor = new();
+        return TryFindSourceSliceDescriptorLocalByParamIndex(sliceDescriptorLocals, arg.Left, descriptor)
+            && SliceDescriptorMatchesFixedArrayParamAbi(descriptor, expected);
+    }
+
     stack ExprType actual = TypeOfNodeWithLocals(nodes, argNode, localTypes);
     if (expected.IsPointer)
     {
@@ -1128,11 +1883,14 @@ internal fn bool ValidateCallArgumentType(
     return actual == ExprType.IntType;
 }
 
-internal fn bool ValidateCallArgumentTypesForNode(
+internal fn bool ValidateCallArgumentTypesForNodeWithSlices(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     ExprNode node,
     FunctionCallContractFacts calleeFacts)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals)
 {
     if (node.Imm < 0)
     {
@@ -1143,7 +1901,7 @@ internal fn bool ValidateCallArgumentTypesForNode(
     while willexit ((i64[min max])argIndex < node.Imm)
     {
         stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, argIndex);
-        if (argNode == 0 || !ValidateCallArgumentType(nodes, localTypes, argNode, FunctionCallContractParamAbi(calleeFacts, argIndex)))
+        if (argNode == 0 || !ValidateCallArgumentTypeWithSlices(nodes, localTypes, sliceDescriptorLocals, argNode, FunctionCallContractParamAbi(calleeFacts, argIndex)))
         {
             return false;
         }
@@ -1154,11 +1912,14 @@ internal fn bool ValidateCallArgumentTypesForNode(
     return true;
 }
 
-internal fn bool TryReadDirectPointerParamArgument(
+internal fn bool TryReadDirectMemoryBackedParamArgument(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     u32[0 max] argNode,
     out u32[0 max] paramIndex)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals)
 {
     paramIndex = 0;
     if (!nodes.Contains(argNode))
@@ -1172,21 +1933,32 @@ internal fn bool TryReadDirectPointerParamArgument(
         return false;
     }
 
-    if (!localTypes.Contains(arg.Left + 1) || localTypes.Get(arg.Left + 1) != 3)
+    if (localTypes.Contains(arg.Left + 1) && localTypes.Get(arg.Left + 1) == SourceLocalTypeCodePointer())
     {
-        return false;
+        paramIndex = arg.Left;
+        return true;
     }
 
-    paramIndex = arg.Left;
-    return true;
+    stack mut SourceSliceDescriptorLocal descriptor = new();
+    if (TryFindSourceSliceDescriptorLocalByParamIndex(sliceDescriptorLocals, arg.Left, descriptor))
+    {
+        paramIndex = descriptor.ParamIndex;
+        return true;
+    }
+
+    return false;
 }
 
-internal fn bool ValidateCallDistinctStorageArguments(
+internal fn bool ValidateCallDistinctStorageArgumentsWithSlices(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
     ExprNode callNode,
     FunctionCallContractFacts calleeFacts)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals),
+          overlap(sliceDescriptorLocals, callerDistinctStorageFacts)
 {
     stack mut u32[0 max] i = 0;
     while willexit (i < calleeFacts.DistinctCount)
@@ -1196,8 +1968,8 @@ internal fn bool ValidateCallDistinctStorageArguments(
         stack u32[0 max] rightArgNode = CallArgumentNodeAt(nodes, callNode, pair.RightParam);
         stack mut u32[0 max] leftParam = 0;
         stack mut u32[0 max] rightParam = 0;
-        if (!TryReadDirectPointerParamArgument(nodes, localTypes, leftArgNode, leftParam)
-            || !TryReadDirectPointerParamArgument(nodes, localTypes, rightArgNode, rightParam)
+        if (!TryReadDirectMemoryBackedParamArgument(nodes, localTypes, sliceDescriptorLocals, leftArgNode, leftParam)
+            || !TryReadDirectMemoryBackedParamArgument(nodes, localTypes, sliceDescriptorLocals, rightArgNode, rightParam)
             || !DistinctStoragePairExists(callerDistinctStorageFacts, leftParam, rightParam))
         {
             return false;
@@ -1209,12 +1981,18 @@ internal fn bool ValidateCallDistinctStorageArguments(
     return true;
 }
 
-internal fn bool ValidateModuleCalls(
+internal fn bool ValidateModuleCallsWithSlices(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(funcParamCounts, sliceDescriptorLocals),
+          overlap(functionCallContractFacts, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals),
+          overlap(callerDistinctStorageFacts, sliceDescriptorLocals)
 {
     stack u64[0 2 ** 63 - 1] count = nodes.Count();
     stack mut u64[0 2 ** 63 - 1] i = 0;
@@ -1234,12 +2012,12 @@ internal fn bool ValidateModuleCalls(
             }
 
             stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
-            if (!ValidateCallArgumentTypesForNode(nodes, localTypes, node, calleeFacts))
+            if (!ValidateCallArgumentTypesForNodeWithSlices(nodes, localTypes, sliceDescriptorLocals, node, calleeFacts))
             {
                 return false;
             }
 
-            if (!ValidateCallDistinctStorageArguments(nodes, localTypes, callerDistinctStorageFacts, node, calleeFacts))
+            if (!ValidateCallDistinctStorageArgumentsWithSlices(nodes, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts, node, calleeFacts))
             {
                 return false;
             }
@@ -1251,13 +2029,30 @@ internal fn bool ValidateModuleCalls(
     return true;
 }
 
-internal fn bool ValidateModuleCallNode(
+internal fn bool ValidateModuleCalls(
     borrow IrTable<ExprNode> nodes,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ValidateModuleCallsWithSlices(nodes, funcParamCounts, functionCallContractFacts, localTypes, noSliceDescriptorLocals, callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateModuleCallNodeWithSlices(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
     ExprNode node)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(funcParamCounts, sliceDescriptorLocals),
+          overlap(functionCallContractFacts, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals),
+          overlap(callerDistinctStorageFacts, sliceDescriptorLocals)
 {
     if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.CallExpr)
     {
@@ -1275,21 +2070,39 @@ internal fn bool ValidateModuleCallNode(
     }
 
     stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, node.Left);
-    if (!ValidateCallArgumentTypesForNode(nodes, localTypes, node, calleeFacts))
+    if (!ValidateCallArgumentTypesForNodeWithSlices(nodes, localTypes, sliceDescriptorLocals, node, calleeFacts))
     {
         return false;
     }
 
-    return ValidateCallDistinctStorageArguments(nodes, localTypes, callerDistinctStorageFacts, node, calleeFacts);
+    return ValidateCallDistinctStorageArgumentsWithSlices(nodes, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts, node, calleeFacts);
 }
 
-internal fn bool ValidateModuleCallsForRoot(
+internal fn bool ValidateModuleCallNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
+    ExprNode node)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ValidateModuleCallNodeWithSlices(nodes, funcParamCounts, functionCallContractFacts, localTypes, noSliceDescriptorLocals, callerDistinctStorageFacts, node);
+}
+
+internal fn bool ValidateModuleCallsForRootWithSlices(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] root,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+    where overlap(nodes, sliceDescriptorLocals),
+          overlap(funcParamCounts, sliceDescriptorLocals),
+          overlap(functionCallContractFacts, sliceDescriptorLocals),
+          overlap(localTypes, sliceDescriptorLocals),
+          overlap(callerDistinctStorageFacts, sliceDescriptorLocals)
 {
     if (!nodes.Contains(root))
     {
@@ -1297,7 +2110,7 @@ internal fn bool ValidateModuleCallsForRoot(
     }
 
     stack ExprNode node = nodes.Get(root);
-    if (!ValidateModuleCallNode(nodes, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts, node))
+    if (!ValidateModuleCallNodeWithSlices(nodes, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts, node))
     {
         return false;
     }
@@ -1313,24 +2126,33 @@ internal fn bool ValidateModuleCallsForRoot(
         case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
-            return ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.FixedArrayParamElementExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
-            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
-                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
-            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
-                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
-            return ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
-                && ValidateModuleCallsForRoot(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts);
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
+                && ValidateModuleCallsForRootWithSlices(nodes, node.Right, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
             stack mut u32[0 max] argIndex = 0;
             while willexit ((i64[min max])argIndex < node.Imm)
             {
                 stack u32[0 max] argNode = CallArgumentNodeAt(nodes, node, argIndex);
-                if (argNode == 0 || !ValidateModuleCallsForRoot(nodes, argNode, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+                if (argNode == 0 || !ValidateModuleCallsForRootWithSlices(nodes, argNode, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
                 {
                     return false;
                 }
@@ -1340,18 +2162,30 @@ internal fn bool ValidateModuleCallsForRoot(
 
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
-            if (node.Left != 0 && !ValidateModuleCallsForRoot(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            if (node.Left != 0 && !ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
             {
                 return false;
             }
 
-            if (node.ExtraArgLink != 0 && !ValidateModuleCallsForRoot(nodes, node.ExtraArgLink, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts))
+            if (node.ExtraArgLink != 0 && !ValidateModuleCallsForRootWithSlices(nodes, node.ExtraArgLink, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
             {
                 return false;
             }
 
             return true;
     }
+}
+
+internal fn bool ValidateModuleCallsForRoot(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] root,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ValidateModuleCallsForRootWithSlices(nodes, root, funcParamCounts, functionCallContractFacts, localTypes, noSliceDescriptorLocals, callerDistinctStorageFacts);
 }
 
 internal fn bool TailCallTargetIsTailCallable(borrow IrTable<ExprNode> nodes, u32[0 max] root, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<u32[0 max]> funcParamCounts, u32[0 max] callerParamCount)
