@@ -1555,6 +1555,27 @@ internal fn bool BuildMirValueRangeFactForInstruction(
             return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
         case MirOp.TailCallWide:
             return ImportFunctionReturnValueFactsForMirValue(valueFacts, value, functionReturnFacts, MirFuncIdOf((u32[0 max])instr.Immediate()));
+        case MirOp.LoadPtr:
+            // A pointer load may carry a declared integer range: operands C
+            // and D reference constants holding the declared lower bound and
+            // exclusive upper bound (see
+            // `MirLoadPtrAlignedTypedWithDeclaredRange`). Importing them here
+            // is what lets declared field ranges reach return-range validation
+            // and LLVM range metadata.
+            if (instr.OperandCIndex() != 0
+                && instr.OperandDIndex() != 0
+                && instrs.Contains(instr.OperandCIndex())
+                && instrs.Contains(instr.OperandDIndex()))
+            {
+                stack MirInstruction lowerConst = instrs.Get(instr.OperandCIndex());
+                stack MirInstruction upperConst = instrs.Get(instr.OperandDIndex());
+                if (lowerConst.Opcode() == MirOp.ConstInt && upperConst.Opcode() == MirOp.ConstInt)
+                {
+                    stack mut ValueFacts declaredFacts = new();
+                    declaredFacts.SetIntegerRange(lowerConst.Immediate(), upperConst.Immediate());
+                    return RecordGeneratedValueFactsForMirValue(valueFacts, value, declaredFacts);
+                }
+            }
         default:
     }
 

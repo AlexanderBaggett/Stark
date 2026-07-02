@@ -542,6 +542,91 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void OverlapAllContractsSuppressPairsAgainstTheNamedParameter()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[min max] SumWindows(borrow i64[min max][] common, borrow i64[min max][] left, borrow i64[min max][] right)
+                where overlap_all(common),
+                      overlap(left, right)
+            {
+                return common[0] + left[0] + right[0];
+            }
+
+            fn i64[min max] Caller(borrow i64[min max][] view)
+            {
+                return SumWindows(view, view, view);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var parameters = validation.Functions["SumWindows"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.False(parameters["common"].GuaranteedNoAlias);
+        Assert.False(parameters["left"].GuaranteedNoAlias);
+        Assert.False(parameters["right"].GuaranteedNoAlias);
+    }
+
+    [Fact]
+    public void OverlapAllOnlyCoversPairsThatIncludeTheNamedParameter()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[min max] SumWindows(borrow i64[min max][] common, borrow i64[min max][] left, borrow i64[min max][] right)
+                where overlap_all(common)
+            {
+                return common[0] + left[0] + right[0];
+            }
+
+            fn i64[min max] Caller(borrow i64[min max][] view)
+            {
+                return SumWindows(view, view, view);
+            }
+            """);
+
+        // common-vs-left and common-vs-right are covered; left-vs-right is not,
+        // so the default non-overlap obligation still fires for that pair.
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3030"
+            && diagnostic.Message.Contains("'left' and 'right'", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3030"
+            && diagnostic.Message.Contains("'common'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OverlapAllContractsValidateTheirTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[min max] BadName(borrow i64[min max][] data)
+                where overlap_all(missing)
+            {
+                return data[0];
+            }
+
+            fn i64[min max] BadType(i64[min max] scalar, borrow i64[min max][] data)
+                where overlap_all(scalar)
+            {
+                return data[0];
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3029"
+            && diagnostic.Message.Contains("does not name a parameter", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3029"
+            && diagnostic.Message.Contains("non-memory-backed type", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ConstParameterQualifierFlowsIntoSemanticReadonlyFacts()
     {
         var result = Compile(

@@ -1,0 +1,147 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.SourceMemberFacts
+module Compiler.Mir.SourceModuleFacts
+
+// The per-module source-lowering input bundle. Every fact table the source
+// lowering passes consume module-wide lives here: the parsed declaration
+// list, the typed enum payload and layout tables, the MIR enum layout facts,
+// and the prevalidated member-path facts with their dense member-name-token
+// index. The bundle is built once per module and travels through the lowering
+// recursion as one `borrow` parameter, so importing the next module-level
+// fact table is a one-field change here instead of an N-signature threading
+// change. This is the single sanctioned struct-of-tables at the source
+// lowering boundary; the tables themselves stay flat, and helpers below this
+// module keep individual-table parameters fed by field reads.
+public struct SourceModuleLoweringFacts
+{
+    DeclarationList Declarations;
+    TypedEnumPayloadTable EnumPayloads;
+    TypedEnumLayoutTable EnumLayouts;
+    IrTable<MirEnumLayoutFact> EnumLayoutFacts;
+    IrTable<u32[0 max]> MemberFactRowsByToken;
+    IrTable<SourceMemberPathFact> MemberPathFacts;
+
+    SourceModuleLoweringFacts()
+    {
+        self.Declarations = new();
+        self.EnumPayloads = new();
+        self.EnumLayouts = new();
+        self.EnumLayoutFacts = new();
+        self.MemberFactRowsByToken = new();
+        self.MemberPathFacts = new();
+    }
+}
+
+// Parses the module's declarations and builds the typed enum payload/layout
+// tables plus the MIR enum layout facts they lower to. Moved verbatim from
+// the module-lowering orchestrator so the bundle builder below can share it
+// with the standalone declaration probes.
+internal fn bool BuildSourceModuleEnumLayoutInputs(
+    ascii sourceText,
+    borrow TokenStream stream,
+    out DeclarationList declarations,
+    out TypedEnumPayloadTable enumPayloads,
+    out TypedEnumLayoutTable enumLayouts,
+    out IrTable<MirEnumLayoutFact> enumLayoutFacts)
+{
+    declarations = new();
+    enumPayloads = new();
+    enumLayouts = new();
+    enumLayoutFacts = new();
+
+    stack mut CompilationUnitHeader header = new();
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var parsedHeader):
+            header = parsedHeader;
+    }
+
+    stack mut DeclarationList parsedDeclarations = new();
+    switch (ParseDeclarations(stream, header.NextToken))
+    {
+        case ParseResult<DeclarationList>.Err(var declarationError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var builtDeclarations):
+            parsedDeclarations = builtDeclarations;
+    }
+
+    stack mut TypedEnumPayloadTable typedPayloads = new();
+    switch (BuildTypedEnumPayloads(sourceText, stream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
+            return false;
+        case ParseResult<TypedEnumPayloadTable>.Ok(var builtPayloads):
+            typedPayloads = builtPayloads;
+    }
+
+    stack mut TypedEnumLayoutTable typedLayouts = new();
+    switch (BuildTypedEnumLayouts(sourceText, stream, parsedDeclarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            typedLayouts = builtLayouts;
+    }
+
+    stack mut IrTable<MirEnumLayoutFact> mirLayoutFacts = new();
+    if (!BuildMirEnumLayoutFactsFromTypedLayouts(typedLayouts, mirLayoutFacts))
+    {
+        return false;
+    }
+
+    declarations = parsedDeclarations;
+    enumPayloads = typedPayloads;
+    enumLayouts = typedLayouts;
+    enumLayoutFacts = mirLayoutFacts;
+    return true;
+}
+
+// Builds the whole per-module lowering input bundle: enum layout inputs first
+// (declarations, typed payload/layout tables, MIR layout facts), then the
+// member-path facts joined to their member-name-token index. The effect
+// prepass and the main lowering pass both call this once per module, so the
+// two passes cannot drift apart on how the inputs are constructed and the
+// typed member table is built exactly once per pass.
+internal fn bool BuildSourceModuleLoweringFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    out SourceModuleLoweringFacts moduleFacts)
+    where overlap(sourceText, source)
+{
+    moduleFacts = new();
+
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumPayloadTable enumPayloads = new();
+    stack mut TypedEnumLayoutTable enumLayouts = new();
+    stack mut IrTable<MirEnumLayoutFact> enumLayoutFacts = new();
+    if (!BuildSourceModuleEnumLayoutInputs(sourceText, stream, declarations, enumPayloads, enumLayouts, enumLayoutFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> memberFactRowsByToken = new();
+    stack mut IrTable<SourceMemberPathFact> memberPathFacts = new();
+    if (!BuildSourceMemberPathFacts(sourceText, stream, source, declarations, memberFactRowsByToken, memberPathFacts))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts built = new();
+    built.Declarations = declarations;
+    built.EnumPayloads = enumPayloads;
+    built.EnumLayouts = enumLayouts;
+    built.EnumLayoutFacts = enumLayoutFacts;
+    built.MemberFactRowsByToken = memberFactRowsByToken;
+    built.MemberPathFacts = memberPathFacts;
+    moduleFacts = built;
+    return true;
+}

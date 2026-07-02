@@ -202,7 +202,18 @@ Diagnostics include `code`, `severity`, `message`, `stage`, and optional source
 location fields. Stark tests can assert adapted diagnostic data with
 `System.Testing.Diagnostic` and the finite-law `Diagnostic*` / `Diagnostics*`
 predicates; JSON parsing/adaptation remains a separate stdlib/test harness
-piece. Logs include stable compiler log metadata and sorted `data`.
+piece.
+
+Two location guarantees worth asserting against:
+
+- Diagnostics produced while checking an imported source module carry the
+  imported module's own file path in their location fields, not the root
+  compilation path. (Only the diagnostic funnels re-path; the syntax model's
+  `Location()` values keep stamping the root path because package-image
+  template records match by location.)
+- A duplicated parameter name in a function signature is an ordinary located
+  diagnostic (STK3057 naming the parameter and function; the first
+  declaration stays authoritative), never an STK9999 pass crash. Logs include stable compiler log metadata and sorted `data`.
 Executions include pass id, phase, status, duration, and diagnostics added.
 Requested output files are indented JSON except artifact text files, which
 contain the renderer output directly. Output write failures are reported in

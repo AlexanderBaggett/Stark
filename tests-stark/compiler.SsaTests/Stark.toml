@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "SsaTests.stark"
 output = "compiler-ssa-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

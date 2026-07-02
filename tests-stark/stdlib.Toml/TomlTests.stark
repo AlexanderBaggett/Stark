@@ -1540,12 +1540,6 @@ output = "selfhost-ir-tests"
 
 [dependencies]
 stark-compiler = { path = "../../selfhost" }
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 """))
         {
             case TomlResult<TomlDocument>.Err(var error):
@@ -1601,38 +1595,10 @@ opt = 3
                     return false;
                 }
 
-                stack mut u64[0 2 ** 63 - 1] profiles = 0;
-                if (!document.TryFindMemberOfKind(TomlRootNode, "profiles", TomlKind.Table, profiles))
-                {
-                    return false;
-                }
-
-                stack mut u64[0 2 ** 63 - 1] dev = 0;
-                if (!document.TryFindMemberOfKind(profiles, "dev", TomlKind.Table, dev))
-                {
-                    return false;
-                }
-
-                stack mut u64[0 2 ** 63 - 1] opt = 0;
-                if (!document.TryFindMember(dev, "opt", opt))
-                {
-                    return false;
-                }
-
-                stack mut i64[min max] optValue = -1;
-                switch (document.I64At(opt))
-                {
-                    case TomlResult<i64[min max]>.Err(var optError):
-                        return false;
-                    case TomlResult<i64[min max]>.Ok(var parsedOpt):
-                        optValue = parsedOpt;
-                }
-
                 return document.TextAt(name) == "selfhost-ir-tests"
                     && document.TextAt(kind) == "test"
                     && document.TextAt(root) == "IrTests.stark"
-                    && document.TextAt(path) == "../../selfhost"
-                    && optValue == 0;
+                    && document.TextAt(path) == "../../selfhost";
         }
     }
 }

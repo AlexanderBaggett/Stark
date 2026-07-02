@@ -7,7 +7,7 @@ import System.Memory
 import System.Text
 module Compiler.Mir.LlvmFacts
 
-internal fn ValueFacts FactAt(borrow IrTable<ValueFacts> facts, u32[0 max] index)
+internal finite law ValueFacts FactAt(borrow IrTable<ValueFacts> facts, u32[0 max] index)
 {
     return ValueFactsAtIndex(facts, index);
 }
@@ -1249,9 +1249,52 @@ internal fn MemoryStatus GetOrAddLlvmRangeMetadata(mut borrow IrTable<LlvmRangeM
     return MemoryStatus.Ok;
 }
 
+// True when the integer range fact spans the value type's whole width, which
+// LLVM range metadata cannot represent (lower would equal upper after
+// truncation). The fact itself stays valid for MIR-level validation; only the
+// metadata attachment is skipped.
+internal finite law bool LlvmRangeFactCoversFullTypeWidth(MirType type, ValueFacts facts)
+{
+    if (facts.IntegerRangeUpperExclusive() == (i64[min max])(-(2 ** 63)))
+    {
+        return false;
+    }
+
+    stack mut i64[min max] span = 0;
+    if (type == MirType.I1)
+    {
+        span = 2;
+    }
+    else if (type == MirType.I8)
+    {
+        span = 256;
+    }
+    else if (type == MirType.I16)
+    {
+        span = 65536;
+    }
+    else if (type == MirType.I32)
+    {
+        span = 4294967296;
+    }
+    else
+    {
+        // A 64-bit full span is not representable in i64 facts, and pointer
+        // values never carry integer ranges.
+        return false;
+    }
+
+    return facts.IntegerRangeUpperExclusive() - facts.IntegerRangeLower() >= span;
+}
+
 internal fn MemoryStatus EmitLlvmRangeMetadataAttachment(MirType type, ValueFacts facts, mut borrow IrTable<LlvmRangeMetadata> ranges, mut borrow OwnedAscii sink)
 {
     if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (LlvmRangeFactCoversFullTypeWidth(type, facts))
     {
         return MemoryStatus.Ok;
     }

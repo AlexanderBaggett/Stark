@@ -703,6 +703,11 @@ internal static class CompilerCli
         switch (effectiveMode)
         {
             case CliMode.Check:
+                if (!await ValidateSourceDependencyModulesForCheckAsync(stderr, result, compilerOptions, diagnosticFormat))
+                {
+                    return 1;
+                }
+
                 await stdout.WriteLineAsync("Check succeeded.");
                 return 0;
             case CliMode.EmitMir:
@@ -4046,6 +4051,89 @@ internal static class CompilerCli
             && module.Reference.ManifestPath is null
             && module.Reference.LibraryPath is null
             && module.PackageImageFacts is null;
+    }
+
+    /// <summary>
+    /// Check-mode parity with binary builds: imported source module bodies skip
+    /// checking inside the root pipeline because "their own compile as a root
+    /// module" is expected to validate them, and on executable/library builds
+    /// the per-dependency compiles do exactly that. A bare <c>--check</c> has no
+    /// such later compile, so this sweep runs each source-backed dependency
+    /// module through the same check pipeline as its own root. Modules are
+    /// validated independently and failures are aggregated across the whole
+    /// sweep, so one broken module does not hide the rest.
+    /// </summary>
+    private static async Task<bool> ValidateSourceDependencyModulesForCheckAsync(
+        TextWriter stderr,
+        CompilationResult rootResult,
+        CompilerOptions compilerOptions,
+        DiagnosticOutputFormat diagnosticFormat)
+    {
+        if (!rootResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
+            || loadedModules is null)
+        {
+            return true;
+        }
+
+        var sourceModules = new List<(string SourceText, string? FilePath)>();
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (!IsSourceBackedDependencyModule(module))
+            {
+                continue;
+            }
+
+            if (compilerOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
+                || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
+            {
+                if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
+                {
+                    continue;
+                }
+
+                sourceText = File.ReadAllText(module.Reference.FilePath);
+                sourceFilePath = module.Reference.FilePath;
+            }
+
+            sourceModules.Add((sourceText, sourceFilePath ?? module.Reference.FilePath));
+        }
+
+        // The per-module check runs only share the module resolver and the parse
+        // cache, both thread-safe, so modules validate in parallel exactly like
+        // the executable path's dependency compiles; diagnostics are collected
+        // per module and written sequentially afterwards.
+        var moduleResults = new CompilationResult[sourceModules.Count];
+        Parallel.For(
+            0,
+            sourceModules.Count,
+            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+            index =>
+            {
+                var modulePipeline = DefaultCompilerPipeline.Create();
+                moduleResults[index] = modulePipeline.Run(
+                    new CompilationInput(sourceModules[index].SourceText, sourceModules[index].FilePath),
+                    compilerOptions);
+            });
+
+        var succeeded = true;
+        for (var index = 0; index < sourceModules.Count; index++)
+        {
+            if (moduleResults[index].Succeeded)
+            {
+                continue;
+            }
+
+            await WriteDiagnosticsAsync(
+                stderr,
+                moduleResults[index].Diagnostics,
+                diagnosticFormat,
+                succeeded: false,
+                sourceModules[index].SourceText,
+                sourceModules[index].FilePath);
+            succeeded = false;
+        }
+
+        return succeeded;
     }
 
     private static NativeToolchainResult EmitDependencyObject(

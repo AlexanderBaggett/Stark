@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "FeatureTests.stark"
 output = "compiler-feature-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

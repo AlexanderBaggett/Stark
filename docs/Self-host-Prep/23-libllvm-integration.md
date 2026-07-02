@@ -140,7 +140,8 @@ the real architecture immediately.
 
 Add target/pass configuration through the C API:
 
-1. optimization level,
+1. pass pipeline configuration (always the full O3 pipeline; Stark has no
+   lower optimization levels),
 2. relocation model,
 3. code model,
 4. target CPU/features,

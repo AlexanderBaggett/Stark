@@ -162,6 +162,23 @@ fn bool IsSameBuffer(
 }
 ```
 
+When one parameter (a threaded context or fact table) may overlap every other
+memory-backed parameter, `where overlap_all(name)` replaces the N-clause
+pairwise list; it expands at type-check into the same pairwise
+`overlap(name, other)` facts, and pairs not involving `name` keep the default
+non-overlap:
+
+```stark
+fn void LowerExpr(
+    borrow u8[0 max][] source,
+    borrow u8[0 max][] valueFacts,
+    mut borrow u8[0 max][] output)
+    where overlap_all(valueFacts)
+{
+    return;
+}
+```
+
 Use `if disjoint(...)` when a function accepts overlap but can take a faster
 path when the actual regions are separate.
 

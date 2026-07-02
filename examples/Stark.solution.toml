@@ -81,9 +81,3 @@ miniaudio = "miniaudio"
 cgltf = "cgltf"
 glfw = "glfw"
 sdl3 = "sdl3"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

@@ -787,11 +787,9 @@ Goal: emitted LLVM becomes richer, more correct, and more competitive.
   - [x] compile-only vs link-only CLI modes
   - [x] explicit linker and archiver selection
   - [x] multi-object link orchestration tests
-- [x] optimization level controls
-  - [x] CLI optimization-level surface
-  - [x] pipeline behavior per optimization level
-  - [x] native toolchain flag forwarding
-  - [x] tests that optimization settings change tool invocation/output
+- [x] Obsolete: optimization level controls were removed in June 2026; the
+  compiler has a single always-optimized pipeline (all Stark SSA passes plus
+  clang -O3), and native toolchain flag forwarding is fixed to -O3
 - [x] debug info emission
   - [x] carry source spans through MIR and SSA
   - [x] emit line-table debug info

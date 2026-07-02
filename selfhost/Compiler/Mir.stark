@@ -48,6 +48,8 @@ export import Compiler.Mir.SourceRangeFacts
 export import Compiler.Mir.SourceSemanticProbes
 export import Compiler.Mir.SourceSymbols
 export import Compiler.Mir.SourceExpressions
+export import Compiler.Mir.SourceMemberFacts
+export import Compiler.Mir.SourceModuleFacts
 export import Compiler.Mir.SourceExpressionLowering
 export import Compiler.Mir.SourceLocalLowering
 export import Compiler.Mir.SourceFunctionContext

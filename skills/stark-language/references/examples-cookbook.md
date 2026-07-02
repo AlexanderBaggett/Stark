@@ -266,12 +266,6 @@ kind = "executable"
 [executable]
 root = "Demo.stark"
 output = "demo"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
 
 Do not add a `stdlib` dependency for `System.*` imports; project builds resolve

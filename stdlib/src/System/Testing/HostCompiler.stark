@@ -1113,7 +1113,7 @@ public unsafe fn HostResult<HostCompileOutcome> ValidateCompilerFixture(
 }
 
 // Single-request convenience that seeds the host's imported inline-clone closure
-// (PAINPOINTS #3 `importedInlineCloneSeedFunctions` field). Mirrors
+// (the `importedInlineCloneSeedFunctions` request field). Mirrors
 // CompileOnceArtifactInForTarget with no target pinning and one seed name.
 public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInWithSeed(
     ascii compilerPath,

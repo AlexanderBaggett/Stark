@@ -9,9 +9,3 @@ output = "selfhost-llvm-tests"
 
 [dependencies]
 stark-compiler = { path = "../../selfhost" }
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

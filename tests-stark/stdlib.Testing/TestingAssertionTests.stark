@@ -504,7 +504,7 @@ fn bool AllDistinctAcceptsSingleton()
     return System.Testing.AllDistinct(view);
 }
 
-// PAINPOINTS #1 — failure-diff text assertions. ContainsReport /
+// Failure-diff text assertions: ContainsReport /
 // DoesNotContainReport return the same booleans as Contains / DoesNotContain;
 // on a mismatch they additionally write a focused `[assert] text mismatch:`
 // report to stderr (the searched fragment + a leading window of the actual

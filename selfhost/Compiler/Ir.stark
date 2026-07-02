@@ -288,12 +288,12 @@ public struct IrTable<T>
     }
 
     // Borrows the row at the 1-based `index`; the caller must ensure `Contains`.
-    public law retborrow T Get(borrow IrTable<T> self, u32[0 max] index)
+    public finite law retborrow T Get(borrow IrTable<T> self, u32[0 max] index)
     {
         return self.Rows.Get((u64[0 2 ** 63 - 1])(index - 1));
     }
 
-    public fn bool Replace(mut borrow IrTable<T> self, u32[0 max] index, T row)
+    public finite bool Replace(mut borrow IrTable<T> self, u32[0 max] index, T row)
     {
         if (!self.Contains(index))
         {
@@ -475,7 +475,7 @@ public struct CAbiAggregateCarrierFacts
     }
 }
 
-public fn CAbiAggregateCarrierFacts CAbiAggregateCarrierFactsAtIndex(borrow IrTable<CAbiAggregateCarrierFacts> facts, u32[0 max] index)
+public finite law CAbiAggregateCarrierFacts CAbiAggregateCarrierFactsAtIndex(borrow IrTable<CAbiAggregateCarrierFacts> facts, u32[0 max] index)
 {
     stack mut CAbiAggregateCarrierFacts empty = new();
     if (facts.Contains(index))
@@ -672,7 +672,7 @@ public struct ValueFacts
 
 // Reads the fact row attached to a 1-based value index. Missing/invalid rows read as
 // empty facts so callers can stay branch-light in hot lowering/emission paths.
-public fn ValueFacts ValueFactsAtIndex(borrow IrTable<ValueFacts> facts, u32[0 max] index)
+public finite law ValueFacts ValueFactsAtIndex(borrow IrTable<ValueFacts> facts, u32[0 max] index)
 {
     stack mut ValueFacts empty = new();
     if (facts.Contains(index))
@@ -684,7 +684,7 @@ public fn ValueFacts ValueFactsAtIndex(borrow IrTable<ValueFacts> facts, u32[0 m
 }
 
 // Reads the fact row attached to a MIR value handle. Invalid handles read as empty.
-public fn ValueFacts ValueFactsForMirValue(borrow IrTable<ValueFacts> facts, MirValueId value)
+public finite law ValueFacts ValueFactsForMirValue(borrow IrTable<ValueFacts> facts, MirValueId value)
 {
     return ValueFactsAtIndex(facts, value.Index());
 }

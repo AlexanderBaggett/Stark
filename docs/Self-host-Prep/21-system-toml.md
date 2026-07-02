@@ -89,7 +89,6 @@ manifests produce domain-specific diagnostics:
 - missing target root
 - bad dependency inline table
 - bad native metadata shape
-- unknown profile optimization level
 - invalid solution defaults or aliases
 
 The manifest decoder should reject unknown fields only where the manifest schema

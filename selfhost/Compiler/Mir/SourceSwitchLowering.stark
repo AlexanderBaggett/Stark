@@ -12,6 +12,8 @@ import Compiler.Mir.SourceExpressionLowering
 import Compiler.Mir.SourceFunctionContext
 import Compiler.Mir.SourceIfLowering
 import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
@@ -114,8 +116,7 @@ internal fn bool TryGetEnumVariantOrdinalForToken(
 internal fn bool TryParseTerminalSwitchEnumCaseLabel(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] ownerDeclarationIndex,
     u64[0 2 ** 63 - 1] valueStart,
     out i64[min max] value,
@@ -123,12 +124,12 @@ internal fn bool TryParseTerminalSwitchEnumCaseLabel(
 {
     value = 0;
     nextToken = valueStart;
-    if ((u64[0 2 ** 63 - 1])ownerDeclarationIndex >= declarations.Count())
+    if ((u64[0 2 ** 63 - 1])ownerDeclarationIndex >= moduleFacts.Declarations.Count())
     {
         return false;
     }
 
-    stack DeclItem enumItem = declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
+    stack DeclItem enumItem = moduleFacts.Declarations.ItemAt((u64[0 2 ** 63 - 1])ownerDeclarationIndex);
     if (enumItem.Kind != DeclarationKind.Enum
         || enumItem.NameToken == 0
         || stream.KindAt(valueStart) != TokenKind.Identifier
@@ -147,9 +148,9 @@ internal fn bool TryParseTerminalSwitchEnumCaseLabel(
 
     stack mut u64[0 max] payloadCount = 0;
     stack mut u64[0 max] tagValue = 0;
-    if (!enumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount)
+    if (!moduleFacts.EnumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount)
         || payloadCount != 0
-        || !enumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+        || !moduleFacts.EnumLayouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
     {
         return false;
     }
@@ -162,7 +163,7 @@ internal fn bool TryParseTerminalSwitchEnumCaseLabel(
 internal fn bool TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] switchIndex,
     out u32[0 max] ownerDeclarationIndex)
 {
@@ -188,11 +189,11 @@ internal fn bool TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
         return false;
     }
 
-    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.Declarations.Count();
     stack mut u64[0 2 ** 63 - 1] index = 0;
     while willexit (index < count)
     {
-        stack DeclItem item = declarations.ItemAt(index);
+        stack DeclItem item = moduleFacts.Declarations.ItemAt(index);
         if (item.Kind == DeclarationKind.Enum
             && item.NameToken != 0
             && TokenTextEqualsToken(stream, source, (u32[0 max])(firstCase + 1), item.NameToken))
@@ -936,8 +937,7 @@ internal fn bool TryParseIntegerSwitchAssignmentCases(
 internal fn bool TryParseEnumSwitchAssignmentCases(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] ownerDeclarationIndex,
     mut borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<ParamName> params,
@@ -982,7 +982,7 @@ internal fn bool TryParseEnumSwitchAssignmentCases(
     {
         stack mut i64[min max] caseValue = 0;
         stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
-        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, declarations, enumLayouts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, moduleFacts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
             || TerminalSwitchCaseValueExists(caseValues, caseValue))
         {
@@ -1194,8 +1194,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] switchIndex,
     u64[0 2 ** 63 - 1] baseParamCount,
     out ExprParseResult scrutinee,
@@ -1209,26 +1208,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedSwitchFieldAssignmentArm defaultArm,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(caseValues, sourceValueFacts),
-          overlap(caseMaxValues, sourceValueFacts),
-          overlap(caseArms, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     scrutinee = new();
     defaultArm = new();
@@ -1240,7 +1220,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
     }
 
     stack u64[0 2 ** 63 - 1] beforeScrutinee = params.Count();
-    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
+    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, switchIndex + 2);
     if (params.Count() != beforeScrutinee
         || stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
         || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
@@ -1283,8 +1263,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
             enumStorageLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             afterCaseLabel + 1,
             armLocalRoots,
             scalarAssignments,
@@ -1333,8 +1312,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         cursor + 2,
         armLocalRoots,
         scalarAssignments,
@@ -1361,8 +1339,7 @@ internal fn bool TryParseIntegerSwitchFieldAssignmentCases(
 internal fn bool TryParseEnumSwitchFieldAssignmentCases(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] ownerDeclarationIndex,
     mut borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<ParamName> params,
@@ -1385,23 +1362,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedSwitchFieldAssignmentArm defaultArm,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(caseValues, sourceValueFacts),
-          overlap(caseArms, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     scrutinee = new();
     defaultArm = new();
@@ -1413,7 +1374,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
     }
 
     stack u64[0 2 ** 63 - 1] beforeScrutinee = params.Count();
-    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
+    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, switchIndex + 2);
     if (params.Count() != beforeScrutinee
         || stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
         || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
@@ -1433,7 +1394,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
     {
         stack mut i64[min max] caseValue = 0;
         stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
-        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, declarations, enumLayouts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, moduleFacts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
             || TerminalSwitchCaseValueExists(caseValues, caseValue))
         {
@@ -1455,8 +1416,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
             enumStorageLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             afterCaseLabel + 1,
             armLocalRoots,
             scalarAssignments,
@@ -1503,8 +1463,7 @@ internal fn bool TryParseEnumSwitchFieldAssignmentCases(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         cursor + 2,
         armLocalRoots,
         scalarAssignments,
@@ -1540,8 +1499,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] switchIndex,
     u64[0 2 ** 63 - 1] baseParamCount,
     out ExprParseResult scrutinee,
@@ -1554,25 +1512,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedSwitchFieldAssignmentArm defaultArm,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(caseValues, sourceValueFacts),
-          overlap(caseArms, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     scrutinee = new();
     defaultArm = new();
@@ -1584,7 +1524,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
     }
 
     stack u64[0 2 ** 63 - 1] beforeScrutinee = params.Count();
-    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, switchIndex + 2);
+    stack ExprParseResult parsedScrutinee = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, switchIndex + 2);
     if (params.Count() != beforeScrutinee
         || stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
         || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
@@ -1626,8 +1566,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
             enumStorageLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             afterCaseLabel + 1,
             armLocalRoots,
             scalarAssignments,
@@ -1674,8 +1613,7 @@ internal fn bool TryParseBooleanSwitchFieldAssignmentCases(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         cursor + 2,
         armLocalRoots,
         scalarAssignments,
@@ -1926,8 +1864,7 @@ internal fn bool TryParseTerminalBooleanSwitchReturnCases(
 internal fn bool TryParseTerminalEnumSwitchReturnCases(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] ownerDeclarationIndex,
     mut borrow IrTable<ExprNode> nodes,
     mut borrow IrTable<ParamName> params,
@@ -1967,7 +1904,7 @@ internal fn bool TryParseTerminalEnumSwitchReturnCases(
     {
         stack mut i64[min max] caseValue = 0;
         stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
-        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, declarations, enumLayouts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, moduleFacts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
             || stream.KindAt(afterCaseLabel) != TokenKind.Colon
             || TerminalSwitchCaseValueExists(caseValues, caseValue))
         {
@@ -2307,8 +2244,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> baseLocalTypes,
     borrow IrTable<ValueFacts> baseSourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] armStart,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -2317,23 +2253,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedSwitchFieldAssignmentArm arm,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, baseSourceValueFacts),
-          overlap(source, baseSourceValueFacts),
-          overlap(nodes, baseSourceValueFacts),
-          overlap(baseParams, baseSourceValueFacts),
-          overlap(funcNames, baseSourceValueFacts),
-          overlap(constructedObjectLocals, baseSourceValueFacts),
-          overlap(sliceDescriptorLocals, baseSourceValueFacts),
-          overlap(scalarStorageLocals, baseSourceValueFacts),
-          overlap(enumStorageLocals, baseSourceValueFacts),
-          overlap(baseLocalTypes, baseSourceValueFacts),
-          overlap(declarations, baseSourceValueFacts),
-          overlap(enumLayouts, baseSourceValueFacts),
-          overlap(armLocalRoots, baseSourceValueFacts),
-          overlap(scalarAssignments, baseSourceValueFacts),
-          overlap(enumAssignments, baseSourceValueFacts),
-          overlap(fieldAssignments, baseSourceValueFacts),
-          overlap(storageMutationStatements, baseSourceValueFacts)
+    where overlap_all(baseSourceValueFacts)
 {
     arm = new();
     nextToken = armStart;
@@ -2417,7 +2337,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
             }
 
             stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
-            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, declarations, enumLayouts, localAssignToken + 1);
+            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, moduleFacts, localAssignToken + 1);
             if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
             {
                 return false;
@@ -2468,8 +2388,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
                 enumStorageLocals,
                 armLocalTypes,
                 armSourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 cursor,
                 statementEnd,
                 scalarAssignments,
@@ -2515,8 +2434,7 @@ internal fn bool TryParseSwitchFieldAssignmentArm(
         enumStorageLocals,
         armLocalTypes,
         armSourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         armStart,
         compactEnd,
         scalarAssignments,
@@ -3240,7 +3158,8 @@ internal fn bool TryGetSwitchAssignmentArmAssignedRoot(
             return false;
         }
 
-        if (assignedTargetOffsets.Get(rootSlot) == targetOffset)
+        stack u32[0 max] assignedTargetOffset = assignedTargetOffsets.Get(rootSlot);
+        if (assignedTargetOffset == targetOffset)
         {
             rootNode = assignedRoots.Get(rootSlot);
             return true;
@@ -5390,7 +5309,20 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             enumLayouts = builtLayouts;
     }
 
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    stack mut IrTable<u32[0 max]> memberFactRowsByToken = new();
+    stack mut IrTable<SourceMemberPathFact> memberPathFacts = new();
+    if (!BuildSourceMemberPathFacts(sourceText, stream, source, declarations, memberFactRowsByToken, memberPathFacts))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumLayouts = enumLayouts;
+    moduleFacts.MemberFactRowsByToken = memberFactRowsByToken;
+    moduleFacts.MemberPathFacts = memberPathFacts;
+
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -5440,7 +5372,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
             if (varExpr.Next != statementEnd || params.Count() != beforeInit)
             {
                 return false;
@@ -5547,8 +5479,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             stack mut bool resolvedSliceDescriptor = TryResolveSliceDescriptorFromConstructedObjectFixedArray(
                 stream,
                 source,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 constructedObjectLocals,
                 scalarTypeToken,
                 assignToken + 1,
@@ -5660,8 +5591,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
                     sliceDescriptorLocals,
                     localTypes,
                     sourceValueFacts,
-                    declarations,
-                    enumLayouts,
+                    moduleFacts,
                     fixedArrayLength,
                     fieldTypeCode,
                     assignToken + 1,
@@ -5757,8 +5687,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
                 localRoots,
                 localOverrideValues,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 cursor,
                 statementEnd,
                 nameStart,
@@ -5790,7 +5719,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
             if (params.Count() != beforeInit || scalarExpr.NodeId == 0 || scalarExpr.Next != statementEnd)
             {
                 return false;
@@ -5913,17 +5842,17 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         if (localStorage == TokenKind.Stack
             && hasAssign
             && scalarTypeToken != 0
-            && TryGetSourceEnumOwnerDeclarationForToken(stream, source, declarations, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
+            && TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
         {
             stack mut u32[0 max] enumAllocationSize = 0;
             stack mut u32[0 max] enumAllocationAlign = 1;
-            if (!TryGetSourceEnumStorageLayout(enumLayouts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+            if (!TryGetSourceEnumStorageLayout(moduleFacts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
             {
                 return false;
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
             if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
             {
                 return false;
@@ -6007,8 +5936,8 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             return false;
         }
 
-        stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
-        stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
+        stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, objectTypeToken);
+        stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, objectTypeToken);
         if (objectAllocationSize == 0 || objectAllocationAlign == 0)
         {
             return false;
@@ -6039,8 +5968,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             if (!TryParseStackObjectPositionalRecordConstructorInitializers(
                 stream,
                 source,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 objectTypeToken,
                 argsOpen,
                 argsClose,
@@ -6063,8 +5991,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             if (!TryParseStackObjectFieldInitializers(
                 stream,
                 source,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 objectTypeToken,
                 bodyOpen,
                 bodyClose,
@@ -6120,7 +6047,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         if (!TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
                 stream,
                 source,
-                declarations,
+                moduleFacts,
                 cursor,
                 caseOwnerDeclarationIndex))
         {
@@ -6147,8 +6074,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
             enumStorageLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             cursor,
             baseParamCount,
             scrutinee,
@@ -6170,8 +6096,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         if (!TryParseEnumSwitchFieldAssignmentCases(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             caseOwnerDeclarationIndex,
             nodes,
             params,
@@ -6215,8 +6140,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         cursor,
         baseParamCount,
         scrutinee,
@@ -6271,7 +6195,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
         }
 
         stack u64[0 2 ** 63 - 1] beforePostLocal = params.Count();
-        stack ExprParseResult postLocalRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, postAssignToken + 1);
+        stack ExprParseResult postLocalRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, postAssignToken + 1);
         if (postLocalRoot.Next != postLocalEnd || params.Count() != beforePostLocal)
         {
             return false;
@@ -6316,7 +6240,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
 
     if (stream.KindAt(returnIndex) == TokenKind.Return)
     {
-        returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, returnIndex + 1);
+        returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, returnIndex + 1);
         stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
         if (stream.KindAt(afterReturn) == TokenKind.Semi)
         {
@@ -6331,7 +6255,7 @@ internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBloc
     else if (stream.KindAt(returnIndex) == TokenKind.If)
     {
         hasTerminalIf = true;
-        if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, returnIndex, terminalIfArms)
+        if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, returnIndex, terminalIfArms)
             || terminalIfArms.ThenBecome
             || terminalIfArms.ElseBecome)
         {
@@ -6851,6 +6775,10 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
             enumLayouts = builtLayouts;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumLayouts = enumLayouts;
+
     stack mut Compiler.Parsing.FunctionSignature signature = new();
     if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
     {
@@ -6871,7 +6799,7 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
     if (!TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
         stream,
         source,
-        declarations,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])braceIndex + 1,
         caseOwnerDeclarationIndex))
     {
@@ -6888,8 +6816,7 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
     if (!TryParseTerminalEnumSwitchReturnCases(
         stream,
         source,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         caseOwnerDeclarationIndex,
         nodes,
         params,
@@ -6920,7 +6847,7 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -7151,17 +7078,12 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     stack bool switchCasesAreEnum = !switchCasesAreBoolean && SwitchFirstCaseLabelLooksQualifiedName(stream, cursor);
     stack mut DeclarationList declarations = new();
     stack mut TypedEnumLayoutTable enumLayouts = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
     stack mut u32[0 max] caseOwnerDeclarationIndex = 0;
     if (switchCasesAreEnum)
     {
         if (AsciiLength(sourceText) == 0
-            || !TryParseMirSourceDeclarations(stream, declarations)
-            || !TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
-                stream,
-                source,
-                declarations,
-                cursor,
-                caseOwnerDeclarationIndex))
+            || !TryParseMirSourceDeclarations(stream, declarations))
         {
             return false;
         }
@@ -7172,6 +7094,18 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
                 return false;
             case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
                 enumLayouts = builtLayouts;
+        }
+
+        moduleFacts.Declarations = declarations;
+        moduleFacts.EnumLayouts = enumLayouts;
+        if (!TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+            stream,
+            source,
+            moduleFacts,
+            cursor,
+            caseOwnerDeclarationIndex))
+        {
+            return false;
         }
     }
 
@@ -7209,8 +7143,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
         if (!TryParseEnumSwitchAssignmentCases(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             caseOwnerDeclarationIndex,
             nodes,
             params,
@@ -7388,7 +7321,7 @@ internal fn bool LowerModuleLocalSwitchStatementFunctionToBlocks(
     stack mut bool seededLocalTypes = false;
     if (switchCasesAreEnum)
     {
-        seededLocalTypes = SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes);
+        seededLocalTypes = SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes);
     }
     else
     {

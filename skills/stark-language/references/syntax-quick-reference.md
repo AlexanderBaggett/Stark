@@ -48,6 +48,15 @@ Storage and access:
 stack heap register arena borrow retborrow storeborrow frozen shared out init mut rawptr rawmutptr fnptr sizeof alignof dead_on_return
 ```
 
+Memory contracts (in `where` clauses; contextual, not reserved):
+
+```text
+overlap(a, b) overlap_all(name) same(a, b) disjoint(p[start, count], q[start, count])
+```
+
+`overlap_all(name)` expands to pairwise `overlap(name, other)` against every
+other memory-backed parameter; other pairs keep the default non-overlap.
+
 Control flow and patterns:
 
 ```text

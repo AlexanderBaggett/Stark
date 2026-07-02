@@ -205,3 +205,26 @@ file and shared helpers in an imported support module. MIR text assertions read
 the `ArtifactTextRenderer` forms (e.g. `$tmp5_dyn_vtable: temp
 rawptr<Speaker.Vtable>`, `= dynview<Speaker>(context,table)`); probe the
 rendering with a one-off server request before asserting fragments.
+
+## Fast Verification Outside The Harness
+
+For compiler-development changes (host or selfhost), two workflows are cheaper
+than harness suites and are the standing convention — full details in
+`docs/Internals/CompilerDevelopmentVerification.md`:
+
+- The widened `--check` gate: `./stark <root>.stark --check -I selfhost
+  -I stdlib/src --no-stark-path --target <triple>` runs the full front end
+  through ownership-validate over the root AND every source-backed dependency
+  module (parallel, batched failures). Zero `error STK` lines is a pass;
+  ~2–3 minutes over the selfhost graph. It proves acceptance, not behavior.
+  If a gate reports errors contradicting the source you just read, look for
+  a stale `*.starkpkg` under the search roots (including the root file's own
+  project `build/` directory — it joins the search implicitly and a stale
+  image silently shadows fresh source); delete it, it is build output.
+- Package-backed probes: build the selfhost library once (`stark build` in
+  `selfhost/`), relocate `stage0/pkg` + `stage0/bin` out of the source tree,
+  then compile a standalone probe executable against the package image with
+  `-I <dir>/stage0/pkg -I stdlib/src` and the image's `--target-data-layout`
+  (from `--inspect-pkg`). ~15 s per probe compile instead of ~12 min from
+  source. Probes print one `ok/FAIL` line per check and encode known-broken
+  shapes as `expectOk=false` so fixes flip them loudly.

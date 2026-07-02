@@ -232,7 +232,25 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    default pipeline converts that log into a compiler diagnostic instead of
    pretending the accepted program compiled.
 
-## Extension Points And Remaining Work
+## Check Mode
+
+`--check` runs the full front end and stops after `ownership-validate`: module
+graph, loading, symbol catalog, function effects, type-check, instantiation
+ownership, monomorphization and specialization planning, enum layout,
+semantic-validate, and ownership-validate all execute; MIR lowering and the
+backend do not. A program that passes `--check` has therefore cleared every
+acceptance decision the compiler makes — what remains is lowering and
+emission, which per the accepted-program contract must not reject.
+
+Because single-compilation modes validate imported source module bodies only
+when those modules compile as their own root, check mode additionally sweeps
+the root's source-backed dependency modules: each one gets its own front-end
+pipeline run (in parallel), and failures aggregate per module into one
+batched report instead of stopping at the first failing module. This closes
+the gap where a root could pass `--check` while an imported module carried
+type or ownership errors that only a later exe/library build would surface.
+Diagnostics produced inside an imported module report that module's own file
+path.
 
 The pass structure is no longer just a skeleton; the current compiler has real
 typing, generic instantiation ownership, monomorphization planning,

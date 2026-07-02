@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "CompilerMirTests.stark"
 output = "compiler-mir-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

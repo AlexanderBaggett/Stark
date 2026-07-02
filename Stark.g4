@@ -157,6 +157,17 @@ overlapContract
     : OVERLAP LPAREN expressionList RPAREN
     ;
 
+// `where overlap_all(name)` — shorthand declaring `name` may overlap every
+// other memory-backed parameter. It currently parses through
+// `lawPredicateContract` (Identifier LPAREN type_ RPAREN) and is expanded by
+// the syntax model into pairwise whole-parameter overlap groups. When the
+// parser is next regenerated (scripts/regenerate-parser.sh; needs the antlr4
+// toolchain), promote it to a dedicated rule:
+//   overlapAllContract
+//       : {IsContextualKeyword("overlap_all")}? Identifier LPAREN expressionList RPAREN
+//       ;
+// listed in `parameterMemoryContract` before `lawPredicateContract`.
+
 sameContract
     : SAME LPAREN expressionList RPAREN
     ;

@@ -112,9 +112,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "demo-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -233,9 +230,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "stage-stdlib-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -312,9 +306,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "repo-stdlib-source-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -400,9 +391,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "repo-vendor-source-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -488,9 +476,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "repo-vendor-native-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -689,9 +674,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "repo-stdlib-dist-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -769,9 +751,6 @@ public sealed class ProjectCliTests
                 [executable]
                 root = "App.stark"
                 output = "installed-stdlib-app"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -1283,9 +1262,6 @@ public sealed class ProjectCliTests
                 [test]
                 root = "Tests.stark"
                 output = "demo-tests"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -1878,9 +1854,6 @@ public sealed class ProjectCliTests
                 [test]
                 root = "Tests.stark"
                 output = "failing-tests"
-
-                [profiles.dev]
-                opt = 0
                 """);
 
             await File.WriteAllTextAsync(
@@ -1970,9 +1943,6 @@ public sealed class ProjectCliTests
             [aliases]
             app = "app"
             math = "math"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -1986,9 +1956,6 @@ public sealed class ProjectCliTests
             [library]
             root = "Math.stark"
             output = "Math"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2016,9 +1983,6 @@ public sealed class ProjectCliTests
 
             [dependencies]
             math = { path = "../math" }
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2055,9 +2019,6 @@ public sealed class ProjectCliTests
             [aliases]
             math = "math"
             tests = "math-tests"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2071,9 +2032,6 @@ public sealed class ProjectCliTests
             [library]
             root = "Math.stark"
             output = "Math"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2101,9 +2059,6 @@ public sealed class ProjectCliTests
 
             [dependencies]
             math = { path = "../math" }
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2142,9 +2097,6 @@ public sealed class ProjectCliTests
             [library]
             root = "Testing.stark"
             output = "TestSupport"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2214,9 +2166,6 @@ public sealed class ProjectCliTests
 
             [dependencies]
             testing = { path = "../testing" }
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(
@@ -2253,9 +2202,6 @@ public sealed class ProjectCliTests
             [test]
             root = "Tests.stark"
             output = "simple-tests"
-
-            [profiles.dev]
-            opt = 0
             """);
 
         await File.WriteAllTextAsync(

@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "TomlTests.stark"
 output = "stdlib-toml-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

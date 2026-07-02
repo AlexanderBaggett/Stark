@@ -4,6 +4,14 @@ This file is the short task tracker for self-hosting prep. Keep it as an
 at-a-glance checklist. Put rationale, design notes, audits, and detailed gap
 tables in the companion documents in this folder.
 
+Ephemerality policy: every document in `docs/Self-host-Prep` — this file,
+TASKS.md, the ledgers, and the numbered companions — exists to
+coordinate the port and is retired when the self-hosted compiler is complete.
+Durable content migrates to [docs/Userfacing](../Userfacing) or
+[docs/Internals](../Internals) at cutover (tracked in TASKS.md section 10).
+New documentation with lasting value should be written in Userfacing or
+Internals directly, not added here.
+
 Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
 
 Roadmap checkboxes track high-level progress. When a roadmap item links to a
@@ -251,7 +259,6 @@ the workaround in place until fixed.
       `case Err(var e)` binding patterns** (the previous bullet). It is now
       fixed; the original 490/493 phantom symptom was most likely that crash
       (or a context-specific artifact), mis-attributed to optimizer elision.
-      See PAINPOINTS.md #12.
 - [x] `lower-mir` could not resolve the generic drop of a `List<T>` field when a
       *consumer* package drops a value of a type defined in a *different*
       (non-stdlib) library that owns that `List<T>` (STK9999,

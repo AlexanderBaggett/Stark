@@ -34,7 +34,6 @@ Project manifest. Lives in a project directory. Describes:
 * root Stark file
 * dependencies
 * native package metadata
-* build profiles
 
 ### `Stark.solution.toml`
 
@@ -43,7 +42,6 @@ Solution manifest. Lives at the root of a multi project repo. Describes:
 * member projects
 * default build, run, and test targets
 * aliases
-* shared profile defaults
 
 Optional for a single standalone project.
 
@@ -198,12 +196,6 @@ output = "breakout-raylib"
 
 [dependencies]
 raylib = { path = "../raylib" }
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
 
 Library form:
@@ -314,12 +306,6 @@ test = ["examples/standard-library-tests"]
 breakout = "examples/breakout"
 vendor = "vendor"
 stdlib = "stdlib"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
 
 The solution file stays small. It answers five questions:

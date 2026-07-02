@@ -167,6 +167,16 @@ fn void MoveOverlapSafe(
 Use `if disjoint(...)` inside an overlap-safe API when a fast path requires
 separate regions.
 
+When STK3030 fires once per parameter against the same threaded context table,
+collapse the pairwise list to `where overlap_all(tableName)`; it expands to
+the same pairwise facts. STK3029 on an `overlap_all` clause means the named
+target is not a parameter or is not memory-backed.
+
+Related signature diagnostics: a duplicated parameter name is STK3057 (a
+located diagnostic naming the parameter and function — not a crash), and
+diagnostics raised inside an imported source module carry that module's own
+file path, so trust the reported path when it differs from the root file.
+
 ## Range Or Narrowing Error
 
 A function body must be valid for every value promised by its parameter type.

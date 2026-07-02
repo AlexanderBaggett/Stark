@@ -11,6 +11,7 @@ import Compiler.Mir.SourceLocalLowering
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceModuleFacts
 module Compiler.Mir.SourceFunctionContext
 
 internal fn bool BuildFunctionCallContractFacts(
@@ -1657,7 +1658,7 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParam(
 internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow Compiler.Parsing.FunctionSignature signature,
     u64[0 2 ** 63 - 1] paramIndex,
     out u32[0 max] ownerDeclarationIndex)
@@ -1669,11 +1670,11 @@ internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
         return false;
     }
 
-    stack u64[0 2 ** 63 - 1] count = declarations.Count();
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.Declarations.Count();
     stack mut u64[0 2 ** 63 - 1] index = 0;
     while willexit (index < count)
     {
-        stack DeclItem item = declarations.ItemAt(index);
+        stack DeclItem item = moduleFacts.Declarations.ItemAt(index);
         if (item.Kind == DeclarationKind.Enum
             && item.NameToken != 0
             && TokenTextEqualsToken(stream, source, typeToken, item.NameToken))
@@ -1691,7 +1692,7 @@ internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
 internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow Compiler.Parsing.FunctionSignature signature,
     borrow IrTable<ParamAbiFacts> paramAbiFacts,
     u64[0 2 ** 63 - 1] paramIndex)
@@ -1713,7 +1714,7 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
     }
 
     stack mut u32[0 max] ownerDeclarationIndex = 0;
-    if (TryGetSignatureParamEnumOwnerDeclarationIndex(stream, source, declarations, signature, paramIndex, ownerDeclarationIndex))
+    if (TryGetSignatureParamEnumOwnerDeclarationIndex(stream, source, moduleFacts, signature, paramIndex, ownerDeclarationIndex))
     {
         return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(ownerDeclarationIndex);
     }
@@ -1747,7 +1748,7 @@ internal fn bool SeedParamLocalTypesFromSignature(
 internal fn bool SeedParamLocalTypesFromSignatureWithDeclarations(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow Compiler.Parsing.FunctionSignature signature,
     borrow IrTable<ParamAbiFacts> paramAbiFacts,
     u64[0 2 ** 63 - 1] paramCount,
@@ -1756,7 +1757,7 @@ internal fn bool SeedParamLocalTypesFromSignatureWithDeclarations(
     stack mut u64[0 2 ** 63 - 1] i = 0;
     while willexit (i < paramCount)
     {
-        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParamWithDeclarations(stream, source, declarations, signature, paramAbiFacts, i));
+        stack u32[0 max] added = localTypes.Add(LocalTypeCodeForSignatureParamWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, i));
         if (added == 0)
         {
             return false;
@@ -1919,7 +1920,7 @@ internal fn bool SeedSignatureParamOverridesForLowering(
             }
         }
         else if (localTypes.Contains((u32[0 max])(i + 1))
-            && SourceLocalTypeCodeIsStoredScalar(localTypes.Get((u32[0 max])(i + 1))))
+            && SourceLocalTypeCodeIsStoredScalarAt(localTypes, (u32[0 max])(i + 1)))
         {
             stack u32[0 max] typeToken = signature.ParamTypeTokenAt(i);
             stack mut MirType paramType = MirType.I64;
@@ -2139,11 +2140,7 @@ internal fn bool ValidateModuleCallsWithSlices(
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
-    where overlap(nodes, sliceDescriptorLocals),
-          overlap(funcParamCounts, sliceDescriptorLocals),
-          overlap(functionCallContractFacts, sliceDescriptorLocals),
-          overlap(localTypes, sliceDescriptorLocals),
-          overlap(callerDistinctStorageFacts, sliceDescriptorLocals)
+    where overlap_all(sliceDescriptorLocals)
 {
     stack u64[0 2 ** 63 - 1] count = nodes.Count();
     stack mut u64[0 2 ** 63 - 1] i = 0;
@@ -2199,11 +2196,7 @@ internal fn bool ValidateModuleCallNodeWithSlices(
     borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts,
     ExprNode node)
-    where overlap(nodes, sliceDescriptorLocals),
-          overlap(funcParamCounts, sliceDescriptorLocals),
-          overlap(functionCallContractFacts, sliceDescriptorLocals),
-          overlap(localTypes, sliceDescriptorLocals),
-          overlap(callerDistinctStorageFacts, sliceDescriptorLocals)
+    where overlap_all(sliceDescriptorLocals)
 {
     if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.CallExpr)
     {
@@ -2249,11 +2242,7 @@ internal fn bool ValidateModuleCallsForRootWithSlices(
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
-    where overlap(nodes, sliceDescriptorLocals),
-          overlap(funcParamCounts, sliceDescriptorLocals),
-          overlap(functionCallContractFacts, sliceDescriptorLocals),
-          overlap(localTypes, sliceDescriptorLocals),
-          overlap(callerDistinctStorageFacts, sliceDescriptorLocals)
+    where overlap_all(sliceDescriptorLocals)
 {
     if (!nodes.Contains(root))
     {

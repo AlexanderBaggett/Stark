@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "PathExtensionTests.stark"
 output = "stdlib-io-path-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

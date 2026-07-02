@@ -156,6 +156,11 @@ internal sealed class TypeChecker
     private IReadOnlyList<ThreadSafetyLawPredicateSymbol> _currentFunctionThreadSafetyLaws = [];
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
+    // Diagnostics-only file-path override for non-root module bodies. Location()
+    // must keep stamping the root input path (package-image template records
+    // match by location — see the note in Location()), so only the diagnostic
+    // funnels apply this override.
+    private string? _currentDiagnosticFilePath;
     private StarkTypeSymbol? _currentFunctionReturnType;
     private bool _insideConstructorBody;
     private int _unsafeDepth;
@@ -2454,9 +2459,11 @@ internal sealed class TypeChecker
                 var previousGenericParameters = _currentFunctionGenericParameters;
                 var previousComptimeGenericParameters = _currentFunctionComptimeGenericParameters;
                 var previousFunctionModuleName = _currentFunctionModuleName;
+                var previousDiagnosticFilePath = _currentDiagnosticFilePath;
                 _currentFunctionGenericParameters = genericParameters;
                 _currentFunctionComptimeGenericParameters = comptimeGenericParameterMap;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                _currentDiagnosticFilePath = module.Reference.IsRoot ? null : module.Reference.FilePath;
 
                 try
                 {
@@ -2524,18 +2531,32 @@ internal sealed class TypeChecker
                     }
 
                     var parameters = new List<TypedParameterSymbol>();
+                    var seenParameterNames = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var parameter in functionSyntax.ParameterList.parameter())
                     {
+                        var parameterName = parameter.Identifier().GetText();
+                        if (!seenParameterNames.Add(parameterName))
+                        {
+                            // Duplicate names would crash every downstream name-keyed
+                            // parameter dictionary, so report and drop the duplicate;
+                            // the first declaration stays authoritative.
+                            ReportError(
+                                "STK3057",
+                                $"Function '{localName}' declares parameter '{parameterName}' more than once.",
+                                parameter);
+                            continue;
+                        }
+
                         var parameterType = ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression);
                         ValidateRuntimeValueType(
                             parameterType,
                             parameter.type_(),
-                            $"parameter '{parameter.Identifier().GetText()}'",
+                            $"parameter '{parameterName}'",
                             allowDirectInlineClosureParameter: true,
                             allowDirectCVaListParameter: isFfi && SupportsCVaListAbiParameter(ffiAbi));
                         if (isAbiBoundary)
                         {
-                            ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
+                            ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameterName}'");
                         }
 
                         parameters.Add(CreateTypedParameterSymbol(parameter, parameterType, rawPointerElementCountExpression));
@@ -2620,6 +2641,7 @@ internal sealed class TypeChecker
                     _currentFunctionGenericParameters = previousGenericParameters;
                     _currentFunctionComptimeGenericParameters = previousComptimeGenericParameters;
                     _currentFunctionModuleName = previousFunctionModuleName;
+                    _currentDiagnosticFilePath = previousDiagnosticFilePath;
                 }
             }
         }
@@ -3104,6 +3126,37 @@ internal sealed class TypeChecker
         foreach (var parameter in parameters)
         {
             parameterSymbols.TryAdd(parameter.Name, parameter);
+        }
+
+        // `where overlap_all(name)` rides the law-predicate contract shape (see
+        // CreateOverlapParameterGroups); the named target must be one of this
+        // function's memory-backed parameters.
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate
+                    || !string.Equals(predicate.Identifier().GetText(), "overlap_all", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var targetName = predicate.type_().GetText();
+                if (!parameterSymbols.TryGetValue(targetName, out var targetSymbol))
+                {
+                    ReportError(
+                        "STK3029",
+                        $"'where overlap_all({targetName})' does not name a parameter of this function.",
+                        predicate);
+                }
+                else if (!CanRuntimeDisjointTest(targetSymbol.Type))
+                {
+                    ReportError(
+                        "STK3029",
+                        $"'where overlap_all({targetName})' references parameter '{targetName}' with non-memory-backed type '{targetSymbol.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                        predicate);
+                }
+            }
         }
 
         foreach (var parameter in functionSyntax.ParameterList.parameter())
@@ -3694,11 +3747,13 @@ internal sealed class TypeChecker
             var previousGenericParameters = _currentFunctionGenericParameters;
             var previousFunctionName = _currentFunctionName;
             var previousFunctionModuleName = _currentFunctionModuleName;
+            var previousDiagnosticFilePath = _currentDiagnosticFilePath;
             var previousInsideConstructorBody = _insideConstructorBody;
 
             _currentFunctionGenericParameters = genericParameters;
             _currentFunctionName = BuildConstructorBodyKey(qualifiedTypeName, constructor);
             _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+            _currentDiagnosticFilePath = module.Reference.IsRoot ? null : module.Reference.FilePath;
             _insideConstructorBody = true;
 
             try
@@ -3714,6 +3769,7 @@ internal sealed class TypeChecker
                 _currentFunctionGenericParameters = previousGenericParameters;
                 _currentFunctionName = previousFunctionName;
                 _currentFunctionModuleName = previousFunctionModuleName;
+                _currentDiagnosticFilePath = previousDiagnosticFilePath;
                 _insideConstructorBody = previousInsideConstructorBody;
             }
         }
@@ -4417,6 +4473,7 @@ internal sealed class TypeChecker
                 var previousComptimeGenericParameters = _currentFunctionComptimeGenericParameters;
                 var previousFunctionName = _currentFunctionName;
                 var previousFunctionModuleName = _currentFunctionModuleName;
+                var previousDiagnosticFilePath = _currentDiagnosticFilePath;
                 var previousFunctionReturnType = _currentFunctionReturnType;
                 var previousImportedTemplateObjectCreations = _currentImportedTemplateObjectCreations;
                 var previousImportedTemplateObjectCreationOrdinals = _currentImportedTemplateObjectCreationOrdinals;
@@ -4449,6 +4506,7 @@ internal sealed class TypeChecker
                     : signature.ComptimeGenericParams.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                _currentDiagnosticFilePath = module.Reference.IsRoot ? null : module.Reference.FilePath;
                 _currentFunctionReturnType = signature.ReturnType;
                 _currentFunctionConstraints = WithImplicitTraitSelfConstraint(signature);
                 _currentFunctionThreadSafetyLaws = signature.ThreadSafetyLaws;
@@ -4554,6 +4612,7 @@ internal sealed class TypeChecker
                     _currentFunctionThreadSafetyLaws = previousFunctionThreadSafetyLaws;
                     _currentFunctionName = previousFunctionName;
                     _currentFunctionModuleName = previousFunctionModuleName;
+                    _currentDiagnosticFilePath = previousDiagnosticFilePath;
                     _currentFunctionReturnType = previousFunctionReturnType;
                     _currentImportedTemplateObjectCreations = previousImportedTemplateObjectCreations;
                     _currentImportedTemplateObjectCreationOrdinals = previousImportedTemplateObjectCreationOrdinals;
@@ -13267,7 +13326,7 @@ internal sealed class TypeChecker
             && resultType.Kind != StarkTypeKind.Error
             && CanRuntimeDisjointTest(resultType))
         {
-            // PAINPOINTS #8: a conditional whose branches are both read-only const
+            // A conditional whose branches are both read-only const
             // values (e.g. string literals) yields a read-only const view. Such a
             // value is static read-only data: it can never be the WRITER in an
             // aliasing hazard, and it lives in distinct const storage that cannot
@@ -25587,28 +25646,35 @@ internal sealed class TypeChecker
 
     private void ReportError(string code, string message, ParserRuleContext context)
     {
-        _context.Diagnostics.Error(code, message, "type-check", Location(context));
+        _context.Diagnostics.Error(code, message, "type-check", DiagnosticLocation(Location(context)));
     }
 
     private void ReportError(string code, string message, IToken token)
     {
-        _context.Diagnostics.Error(code, message, "type-check", Location(token));
+        _context.Diagnostics.Error(code, message, "type-check", DiagnosticLocation(Location(token)));
     }
 
     private void ReportWarning(string code, string message, ParserRuleContext context)
     {
-        _context.Diagnostics.Warning(code, message, "type-check", Location(context));
+        _context.Diagnostics.Warning(code, message, "type-check", DiagnosticLocation(Location(context)));
     }
 
     private void ReportWarning(string code, string message, IToken token)
     {
-        _context.Diagnostics.Warning(code, message, "type-check", Location(token));
+        _context.Diagnostics.Warning(code, message, "type-check", DiagnosticLocation(Location(token)));
     }
 
     private void ReportInfo(string code, string message, ParserRuleContext context)
     {
-        _context.Diagnostics.Info(code, message, "type-check", Location(context));
+        _context.Diagnostics.Info(code, message, "type-check", DiagnosticLocation(Location(context)));
     }
+
+    // Applies the per-module diagnostics-only file path; typed records keep the
+    // root-stamped Location() (see the serialization note there).
+    private SourceLocation DiagnosticLocation(SourceLocation location)
+        => _currentDiagnosticFilePath is null
+            ? location
+            : location with { FilePath = _currentDiagnosticFilePath };
 
     private SourceLocation Location(ParserRuleContext context) => Location(context.Start, context.Stop);
 

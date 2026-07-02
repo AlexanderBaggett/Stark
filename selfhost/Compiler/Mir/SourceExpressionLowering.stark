@@ -313,6 +313,17 @@ internal fn MirValueId LowerResolvedFieldRead(
         return MirLoadEnumPtrAligned(instrs, TypeIdOf(ownerTypeIndex), fieldPointer, node.Arg2);
     }
 
+    if (node.HasDeclaredRange)
+    {
+        return MirLoadPtrAlignedTypedWithDeclaredRange(
+            instrs,
+            MirTypeForResolvedFieldTypeCode(node.Arg3),
+            fieldPointer,
+            node.Arg2,
+            node.DeclaredRangeLower,
+            node.DeclaredRangeUpperExclusive);
+    }
+
     return MirLoadPtrAlignedTyped(instrs, MirTypeForResolvedFieldTypeCode(node.Arg3), fieldPointer, node.Arg2);
 }
 
