@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "TextBuilderTests.stark"
 output = "stdlib-text-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

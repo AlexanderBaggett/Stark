@@ -45,6 +45,8 @@ import Compiler.Mir.SourceExpressions
 import Compiler.Mir.SourceFunctionContext
 import Compiler.Mir.SourceIfLowering
 import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
 import Compiler.Mir.SourceLoopLowering
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
@@ -58,68 +60,6 @@ module Compiler.Mir.SourceModuleLowering
 
 // Module-level source lowering orchestration, package-image construction, and
 // function-effect fact prepasses that feed LLVM attributes.
-
-internal fn bool BuildSourceModuleEnumLayoutInputs(
-    ascii sourceText,
-    borrow TokenStream stream,
-    out DeclarationList declarations,
-    out TypedEnumPayloadTable enumPayloads,
-    out TypedEnumLayoutTable enumLayouts,
-    out IrTable<MirEnumLayoutFact> enumLayoutFacts)
-{
-    declarations = new();
-    enumPayloads = new();
-    enumLayouts = new();
-    enumLayoutFacts = new();
-
-    stack mut CompilationUnitHeader header = new();
-    switch (ParseHeader(stream))
-    {
-        case ParseResult<CompilationUnitHeader>.Err(var headerError):
-            return false;
-        case ParseResult<CompilationUnitHeader>.Ok(var parsedHeader):
-            header = parsedHeader;
-    }
-
-    stack mut DeclarationList parsedDeclarations = new();
-    switch (ParseDeclarations(stream, header.NextToken))
-    {
-        case ParseResult<DeclarationList>.Err(var declarationError):
-            return false;
-        case ParseResult<DeclarationList>.Ok(var builtDeclarations):
-            parsedDeclarations = builtDeclarations;
-    }
-
-    stack mut TypedEnumPayloadTable typedPayloads = new();
-    switch (BuildTypedEnumPayloads(sourceText, stream, parsedDeclarations))
-    {
-        case ParseResult<TypedEnumPayloadTable>.Err(var payloadError):
-            return false;
-        case ParseResult<TypedEnumPayloadTable>.Ok(var builtPayloads):
-            typedPayloads = builtPayloads;
-    }
-
-    stack mut TypedEnumLayoutTable typedLayouts = new();
-    switch (BuildTypedEnumLayouts(sourceText, stream, parsedDeclarations))
-    {
-        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
-            return false;
-        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
-            typedLayouts = builtLayouts;
-    }
-
-    stack mut IrTable<MirEnumLayoutFact> mirLayoutFacts = new();
-    if (!BuildMirEnumLayoutFactsFromTypedLayouts(typedLayouts, mirLayoutFacts))
-    {
-        return false;
-    }
-
-    declarations = parsedDeclarations;
-    enumPayloads = typedPayloads;
-    enumLayouts = typedLayouts;
-    enumLayoutFacts = mirLayoutFacts;
-    return true;
-}
 
 // === LLVM textual IR emission (first backend lowering, step toward #31) ===
 // A first lowering of the integer MIR subset to LLVM textual IR. Each MIR value
@@ -578,7 +518,8 @@ internal fn bool CopyFlagTable(borrow IrTable<u32[0 max]> source, out IrTable<u3
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        if (built.Add(source.Get(i)) == 0)
+        stack u32[0 max] sourceRow = source.Get(i);
+        if (built.Add(sourceRow) == 0)
         {
             return false;
         }
@@ -594,6 +535,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -604,15 +546,6 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
     where overlap(sourceText, source)
 {
     stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
-    stack mut DeclarationList declarations = new();
-    stack mut TypedEnumPayloadTable enumPayloads = new();
-    stack mut TypedEnumLayoutTable enumLayouts = new();
-    stack mut IrTable<MirEnumLayoutFact> prepassEnumLayoutFacts = new();
-    if (!BuildSourceModuleEnumLayoutInputs(sourceText, stream, declarations, enumPayloads, enumLayouts, prepassEnumLayoutFacts))
-    {
-        return false;
-    }
-
     stack mut u32[0 max] functionNumber = 0;
     stack mut u64[0 2 ** 63 - 1] f = 0;
     while willexit (f < tokenCount)
@@ -641,13 +574,11 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     body))
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
-                    stack mut DeclarationList noDeclarations = new();
-                    stack mut TypedEnumLayoutTable noEnumLayouts = new();
+                    stack mut SourceModuleLoweringFacts noModuleFacts = new();
                     if (!LowerModuleLocalIfReturnFunctionToBlocks(
                         stream,
                         source,
-                        noDeclarations,
-                        noEnumLayouts,
+                        noModuleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -885,13 +816,11 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             else if (FunctionBodyHasLocalPrefixedTerminalIf(stream, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
-                stack mut DeclarationList noDeclarations = new();
-                stack mut TypedEnumLayoutTable noEnumLayouts = new();
+                stack mut SourceModuleLoweringFacts noModuleFacts = new();
                 if (!LowerModuleLocalIfReturnFunctionToBlocks(
                     stream,
                     source,
-                    noDeclarations,
-                    noEnumLayouts,
+                    noModuleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -910,13 +839,11 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             else if (FunctionBodyStartsWithIfStatement(stream, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
-                stack mut DeclarationList noDeclarations = new();
-                stack mut TypedEnumLayoutTable noEnumLayouts = new();
+                stack mut SourceModuleLoweringFacts noModuleFacts = new();
                 if (!LowerModuleLocalIfReturnFunctionToBlocks(
                     stream,
                     source,
-                    noDeclarations,
-                    noEnumLayouts,
+                    noModuleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -939,9 +866,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -962,9 +887,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -985,9 +908,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -1008,9 +929,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -1031,9 +950,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -1054,9 +971,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -1077,9 +992,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     stream,
                     sourceText,
                     source,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -1808,8 +1721,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
     borrow IrTable<u32[0 max]> funcTailFlags,
     bool isTailCallable,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] fnIndex,
     mut borrow IrTable<MirInstruction> instrs,
     mut borrow IrTable<MirBlock> blocks)
@@ -1898,7 +1810,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
     stack mut IrTable<SourceStorageMutationStatement> storageMutationStatements = new();
     stack mut IrTable<u32[0 max]> localOverrideValues = new();
     stack mut bool usesArenaFrame = false;
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return result;
     }
@@ -1952,7 +1864,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
             // The initializer may reference only ALREADY-declared names — reject if parsing it
             // grew the table (an undeclared/forward/self reference inserts a phantom index).
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
             if (params.Count() != beforeInit)
             {
                 return result;
@@ -2113,8 +2025,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                 stack mut bool resolvedSliceDescriptor = TryResolveSliceDescriptorFromConstructedObjectFixedArray(
                     stream,
                     source,
-                    declarations,
-                    enumLayouts,
+                    moduleFacts,
                     constructedObjectLocals,
                     scalarTypeToken,
                     assignToken + 1,
@@ -2226,8 +2137,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                         sliceDescriptorLocals,
                         localTypes,
                         sourceValueFacts,
-                        declarations,
-                        enumLayouts,
+                        moduleFacts,
                         fixedArrayLength,
                         fieldTypeCode,
                         assignToken + 1,
@@ -2323,8 +2233,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                     localRoots,
                     localOverrideValues,
                     sourceValueFacts,
-                    declarations,
-                    enumLayouts,
+                    moduleFacts,
                     cursor,
                     statementEnd,
                     nameStart,
@@ -2356,7 +2265,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                 }
 
                 stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-                stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+                stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
                 if (params.Count() != beforeInit || scalarExpr.NodeId == 0 || scalarExpr.Next != statementEnd)
                 {
                     return result;
@@ -2476,17 +2385,17 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
             if (localStorage == TokenKind.Stack
                 && hasAssign
                 && scalarTypeToken != 0
-                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, declarations, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
+                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
             {
                 stack mut u32[0 max] enumAllocationSize = 0;
                 stack mut u32[0 max] enumAllocationAlign = 1;
-                if (!TryGetSourceEnumStorageLayout(enumLayouts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+                if (!TryGetSourceEnumStorageLayout(moduleFacts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
                 {
                     return result;
                 }
 
                 stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-                stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+                stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
                 if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
                 {
                     return result;
@@ -2593,8 +2502,8 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                         return result;
                     }
 
-                    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
-                    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
+                    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, objectTypeToken);
+                    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, objectTypeToken);
                     if (objectAllocationSize == 0 || objectAllocationAlign == 0)
                     {
                         return result;
@@ -2624,8 +2533,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                         if (!TryParseStackObjectPositionalRecordConstructorInitializers(
                             stream,
                             source,
-                            declarations,
-                            enumLayouts,
+                            moduleFacts,
                             objectTypeToken,
                             argsOpen,
                             argsClose,
@@ -2648,8 +2556,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                         if (!TryParseStackObjectFieldInitializers(
                             stream,
                             source,
-                            declarations,
-                            enumLayouts,
+                            moduleFacts,
                             objectTypeToken,
                             bodyOpen,
                             bodyClose,
@@ -2735,8 +2642,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
             sliceDescriptorLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             cursor,
             statementEnd,
             constructedObjectFieldAssignments))
@@ -2781,8 +2687,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                 constructedObjectLocals,
                 localTypes,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 cursor,
                 statementEnd,
                 constructedObjectFieldAssignments))
@@ -2832,8 +2737,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                 enumStorageLocals,
                 localTypes,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 cursor,
                 statementEnd,
                 enumStorageAssignments))
@@ -2859,7 +2763,7 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
         cursor = statementEnd + 1;
     }
 
-    stack ExprParseResult returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, (u64[0 2 ** 63 - 1])terminalIndex + 1);
+    stack ExprParseResult returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, (u64[0 2 ** 63 - 1])terminalIndex + 1);
 
     // Every body name must be a parameter or a declared local — no phantom names.
     if (params.Count() != signatureParamCount + localRoots.Count())
@@ -3488,19 +3392,19 @@ internal fn bool FunctionBodyStartsWithReturnTryExpression(
 }
 
 internal fn bool TryGetSourceTryEnumTagType(
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] ownerDeclarationIndex,
     out MirType tagType)
 {
     tagType = MirType.I8;
-    stack u64[0 2 ** 63 - 1] count = enumLayouts.Count();
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.EnumLayouts.Count();
     stack mut u64[0 2 ** 63 - 1] index = 0;
     while willexit (index < count)
     {
-        if (enumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
-            && enumLayouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant)
+        if (moduleFacts.EnumLayouts.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && moduleFacts.EnumLayouts.RowKindAt(index) == TypedEnumLayoutRowKind.Variant)
         {
-            stack u32[0 max] bitWidth = enumLayouts.BitWidthAt(index);
+            stack u32[0 max] bitWidth = moduleFacts.EnumLayouts.BitWidthAt(index);
             if (bitWidth <= 1)
             {
                 tagType = MirType.I1;
@@ -3671,9 +3575,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -3735,7 +3637,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
 
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -3778,8 +3680,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         assignToken + 1);
     if (tryExpr.NodeId == 0 || tryExpr.Next != statementEnd || params.Count() != beforeTryParse)
     {
@@ -3803,7 +3704,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -3816,9 +3717,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -3917,8 +3816,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                     sliceDescriptorLocals,
                     localTypes,
                     sourceValueFacts,
-                    declarations,
-                    enumLayouts,
+                    moduleFacts,
                     successorAssignToken + 1);
                 if (successorExpr.NodeId == 0
                     || successorExpr.Next != successorEnd
@@ -3945,9 +3843,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumLayouts,
-                        enumPayloads,
+                        moduleFacts,
                         nestedOperandOwnerDeclarationIndex,
                         returnOwnerDeclarationIndex,
                         nestedCompatibility))
@@ -3996,7 +3892,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                     }
 
                     stack mut MirType nestedTagType = MirType.I8;
-                    if (!TryGetSourceTryEnumTagType(enumLayouts, nestedOperandOwnerDeclarationIndex, nestedTagType))
+                    if (!TryGetSourceTryEnumTagType(moduleFacts, nestedOperandOwnerDeclarationIndex, nestedTagType))
                     {
                         return false;
                     }
@@ -4084,8 +3980,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                     stack mut bool resolvedSliceDescriptor = TryResolveSliceDescriptorFromConstructedObjectFixedArray(
                         stream,
                         source,
-                        declarations,
-                        enumLayouts,
+                        moduleFacts,
                         constructedObjectLocals,
                         localTypeToken,
                         successorAssignToken + 1,
@@ -4171,8 +4066,8 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                     stack mut u32[0 max] fixedArrayLength = 0;
                     if (objectConstructor)
                     {
-                        stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, localTypeToken);
-                        stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, localTypeToken);
+                        stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, localTypeToken);
+                        stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, localTypeToken);
                         if (objectAllocationSize == 0 || objectAllocationAlign == 0)
                         {
                             return false;
@@ -4196,8 +4091,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                             if (!TryParseStackObjectPositionalRecordConstructorInitializers(
                                 stream,
                                 source,
-                                declarations,
-                                enumLayouts,
+                                moduleFacts,
                                 localTypeToken,
                                 argsOpen,
                                 argsClose,
@@ -4220,8 +4114,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                             if (!TryParseStackObjectFieldInitializers(
                                 stream,
                                 source,
-                                declarations,
-                                enumLayouts,
+                                moduleFacts,
                                 localTypeToken,
                                 bodyOpen,
                                 bodyClose,
@@ -4331,8 +4224,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                                 sliceDescriptorLocals,
                                 localTypes,
                                 sourceValueFacts,
-                                declarations,
-                                enumLayouts,
+                                moduleFacts,
                                 fixedArrayLength,
                                 fieldTypeCode,
                                 successorAssignToken + 1,
@@ -4348,8 +4240,9 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                             {
                                 if (initializerRoots.Contains(initializerIndex))
                                 {
+                                    stack u32[0 max] initializerRoot = initializerRoots.Get(initializerIndex);
                                     stack mut u32[0 max] nestedTryOperand = 0;
-                                    if (TryGetSourceTryOperandNode(nodes, initializerRoots.Get(initializerIndex), nestedTryOperand))
+                                    if (TryGetSourceTryOperandNode(nodes, initializerRoot, nestedTryOperand))
                                     {
                                         return false;
                                     }
@@ -4449,14 +4342,14 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                             && TryGetSourceEnumOwnerDeclarationForToken(
                                 stream,
                                 source,
-                                declarations,
+                                moduleFacts,
                                 localTypeToken,
                                 enumOwnerDeclarationIndex,
                                 enumItem))
                         {
                             stack mut u32[0 max] enumAllocationSize = 0;
                             stack mut u32[0 max] enumAllocationAlign = 1;
-                            if (!TryGetSourceEnumStorageLayout(enumLayouts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+                            if (!TryGetSourceEnumStorageLayout(moduleFacts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
                             {
                                 return false;
                             }
@@ -4472,8 +4365,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                                 sliceDescriptorLocals,
                                 localTypes,
                                 sourceValueFacts,
-                                declarations,
-                                enumLayouts,
+                                moduleFacts,
                                 successorAssignToken + 1);
                             if (enumExpr.NodeId == 0
                                 || enumExpr.Next != successorEnd
@@ -4590,8 +4482,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                                     sliceDescriptorLocals,
                                     localTypes,
                                     sourceValueFacts,
-                                    declarations,
-                                    enumLayouts,
+                                    moduleFacts,
                                     successorAssignToken + 1);
                                 if (scalarExpr.NodeId == 0
                                     || scalarExpr.Next != successorEnd
@@ -4703,8 +4594,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                 enumStorageLocals,
                 localTypes,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 successorCursor,
                 successorEnd,
                 scalarStorageAssignments,
@@ -4744,8 +4634,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     if (returnRoot.NodeId == 0 || params.Count() != beforeReturnParse)
     {
@@ -4788,7 +4677,7 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -5106,9 +4995,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -5186,7 +5073,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
 
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -5232,8 +5119,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         assignmentAssignToken + 1);
     if (tryExpr.NodeId == 0 || tryExpr.Next != assignmentEnd || params.Count() != beforeTryParse)
     {
@@ -5257,7 +5143,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -5270,9 +5156,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -5325,8 +5209,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
     if (stream.KindAt(afterReturn) == TokenKind.Semi)
@@ -5381,7 +5264,7 @@ internal fn bool LowerModuleLocalTryAssignmentFunctionToBlocks(
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -5468,9 +5351,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -5519,7 +5400,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
     stack mut IrTable<ConstructedObjectLocal> constructedObjectLocals = new();
     stack mut IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals = new();
     stack mut IrTable<u32[0 max]> localOverrideValues = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -5670,8 +5551,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
                 sliceDescriptorLocals,
                 localTypes,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 fixedArrayLength,
                 fieldTypeCode,
                 assignToken + 1,
@@ -5776,8 +5656,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         assignmentStart,
         assignmentEnd,
         fieldAssignment))
@@ -5802,7 +5681,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -5815,9 +5694,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -5841,8 +5718,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
     if (stream.KindAt(afterReturn) == TokenKind.Semi)
@@ -5930,7 +5806,7 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -6024,9 +5900,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -6103,7 +5977,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
 
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -6160,8 +6034,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
             sliceDescriptorLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             localAssignToken + 1);
         if (initResult.NodeId == 0 || initResult.Next != localEnd || params.Count() != beforeInitParse)
         {
@@ -6200,8 +6073,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
             sliceDescriptorLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             assignmentAssignToken + 1);
         if (tryExpr.NodeId == 0 || tryExpr.Next != assignmentEnd || params.Count() != beforeTryParse)
         {
@@ -6221,8 +6093,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
             sliceDescriptorLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             assignmentAssignToken + 1);
         if (tryExpr.NodeId == 0 || tryExpr.Next != assignmentEnd || params.Count() != beforeTryParse)
         {
@@ -6258,7 +6129,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -6271,9 +6142,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -6297,8 +6166,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
     if (stream.KindAt(afterReturn) == TokenKind.Semi)
@@ -6347,7 +6215,7 @@ internal fn bool LowerModuleStorageTryAssignmentFunctionToBlocks(
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -6460,9 +6328,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -6513,7 +6379,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
 
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -6542,8 +6408,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         assignmentStart,
         assignmentEnd,
         fieldAssignment))
@@ -6568,7 +6433,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -6581,9 +6446,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -6607,8 +6470,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
     if (stream.KindAt(afterReturn) == TokenKind.Semi)
@@ -6657,7 +6519,7 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -6752,9 +6614,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -6836,7 +6696,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
 
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -6876,8 +6736,8 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
         positionalRecordConstructor = true;
     }
 
-    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
-    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
+    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, objectTypeToken);
+    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, objectTypeToken);
     if (!objectConstructor || objectAllocationSize == 0 || objectAllocationAlign == 0)
     {
         return false;
@@ -6917,8 +6777,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
         if (!TryParseStackObjectPositionalRecordConstructorInitializers(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             objectTypeToken,
             argsOpen,
             argsClose,
@@ -6941,8 +6800,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
         if (!TryParseStackObjectFieldInitializers(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             objectTypeToken,
             bodyOpen,
             bodyClose,
@@ -6981,8 +6839,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
         constructedObjectLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         assignmentStart,
         assignmentEnd,
         fieldAssignment)
@@ -7008,7 +6865,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -7021,9 +6878,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -7047,8 +6902,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
     if (stream.KindAt(afterReturn) == TokenKind.Semi)
@@ -7118,7 +6972,7 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -7212,9 +7066,7 @@ internal fn bool LowerModuleReturnTryExpressionFunctionToBlocks(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -7263,7 +7115,7 @@ internal fn bool LowerModuleReturnTryExpressionFunctionToBlocks(
 
     stack mut IrTable<ExprNode> nodes = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -7291,8 +7143,7 @@ internal fn bool LowerModuleReturnTryExpressionFunctionToBlocks(
         sliceDescriptorLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         returnIndex + 1);
     stack mut u64[0 2 ** 63 - 1] afterTry = tryExpr.Next;
     if (stream.KindAt(afterTry) == TokenKind.Semi)
@@ -7322,7 +7173,7 @@ internal fn bool LowerModuleReturnTryExpressionFunctionToBlocks(
     if (!TryGetSourceEnumOwnerDeclarationForToken(
         stream,
         source,
-        declarations,
+        moduleFacts,
         signature.ReturnTypeTokenAt(),
         returnOwnerDeclarationIndex,
         returnEnumItem))
@@ -7335,9 +7186,7 @@ internal fn bool LowerModuleReturnTryExpressionFunctionToBlocks(
         stream,
         sourceText,
         source,
-        declarations,
-        enumLayouts,
-        enumPayloads,
+        moduleFacts,
         operandOwnerDeclarationIndex,
         returnOwnerDeclarationIndex,
         compatibility))
@@ -7383,7 +7232,7 @@ internal fn bool LowerModuleReturnTryExpressionFunctionToBlocks(
     }
 
     stack mut MirType tagType = MirType.I8;
-    if (!TryGetSourceTryEnumTagType(enumLayouts, operandOwnerDeclarationIndex, tagType))
+    if (!TryGetSourceTryEnumTagType(moduleFacts, operandOwnerDeclarationIndex, tagType))
     {
         return false;
     }
@@ -7454,18 +7303,14 @@ internal fn LoweredBody LowerFunctionWithLocals(
     mut borrow IrTable<MirInstruction> instrs,
     mut borrow IrTable<MirBlock> blocks)
 {
-    stack mut DeclarationList noDeclarations = new();
-    stack mut TypedEnumLayoutTable noEnumLayouts = new();
-    return LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, noDeclarations, noEnumLayouts, fnIndex, instrs, blocks);
+    stack mut SourceModuleLoweringFacts noModuleFacts = new();
+    return LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, noModuleFacts, fnIndex, instrs, blocks);
 }
 internal fn bool EmitModuleFunctionAst(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumPayloadTable enumPayloads,
-    borrow TypedEnumLayoutTable enumLayouts,
-    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<u32[0 max]> funcTailFlags,
@@ -7507,8 +7352,7 @@ internal fn bool EmitModuleFunctionAst(
         return EmitModuleLocalIfReturnFunction(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             funcNames,
             funcParamCounts,
             functionCallContractFacts,
@@ -7784,8 +7628,7 @@ internal fn bool EmitModuleFunctionAst(
         return EmitModuleLocalIfReturnFunction(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             funcNames,
             funcParamCounts,
             functionCallContractFacts,
@@ -7806,8 +7649,7 @@ internal fn bool EmitModuleFunctionAst(
         return EmitModuleLocalIfReturnFunction(
             stream,
             source,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             funcNames,
             funcParamCounts,
             functionCallContractFacts,
@@ -7841,9 +7683,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -7863,9 +7703,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -7885,9 +7723,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -7907,9 +7743,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -7929,9 +7763,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -7951,9 +7783,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -7971,9 +7801,7 @@ internal fn bool EmitModuleFunctionAst(
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 functionCallContractFacts,
@@ -8043,7 +7871,7 @@ internal fn bool EmitModuleFunctionAst(
             tryValueFacts,
             tryGlobalFacts,
             functionReturnFacts,
-            enumLayoutFacts,
+            moduleFacts.EnumLayoutFacts,
             rangeMetadata,
             tryFunctionEffects,
             tryBody.ParamCount,
@@ -8059,7 +7887,7 @@ internal fn bool EmitModuleFunctionAst(
 
     stack mut IrTable<MirInstruction> instrs = new();
     stack mut IrTable<MirBlock> blocks = new();
-    stack LoweredBody body = LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, declarations, enumLayouts, fnIndex, instrs, blocks);
+    stack LoweredBody body = LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, moduleFacts, fnIndex, instrs, blocks);
     if (!body.Ok)
     {
         return false;
@@ -8123,7 +7951,7 @@ internal fn bool EmitModuleFunctionAst(
         valueFacts,
         globalFacts,
         functionReturnFacts,
-        enumLayoutFacts,
+        moduleFacts.EnumLayoutFacts,
         rangeMetadata,
         functionEffects,
         body.ParamCount,
@@ -8143,6 +7971,7 @@ internal fn bool PrecomputeModuleFunctionEffectFactsFromAstStream(
     borrow TokenStream stream,
     ascii sourceText,
     borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -8154,7 +7983,7 @@ internal fn bool PrecomputeModuleFunctionEffectFactsFromAstStream(
     stack mut IrTable<MirInstruction> instrs = new();
     stack mut IrTable<MirBlock> blocks = new();
     stack mut IrTable<MirFunction> funcs = new();
-    if (!BuildModuleFunctionTablesForEffectPrepass(stream, sourceText, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, instrs, blocks, funcs))
+    if (!BuildModuleFunctionTablesForEffectPrepass(stream, sourceText, source, moduleFacts, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, instrs, blocks, funcs))
     {
         return false;
     }
@@ -8279,11 +8108,8 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
         return false;
     }
 
-    stack mut DeclarationList declarations = new();
-    stack mut TypedEnumPayloadTable enumPayloads = new();
-    stack mut TypedEnumLayoutTable enumLayouts = new();
-    stack mut IrTable<MirEnumLayoutFact> enumLayoutFacts = new();
-    if (!BuildSourceModuleEnumLayoutInputs(sourceText, stream, declarations, enumPayloads, enumLayouts, enumLayoutFacts))
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildSourceModuleLoweringFacts(sourceText, stream, source, moduleFacts))
     {
         return false;
     }
@@ -8321,7 +8147,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
     }
 
     stack mut IrTable<FunctionEffectFacts> functionEffectFacts = new();
-    if (!PrecomputeModuleFunctionEffectFactsFromAstStream(stream, sourceText, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, functionEffectFacts))
+    if (!PrecomputeModuleFunctionEffectFactsFromAstStream(stream, sourceText, source, moduleFacts, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, functionEffectFacts))
     {
         return false;
     }
@@ -8339,10 +8165,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
                 stream,
                 sourceText,
                 source,
-                declarations,
-                enumPayloads,
-                enumLayouts,
-                enumLayoutFacts,
+                moduleFacts,
                 funcNames,
                 funcParamCounts,
                 funcTailFlags,
@@ -8456,11 +8279,8 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
         return false;
     }
 
-    stack mut DeclarationList declarations = new();
-    stack mut TypedEnumPayloadTable enumPayloads = new();
-    stack mut TypedEnumLayoutTable enumLayouts = new();
-    stack mut IrTable<MirEnumLayoutFact> enumLayoutFacts = new();
-    if (!BuildSourceModuleEnumLayoutInputs(sourceText, stream, declarations, enumPayloads, enumLayouts, enumLayoutFacts))
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildSourceModuleLoweringFacts(sourceText, stream, source, moduleFacts))
     {
         return false;
     }
@@ -8756,8 +8576,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                     if (!LowerModuleLocalIfReturnFunctionToBlocks(
                         stream,
                         source,
-                        declarations,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8779,8 +8598,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                     if (!LowerModuleLocalIfReturnFunctionToBlocks(
                         stream,
                         source,
-                        declarations,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8803,9 +8621,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8826,9 +8642,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8849,9 +8663,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8872,9 +8684,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8895,9 +8705,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8918,9 +8726,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8941,9 +8747,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         stream,
                         sourceText,
                         source,
-                        declarations,
-                        enumPayloads,
-                        enumLayouts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -8959,7 +8763,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                 }
                 else
                 {
-                    body = LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, declarations, enumLayouts, f, instrs, blocks);
+                    body = LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, moduleFacts, f, instrs, blocks);
                     if (!body.Ok)
                     {
                         return false;
@@ -9087,6 +8891,161 @@ public fn bool CompileModuleFromAstChecked(ascii source, mut borrow OwnedAscii s
 // it), and at lower time its index is REDIRECTED — via `localOverrides` — to the SSA value
 // its initializer produced (computed once, reused on each reference). The emitted function
 // declares only the SIGNATURE parameters; locals are interior values, not parameters.
+internal finite law u32[0 max] ProbeTypeKindCode(TypedSignatureTypeKind kind)
+{
+    switch (kind)
+    {
+        case TypedSignatureTypeKind.Void:
+            return 1;
+        case TypedSignatureTypeKind.Bool:
+            return 2;
+        case TypedSignatureTypeKind.Integer:
+            return 3;
+        case TypedSignatureTypeKind.Float:
+            return 4;
+        case TypedSignatureTypeKind.Text:
+            return 5;
+        case TypedSignatureTypeKind.Named:
+            return 6;
+        case TypedSignatureTypeKind.GenericParameter:
+            return 7;
+        case TypedSignatureTypeKind.RawPointer:
+            return 8;
+        case TypedSignatureTypeKind.FunctionPointer:
+            return 9;
+        case TypedSignatureTypeKind.Closure:
+            return 10;
+        case TypedSignatureTypeKind.Dynamic:
+            return 11;
+        case TypedSignatureTypeKind.FixedArray:
+            return 12;
+        case TypedSignatureTypeKind.Slice:
+            return 13;
+        case TypedSignatureTypeKind.Unknown:
+            return 0;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendProbeFlag(mut borrow OwnedAscii sink, bool flag)
+{
+    if (flag)
+    {
+        return sink.AppendConstAscii("1");
+    }
+
+    return sink.AppendConstAscii("0");
+}
+
+internal fn System.Memory.MemoryStatus AppendSourceMemberPathFactProbeLines(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] sourceBytes,
+    borrow DeclarationList declarations,
+    mut borrow OwnedAscii sink)
+    where overlap(sourceText, sourceBytes)
+{
+    stack mut TypedMemberExpressionTable typedMembers = new();
+    switch (BuildTypedMemberExpressions(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedMemberExpressionTable>.Err(var memberError):
+            try sink.AppendConstAscii("members=err\n");
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<TypedMemberExpressionTable>.Ok(var built):
+            typedMembers = built;
+    }
+
+    try sink.AppendConstAscii("members=");
+    try sink.AppendI64((i64[min max])typedMembers.Count());
+    try sink.AppendConstAscii("\n");
+    stack u64[0 2 ** 63 - 1] count = typedMembers.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        try sink.AppendConstAscii("row token=");
+        try sink.AppendI64((i64[min max])typedMembers.MemberNameTokenAt(index));
+        try sink.AppendConstAscii(" resolved=");
+        try AppendProbeFlag(sink, typedMembers.IsResolvedAt(index));
+        try sink.AppendConstAscii(" field=");
+        try AppendProbeFlag(sink, typedMembers.IsFieldAt(index));
+        try sink.AppendConstAscii(" kind=");
+        try sink.AppendI64((i64[min max])ProbeTypeKindCode(typedMembers.TypeKindAt(index)));
+        try sink.AppendConstAscii(" width=");
+        try sink.AppendI64((i64[min max])typedMembers.BitWidthAt(index));
+        try sink.AppendConstAscii(" ranged=");
+        try AppendProbeFlag(sink, typedMembers.HasIntegerRangeAt(index));
+        try sink.AppendConstAscii(" head=");
+        try sink.AppendI64((i64[min max])typedMembers.TypeHeadTokenAt(index));
+        try sink.AppendConstAscii(" primary=");
+        try sink.AppendI64((i64[min max])typedMembers.TypePrimaryTokenAt(index));
+        try sink.AppendConstAscii("\n");
+    }
+
+    stack mut IrTable<u32[0 max]> rowsByToken = new();
+    stack mut IrTable<SourceMemberPathFact> memberPathFacts = new();
+    if (!BuildSourceMemberPathFacts(sourceText, stream, sourceBytes, declarations, rowsByToken, memberPathFacts))
+    {
+        try sink.AppendConstAscii("facts=build-failed\n");
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("facts=");
+    try sink.AppendI64((i64[min max])memberPathFacts.Count());
+    try sink.AppendConstAscii("\n");
+    stack u64[0 2 ** 63 - 1] factCount = memberPathFacts.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] factIndex = 0; factIndex < factCount; factIndex += 1)
+    {
+        stack u32[0 max] factRow = (u32[0 max])(factIndex + 1);
+        stack SourceMemberPathFact fact = memberPathFacts.Get(factRow);
+        try sink.AppendConstAscii("fact kind=");
+        try sink.AppendI64((i64[min max])ProbeTypeKindCode(fact.Kind));
+        try sink.AppendConstAscii(" width=");
+        try sink.AppendI64((i64[min max])fact.BitWidth);
+        try sink.AppendConstAscii(" unsigned=");
+        try AppendProbeFlag(sink, fact.IntegerIsUnsigned);
+        try sink.AppendConstAscii(" hasrange=");
+        try AppendProbeFlag(sink, fact.HasDeclaredRange);
+        try sink.AppendConstAscii(" lower=");
+        try sink.AppendI64(fact.DeclaredRangeLower);
+        try sink.AppendConstAscii(" upper=");
+        try sink.AppendI64(fact.DeclaredRangeUpperExclusive);
+        try sink.AppendConstAscii("\n");
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Diagnostic probe for standalone member-path investigations: renders the
+// typed member rows and the prevalidated member-path facts of `source` into
+// `sink`, one line per row.
+public fn bool ProbeSourceMemberPathFacts(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack mut DeclarationList declarations = new();
+            stack mut TypedEnumPayloadTable enumPayloads = new();
+            stack mut TypedEnumLayoutTable enumLayouts = new();
+            stack mut IrTable<MirEnumLayoutFact> enumLayoutFacts = new();
+            if (!BuildSourceModuleEnumLayoutInputs(sourceText.View(), stream, declarations, enumPayloads, enumLayouts, enumLayoutFacts))
+            {
+                return false;
+            }
+
+            switch (AppendSourceMemberPathFactProbeLines(sourceText.View(), stream, sourceBytes, declarations, sink))
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var probeError):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
 public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAscii sink)
 {
     stack mut OwnedAscii sourceText = new();
@@ -9105,11 +9064,8 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
             // The same body lowering the module path uses, with EMPTY function tables (a
             // single function has no cross-function calls — any call resolves to 0 and is
             // rejected by the shared `ValidateModuleCalls`). Emitted as `@main`.
-            stack mut DeclarationList declarations = new();
-            stack mut TypedEnumPayloadTable enumPayloads = new();
-            stack mut TypedEnumLayoutTable enumLayouts = new();
-            stack mut IrTable<MirEnumLayoutFact> enumLayoutFacts = new();
-            if (!BuildSourceModuleEnumLayoutInputs(sourceText.View(), stream, declarations, enumPayloads, enumLayouts, enumLayoutFacts))
+            stack mut SourceModuleLoweringFacts moduleFacts = new();
+            if (!BuildSourceModuleLoweringFacts(sourceText.View(), stream, sourceBytes, moduleFacts))
             {
                 return false;
             }
@@ -9128,9 +9084,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9151,9 +9105,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9174,9 +9126,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9197,9 +9147,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9220,9 +9168,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9243,9 +9189,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9266,9 +9210,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                     stream,
                     sourceText.View(),
                     sourceBytes,
-                    declarations,
-                    enumPayloads,
-                    enumLayouts,
+                    moduleFacts,
                     noFuncs,
                     noFuncCounts,
                     noFunctionCallContractFacts,
@@ -9284,7 +9226,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
             }
             else
             {
-                body = LowerFunctionWithLocalsWithEnums(stream, sourceBytes, noFuncs, noFuncCounts, noFunctionCallContractFacts, noTailFlags, false, declarations, enumLayouts, (u64[0 2 ** 63 - 1])fnIndex, instrs, blocks);
+                body = LowerFunctionWithLocalsWithEnums(stream, sourceBytes, noFuncs, noFuncCounts, noFunctionCallContractFacts, noTailFlags, false, moduleFacts, (u64[0 2 ** 63 - 1])fnIndex, instrs, blocks);
             }
 
             if (!body.Ok)
@@ -9354,7 +9296,7 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                 valueFacts,
                 globalFacts,
                 functionReturnFacts,
-                enumLayoutFacts,
+                moduleFacts.EnumLayoutFacts,
                 rangeMetadata,
                 functionEffects,
                 body.ParamCount,

@@ -13229,8 +13229,8 @@ public unsafe fn T Identity<T>(T value)
     // materializes `@__stark_mono_fn_Demo__…` as `internal`. The CLI `--emit-lib`
     // package is a FULL image, so the consumer reuses the library's
     // `@__stark_mono_fn_Facade__…` `linkonce_odr` specialization — a different,
-    // equally valid strategy. Typed-only package building isn't exposed by the CLI
-    // (PAINPOINTS #4), so only the package build + cross-package compile is checked.
+    // equally valid strategy. Typed-only package building isn't exposed by the CLI,
+    // so only the package build + cross-package compile is checked.
     return Succeeds(c);
 }
 
@@ -13268,7 +13268,7 @@ public inline fn T Apply<T>(T value, inline closure<fn T(T)> op)
 }
 """);
     // PORT-NOTE: typed-only manifest closure-body specialization isn't reproducible
-    // via the full `--emit-lib` package (PAINPOINTS #4); only the package build +
+    // via the full `--emit-lib` package; only the package build +
     // cross-package compile is checked.
     return Succeeds(c);
 }
@@ -13306,7 +13306,7 @@ public unsafe fn T Forward<T>(T value)
 """);
     // PORT-NOTE: typed-only manifest specialization (Demo__ internal) is not
     // reproducible via the full `--emit-lib` package (gives Facade__ linkonce_odr);
-    // typed-only package building isn't CLI-exposed (PAINPOINTS #4). Only the
+    // typed-only package building isn't CLI-exposed. Only the
     // package build + cross-package compile is checked.
     return Succeeds(c);
 }
@@ -13348,7 +13348,7 @@ public unsafe fn T Forward<T>(T value)
 """);
     // PORT-NOTE: typed-only manifest dedup/internalization (Demo__ internal) is not
     // reproducible via the full `--emit-lib` package (gives Facade__ linkonce_odr);
-    // typed-only package building isn't CLI-exposed (PAINPOINTS #4). Only the
+    // typed-only package building isn't CLI-exposed. Only the
     // package build + cross-package compile is checked.
     return Succeeds(c);
     return Succeeds(c);
@@ -13828,7 +13828,7 @@ unsafe fn i32[min max] Run()
 }
 
 // Verifies the host-test request's `importedInlineCloneSeedFunctions` field
-// (PAINPOINTS #3) reaches CompilerOptions.ImportedInlineCloneSeedFunctions and
+// reaches CompilerOptions.ImportedInlineCloneSeedFunctions and
 // narrows owned function-definition emission. The emitter restricts strong owned
 // definitions to the seed-reachable closure
 // (LlvmIrEmitter.BuildOwnedFunctionDefinitionFilter); non-reachable bodies fall

@@ -457,12 +457,12 @@ public struct List<T>
         return true;
     }
 
-    law retborrow T Get(borrow List<T> self, u64[0 2 ** 63 - 1] index)
+    finite law retborrow T Get(borrow List<T> self, u64[0 2 ** 63 - 1] index)
     {
         return self.Items[index];
     }
 
-    fn retborrow mut T GetMut(mut borrow List<T> self, u64[0 2 ** 63 - 1] index)
+    finite retborrow mut T GetMut(mut borrow List<T> self, u64[0 2 ** 63 - 1] index)
     {
         return self.Items[index];
     }

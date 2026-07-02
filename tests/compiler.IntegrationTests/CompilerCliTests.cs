@@ -32,6 +32,226 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task CheckModeValidatesImportedSourceModuleBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-check-imported-");
+        try
+        {
+            var depPath = Path.Combine(tempDirectory.FullName, "Dep.stark");
+            var rootPath = Path.Combine(tempDirectory.FullName, "Root.stark");
+            await File.WriteAllTextAsync(
+                depPath,
+                """
+                module Dep
+
+                public struct Table
+                {
+                    dynamic i64[min max] Items;
+
+                    Table()
+                    {
+                        self.Items = new();
+                    }
+
+                    public law retborrow i64[min max] Get(borrow Table self, u64[0 2 ** 63 - 1] index)
+                        where index < self.Items.Length
+                    {
+                        return self.Items[index];
+                    }
+                }
+
+                public fn i64[min max] Consume(i64[min max] value)
+                {
+                    return value + 1;
+                }
+
+                public fn i64[min max] UseViolation(borrow Table table)
+                {
+                    if (table.Items.Length == 0)
+                    {
+                        return 0;
+                    }
+
+                    return Consume(table.Get(0));
+                }
+                """);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import Dep
+                module Root
+
+                fn i64[min max] Run(borrow Table table)
+                {
+                    return UseViolation(table);
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--check", "-I", tempDirectory.FullName, "--no-stark-path"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            // The violation lives in the imported module's body: check-mode parity
+            // with binary builds requires the dependency sweep to surface it.
+            Assert.Equal(1, exitCode);
+            Assert.Contains("STK4003", stderr.ToString());
+            Assert.Contains("Dep.stark", stderr.ToString());
+            Assert.DoesNotContain("Check succeeded.", stdout.ToString());
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ImportedModuleTypeCheckDiagnosticsReportTheImportedFilePath()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-imported-path-");
+        try
+        {
+            var depPath = Path.Combine(tempDirectory.FullName, "Dep.stark");
+            var rootPath = Path.Combine(tempDirectory.FullName, "Root.stark");
+            await File.WriteAllTextAsync(
+                depPath,
+                """
+                module Dep
+
+                public fn i64[min max] BrokenBody()
+                {
+                    return missingName;
+                }
+                """);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import Dep
+                module Root
+
+                fn i64[min max] Run()
+                {
+                    return BrokenBody();
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--check", "-I", tempDirectory.FullName, "--no-stark-path"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            // The unknown symbol lives in the imported module's body, so the
+            // diagnostic must carry Dep.stark, not the root compilation path.
+            Assert.Equal(1, exitCode);
+            Assert.Contains("STK3003", stderr.ToString());
+            Assert.Contains("Dep.stark", stderr.ToString());
+            Assert.DoesNotContain("Root.stark:", stderr.ToString());
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CheckModeAcceptsCleanImportedSourceModules()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-check-imported-clean-");
+        try
+        {
+            var depPath = Path.Combine(tempDirectory.FullName, "Dep.stark");
+            var rootPath = Path.Combine(tempDirectory.FullName, "Root.stark");
+            await File.WriteAllTextAsync(
+                depPath,
+                """
+                module Dep
+
+                public struct Table
+                {
+                    dynamic i64[min max] Items;
+
+                    Table()
+                    {
+                        self.Items = new();
+                    }
+
+                    public law retborrow i64[min max] Get(borrow Table self, u64[0 2 ** 63 - 1] index)
+                        where index < self.Items.Length
+                    {
+                        return self.Items[index];
+                    }
+                }
+
+                public fn i64[min max] Consume(i64[min max] value)
+                {
+                    return value + 1;
+                }
+
+                public fn i64[min max] UseValue(borrow Table table)
+                {
+                    if (table.Items.Length == 0)
+                    {
+                        return 0;
+                    }
+
+                    stack i64[min max] value = table.Get(0);
+                    return Consume(value);
+                }
+                """);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                import Dep
+                module Root
+
+                fn i64[min max] Run(borrow Table table)
+                {
+                    return UseValue(table);
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--check", "-I", tempDirectory.FullName, "--no-stark-path"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Check succeeded.", stdout.ToString());
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task HelpOutputGroupsOptionsByWorkflow()
     {
         var stdout = new StringWriter();

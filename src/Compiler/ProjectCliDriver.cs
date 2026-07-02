@@ -460,7 +460,7 @@ internal static class ProjectCliDriver
         var outputDirectory = GetOutputDirectory(project, session);
         session.BuildLocks.Add(await AcquireBuildDirectoryLockAsync(outputDirectory));
 
-        // PAINPOINTS #5: derive a deterministic stamp over every input that can change
+        // Derive a deterministic stamp over every input that can change
         // this project's output (its own sources, the manifest, bundled-library
         // search-path inputs, each dependency's stamp, the build configuration, and
         // the compiler binary itself). If the stamp matches the one recorded beside a
@@ -621,7 +621,7 @@ internal static class ProjectCliDriver
             return RememberFailure(project, session);
         }
 
-        // PAINPOINTS #5: record the input stamp only after a clean build so the next
+        // Record the input stamp only after a clean build so the next
         // run can skip recompilation when nothing changed; a failed build leaves no
         // stamp, forcing a retry.
         try
@@ -775,7 +775,7 @@ internal static class ProjectCliDriver
         new(@"^\s*\[\s*(Fact|Theory)\b",
             RegexOptions.Multiline | RegexOptions.Compiled);
 
-    // PAINPOINTS #6: the generated test runner collects [Fact]/[Theory] facts ONLY from
+    // The generated test runner collects [Fact]/[Theory] facts ONLY from
     // the [test] root compilation unit, and an imported module file must be named after
     // its module to resolve. So warn (non-fatally, to stderr) when a project source file
     // (a) declares [Fact]/[Theory] but is not the root — those facts silently never run —
@@ -960,11 +960,11 @@ internal static class ProjectCliDriver
         return failure;
     }
 
-    // PAINPOINTS #5: the file written beside a project's outputs recording the input
+    // The file written beside a project's outputs recording the input
     // stamp of the build that produced them.
     private const string BuildStampFileName = ".stark-build-stamp";
 
-    // PAINPOINTS #5: a build is up to date when the recorded stamp matches the freshly
+    // A build is up to date when the recorded stamp matches the freshly
     // computed one AND the output it described is still present (for libraries, the
     // package image too). Any mismatch or missing artifact forces a clean rebuild.
     private static bool IsBuildUpToDate(
@@ -1007,7 +1007,7 @@ internal static class ProjectCliDriver
         return true;
     }
 
-    // PAINPOINTS #5: before rebuilding a changed project, remove the artifacts a prior
+    // Before rebuilding a changed project, remove the artifacts a prior
     // build produced (executable/library, the generated test runner, intermediate
     // temps, and any emitted package image) so a stale `.starkpkg` can never be
     // rediscovered and shadow the fresh source.
@@ -1061,7 +1061,7 @@ internal static class ProjectCliDriver
         }
     }
 
-    // PAINPOINTS #5: a stable hash over every input that can change this project's
+    // A stable hash over every input that can change this project's
     // output — its sources and manifest, bundled-library search-path inputs, each
     // dependency's own stamp (so transitive source changes propagate), the build
     // configuration and test filters, and the compiler binary itself (so a rebuilt

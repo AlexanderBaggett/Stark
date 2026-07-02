@@ -2012,7 +2012,7 @@ internal static class SyntaxModelFactory
             Attributes: attributes,
             BackendOptimizationMode: backendOptimizationMode,
             DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
-            OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
+            OverlapParameterGroups: CreateOverlapParameterGroups(parameterList, memoryContractClauses),
             SameParameterGroups: CreateSameParameterGroups(memoryContractClauses),
             PointeeDeadOnReturnParameterNames: CreatePointeeDeadOnReturnParameterNames(memoryContractClauses),
             ValueParameterContracts: CreateValueParameterContracts(memoryContractClauses),
@@ -2093,13 +2093,48 @@ internal static class SyntaxModelFactory
     }
 
     private static IReadOnlyList<ParameterOverlapGroup> CreateOverlapParameterGroups(
+        StarkParser.ParameterListContext? parameterList,
         IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
     {
-        return CreateParameterRelationGroups(
+        var groups = CreateParameterRelationGroups(
                 memoryContractClauses,
                 static contract => contract.overlapContract()?.expressionList())
             .Select(static group => new ParameterOverlapGroup(group))
-            .ToArray();
+            .ToList();
+
+        // `where overlap_all(name)` currently parses through the law-predicate
+        // contract shape (a dedicated grammar rule needs the antlr4 toolchain to
+        // regenerate the parser — see the note next to `overlapContract` in
+        // Stark.g4) and expands here into pairwise whole-parameter overlap
+        // groups against every other parameter. Pairs whose partner is not
+        // memory-backed are inert to every downstream consumer, so the
+        // expansion is purely name-driven; the type checker validates that the
+        // named parameter exists and is memory-backed.
+        var parameterNames = parameterList?.parameter()
+            .Select(static parameter => parameter.Identifier().GetText())
+            .ToArray() ?? [];
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate
+                    || !string.Equals(predicate.Identifier().GetText(), "overlap_all", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var target = predicate.type_().GetText();
+                foreach (var other in parameterNames)
+                {
+                    if (!string.Equals(other, target, StringComparison.Ordinal))
+                    {
+                        groups.Add(new ParameterOverlapGroup([target, other]));
+                    }
+                }
+            }
+        }
+
+        return groups;
     }
 
     private static IReadOnlyList<ParameterValueContract> CreateValueParameterContracts(
@@ -2159,6 +2194,15 @@ internal static class SyntaxModelFactory
             foreach (var contract in clause.parameterMemoryContract())
             {
                 if (contract.lawPredicateContract() is not { } predicate)
+                {
+                    continue;
+                }
+
+                // `where overlap_all(name)` is a memory contract riding the
+                // law-predicate parse shape; it expands into pairwise overlap
+                // groups (see CreateOverlapParameterGroups) and is not a
+                // thread-safety law.
+                if (string.Equals(predicate.Identifier().GetText(), "overlap_all", StringComparison.Ordinal))
                 {
                     continue;
                 }

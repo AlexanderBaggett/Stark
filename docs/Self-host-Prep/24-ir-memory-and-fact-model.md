@@ -108,6 +108,23 @@ The exact fact records can expand over time. New fact categories should declare:
 - whether it is serialized through package images
 - which verifier catches incorrect loss or misuse
 
+### Module-facts bundle at the source-lowering boundary
+
+Individual fact tables stay flat: free functions over directly-owned tables,
+no wrapper structs, no nested generic fields. There is exactly one sanctioned
+exception. The per-module source-lowering inputs (parsed declarations, typed
+enum payload/layout tables, MIR enum layout facts, and the member-path facts
+with their dense token index) travel together as `SourceModuleLoweringFacts`
+(`selfhost/Compiler/Mir/SourceModuleFacts.stark`). The bundle owns those
+tables, is built once per module by `BuildSourceModuleLoweringFacts` (shared
+by the effect prepass and the main lowering pass), and threads through the
+lowering recursion as a single `borrow` parameter. Functions below the bundle
+module in the import graph (`SourceMemberFacts`, `EnumLayout`, the typing
+builders) keep individual-table parameters; bundle holders pass fields
+(`moduleFacts.MemberPathFacts`, ...) down. Adding the next per-module fact
+table is a one-field change to the bundle and its builder, not an N-signature
+threading change.
+
 ## 5. Lowering Policy
 
 Every lowering pass that creates new handles from old handles must define the

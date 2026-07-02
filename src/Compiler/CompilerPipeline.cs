@@ -255,6 +255,10 @@ public sealed class CompilerPipeline
     private static readonly bool PassTraceEnabled =
         Environment.GetEnvironmentVariable("STARK_PASS_TRACE") is not null;
 
+    // Passes slower than this surface a default-visibility progress line, so long
+    // compiles do not look hung without tracing flags.
+    private static readonly TimeSpan SlowPassThreshold = TimeSpan.FromSeconds(5);
+
     private readonly IReadOnlyList<ICompilerPass> _passes;
 
     internal CompilerPipeline(IReadOnlyList<ICompilerPass> passes)
@@ -352,6 +356,23 @@ public sealed class CompilerPipeline
                     PassExecutionStatus.Executed,
                     stopwatch.Elapsed,
                     state.Diagnostics.Count - diagnosticsBefore));
+
+                if (stopwatch.Elapsed >= SlowPassThreshold)
+                {
+                    // Long compiles otherwise look hung at default verbosity;
+                    // a slow pass surfacing as it completes gives the terminal
+                    // a progress heartbeat without any tracing flags.
+                    state.Logs.Warning(
+                        "pipeline",
+                        "pass-slow",
+                        $"Pass '{pass.Id}' took {stopwatch.Elapsed.TotalSeconds:F1}s.",
+                        operation: "pass-complete",
+                        data: CompilerLogData.Create(
+                            ("phase", pass.Phase.ToString()),
+                            ("durationMs", stopwatch.ElapsedMilliseconds.ToString())),
+                        kind: CompilerLogKind.Pipeline,
+                        outcome: CompilerLogOutcome.Continued);
+                }
 
                 state.Logs.Info(
                     "pipeline",

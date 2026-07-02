@@ -6,9 +6,3 @@ kind = "test"
 [test]
 root = "FileSystemSymlinkTests.stark"
 output = "stdlib-filesystem-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

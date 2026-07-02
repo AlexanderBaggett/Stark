@@ -6,9 +6,3 @@ kind = "library"
 [library]
 root = "Compiler.stark"
 output = "StarkCompiler"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

@@ -69,9 +69,3 @@ data-model = "data-model"
 static-library = "static-library"
 standard-library-tests = "standard-library-tests"
 stdlib-tests = "standard-library-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

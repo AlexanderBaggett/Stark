@@ -9,6 +9,119 @@ capturing details that would otherwise clutter the task list.
 Use [TASKS.md](TASKS.md) for compact task and subtask checkboxes, not for
 failure evidence, run logs, or status-update prose.
 
+Verification convention (since 2026-07-01): `--check` runs the full front end
+— type-check, semantic-validate, and ownership-validate — over the root AND
+every source-imported module (each validated as its own root, in parallel,
+with failures aggregated). A green `--check` gate therefore covers the
+diagnostics that previously only surfaced on executable builds.
+
+---
+
+## 2026-07-01 Pain-Point Fixes: Module-Facts Bundle, overlap_all, Widened Check, Probe Recipe
+
+- Widened `--check` to run the full front end (through ownership-validate) over the root and every source-backed dependency module, in parallel, with per-module batched failure reporting (host `CompilerCli`).
+- Added `where overlap_all(name)` to the host compiler (syntax-model expansion into pairwise overlap groups, STK3050 exemption, STK3029 target validation, grammar rule documented in `Stark.g4` pending parser regeneration) and collapsed 42 selfhost where-clauses onto it.
+- Added STK3057 for duplicate parameter names (was an STK9999 crash) and imported-module file paths on type-check diagnostics (report funnels only; `Location()` untouched for package-image template matching).
+- Strengthened `IrTable` accessors to `finite law` (root fix in `System.Collections.List<T>`) and re-strengthened the selfhost helpers that had been demoted.
+- Added the slow-pass heartbeat: pass completion logs `Pass 'X' took N.Ns` at default visibility past five seconds.
+- Introduced `SourceModuleLoweringFacts` (`Compiler.Mir.SourceModuleFacts`): the single sanctioned struct-of-tables bundling the six per-module lowering inputs (declarations, typed enum payloads/layouts, MIR enum layout facts, member-path fact rows + token index), built once per module by `BuildSourceModuleLoweringFacts` and threaded as one `borrow` parameter; 76 lowering signatures across five files migrated by a dry-run-validated scripted rewriter; `CompileModuleFromAstStream` builds one bundle shared with the effect prepass (double typed-member build eliminated); 11 `IrTests` call sites assemble test bundles.
+- Established the package-backed probe recipe: member-facts probe compiles in 14.5 s against `libStarkCompiler.starkpkg` vs ~12–20 min from source, runs 13/13; sharp edges (data-layout mismatch, `*.starkpkg` search-dir poisoning, relative library path, embedded-stdlib subset) recorded in TASKS.md tooling items and docs/Internals/CompilerDevelopmentVerification.md.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed clean after the overlap_all collapse, again after the bundle migration, and again after the prepass hoist.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed (bundle-assembly test edits) after deleting a stale `tests-stark/selfhost.Ir/build/.../libSystem.starkpkg` that silently shadowed fresh stdlib source and reported phantom STK4107s against pre-fix `List.Get` (recorded as a package-consumer edge in TASKS.md tooling items).
+  - `cd selfhost && ../stark build`: package build passed with the current host (an initial failure was a stale `compiler.dll` predating the STK3050 exemption).
+  - Standalone member-facts probe, package-backed and from-source builds: 13/13 checks passed at runtime.
+  - Host: 3 new `FunctionSemanticsTests` (overlap_all), 2 new `DiagnosticRegressionTests` (STK3057, law/out), 3 new `CompilerCliTests` (check-mode sweep, imported paths) passed alongside their suites' pre-existing failure baseline (see TASKS.md).
+- No broad test sweep was run.
+
+## 2026-07-01 MIR Typed Member Path Row Import Slice
+
+- Imported the typing-phase member expression rows into MIR storage-place
+  lowering: `Compiler.Mir.SourceMemberFacts` builds the rows once per module,
+  validates every field-resolved row's owner declaration, and predecodes each
+  into a flat `SourceMemberPathFact` (owner identity, leaf type kind/width,
+  signedness, declared integer range) joined to the token walk through a dense
+  member-name-token index (O(1) per step, no typed-table calls inside the
+  lowering recursion). Declared ranges decode from the row's semantic primary
+  token — the head token is a last-identifier heuristic that never lands on
+  integer type heads.
+- The shared member-chain resolver now requires and validates a typed member
+  path fact at every `.field` step (owner-declaration agreement) and returns
+  the leaf fact row; leaf consumers enforce kind/width agreement against the
+  resolved field type code, and indexed paths require a fixed-array leaf fact.
+  The single-field legacy paths that bypassed the resolver (expression-primary
+  fallbacks, plain and operator field-assignment targets) received the same
+  step validation, so no member path lowers without a typing-resolved fact.
+- Resolved field reads carry the field's declared integer range on the source
+  expression node; source value-fact queries answer through ranged field
+  reads, and `var` locals seeded from them inherit the range.
+- Field stores validate the stored value against the target's declared range:
+  provable in-range stores are accepted, provable out-of-range constants are
+  rejected, and unprovable (or wider-than-declared, as full-width arithmetic
+  always is) stores keep the pre-existing width-only semantics unless the
+  declared range is narrower than storage — `u8[0 2] count`: `box.count = 2`
+  accepted, `box.count = 5` and `box.count = <i64 param>` rejected
+  (probe-verified).
+- Declared field ranges now survive to MIR value facts and LLVM:
+  `MirLoadPtrAlignedTypedWithDeclaredRange` records the declared bounds as
+  constant operands C/D on the `LoadPtr` (well-formedness already
+  bounds-checks them), `BuildMirValueRangeFactForInstruction` imports the pair
+  as the load's value facts, and range metadata emission gained a guard that
+  skips metadata whose span covers the full value width (unrepresentable in
+  LLVM `!range`) while keeping the fact for validation. This FIXED a
+  pre-existing runtime failure: `fn i32[min max]` returning a ranged field
+  load previously failed return-range validation because loads carried no
+  facts — red at HEAD, green after this slice (probe-verified).
+- Standalone probe matrix compiled at HEAD (in a worktree, with only the
+  mechanical retborrow fixes ported so it could build at all) and on the
+  working tree produced IDENTICAL failures, proving the remaining
+  nested-member runtime failures are PRE-EXISTING and untouched by this
+  slice: nested chains (`box.inner.value`, even all-i64), heap-object bool
+  member stores, and if-condition member reads fail end-to-end at HEAD; only
+  single-step scalar member paths on unranged fields executed before this
+  slice. Queued as new TASKS.md items; the recently added nested-member facts
+  in `tests-stark/selfhost.Ir` have never executed green (the filtered-runner
+  compile cost; docs/Internals/CompilerDevelopmentVerification.md records the
+  probe recipe that answers it).
+- Threading inventory: 53 lowering functions across
+  SourceLocalLowering/SourceModuleLowering/SourceIfLowering/SourceSwitchLowering
+  gained the two fact-table parameters (scripted rewrite + manual entry and
+  adapter wiring); 4 module-lowering builders construct the facts; empty-table
+  adapters mirror the existing `noDeclarations`/`noEnumLayouts` pattern; the
+  dead pre-refactor `TryResolveConstructedObjectScalarMemberChainLayout` was
+  removed. A diagnostic probe (`ProbeSourceMemberPathFacts`) renders the typed
+  member rows and member-path facts of a source module for standalone
+  investigations.
+- Fixed pre-existing `semantic-validate` STK4003 retborrow-argument violations
+  (`IrTable.Get` results passed directly as arguments) in
+  SourceModuleLowering, SourceFunctionContext, SourceIfLowering,
+  SourceSwitchLowering — invisible to `--check`, which at the time stopped
+  before semantic-validate (since widened; see docs/Internals/CompilerPipeline.md
+  "Check Mode"), and blocking any executable build
+  against the selfhost library.
+- Known cost queued for follow-up: the effect prepass and the main lowering
+  each build the typed member tables, so a module compile currently runs the
+  typed-member frontend twice.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - Standalone probe executable (`--emit-exe` against the selfhost library —
+    the first slice probe allowed to run to completion, ~12 minutes per
+    compile): plain member paths, missing-leaf and scalar-intermediate
+    rejections, all three narrow-store outcomes, i64 fixed-array element
+    stores, the ranged-return declared-load-fact case, and the bounds
+    capability itself — a `u8[0 2]` field read used directly as a fixed-array
+    index proves bounds and lowers through the bounded inbounds indexed path —
+    all pass. A statement-level sub-bisect attributed the remaining composite
+    failures to a pre-existing gap: `var` locals initialized from member field
+    reads do not lower at HEAD for any field width (`var copy = box.value`
+    fails on plain i64), now queued in TASKS.md; the probe
+    (`selfhost/probe/MemberFactsProbe.stark`) documents those cases with
+    expected-fail entries so it runs green and flags movement in either
+    direction.
+- No broad test sweep was run.
+
 ---
 
 ## 2026-07-01 MIR Member Place Address Helper Slice
@@ -2215,10 +2328,10 @@ were fixed and verified by targeted project reruns, leaving 4 main suites.
 
 Cross-cutting levers:
 
-- Package-image input, PAINPOINTS #4: remaining package-image residue is in
+- Package-image input: remaining package-image residue is in
   `compiler.Tests` ManifestBacked/PackageImage paths; `compiler.LlvmTests`
   package-image facts are green after the targeted 2026-06-23 rerun.
-- SSA/MIR text alignment, PAINPOINTS #11 reframed: roughly 145 tests left across
+- SSA/MIR text alignment, reframed: roughly 145 tests left across
   `compiler.SsaTests` and `compiler.MirTests`. The `optimized-ssa`/`mir`
   artifacts already carry operands, block labels, and typed terminators. Most
   failures are wrong-artifact-selection plus wrong-fragment-spelling, like the

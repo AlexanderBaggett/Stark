@@ -382,6 +382,31 @@ public fn MirValueId MirLoadPtrAlignedTyped(mut borrow IrTable<MirInstruction> i
     return MirEmitTyped(instrs, MirOp.LoadPtr, type, ptr.Index(), alignBytes, 0);
 }
 
+// Emits a typed aligned pointer load whose result carries a declared integer
+// range: operands C and D reference constants holding the declared lower
+// bound and exclusive upper bound. The MIR value-fact pass imports the pair,
+// so declared field ranges survive through return-range validation and LLVM
+// range metadata.
+public fn MirValueId MirLoadPtrAlignedTypedWithDeclaredRange(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirType type,
+    MirValueId ptr,
+    u32[0 max] alignBytes,
+    i64[min max] declaredLower,
+    i64[min max] declaredUpperExclusive)
+{
+    stack MirValueId lowerConst = MirConstInt(instrs, declaredLower);
+    stack MirValueId upperConst = MirConstInt(instrs, declaredUpperExclusive);
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.LoadPtr;
+    instr.AIndex = ptr.Index();
+    instr.BIndex = alignBytes;
+    instr.CIndex = lowerConst.Index();
+    instr.DIndex = upperConst.Index();
+    instr.ResType = type;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
 public fn MirValueId MirStorePtr(mut borrow IrTable<MirInstruction> instrs, MirValueId ptr, MirValueId value)
 {
     return MirStorePtrTyped(instrs, MirValueType(instrs, value.Index()), ptr, value);

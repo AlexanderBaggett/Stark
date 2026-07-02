@@ -20,6 +20,9 @@ on compiler infrastructure that is still being implemented.
 
 Execution constraints:
 
+- Verify slices with `--check`, which since 2026-07-01 runs the full front end
+  (through semantic-validate and ownership-validate) over the root and every
+  source-imported module; deep emit-path probes remain for runtime behavior.
 - Preserve backend facts all the way through lowering to IR.
 - Treat correctness and completeness as required scope, not expansion.
 - Keep Stark's speed-focused design visible in implementation choices.
@@ -523,11 +526,18 @@ Execution constraints:
     - [~] Lower general typed member chains from HIR.
       - [x] Lower scalar and enum leaf chains on storage-backed constructed object locals.
       - [x] Lower fixed-array leaves reached through nested member chains.
+      - [ ] Fix nested member chain runtime lowering end-to-end (probe matrix 2026-07-01: nested chains fail at HEAD even for all-i64 fields; only single-step member paths execute).
+      - [ ] Fix heap constructed-object bool member stores and if-condition member reads at runtime (probe matrix 2026-07-01: fails at HEAD).
+      - [ ] Fix `var` locals initialized from member field reads (probe matrix 2026-07-01: `var copy = box.value` fails at HEAD even for plain i64 fields).
       - [~] Lower typed HIR member path rows through shared storage-place addressing.
         - [x] Route constructed-object field reads and address-taking through a shared storage-place address helper.
         - [x] Route constructed-object field assignments through the shared storage-place address helper.
         - [x] Route direct and indexed constructed-object field parsing through the member-chain resolver.
-        - [ ] Import typed HIR member path rows into the shared place-address resolver.
+        - [x] Import typed HIR member path rows into the shared place-address resolver.
+        - [ ] Extend declared-range facts to indexed fixed-array element reads.
+        - [ ] Prove compound-assignment and try-assignment stored ranges against narrow declared field ranges.
+        - [ ] Record declared field-load result range facts through MIR value facts and LLVM load range metadata.
+        - [x] Share module-level typed member tables between the effect prepass and the main lowering pass (the `SourceModuleLoweringFacts` bundle is built once in `CompileModuleFromAstStream` and threaded through the effect prepass; see the 2026-07-01 pain-point-fixes entry in TestPassLedger.md).
     - [~] Lower address-taking place reads for locals, fields, and parameters.
       - [x] Lower address-taking for storage-backed scalar and aggregate locals.
       - [x] Lower address-taking for storage-backed field and indexed element places.
@@ -1090,6 +1100,10 @@ Execution constraints:
     - [ ] Decode `MANF` and materialize logical package-image facts without source reconstruction.
   - [x] Add `stark inspect-pkg` as a top-level compiler command.
   - [x] Update package-image docs and tests after public spelling lands.
+  - [ ] Smooth the package-consumer edges found by the probe-recipe work (2026-07-01):
+    - [ ] Raw `--target` invocations derive a different LLVM data layout than project builds embed, so consuming a project-built package requires copying `--target-data-layout` from `--inspect-pkg` by hand; derive the same layout by default for a bare `--target` triple.
+    - [ ] Search-dir resolution enumerates `*.starkpkg` recursively, so a package image left under a source search root (e.g. `selfhost/build/` under `-I selfhost`) poisons source-only compiles with STK7312; scope package discovery away from source roots or prefer fresh source over images outside the project driver. Worse, the root file's own directory joins the search, so a stale test-project package (e.g. `tests-stark/selfhost.Ir/build/.../libSystem.starkpkg`) silently SHADOWS fresh stdlib source in raw `--check` runs — observed 2026-07-01 as phantom STK4107 kind errors against pre-fix `List.Get`; the raw CLI has no freshness stamps, only the project driver does. Delete the stale image (build output) to unblock.
+    - [ ] A library package records its static library by relative path (`../../bin/...`), so relocated packages must replicate the `stage0/pkg` + `stage0/bin` layout; consider embedding a layout-independent reference.
 
 - [~] Complete native toolchain discovery and target facts.
   - [x] Resolve the LLVM version policy.
@@ -1391,3 +1405,4 @@ No open decisions currently tracked.
 - [ ] Compare Stage1 and Stage2 package images, diagnostics, artifacts, and executable behavior.
 - [ ] Run compiler benchmarks for Stage0, Stage1, and Stage2.
 - [ ] Address cutover-only divergences discovered by Stage1/Stage2 comparison.
+- [ ] Migrate durable Self-host-Prep content to Userfacing/Internals and retire this folder: fold the surviving parts of the numbered companion documents, TASKS.md, and TestPassLedger.md into docs/Userfacing or docs/Internals (append to existing documents where one fits), then delete the Self-host-Prep documents. (The pain-points tracker was retired 2026-07-01 after its durable rationale — the widened `--check`, `overlap_all`, the module-facts bundle, the probe recipe — landed in Userfacing/Internals; its resolution log survives as the 2026-07-01 pain-point-fixes entry in TestPassLedger.md.)

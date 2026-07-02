@@ -886,6 +886,28 @@ fn void CopyWindow(
 
 Do not write whole-parameter `disjoint` on ordinary Stark functions; default parameter non-overlap already covers it. FFI and assembly declarations do not receive the default, so explicit whole-parameter disjointness is the opt-in spelling there.
 
+When one parameter may overlap every other memory-backed parameter (a
+context/fact-table parameter threaded through many callees), write
+`where overlap_all(name)` instead of listing each pair:
+
+```stark
+fn void LowerStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<MirInstruction> instrs)
+    where overlap_all(sourceValueFacts)
+{
+    return;
+}
+```
+
+`overlap_all(name)` expands at type-check into pairwise `overlap(name, other)`
+facts against every other memory-backed parameter — the same groups an
+explicit list produces, so package images and call-site checks are unchanged.
+Pairs that do not include the named parameter keep the default non-overlap.
+The named target must exist and be memory-backed (STK3029).
+
 Use `if disjoint(...)` for a runtime branch that grants non-overlap only in the true branch. Use `unsafe assume disjoint(...) { ... }` only for scoped, externally proven facts the compiler cannot prove.
 
 A read-only constant argument is exempt from the default non-overlap obligation at the call site. A direct string literal has always been exempt; a conditional/ternary whose branches are all read-only constants is exempt too — `cond ? "llvm" : "llvm-normalized"`, including nested conditionals and a local bound to such an expression, count as independent const storage that can never be the writer in an aliasing hazard and can never alias a mutable argument. So a flag/name selector like `OptimizedSsaContains(c, hit ? "weak_odr" : "define")` passed alongside other memory-backed arguments does not trip STK3030 and needs no `where overlap(...)` workaround. A conditional with a non-constant branch (`cond ? buffer : "x"`) is not exempt and still requires a proof.
@@ -1288,12 +1310,6 @@ kind = "executable"
 [executable]
 root = "App.stark"
 output = "app"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
 
 Project manifests do not list the bundled standard library or official vendor

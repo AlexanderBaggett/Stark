@@ -19,12 +19,6 @@ kind = "executable"
 [executable]
 root = "../hello.stark"
 output = "hello"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
 
 Library project:
@@ -121,12 +115,6 @@ test = [
 [aliases]
 hello = "hello"
 stdlib-tests = "standard-library-tests"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3
 ```
 
 Use aliases for shorter command names, not for changing source module names.
@@ -275,4 +263,8 @@ asks to inspect them.
 - Dependencies name packages, not imported modules.
 - Native metadata lives in the package that owns the FFI wrapper.
 - Machine-local native paths are not committed into shared manifests.
-- Profiles use explicit optimization levels for development and release.
+- Manifests do not configure optimization: every build compiles fully
+  optimized. `dev` and `release` are built-in profiles selected with
+  `--dev`/`--release`; they choose the output layout under
+  `build/<profile>/...` and the recorded package profile, never a codegen
+  level.

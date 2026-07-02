@@ -118,8 +118,8 @@ public fn LlvmCompile CompileLlvmForTargetUsingStarkPath(ascii id, ascii source,
 }
 
 // As CompileLlvmForTarget, but also pins a custom target data layout so a ported
-// test can assert the emitted `target datalayout = "…"` module header (PAINPOINTS
-// #10 ConfiguredTargetInfo). The raw `llvm` artifact carries the header verbatim.
+// test can assert the emitted `target datalayout = "…"` module header
+// (ConfiguredTargetInfo). The raw `llvm` artifact carries the header verbatim.
 public fn LlvmCompile CompileLlvmForTargetWithDataLayout(ascii id, ascii source, ascii targetTriple, ascii targetDataLayout)
 {
     unsafe
@@ -217,7 +217,7 @@ public fn LlvmCompile CompileLlvmInternalized(ascii id, ascii source)
 // read through `GetLlvmRaw`). Owned function definitions reachable from `seed`
 // keep strong linkage; non-reachable bodies fall back to weak `weak_odr`
 // definitions — so a ported dependency-pruning oracle can assert the seed
-// narrows the owned emission surface. PAINPOINTS #3.
+// narrows the owned emission surface.
 public fn LlvmCompile CompileLlvmWithSeeds(ascii id, ascii source, ascii seed)
 {
     unsafe
@@ -652,7 +652,7 @@ public fn ascii Llvm(mut borrow LlvmCompile compiled)
     }
 }
 
-// Self-reporting LLVM text assertions (PAINPOINTS #1). On a mismatch they write a
+// Self-reporting LLVM text assertions. On a mismatch they write a
 // focused failure report — the searched-for fragment plus a leading window of the
 // actual LLVM text — to stderr via System.Testing.ContainsReport /
 // DoesNotContainReport, so a failing emitter port explains itself instead of
@@ -1018,7 +1018,7 @@ internal fn LlvmCompile RunHostCompileForTargetOptionsCore(
 }
 
 // As RunHostCompile, but seeds the host's imported inline-clone closure with one
-// function name (PAINPOINTS #3 `importedInlineCloneSeedFunctions`). Routes through
+// function name (`importedInlineCloneSeedFunctions`). Routes through
 // CompileOnceArtifactInWithSeed so the request carries the seed array.
 internal fn LlvmCompile RunHostCompileWithSeed(ascii id, ascii source, ascii artifactName, ascii importedInlineCloneSeed)
 {

@@ -16,9 +16,3 @@ include-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/glfw"]
 library-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/glfw"]
 libraries = ["glfw3"]
 link-args = ["-framework", "Cocoa", "-framework", "IOKit", "-framework", "CoreFoundation"]
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

@@ -199,6 +199,15 @@ Recommended visibility:
 - `verbose`: add pass completion and major decisions
 - `trace`: reserved for v2.0 value/entity flow
 
+One operational event is deliberately promoted to `normal`: the slow-pass
+heartbeat. When a pass takes longer than five seconds, pass completion logs a
+warning-level event (`Pass 'X' took N.Ns`, category `pipeline`, kind
+`pass-slow`, with the stage attached) at default visibility. Long compiles —
+dependency sweeps, `stark build`, large-module type-check — would otherwise
+sit silent for minutes; the heartbeat makes progress visible without turning
+on `verbose`. Fast passes stay quiet, so ordinary compiles produce no extra
+output.
+
 ### 2. Decision Events
 
 Decision events explain why the compiler chose one path over another.

@@ -551,6 +551,28 @@ fn void RequireSame(borrow u8[] left, borrow u8[] right)
 
 Inside `CopyDisjoint`, `source` and `destination` are known not to overlap for the duration of the call because that is the default. `MoveOverlapSafe` explicitly permits overlap for its listed pair and must use overlap-safe code. `RequireSame` requires the caller to pass the same visible region for both parameters. The readonly or mutable authority still comes from `borrow` and `borrow mut`; the memory contract only supplies region identity or non-overlap facts.
 
+When one parameter may overlap every other memory-backed parameter, listing
+each pair repeats the same fact once per parameter. `where overlap_all(name)`
+is shorthand for the full pairwise list:
+
+```stark
+fn void Analyze(
+    borrow u8[] table,
+    borrow u8[] rowIndex,
+    borrow mut u8[] scratch)
+    where overlap_all(table)
+{
+    return;
+}
+```
+
+`overlap_all(table)` expands to `overlap(table, rowIndex)` and
+`overlap(table, scratch)` — exactly the pairwise facts the checker already
+consumes, so package images and downstream tooling see ordinary overlap
+groups. Pairs that do not include the named parameter keep the default:
+`rowIndex` and `scratch` above must still be disjoint. The named parameter
+must exist and be memory-backed (STK3029 otherwise).
+
 Function-pointer types preserve the same callable-boundary contract. Because a
 `fnptr` type does not name its parameters, use `arg0`, `arg1`, and so on in the
 type-level relation:

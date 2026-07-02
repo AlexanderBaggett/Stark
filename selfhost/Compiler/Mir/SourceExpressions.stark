@@ -92,6 +92,20 @@ internal inline finite law bool SourceLocalTypeCodeIsStoredScalar(u32[0 max] typ
     return typeCode >= SourceLocalTypeCodeStoredBool() && typeCode <= SourceLocalTypeCodeStoredI64();
 }
 
+// Binds the slot's type code before testing it, so callers can keep the
+// stored-scalar test inside a single condition without passing a table `Get`
+// result directly as an argument.
+internal finite law bool SourceLocalTypeCodeIsStoredScalarAt(borrow IrTable<u32[0 max]> localTypes, u32[0 max] slot)
+{
+    if (!localTypes.Contains(slot))
+    {
+        return false;
+    }
+
+    stack u32[0 max] typeCode = localTypes.Get(slot);
+    return SourceLocalTypeCodeIsStoredScalar(typeCode);
+}
+
 internal inline finite law bool SourceLocalTypeCodeIsIntegerValue(u32[0 max] typeCode)
 {
     return typeCode == SourceLocalTypeCodeInt()
@@ -462,7 +476,9 @@ internal fn bool IsProductOpToken(TokenKind k)
 // parenthesized comparison, or a chained comparison. The fix is a real expression AST
 // and a typer that recurses over it. This is that AST: a FLAT node table (free functions
 // over a directly-owned `IrTable<ExprNode>`, per the host-codegen discipline — no wrapper
-// struct, no nested generic field). Each node is one of five kinds; Binary/Compare carry
+// struct, no nested generic field; the single sanctioned exception is the per-module
+// `SourceModuleLoweringFacts` bundle at the source-lowering boundary, see
+// SourceModuleFacts.stark). Each node is one of five kinds; Binary/Compare carry
 // an operator and two child node ids; a Call carries its (single) argument node id;
 // parentheses are a parser concern and produce no node (the inner expression stands in).
 public enum ExprKind
@@ -503,6 +519,13 @@ public struct ExprNode
     u32[0 max] ExtraArgLink;
     // Indexed field reads carry whether the source proved a fixed compile-time bound.
     bool IndexHasKnownBounds;
+    // Resolved field reads carry the field's declared integer range imported
+    // from the typed member path facts, so source value-fact queries can prove
+    // bounds through ranged field reads. The declared range is a type-level
+    // fact and stays sound across mutations of the field.
+    bool HasDeclaredRange;
+    i64[min max] DeclaredRangeLower;
+    i64[min max] DeclaredRangeUpperExclusive;
     i64[min max] Imm;
 
     ExprNode()
@@ -516,6 +539,9 @@ public struct ExprNode
         self.Arg4 = 0;
         self.ExtraArgLink = 0;
         self.IndexHasKnownBounds = false;
+        self.HasDeclaredRange = false;
+        self.DeclaredRangeLower = 0;
+        self.DeclaredRangeUpperExclusive = 0;
         self.Imm = 0;
     }
 }
@@ -567,6 +593,26 @@ public fn u32[0 max] MakeResolvedFieldRead(
     node.Arg2 = alignBytes;
     node.Arg3 = fieldTypeCode;
     return nodes.Add(node);
+}
+
+// Attaches a declared integer range fact to an already-built node. Used for
+// resolved field reads whose typed member path fact carries a declared range.
+public fn void SetNodeDeclaredRange(
+    mut borrow IrTable<ExprNode> nodes,
+    u32[0 max] nodeId,
+    i64[min max] lower,
+    i64[min max] upperExclusive)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    node.HasDeclaredRange = true;
+    node.DeclaredRangeLower = lower;
+    node.DeclaredRangeUpperExclusive = upperExclusive;
+    stack bool replaced = nodes.Replace(nodeId, node);
 }
 
 public fn u32[0 max] MakeResolvedIndexedFieldRead(

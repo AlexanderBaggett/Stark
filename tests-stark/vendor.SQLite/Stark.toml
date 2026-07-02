@@ -15,9 +15,3 @@ pkg-config = ["sqlite3"]
 include-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/sqlite"]
 library-dirs = ["../../vendor/dist/arm64-apple-macosx26.0.0/native/sqlite"]
 libraries = ["sqlite3"]
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

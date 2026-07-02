@@ -16,9 +16,3 @@ stdlib = "stdlib"
 vendor = "vendor"
 raylib = "examples/raylib"
 breakout = "examples/breakout"
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

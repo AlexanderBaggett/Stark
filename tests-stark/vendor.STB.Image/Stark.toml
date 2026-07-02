@@ -12,9 +12,3 @@ stdlib = { path = "../../stdlib" }
 
 [native]
 sources = ["../../vendor/StbImageImplementation.c"]
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

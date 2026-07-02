@@ -33,9 +33,3 @@ link-args = [
   "-framework", "QuartzCore",
   "-weak_framework", "CoreHaptics"
 ]
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

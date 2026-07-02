@@ -15,9 +15,3 @@ sources = ["../../vendor/MiniaudioImplementation.c"]
 
 [native.fallback.linux]
 libraries = ["pthread", "m", "dl"]
-
-[profiles.dev]
-opt = 0
-
-[profiles.release]
-opt = 3

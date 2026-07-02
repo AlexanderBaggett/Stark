@@ -5,6 +5,42 @@ namespace compiler.Tests;
 public sealed class DiagnosticRegressionTests
 {
     [Fact]
+    public void DuplicateParameterNamesReportALocatedDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[min max] Broken(i64[min max] value, i64[min max] value)
+            {
+                return value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3057", "declares parameter 'value' more than once");
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK9999");
+    }
+
+    [Fact]
+    public void LawFunctionsWithOutParametersReportSemanticValidateDiagnostics()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law bool Broken(out u32[0 max] value)
+            {
+                value = 1;
+                return true;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4101", "cannot declare 'out'");
+    }
+
+    [Fact]
     public void MalformedSyntaxProducesAStableParseDiagnostic()
     {
         var result = Compile(

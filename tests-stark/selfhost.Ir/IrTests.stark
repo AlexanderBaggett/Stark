@@ -5666,9 +5666,14 @@ fn bool SourceTryRoleFactsResolveOkErrEnumLayouts()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationRoleFacts facts = new();
-    return TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, declarations, layouts, 0, facts)
+    return TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, moduleFacts, 0, facts)
         && facts.IsValid()
         && facts.OkVariantOrdinal() == 0
         && facts.OkVariantTag() == 0
@@ -5702,9 +5707,14 @@ fn bool SourceTryRoleFactsRejectMalformedEnums()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationRoleFacts facts = new();
-    return !TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, declarations, layouts, 0, facts)
+    return !TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, moduleFacts, 0, facts)
         && !facts.IsValid();
 }
 
@@ -5735,9 +5745,14 @@ fn bool SourceTryRoleFactsResolveEnumSuccessPayload()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationRoleFacts facts = new();
-    return TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, declarations, layouts, 1, facts)
+    return TryResolveSourceTryPropagationRoleFacts(stream, sourceBytes, moduleFacts, 1, facts)
         && facts.IsValid()
         && facts.OkPayloadCount() == 1
         && facts.OkPayloadTypeCode() == SourceResolvedFieldTypeCodeForEnumOwnerDeclarationIndex(0)
@@ -5772,9 +5787,14 @@ fn bool SourceTryCompatibilityAcceptsSameFailurePayloadType()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
-    stack bool ok = TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 1, 2, facts);
+    stack bool ok = TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 1, 2, facts);
     stack SourceTryPropagationRoleFacts operandRoles = facts.OperandRoles();
     stack SourceTryPropagationRoleFacts returnRoles = facts.ReturnRoles();
     return ok
@@ -5811,9 +5831,14 @@ fn bool SourceTryCompatibilityAcceptsUnitFailures()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
-    return TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 0, 1, facts)
+    return TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 0, 1, facts)
         && facts.IsValid()
         && facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.UnitFailure;
 }
@@ -5852,9 +5877,14 @@ fn bool SourceTryCompatibilityResolvesErrorFunnel()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
-    return TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 3, 4, facts)
+    return TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 3, 4, facts)
         && facts.IsValid()
         && facts.ErrorCompatibilityKind() == SourceTryPropagationErrorCompatibilityKind.FunnelFailurePayloadType
         && facts.ErrorFunnelOwnerDeclarationIndex() == 2
@@ -5895,9 +5925,14 @@ fn bool SourceTryCompatibilityRejectsMismatchWithoutFunnel()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
-    return !TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 3, 4, facts)
+    return !TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 3, 4, facts)
         && !facts.IsValid();
 }
 
@@ -5929,9 +5964,14 @@ fn bool SourceTryCompatibilityRejectsUnitPayloadMix()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
-    return !TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 1, 2, facts)
+    return !TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 1, 2, facts)
         && !facts.IsValid();
 }
 
@@ -5957,9 +5997,14 @@ fn bool SameOwnerSourceTryLoweringBranchesAndExtractsSuccessPayload()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
-    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 0, 0, facts))
+    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 0, 0, facts))
     {
         return false;
     }
@@ -6054,9 +6099,14 @@ fn bool SameFailurePayloadSourceTryLoweringBuildsReturnErr()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
-    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 1, 2, facts))
+    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 1, 2, facts))
     {
         return false;
     }
@@ -6151,9 +6201,14 @@ fn bool FunnelFailurePayloadSourceTryLoweringBuildsReturnErr()
         return false;
     }
 
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumPayloads = payloads;
+    moduleFacts.EnumLayouts = layouts;
+
     stack mut SourceTryPropagationCompatibilityFacts facts = new();
     stack i8[min max][] sourceBytes = sourceText.AsSlice();
-    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, declarations, layouts, payloads, 2, 3, facts))
+    if (!TryResolveSourceTryPropagationCompatibility(stream, sourceText.View(), sourceBytes, moduleFacts, 2, 3, facts))
     {
         return false;
     }
@@ -9618,6 +9673,54 @@ fn bool CompileFunctionNestedDynamicFixedArrayElementAssignmentStoresThroughInde
         && System.Text.Contains(sink.View(), "store i32")
         && System.Text.Contains(sink.View(), "align 4")
         && ClangVerifiesLlvmText(sink);
+}
+
+// A ranged field read carries its declared integer range imported from the
+// typed member path facts, so using it directly as a fixed-array index proves
+// bounds and lowers through the bounded indexed pointer path. (The `var`-local
+// form of this capability is blocked by the pre-existing var-from-field
+// runtime gap tracked in TASKS.md.)
+[Fact]
+fn bool CompileFunctionRangedFieldReadProvesFixedArrayIndexBounds()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.count = 2; box.values[2] = 17; return box.values[box.count] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 %v")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %v")
+        && System.Text.Contains(sink.View(), "store i64 17")
+        && System.Text.Contains(sink.View(), "load i8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// A ranged scalar field load imports its declared range into MIR value facts
+// through the declared-range load operands, so returning it from a
+// range-annotated function passes return-range validation.
+[Fact]
+fn bool CompileFunctionRangedFieldReturnCarriesDeclaredLoadRange()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { i32[min max] value; } fn i32[min max] main() { stack Box box = new Box(); box.value = 11; return box.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "store i32 11")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// Stores into a field with a narrow declared range must prove the stored
+// range fits: a provable out-of-range constant and an unprovable full-width
+// parameter are both rejected, while an in-range constant is accepted.
+[Fact]
+fn bool RejectsRangedFieldStoreOutsideDeclaredRange()
+{
+    stack mut OwnedAscii accepted = new();
+    stack mut OwnedAscii constantTooBig = new();
+    stack mut OwnedAscii unprovenParam = new();
+    return CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64 tail; } fn i64 main() { stack Box box = new Box(); box.count = 2; return box.tail }", accepted)
+        && !CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64 tail; } fn i64 main() { stack Box box = new Box(); box.count = 5; return box.tail }", constantTooBig)
+        && !CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64 tail; } fn i64 main(i64 value) { stack Box box = new Box(); box.count = value; return box.tail }", unprovenParam);
 }
 
 [Fact]

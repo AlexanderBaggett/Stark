@@ -372,6 +372,19 @@ fn void ProcessPairs(
 
 These relations are not transitive. `where same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `where overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
 
+`where overlap_all(name)` is shorthand for the pairwise `overlap(name, other)` relation against every other memory-backed parameter of the function. It expands during type-checking into the ordinary pairwise overlap groups, so package images, diagnostics, and call-site checking see the same facts the explicit list would produce. Only pairs that include the named parameter are affected; every other pair keeps the default non-overlap obligation. The named parameter must exist and be memory-backed (STK3029 otherwise). Use it for context-table parameters that legitimately may alias anything else the function receives:
+
+```stark
+fn void LowerStatement(
+    borrow u8[] source,
+    borrow u8[] valueFacts,
+    borrow mut u8[] output)
+    where overlap_all(valueFacts)
+{
+    return;
+}
+```
+
 A memory contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy a non-overlap obligation when their element ranges do not overlap. Contract operands must be memory-backed parameters or raw pointer region expressions; scalar value parameters cannot carry a memory-region contract.
 
 `where dead_on_return(name)` marks a memory-backed parameter's pointee storage as

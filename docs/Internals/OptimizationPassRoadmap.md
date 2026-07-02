@@ -864,9 +864,9 @@ on the target cost model.
         chains.
   - [x] Run existing SSA cleanup and constant propagation after the rewrite so
         dead intermediate arithmetic and newly-created constants disappear.
-  - [x] Keep the pass disabled at no-optimization levels where preserving the
-        source-shaped debug experience is more important than generated code
-        quality.
+  - [x] Obsolete: the pass was formerly disabled at no-optimization levels;
+        optimization levels have since been removed and the pass now always
+        runs.
 
 ### Linear Add/Sub Folding
 

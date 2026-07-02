@@ -11,6 +11,8 @@ import Compiler.Mir.SourceExpressions
 import Compiler.Mir.SourceExpressionLowering
 import Compiler.Mir.SourceFunctionContext
 import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
@@ -703,13 +705,7 @@ internal fn bool TryParseTerminalIfArmWithConstructedObjectLocals(
     out ExprParseResult arm,
     out bool usesBecome,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arm = new();
     usesBecome = false;
@@ -777,13 +773,7 @@ internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocals(
     borrow IrTable<ValueFacts> sourceValueFacts,
     u64[0 2 ** 63 - 1] ifIndex,
     out ParsedIfReturnArms arms)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arms = new();
     stack ExprParseResult condition = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, ifIndex + 1);
@@ -827,22 +817,12 @@ internal fn bool TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(
     borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow Compiler.Parsing.DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] armStart,
     out ExprParseResult arm,
     out bool usesBecome,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arm = new();
     usesBecome = false;
@@ -862,7 +842,7 @@ internal fn bool TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(
             return false;
         }
 
-        stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, armStart + 2);
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, armStart + 2);
         stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
         if (stream.KindAt(afterExpr) == TokenKind.Semi)
         {
@@ -886,7 +866,7 @@ internal fn bool TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(
         return false;
     }
 
-    stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, armStart + 1);
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, armStart + 1);
     stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
     if (stream.KindAt(afterExpr) == TokenKind.Semi)
     {
@@ -909,28 +889,18 @@ internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlice
     borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow Compiler.Parsing.DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] ifIndex,
     out ParsedIfReturnArms arms)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arms = new();
-    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, ifIndex + 1);
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
 
     stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
     stack mut ExprParseResult thenArm = new();
     stack mut bool thenBecome = false;
-    if (!TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, condition.Next, thenArm, thenBecome, afterThen))
+    if (!TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, condition.Next, thenArm, thenBecome, afterThen))
     {
         return false;
     }
@@ -943,7 +913,7 @@ internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlice
     stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
     stack mut ExprParseResult elseArm = new();
     stack mut bool elseBecome = false;
-    if (!TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, afterThen + 1, elseArm, elseBecome, afterElse))
+    if (!TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, afterThen + 1, elseArm, elseBecome, afterElse))
     {
         return false;
     }
@@ -2165,7 +2135,8 @@ internal fn bool TryGetIfAssignmentArmAssignedRoot(
             return false;
         }
 
-        if (assignedTargetOffsets.Get(rootSlot) == targetOffset)
+        stack u32[0 max] assignedTargetOffset = assignedTargetOffsets.Get(rootSlot);
+        if (assignedTargetOffset == targetOffset)
         {
             rootNode = assignedRoots.Get(rootSlot);
             return true;
@@ -3001,8 +2972,7 @@ internal fn bool TryParseIfStorageMutationArm(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> baseLocalTypes,
     borrow IrTable<ValueFacts> baseSourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] armStart,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -3011,23 +2981,7 @@ internal fn bool TryParseIfStorageMutationArm(
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedIfStorageMutationArm arm,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, baseSourceValueFacts),
-          overlap(source, baseSourceValueFacts),
-          overlap(nodes, baseSourceValueFacts),
-          overlap(baseParams, baseSourceValueFacts),
-          overlap(funcNames, baseSourceValueFacts),
-          overlap(constructedObjectLocals, baseSourceValueFacts),
-          overlap(sliceDescriptorLocals, baseSourceValueFacts),
-          overlap(scalarStorageLocals, baseSourceValueFacts),
-          overlap(enumStorageLocals, baseSourceValueFacts),
-          overlap(baseLocalTypes, baseSourceValueFacts),
-          overlap(declarations, baseSourceValueFacts),
-          overlap(enumLayouts, baseSourceValueFacts),
-          overlap(armLocalRoots, baseSourceValueFacts),
-          overlap(scalarAssignments, baseSourceValueFacts),
-          overlap(enumAssignments, baseSourceValueFacts),
-          overlap(fieldAssignments, baseSourceValueFacts),
-          overlap(storageMutationStatements, baseSourceValueFacts)
+    where overlap_all(baseSourceValueFacts)
 {
     arm = new();
     nextToken = armStart;
@@ -3111,7 +3065,7 @@ internal fn bool TryParseIfStorageMutationArm(
             }
 
             stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
-            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, declarations, enumLayouts, localAssignToken + 1);
+            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, moduleFacts, localAssignToken + 1);
             if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
             {
                 return false;
@@ -3162,8 +3116,7 @@ internal fn bool TryParseIfStorageMutationArm(
                 enumStorageLocals,
                 armLocalTypes,
                 armSourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 cursor,
                 statementEnd,
                 scalarAssignments,
@@ -3209,8 +3162,7 @@ internal fn bool TryParseIfStorageMutationArm(
         enumStorageLocals,
         armLocalTypes,
         armSourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         armStart,
         compactEnd,
         scalarAssignments,
@@ -3242,8 +3194,7 @@ internal fn bool TryParseIfStorageMutationArms(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] ifIndex,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -3251,23 +3202,7 @@ internal fn bool TryParseIfStorageMutationArms(
     mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedIfStorageMutationArms arms)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arms = new();
     if (stream.KindAt(ifIndex) != TokenKind.If)
@@ -3276,7 +3211,7 @@ internal fn bool TryParseIfStorageMutationArms(
     }
 
     stack u64[0 2 ** 63 - 1] beforeCondition = params.Count();
-    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, ifIndex + 1);
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
     if (params.Count() != beforeCondition)
     {
         return false;
@@ -3297,8 +3232,7 @@ internal fn bool TryParseIfStorageMutationArms(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         condition.Next,
         armLocalRoots,
         scalarAssignments,
@@ -3331,8 +3265,7 @@ internal fn bool TryParseIfStorageMutationArms(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         afterThen + 1,
         armLocalRoots,
         scalarAssignments,
@@ -3365,8 +3298,7 @@ internal fn bool TryParseNestedOrLeafIfStorageMutationArm(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] armStart,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -3374,23 +3306,7 @@ internal fn bool TryParseNestedOrLeafIfStorageMutationArm(
     mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedNestedIfStorageMutationArm arm)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arm = new();
     if (stream.KindAt(armStart) == TokenKind.LBrace)
@@ -3418,8 +3334,7 @@ internal fn bool TryParseNestedOrLeafIfStorageMutationArm(
                 enumStorageLocals,
                 localTypes,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 nestedIfIndex,
                 armLocalRoots,
                 scalarAssignments,
@@ -3458,8 +3373,7 @@ internal fn bool TryParseNestedOrLeafIfStorageMutationArm(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         armStart,
         armLocalRoots,
         scalarAssignments,
@@ -3491,8 +3405,7 @@ internal fn bool TryParseNestedIfStorageMutationArms(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] ifIndex,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -3500,23 +3413,7 @@ internal fn bool TryParseNestedIfStorageMutationArms(
     mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     out ParsedNestedIfStorageMutationArms arms)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arms = new();
     if (stream.KindAt(ifIndex) != TokenKind.If)
@@ -3525,7 +3422,7 @@ internal fn bool TryParseNestedIfStorageMutationArms(
     }
 
     stack u64[0 2 ** 63 - 1] beforeCondition = params.Count();
-    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, ifIndex + 1);
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
     if (params.Count() != beforeCondition)
     {
         return false;
@@ -3545,8 +3442,7 @@ internal fn bool TryParseNestedIfStorageMutationArms(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         condition.Next,
         armLocalRoots,
         scalarAssignments,
@@ -3577,8 +3473,7 @@ internal fn bool TryParseNestedIfStorageMutationArms(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         thenArm.Next + 1,
         armLocalRoots,
         scalarAssignments,
@@ -3609,8 +3504,7 @@ internal fn bool TryParseRecursiveOrLeafIfStorageMutationArm(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] armStart,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -3619,24 +3513,7 @@ internal fn bool TryParseRecursiveOrLeafIfStorageMutationArm(
     mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
     mut borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
     out ParsedRecursiveIfStorageMutationArm arm)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts),
-          overlap(ifNodes, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     arm = new();
 
@@ -3666,8 +3543,7 @@ internal fn bool TryParseRecursiveOrLeafIfStorageMutationArm(
                 enumStorageLocals,
                 localTypes,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 nestedIfIndex,
                 armLocalRoots,
                 scalarAssignments,
@@ -3708,8 +3584,7 @@ internal fn bool TryParseRecursiveOrLeafIfStorageMutationArm(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         armStart,
         armLocalRoots,
         scalarAssignments,
@@ -3741,8 +3616,7 @@ internal fn bool TryParseRecursiveIfStorageMutationNode(
     borrow IrTable<EnumStorageLocal> enumStorageLocals,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<ValueFacts> sourceValueFacts,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] ifIndex,
     mut borrow IrTable<u32[0 max]> armLocalRoots,
     mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
@@ -3752,24 +3626,7 @@ internal fn bool TryParseRecursiveIfStorageMutationNode(
     mut borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
     out u32[0 max] nodeIndex,
     out u64[0 2 ** 63 - 1] nextToken)
-    where overlap(stream, sourceValueFacts),
-          overlap(source, sourceValueFacts),
-          overlap(nodes, sourceValueFacts),
-          overlap(params, sourceValueFacts),
-          overlap(funcNames, sourceValueFacts),
-          overlap(constructedObjectLocals, sourceValueFacts),
-          overlap(sliceDescriptorLocals, sourceValueFacts),
-          overlap(scalarStorageLocals, sourceValueFacts),
-          overlap(enumStorageLocals, sourceValueFacts),
-          overlap(localTypes, sourceValueFacts),
-          overlap(declarations, sourceValueFacts),
-          overlap(enumLayouts, sourceValueFacts),
-          overlap(armLocalRoots, sourceValueFacts),
-          overlap(scalarAssignments, sourceValueFacts),
-          overlap(enumAssignments, sourceValueFacts),
-          overlap(fieldAssignments, sourceValueFacts),
-          overlap(storageMutationStatements, sourceValueFacts),
-          overlap(ifNodes, sourceValueFacts)
+    where overlap_all(sourceValueFacts)
 {
     nodeIndex = 0;
     nextToken = ifIndex;
@@ -3779,7 +3636,7 @@ internal fn bool TryParseRecursiveIfStorageMutationNode(
     }
 
     stack u64[0 2 ** 63 - 1] beforeCondition = params.Count();
-    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, ifIndex + 1);
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
     if (params.Count() != beforeCondition)
     {
         return false;
@@ -3799,8 +3656,7 @@ internal fn bool TryParseRecursiveIfStorageMutationNode(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         condition.Next,
         armLocalRoots,
         scalarAssignments,
@@ -3832,8 +3688,7 @@ internal fn bool TryParseRecursiveIfStorageMutationNode(
         enumStorageLocals,
         localTypes,
         sourceValueFacts,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         thenArm.Next + 1,
         armLocalRoots,
         scalarAssignments,
@@ -10773,8 +10628,7 @@ internal fn bool LowerModuleLocalIfStatementFunctionToBlocks(
 internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -10842,7 +10696,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     stack mut IrTable<SourceStorageMutationStatement> storageMutationStatements = new();
     stack mut IrTable<u32[0 max]> localOverrideValues = new();
     stack mut bool usesArenaFrame = false;
-    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, declarations, signature, paramAbiFacts, signatureParamCount, localTypes))
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
     {
         return false;
     }
@@ -10893,7 +10747,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             }
 
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
             if (params.Count() != beforeInit)
             {
                 return false;
@@ -11054,8 +10908,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                 stack mut bool resolvedSliceDescriptor = TryResolveSliceDescriptorFromConstructedObjectFixedArray(
                     stream,
                     source,
-                    declarations,
-                    enumLayouts,
+                    moduleFacts,
                     constructedObjectLocals,
                     scalarTypeToken,
                     assignToken + 1,
@@ -11167,8 +11020,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                         sliceDescriptorLocals,
                         localTypes,
                         sourceValueFacts,
-                        declarations,
-                        enumLayouts,
+                        moduleFacts,
                         fixedArrayLength,
                         fieldTypeCode,
                         assignToken + 1,
@@ -11264,8 +11116,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                 localRoots,
                 localOverrideValues,
                 sourceValueFacts,
-                declarations,
-                enumLayouts,
+                moduleFacts,
                 cursor,
                 statementEnd,
                 nameStart,
@@ -11297,7 +11148,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                 }
 
                 stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-                stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+                stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
                 if (params.Count() != beforeInit || scalarExpr.NodeId == 0 || scalarExpr.Next != statementEnd)
                 {
                     return false;
@@ -11417,17 +11268,17 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             if (localStorage == TokenKind.Stack
                 && hasAssign
                 && scalarTypeToken != 0
-                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, declarations, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
+                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
             {
                 stack mut u32[0 max] enumAllocationSize = 0;
                 stack mut u32[0 max] enumAllocationAlign = 1;
-                if (!TryGetSourceEnumStorageLayout(enumLayouts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+                if (!TryGetSourceEnumStorageLayout(moduleFacts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
                 {
                     return false;
                 }
 
                 stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-                stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, assignToken + 1);
+                stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
                 if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
                 {
                     return false;
@@ -11494,8 +11345,8 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                     return false;
                 }
 
-                allocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, typeToken);
-                allocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, typeToken);
+                allocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, typeToken);
+                allocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, typeToken);
                 if (allocationSize == 0 || allocationAlign == 0)
                 {
                     return false;
@@ -11534,8 +11385,8 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                         return false;
                     }
 
-                    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
-                    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, declarations, enumLayouts, objectTypeToken);
+                    stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, objectTypeToken);
+                    stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, objectTypeToken);
                     if (objectAllocationSize == 0 || objectAllocationAlign == 0)
                     {
                         return false;
@@ -11565,8 +11416,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                         if (!TryParseStackObjectPositionalRecordConstructorInitializers(
                             stream,
                             source,
-                            declarations,
-                            enumLayouts,
+                            moduleFacts,
                             objectTypeToken,
                             argsOpen,
                             argsClose,
@@ -11589,8 +11439,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
                         if (!TryParseStackObjectFieldInitializers(
                             stream,
                             source,
-                            declarations,
-                            enumLayouts,
+                            moduleFacts,
                             objectTypeToken,
                             bodyOpen,
                             bodyClose,
@@ -11678,8 +11527,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             enumStorageLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             cursor,
             statementEnd,
             scalarStorageAssignments,
@@ -11705,7 +11553,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
 
     stack u32[0 max] prefixStorageMutationCount = (u32[0 max])storageMutationStatements.Count();
     stack mut ParsedIfReturnArms arms = new();
-    if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, cursor, arms))
+    if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor, arms))
     {
         stack mut IrTable<ParsedRecursiveIfStorageMutationNode> storageIfNodes = new();
         stack mut u32[0 max] storageRootNode = 0;
@@ -11724,8 +11572,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             enumStorageLocals,
             localTypes,
             sourceValueFacts,
-            declarations,
-            enumLayouts,
+            moduleFacts,
             cursor,
             storageArmLocalRoots,
             scalarStorageAssignments,
@@ -11750,7 +11597,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
             return false;
         }
 
-        stack ExprParseResult storageReturnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, declarations, enumLayouts, storageReturnIndex + 1);
+        stack ExprParseResult storageReturnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, storageReturnIndex + 1);
         stack mut u64[0 2 ** 63 - 1] afterStorageReturn = storageReturnRoot.Next;
         if (stream.KindAt(afterStorageReturn) == TokenKind.Semi)
         {
@@ -11924,7 +11771,7 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
         while willexit (prefixStorageMutationIndex <= prefixStorageMutationCount)
         {
             if (!storageMutationStatements.Contains(prefixStorageMutationIndex)
-                || prefixStorageMutationStatements.Add(storageMutationStatements.Get(prefixStorageMutationIndex)) == 0)
+                || AppendStorageMutationStatementRow(prefixStorageMutationStatements, storageMutationStatements, prefixStorageMutationIndex) == 0)
             {
                 return false;
             }
@@ -13049,8 +12896,7 @@ internal fn bool EmitModuleLocalIfStatementFunction(
 internal fn bool EmitModuleLocalIfReturnFunction(
     borrow TokenStream stream,
     borrow i8[min max][] source,
-    borrow DeclarationList declarations,
-    borrow TypedEnumLayoutTable enumLayouts,
+    borrow SourceModuleLoweringFacts moduleFacts,
     borrow IrTable<ParamName> funcNames,
     borrow IrTable<u32[0 max]> funcParamCounts,
     borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
@@ -13072,8 +12918,7 @@ internal fn bool EmitModuleLocalIfReturnFunction(
     if (!LowerModuleLocalIfReturnFunctionToBlocks(
         stream,
         source,
-        declarations,
-        enumLayouts,
+        moduleFacts,
         funcNames,
         funcParamCounts,
         functionCallContractFacts,
