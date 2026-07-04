@@ -9757,7 +9757,18 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            // Package-loaded field types can carry the instantiated spelling
+            // (e.g. `System.Collections.List<Pkg.Row>`) in NamedType; member
+            // overloads are keyed by the declaration name, so fall back to the
+            // generic base exactly like the destructor and enum-layout lookups.
             var sourceName = $"{namedTypeName}.{memberName}";
+            if (!TryGetFunctionOverloads(sourceName, out _)
+                && StarkTypeSymbols.GetGenericBaseName(namedTypeName) is { } receiverBaseName
+                && !string.Equals(receiverBaseName, namedTypeName, StringComparison.Ordinal))
+            {
+                sourceName = $"{receiverBaseName}.{memberName}";
+            }
+
             if (TryGetFunctionOverloads(sourceName, out var overloads))
             {
                 overloads = overloads.Where(static method => !method.IsStatic).ToArray();
@@ -9853,7 +9864,16 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            // Same generic-base fallback as TryBuildMemberCall: package-loaded
+            // receiver types can spell NamedType with instantiated arguments.
             var sourceName = $"{namedTypeName}.{memberName}";
+            if (!TryGetFunctionOverloads(sourceName, out _)
+                && StarkTypeSymbols.GetGenericBaseName(namedTypeName) is { } receiverBaseName
+                && !string.Equals(receiverBaseName, namedTypeName, StringComparison.Ordinal))
+            {
+                sourceName = $"{receiverBaseName}.{memberName}";
+            }
+
             if (TryGetFunctionOverloads(sourceName, out var overloads))
             {
                 overloads = overloads.Where(static method => !method.IsStatic).ToArray();

@@ -57,14 +57,14 @@ public sealed class StarkTestRunnerGeneratorTests
         Assert.True(result.Success, FormatDiagnostics(result));
         Assert.True(result.GeneratedRunner);
         var runner = result.SourceText!;
-        Assert.Contains("System.Testing.RunFact(\"LinuxOnly\", LinuxOnly())", runner, StringComparison.Ordinal);
-        Assert.Contains("System.Testing.RunFact(\"LinuxGroup.GroupFact\", LinuxGroup.GroupFact())", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"LinuxOnly\", LinuxOnly())", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"LinuxGroup.GroupFact\", LinuxGroup.GroupFact())", runner, StringComparison.Ordinal);
         Assert.Contains("System.Testing.SkipFact(\"WindowsOnly\", \"target does not match [Platform]\")", runner, StringComparison.Ordinal);
         Assert.Contains("System.Testing.SkipFact(\"SkippedOnLinux\", \"excluded by [SkipPlatform]\")", runner, StringComparison.Ordinal);
         Assert.Contains("System.Testing.SkipFact(\"LinuxGroup.NarrowedOut\", \"target does not match [Platform]\")", runner, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Testing.RunFact(\"WindowsOnly\", WindowsOnly())", runner, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Testing.RunFact(\"SkippedOnLinux\", SkippedOnLinux())", runner, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Testing.RunFact(\"LinuxGroup.NarrowedOut\", LinuxGroup.NarrowedOut())", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain(", \"WindowsOnly\", WindowsOnly())", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain(", \"SkippedOnLinux\", SkippedOnLinux())", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain(", \"LinuxGroup.NarrowedOut\", LinuxGroup.NarrowedOut())", runner, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -93,8 +93,8 @@ public sealed class StarkTestRunnerGeneratorTests
         var runner = result.SourceText!;
         Assert.Contains("System.Testing.SkipFact(\"WindowsOnly(1)\", \"target does not match [Platform]\")", runner, StringComparison.Ordinal);
         Assert.Contains("System.Testing.SkipFact(\"WindowsOnly(2)\", \"target does not match [Platform]\")", runner, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Testing.RunFact(\"WindowsOnly(1)\", WindowsOnly(1))", runner, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Testing.RunFact(\"WindowsOnly(2)\", WindowsOnly(2))", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain(", \"WindowsOnly(1)\", WindowsOnly(1))", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain(", \"WindowsOnly(2)\", WindowsOnly(2))", runner, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -126,8 +126,8 @@ public sealed class StarkTestRunnerGeneratorTests
         Assert.True(result.Success, FormatDiagnostics(result));
         Assert.True(result.GeneratedRunner);
         var runner = result.SourceText!;
-        Assert.Contains("System.Testing.RunFact(\"ExactTriple\", ExactTriple())", runner, StringComparison.Ordinal);
-        Assert.Contains("System.Testing.RunFact(\"Arm64Alias\", Arm64Alias())", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"ExactTriple\", ExactTriple())", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"Arm64Alias\", Arm64Alias())", runner, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -258,14 +258,14 @@ public sealed class StarkTestRunnerGeneratorTests
         Assert.Contains("    // Test collection: Serial", runner, StringComparison.Ordinal);
         AssertInOrder(
             runner,
-            "System.Testing.RunFact(\"Before\", Before())",
+            ", \"Before\", Before())",
             "    // Test collection: Toolchain",
-            "System.Testing.RunFact(\"ToolchainA\", ToolchainA())",
-            "System.Testing.RunFact(\"ToolchainB\", ToolchainB())",
-            "System.Testing.RunFact(\"Between\", Between())",
+            ", \"ToolchainA\", ToolchainA())",
+            ", \"ToolchainB\", ToolchainB())",
+            ", \"Between\", Between())",
             "    // Test collection: Serial",
-            "System.Testing.RunFact(\"SerialGroup.First\", SerialGroup.First())",
-            "System.Testing.RunFact(\"SerialGroup.Second\", SerialGroup.Second())");
+            ", \"SerialGroup.First\", SerialGroup.First())",
+            ", \"SerialGroup.Second\", SerialGroup.Second())");
     }
 
     [Fact]
@@ -299,11 +299,11 @@ public sealed class StarkTestRunnerGeneratorTests
         Assert.True(result.Success, FormatDiagnostics(result));
         Assert.True(result.GeneratedRunner);
         var runner = result.SourceText!;
-        Assert.Contains("System.Testing.RunFact(\"Adds(1, 2, 3)\", Adds(1, 2, 3))", runner, StringComparison.Ordinal);
-        Assert.Contains("System.Testing.RunFact(\"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"Adds(1, 2, 3)\", Adds(1, 2, 3))", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", runner, StringComparison.Ordinal);
         Assert.Contains("    // Test collection: TextCases", runner, StringComparison.Ordinal);
         Assert.Contains(
-            "System.Testing.RunFact(\"TextCase(\\\"stark\\\", true)\", TextCase(\"stark\", true))",
+            ", \"TextCase(\\\"stark\\\", true)\", TextCase(\"stark\", true))",
             runner,
             StringComparison.Ordinal);
     }
@@ -331,8 +331,8 @@ public sealed class StarkTestRunnerGeneratorTests
         Assert.True(result.Success, FormatDiagnostics(result));
         Assert.True(result.GeneratedRunner);
         var runner = result.SourceText!;
-        Assert.Contains("System.Testing.RunFact(\"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", runner, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Testing.RunFact(\"Adds(1, 2, 3)\", Adds(1, 2, 3))", runner, StringComparison.Ordinal);
+        Assert.Contains(", \"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain(", \"Adds(1, 2, 3)\", Adds(1, 2, 3))", runner, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -370,18 +370,18 @@ public sealed class StarkTestRunnerGeneratorTests
         var runner = result.SourceText!;
         Assert.Contains("stack AddRow __stark_member_data_0 = AddRows(0);", runner, StringComparison.Ordinal);
         Assert.Contains(
-            "System.Testing.RunFact(\"Adds[AddRows:0]\", Adds(__stark_member_data_0.Left, __stark_member_data_0.Right, __stark_member_data_0.Expected))",
+            ", \"Adds[AddRows:0]\", Adds(__stark_member_data_0.Left, __stark_member_data_0.Right, __stark_member_data_0.Expected))",
             runner,
             StringComparison.Ordinal);
         Assert.Contains("stack AddRow __stark_member_data_1 = AddRows(1);", runner, StringComparison.Ordinal);
         Assert.Contains(
-            "System.Testing.RunFact(\"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
+            ", \"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
             runner,
             StringComparison.Ordinal);
         Assert.Contains("    // Test collection: TextCases", runner, StringComparison.Ordinal);
         Assert.Contains("stack TextRow __stark_member_data_2 = TextRows(0);", runner, StringComparison.Ordinal);
         Assert.Contains(
-            "System.Testing.RunFact(\"TextCase[TextRows:0]\", TextCase(__stark_member_data_2.name, __stark_member_data_2.expected))",
+            ", \"TextCase[TextRows:0]\", TextCase(__stark_member_data_2.name, __stark_member_data_2.expected))",
             runner,
             StringComparison.Ordinal);
     }
@@ -412,7 +412,7 @@ public sealed class StarkTestRunnerGeneratorTests
         var runner = result.SourceText!;
         Assert.Contains("stack AddRow __stark_member_data_1 = AddRows(1);", runner, StringComparison.Ordinal);
         Assert.Contains(
-            "System.Testing.RunFact(\"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
+            ", \"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
             runner,
             StringComparison.Ordinal);
         Assert.DoesNotContain("AddRows(0)", runner, StringComparison.Ordinal);

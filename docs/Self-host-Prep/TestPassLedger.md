@@ -17,6 +17,306 @@ diagnostics that previously only surfaced on executable builds.
 
 ---
 
+## 2026-07-04 Bundle Field-Store Heisenbug Closed: Stale-Archive Ghost
+
+- Closed the TASKS.md §6 bundle entry. The real defect was the
+  ownership-traffic liveness bug (fixed 2026-07-03,
+  `TryResolveWholeLocalAddress`); everything observed after that fix was
+  artifact, not compiler:
+  - The "stock `opt -O3` removes the 144/576-byte field copies" layer was
+    a copy-COUNT phantom. Store-level semantic check on the package
+    build's own `Compiler_Mir_SourceModuleFacts.ll`: pre-O3 all six bundle
+    field memcpys are present; post-O3 SROA scalarizes `built` and the
+    success path stores every `slot_built.sroa.*.copyload` value directly
+    into `%arg_moduleFacts` at ascending offsets (including the
+    144-offset EnumPayloads region). Legitimate forwarding — which is
+    also why single-category attribute strips never "preserved" the
+    memcpys: no attribute licenses SROA forwarding.
+  - The post-fix "runtime probe still loses fields" observation was a
+    stale-archive ghost: the loss is baked into `libStarkCompiler.a` at
+    PACKAGE-build time, and the verification rebuilt only the probe
+    (~15 s path) against the old archive. A probe-only rebuild can never
+    see a compiler fix to package-side code. Recipe rule added to
+    docs/Internals/CompilerDevelopmentVerification.md.
+- Verified against the fresh instrumented package (built 2026-07-03
+  18:43, all fixes in): MemberFactsProbe 19/19 with MFDBG pre/built/out
+  counts identical; NestedChainFactsProbe and NestedChainProbe green.
+- Removed the temporary tooling: `STARK_SKIP_PASSES` (CompilerPipeline.cs),
+  `DumpSsaFunction` + 10 call sites (DefaultCompilerPipeline.cs), ECM/WALK
+  emit traces (LlvmFunctionBodyEmitter*.cs), MFDBG/ENDBG/ECDBG crumbs
+  (SourceModuleFacts/SourceModuleLowering/SourceLocalLowering .stark; the
+  four host files and SourceModuleFacts are byte-identical to HEAD again).
+  Rebuilt the package from the de-instrumented sources; clean-room
+  re-verification (package-free CWD, single package candidate):
+  MemberFactsProbe 19/19 and both nested-chain probes green with zero
+  crumb output — the bundle copies survive without instrumentation reads
+  keeping them alive.
+- RETRACTION from the de-instrumented re-verification: the enum-return
+  slice's prior evidence ("`ok enum-return-only` whenever the copies
+  survive") was accept-plus-INVALID-emission, not a working lowering.
+  Dumping the accepted module from the instrumented package shows
+  `define unknown @main()` with `ret unknown` — the enum return-type
+  mapping is unimplemented and the accept boolean masked garbage output.
+  The de-instrumented build REJECTS the same shapes (`return Pick.First`,
+  `stack Pick pick = ...; return pick`) while enum construction into
+  locals keeps working (`enum-local-scalar-return` control passes) —
+  the safe behavior at the ragged edge of the parked #34 work; which side
+  the partial matcher lands on is incidental (single-WriteLine and
+  every-optimizer-skipped host experiments do not flip it; a Jul 3 dll
+  vintage agrees with today's). Chased to ground via: probe-shape
+  bisection (construction vs return), package-vs-source compile parity
+  (both reject), host pass-skip sweep (all optimizers), old-dll
+  cross-check, and finally dumping the "accepted" emission. New §1 task
+  records the enum-valued-return lowering work;
+  `selfhost/probe/EnumReturnProbe.stark` pins the shapes expect-reject
+  with a construction control and must validate the emitted module (not
+  just the boolean) when the slice lands.
+- Process lesson recorded in the probe conventions: an accept BOOLEAN
+  from a compile probe is not lowering evidence — dump and validate the
+  emitted module for at least one accepted shape per slice.
+- Probe caveat re-confirmed: package-backed probes pass `-I <pkg>` only
+  (no `-I stdlib/src`); Internals recipe updated to match.
+- Regression coverage added:
+  `OwnershipTrafficSsaKeepsSiblingFieldCopiesIntoLiveAggregate`
+  (compiler.PipelineTests) pins the sibling-field-copy shape — verified
+  red against the pre-fix resolver (both kill sites flipped back), green
+  with the fix.
+- Discovered in passing (pre-existing at unmodified HEAD, worktree
+  check): the two neighboring ownership-traffic tests
+  (`OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRoots`,
+  `OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRoots`) fail 2/2
+  at HEAD — their fixtures no longer produce Move-kind copies or undef
+  move-invalidation stores by `memory-opt-ssa` (only Copy-kind traffic
+  remains), so the asserts never match. Committed-state residue, not
+  related to the bundle work; needs its own triage.
+- No broad test sweep was run.
+
+## 2026-07-03 Host Wrong-Code Fix: Order-Dependent Value-Fact Recording
+
+- Fixed the stale dynamic-`Length` wrong-code (TASKS.md §6 entry, now
+  [x]): `RefineDynamicStorageLocalFacts` recorded per-value facts during
+  the entry-state fixpoint, so a loop exit processed before back-edge
+  convergence permanently kept the pre-loop state (length 0 → emitted
+  `range(i64 0, 1)` → branch folded at emission). The fixpoint now runs on
+  a scratch facts copy and records once from converged entry states.
+- Minimized to a 40-line hermetic repro (`stale_min`) before fixing;
+  statically confirmed in the unoptimized emitted module (folded branch +
+  poisoned range annotation).
+- Verified: both stale-length repros correct; allocator and
+  package-instantiation repros still green; 21 targeted unit tests green;
+  full `LlvmIrEmissionTests` 455/458 with the 3 failures reproduced
+  byte-identically at unmodified HEAD (pre-existing).
+- The bundle field-store heisenbug is NOT cured by this (clean-rebuild
+  verified; an apparent cure was a stale bisect-era probe binary). Its
+  documented next suspect: the analogous order-dependence in
+  memory-opt-ssa's single-predecessor known-state propagation.
+- The updated `stark-stdlib-authoring-gotchas` workaround guidance can be
+  retired once consumers rebuild; the defensive local-counter pattern in
+  `Compiler.TestDriver` remains harmless.
+- No broad test sweep was run.
+
+## 2026-07-03 Stage1 Test Driver Component: Golden Parity (T30.9/T30.10)
+
+- Landed `Compiler.TestDriver` (`RunTestRunner`): spawns a generated runner
+  via the new grouped `Spawn`, forwards stdout/stderr line-by-line with
+  `[N.Ns] ` monotonic prefixes when progress is on, passes `--progress` in
+  the runner argv, and at the deadline group-kills the child and appends
+  the stage0-identical timeout report. Single-threaded pipe-poll
+  multiplexing (new public `PollChildPipes`) instead of §5.2's
+  thread-per-pipe sketch — same observable contract; deviation recorded in
+  the design doc. Pending-buffer lengths tracked with local counters to
+  sidestep the stale-Length host bug (TASKS.md §6).
+- Golden parity verified by probe against the conformance fixtures: legacy
+  transcripts byte-identical (both streams), progress transcripts
+  prefix-normalized identical with every line prefixed, hang fixture under
+  a 3s deadline yields `run HangsForever` last, the exact §3.4 report, a
+  clean group kill, and no orphaned runner.
+- `tests-stark/selfhost.TestRunner` grew a portable driver fact
+  (`/bin/echo` streamed with prefixes + argv `--progress` echo) — 4/4
+  green through the package. Docs closure (T30.10): design-doc status,
+  Internals "Test Runner Progress", and the TASKS.md stage-contract entry
+  now point at `tests/fixtures/test-progress` as normative.
+- No broad test sweep was run.
+
+## 2026-07-03 Stdlib: Spawned-Child Surface For The Stage1 Test Driver
+
+- Implemented the T30.7 gap surfaces in `System.Process` (`ChildProcess`,
+  grouped `Spawn`, `ReadStdoutChunk`/`ReadStderrChunk`, `TryWaitExit`/
+  `WaitExit`, `KillTree`, `Close`, public `MonotonicMilliseconds`) over new
+  platform primitives `StartProcessCaptureGrouped`/`KillProcessGroup`
+  (full 4-dispatch + 3-backend fan-out; macOS `posix_spawnattr` group
+  spawn — including fixing `posix_spawnp`'s attributes parameter to the
+  pointer-to-pointer shape — Linux child `setpgid`, Windows single-kill
+  fallback noted).
+- Runtime-verified on macOS by probe: echo spawn/stream/wait (exit 0,
+  9 bytes), `KillTree` on a `sh -c sleep` group with clean reap and no
+  orphaned sleep, monotonic clock sane.
+- Found host wrong-code bug in the process: a post-loop `captured.Length`
+  read returns the stale pre-loop value when the loop mutates the dynamic
+  through a nested mut-borrow call (TASKS.md §6 entry; repro preserved).
+  Probe works around it by accumulating counts locally.
+- Regression checks: `SystemProcessStandardLibraryTests` 5/7 failures are
+  byte-identical at unmodified HEAD (shared-fixture STK7312 target
+  mismatch — pre-existing environment issue). No broad sweep run.
+
+## 2026-07-03 Host Fix: Package-Imported Field Instantiations Materialize
+
+- Fixed the `lower-mir` crash on consumers that hold and drop a
+  package-imported struct with a `List<T>`-class field (TASKS.md §6 entry):
+  `MaterializeImportedSourceInstantiations` skipped package-image modules,
+  so field-nested generic instantiations never registered (no named-type
+  entry, no triggers, no plan, no layout, no LLVM struct def). The
+  type-checker now walks published concrete struct/enum field and variant
+  types through `EnsureMonomorphizedType`, mirroring source imports; member
+  resolution also gained the `GetGenericBaseName` receiver fallback used by
+  the destructor/enum-layout lookups.
+- Unblocked `tests-stark/selfhost.TestRunner`: 3/3 facts green, and the
+  package-backed `Compiler.TestRunner` emission byte-matches stage0's
+  generated runner (probe diff empty). One test needle fixed
+  (RunFactCounted line is nested in `if (...)`).
+- Narrow verification: `build/pkgbug` repro `ok plan`; 21
+  generator/emission unit tests green; allocator repros green; the 7
+  `PackageImage` unit-test failures reproduce identically at unmodified
+  HEAD (worktree check) — pre-existing.
+- selfhost.Ir run as the heavyweight package-consumer gate: it crashes in
+  `LowerFieldAccess` on `SameOwnerSourceTryLoweringBranchesAndExtractsSuccessPayload`
+  (one of the UNCOMMITTED try-shape facts) — reproduced byte-identically
+  under the unmodified HEAD compiler with the same uncommitted
+  selfhost/tests sources (worktree check), so it is pre-existing to the
+  parked try-shape/#34 work, not a regression from this fix. The 4
+  TestProgressProtocolTests re-pass on the fixed compiler. No broad sweep
+  run.
+
+## 2026-07-03 Test-Progress Streaming: Fixture, Goldens, Stage1 Emission
+
+- Landed T30.4–T30.8 of docs/Self-host-Prep/30-test-progress-streaming.md:
+  the `tests/fixtures/test-progress` conformance + hang fixtures with
+  byte-exact §3.2/§3.3 golden transcripts, four green
+  `TestProgressProtocolTests` integration tests (runner-direct golden diff,
+  driver prefix streaming, legacy byte-identity, timeout kill + orphan
+  check), the TASKS.md §4 stdlib audit for the stage1 driver, and
+  `Compiler.TestRunner` — the stage1 generated-runner emission whose main
+  block byte-matches stage0's generator for the full fixture plan.
+- Blocked: `tests-stark/selfhost.TestRunner` regression facts crash the
+  project build on a new host package-generics bug (imported struct holding
+  a `List<T>` field breaks consumer drop lowering; minimal repro under
+  `build/pkgbug`; TASKS.md §6). The same bug gates the T30.9 stage1 driver
+  component's owned-row containers.
+- Narrow verification: 4/4 TestProgressProtocolTests; `--check` clean on the
+  new selfhost module; byte-diff of stage1 vs stage0 generated main; manual
+  `stark test --test-progress --test-timeout 5` on the hang fixture.
+- No broad test sweep was run.
+
+## 2026-07-03 Host Wrong-Code: Allocator Attributes On Visible Bodies
+
+- Root-caused the deterministic `OwnedAscii` first-append loss (`v_cross`: two
+  `AppendConstAscii` calls crossing initial capacity printed only the second
+  string, exit 0) and the related 4-append SIGTRAP: the emitter attached
+  `allockind`/`allocsize`/`alloc-family` to the runtime bucket allocator
+  (`__stark_runtime_(try_)alloc`/`(try_)realloc`/`free`), the heap wrappers,
+  and the arena allocator while also broadcasting their bodies `linkonce_odr`
+  into every module. The bodies read the allocation header at `ptr - 24`; the
+  attributes assert a fresh object starting at the returned pointer, so
+  whole-program O3 proved the header peek UB, concluded successful allocation
+  paths are unreachable, and emitted `llvm.assume(alloc == null)` — deleting
+  the first append's stores entirely.
+- Evidence chain: native disassembly of the failing exe showed a fully folded
+  `main` (both source strings reduced to one 12-byte buffer); stock
+  `llvm-link` + `opt -O3` over the `--save-temps` modules reproduced the fold;
+  stripping only the runtime-family attribute groups in the merged module
+  fixed the runtime output with no other change; the unmodified control still
+  corrupted.
+- Fix: `LlvmBuiltinAndHelperEmitter.cs` no longer attributes any allocator
+  with a visible body (runtime, heap, arena); opaque libc/Win32 declarations
+  and the model-consistent `__stark_os_*` wrappers keep theirs. Policy comment
+  added at the family-attribute constants.
+- Narrow verification: 5 affected `LlvmIrEmissionTests` pass; `v_cross`,
+  `v_cross3` (status-checked variant), and `v_ownedascii` (previously SIGTRAP
+  133) all print correct output with the rebuilt compiler.
+- Fallout: every earlier probe/test observation made through binaries that
+  grow `dynamic` storage is suspect — including the `MemberFactsProbe`
+  decl-count-0 anomaly blocking the enum-return slice and the try-shape HEAD
+  verdict. Re-verification queued per item.
+- No broad test sweep was run.
+
+## 2026-07-03 Stark Test Per-Fact Progress Streaming
+
+- `stark test` no longer buffers runner output until exit: the driver forwards stdout/stderr line-by-line as they arrive, so a killed or timed-out run keeps its partial transcript. (The old `ReadToEndAsync` batch was why timeouts yielded one opaque blob.)
+- New `--test-progress` flag: the driver passes `--progress` to the generated runner (runtime argv toggle — no regeneration or build-stamp churn); the runner prints `run <name>` before each fact and `ok|FAILED <name> (k/N)` after it through the new `System.Testing.BeginFact`/`RunFactCounted`; the driver stamps `[elapsed]` wall-clock prefixes on every forwarded line. A hung run's last `run <name>` line names the fact in flight. Without the flag, output is byte-identical to the legacy format.
+- New `--test-timeout <seconds>` flag: kills the runner process tree at the deadline and reports the timeout explicitly.
+- The protocol is documented as a stage0/stage1 contract (docs/Internals/CompilerDevelopmentVerification.md "Test Runner Progress"); the stage1 port item is queued in TASKS.md.
+- Narrow verification:
+  - `dotnet build` clean; all 16 `StarkTestRunnerGenerator` unit tests pass with counted-call assertions.
+  - `stark test --test-progress --filter Contains` in `tests-stark/stdlib.Testing`: `run` markers, `(1/2)`/`(2/2)` counters, `[0.2s]` prefixes, streamed stderr assert-reports, clean pass (37.7 s including a full stdlib rebuild after clearing a stale package fixture).
+  - No-flag run: legacy `ok <name>` output byte-identical; `--test-timeout 60` run: no false firing.
+- Discovered in passing: the per-project cached stdlib package fixture shadowed the freshly edited `System.Testing` source (the known stale-`.starkpkg` edge) — cleared with `rm -rf build/`; the TASKS.md package-consumer item already covers the fix direction.
+- No broad test sweep was run.
+
+## 2026-07-02 MIR Compound And Try Store Range Proofs Slice
+
+- Compound field assignments (`box.f += e`, `-=`) now lower: the statement gate and the chain-branch parser accept AddAssign/SubAssign on simple and nested field targets, and the stored value desugars at parse into `Binary(field-read, OP, e)` with the field read carrying its declared range — the existing `SourceStoredValueSatisfiesDeclaredFieldRange` proof then judges the widened result. Full-width fields accept; narrow declared ranges reject without evidence (`[0 3) + 1 → [1 4)` is not provable), matching the host's declared-range conservatism. Indexed compound targets remain unsupported (gate unchanged) and are noted as follow-up.
+- Try-assignments into narrow-ranged fields now carry a reject-unproven guard: the [Ok] payload's declared range is not yet decoded into node facts, so a field narrower than its storage width has no store proof. HEAD-worktree verification (2026-07-03) then showed the guard is currently shadowed by a PRE-EXISTING shape gap: constructed-object field try-assignments reject for every field width through the single-function entry (the body matcher fires but the lowering rejects; the IrTests facts asserting these shapes never executed green). The gap is recorded as its own TASKS.md item; the probe encodes both spellings as rejecting today, with the full-width one flipping when the shape lands.
+- Cross-field narrow-store proofs verified already working: `u8[0 2] = <read of u8[0 2] field>` accepts via the declared load range; `u8[0 2] = <read of u8[0 200] field>` rejects.
+- Standing probe gains four checks (compound full-width/narrow, try full-width/narrow — 19 total); IrTests gains the compound-desugar fact (add+store asserted, ClangVerified) and the narrow-try rejection fact.
+- Narrow verification: widened `--check` clean; `stark build` clean; probe batteries green; IrTests `--check` after the facts.
+- No broad test sweep was run.
+
+## 2026-07-02 MIR Indexed Element Declared-Range Facts Slice
+
+- Fixed-array member-path facts now decode the ELEMENT's declared integer range (the fact builder's semantic primary token lands on the element type head, so `u8[0 2][4]` decodes the `u8[0 2]` span into new ElementHasDeclaredRange fields).
+- Constant- and dynamic-index element reads attach the element range to their expression nodes, and `LowerResolvedIndexedFieldRead` lowers ranged element loads through the declared-range typed LoadPtr, so element loads carry `!range` metadata and their MIR value facts prove downstream fixed-array index bounds.
+- Verified LLVM by hand: `box.slots[1]` loads i8 at byte 1 with `!range {0,3}`, and the loaded value scales the second array's element offset directly — `return box.values[box.slots[1]]` needs no extra comparison. The unranged control (`i64[min max]` elements) still rejects as an unproven index.
+- Standing probe gains ranged-elem-read-proves-index-bounds and unranged-elem-index-rejected; IrTests gains the corresponding ClangVerified fact.
+- Narrow verification: widened `--check` clean; `stark build` clean; MemberFactsProbe 15/15; nested/var/if batteries unregressed; IrTests `--check` after the fact.
+- No broad test sweep was run.
+
+## 2026-07-02 MIR Terminal-If Member Conditions Slice
+
+- Re-bisected the 2026-07-01 "heap bool member" matrix entry: heap and stack bool member stores lower fine after the earlier slices; the actual gaps were in if-condition handling, and probe syntax matters — the dialect's `if` is paren-free (`if flag return 1 else return 0`), so C-style probes mislead.
+- Three stacked fixes:
+  1. `CompileFunctionWithLocalsToLlvm` never dispatched to the terminal-if lowerings (they were wired only into the module paths, with an EMPTY facts bundle there); the driver now routes `FunctionBodyHasLocalPrefixedTerminalIf`/`FunctionBodyStartsWithIfStatement` bodies into `LowerModuleLocalIfReturnFunctionToBlocks` with the real `SourceModuleLoweringFacts`. This alone fixed bare-bool param conditions.
+  2. The typing-side statement walker extracted if/while conditions only when parenthesized, so paren-free dialect conditions — and real-Stark `while willexit (…)` conditions — produced no typed member rows, and the lowering's member branch fell through (breadcrumb: then-arm-reject from a NameExpr(box) with Next at the dot). The extraction now skips the `willexit` marker and the optional paren. Same root-cause class as the var-from-field classifier gap.
+  3. The driver's shared tail emitted a linear instruction range, truncating multi-block if bodies mid-CFG (a dangling `br` with no target blocks — caught by dumping the emitted LLVM, invalid text that ClangVerifies would reject). Block-shaped bodies now record `BlockEmit` ranges and emit through `EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts` with the range-metadata epilogue.
+- Emitted LLVM verified by hand for the heap shape: dereferenceable(16) heap alloc, store i1 true at offset 0, flag load, `br i1` into `b2: ret 1` / `b3: ret 0`.
+- Added IrTests facts for stack and heap member-bool conditions (block labels + branch + ClangVerifiesLlvmText).
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check ...`: passed after each of the three fixes.
+  - `cd selfhost && ../stark build`: passed at each step; probes ran against the freshly built packages.
+  - Probe batteries: if-shapes 5/5, MemberFactsProbe 13/13, NestedChainProbe unregressed, var-shapes 4/4.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check ...`: run after adding the two facts.
+- No broad test sweep was run.
+
+## 2026-07-02 MIR Var-From-Field And Ordered Statement Timeline Slice
+
+- Root-caused `var copy = box.value` rejections with breadcrumb instrumentation plus the member-facts diagnostic probe: the typed member table had ZERO rows for var initializers (`ProbeSourceMemberPathFacts`: members=0 vs members=1 for the `stack i64` spelling) because the statement-kind classifier in `Parsing.stark` mapped stack/heap/register/static/arena/const to `StatementKind.Local` but not `var` — var statements classified as expressions, so their initializers never parsed into the expression table and typing never walked them. One classifier case fixes the fact pipeline end-to-end.
+- Merged the single-function driver's locals and statements loops into one walk so locals may interleave with assignment statements (`box.count = 2; var idx = box.count;` previously exited the locals loop and rejected).
+- Caught a wrong-code hazard the interleaving exposed before it shipped: the driver batched local overrides/initializers before mutation replay, so an interleaved var's field load emitted BEFORE the store it must observe (probe LLVM showed load-then-store). Fixed by making `storageMutationStatements` the ordered statement timeline: the walk appends a `SourceStorageMutationKindLocalDecl` row per local, and replay lowers each local's override value and initializers at its source position, delegating mutation rows to the shared per-statement dispatcher. This also orders stored-scalar initializers that read fields after mutations.
+- Emitted LLVM verified by hand: store i8 2 precedes the var's !range-carrying load (%v8), the indexed store scales the loaded value to byte 24, and the return loads byte 24 — the declared field range proves the fixed-array bounds through the var.
+- Standing probe expectations flipped: var-from-i64-field, var-from-ranged-field, ranged-field-index-store-proves-bounds, ranged-field-index-read-proves-bounds now expect success (they flipped loudly to FAIL first, per the probe convention).
+- Added IrTests facts: var-from-field lowering, and the ordering + bounds fact asserting the store consumes an earlier SSA value than the var's load.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check ...`: passed after the classifier fix, after the loop merge, and after the timeline replay.
+  - `cd selfhost && ../stark build`: passed at each step; probes ran against the freshly built package images.
+  - `MemberFactsProbe` 13/13, `NestedChainProbe` unregressed (correct offsets, cyclic rejection), var-shapes battery 4/4.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check ...`: run after adding the two facts.
+- Remaining member-access runtime gap tracked in TASKS.md: heap constructed-object bool member stores / if-condition member reads.
+- No broad test sweep was run.
+
+## 2026-07-02 MIR Nested Member Chain Lowering Slice
+
+- Root-caused the nested-member-chain runtime gap with the package-backed probe recipe (bisection battery, ~15 s per iteration): every aggregate-in-aggregate constructed-object local was rejected at declaration because `TryGetKnownSourceStorageLayoutWithEnums` — the per-field layout resolver feeding `StructKnownByteExtentWithEnums`/`StructKnownByteAlignmentWithEnums` — handled builtins and enums but never recursed into named aggregate fields, leaving the outer struct with extent 0. The chain resolver, per-step member-path fact validation, and store/read statement gates were already chain-capable.
+- Fixed with depth-capped recursion: `TryGetKnownSourceStorageLayoutWithEnumsAtDepth` falls through to recursive struct extent/alignment for identifier type tokens (`u8[0 16]` depth cap — the mini-Stark dialect has no front end, so cyclic aggregates would otherwise hang layout; they now reject). Fixed arrays of named aggregates stay rejected rather than silently sizing one element. Existing signatures kept as depth-0 wrappers.
+- Verified offsets, not just acceptance: `Box{i64 head; Inner{i64 pad; i64 value}}` lowers to a 24-byte alloca with store/load at byte 16; the three-level chain accumulates to byte 16; a scalar field after an aggregate field lands at byte 8 of a 16-byte alloca.
+- Added IrTests facts: nested store/load byte offset, three-level offset accumulation, scalar-after-aggregate recursive extent, cyclic-aggregate rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed (first run caught STK3014 width style on the depth parameter; clean after narrowing to `u8[0 16]`).
+  - `cd selfhost && ../stark build`: passed; probes below ran against this package image (built from the fixed sources, so package-backed probe runs are runtime evidence for the current tree).
+  - `NestedChainProbe` (9 shapes incl. dumps): all nested shapes compile with correct offsets; cyclic aggregate rejects.
+  - `MemberFactsProbe` (13 standing checks): all still match expectations — no regressions in narrow-store proofs, bounds proofs, or rejection shapes.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check ...`: run after adding the four facts (see below).
+- Remaining member-access runtime gaps tracked in TASKS.md: heap constructed-object bool member stores / if-condition member reads, and `var` locals initialized from member field reads.
+- No broad test sweep was run.
+
 ## 2026-07-01 Pain-Point Fixes: Module-Facts Bundle, overlap_all, Widened Check, Probe Recipe
 
 - Widened `--check` to run the full front end (through ownership-validate) over the root and every source-backed dependency module, in parallel, with per-module batched failure reporting (host `CompilerCli`).

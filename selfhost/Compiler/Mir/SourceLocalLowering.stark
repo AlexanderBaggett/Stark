@@ -17,6 +17,7 @@ import Compiler.Typing.TypedEnumLayoutModel
 import Compiler.Typing.TypedEnumPayloadModel
 import Compiler.Typing.TypedTypeResolution
 import System.Text
+import System.Console
 module Compiler.Mir.SourceLocalLowering
 
 internal finite law u32[0 max] MatchingBraceForMirLowering(borrow TokenStream stream, u32[0 max] open)
@@ -980,6 +981,23 @@ internal fn bool TryGetKnownSourceStorageLayoutWithEnums(
     out u32[0 max] sizeBytes,
     out u32[0 max] alignBytes)
 {
+    return TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, typeToken, 0, sizeBytes, alignBytes);
+}
+
+// Field layout for one type token: builtin scalars and fixed arrays, enum
+// storage, then named aggregates by recursive struct layout. The depth cap
+// bounds mutual recursion through aggregate-typed fields: the mini-Stark
+// dialect has no front-end validation, so a cyclic aggregate (struct A holds
+// B, B holds A) would otherwise recurse forever instead of rejecting.
+internal fn bool TryGetKnownSourceStorageLayoutWithEnumsAtDepth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u8[0 16] aggregateDepth,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
     sizeBytes = TypeKnownByteExtent(stream, source, typeToken);
     alignBytes = BuiltinTypeKnownByteAlignment(stream, source, typeToken);
     if (sizeBytes != 0 && alignBytes != 0)
@@ -988,7 +1006,25 @@ internal fn bool TryGetKnownSourceStorageLayoutWithEnums(
     }
 
     stack mut u32[0 max] ownerDeclarationIndex = 0;
-    return TryGetSourceEnumStorageLayoutForToken(stream, source, moduleFacts, typeToken, ownerDeclarationIndex, sizeBytes, alignBytes);
+    if (TryGetSourceEnumStorageLayoutForToken(stream, source, moduleFacts, typeToken, ownerDeclarationIndex, sizeBytes, alignBytes))
+    {
+        return true;
+    }
+
+    // Fixed arrays of named aggregates have no layout support yet; keep them
+    // rejected instead of silently sizing one element.
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.Identifier
+        || stream.KindAt((u64[0 2 ** 63 - 1])typeToken + 1) == TokenKind.LBrack
+        || aggregateDepth >= 16)
+    {
+        sizeBytes = 0;
+        alignBytes = 0;
+        return false;
+    }
+
+    sizeBytes = StructKnownByteExtentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, aggregateDepth + 1);
+    alignBytes = StructKnownByteAlignmentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, aggregateDepth + 1);
+    return sizeBytes != 0 && alignBytes != 0;
 }
 
 internal fn bool TryGetSourceValueTypeCodeWithEnums(
@@ -1026,6 +1062,16 @@ internal fn u32[0 max] StructKnownByteAlignmentWithEnums(
     borrow i8[min max][] source,
     borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] typeToken)
+{
+    return StructKnownByteAlignmentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, 0);
+}
+
+internal fn u32[0 max] StructKnownByteAlignmentWithEnumsAtDepth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u8[0 16] aggregateDepth)
 {
     stack u64[0 2 ** 63 - 1] count = stream.Count();
     stack mut u64[0 2 ** 63 - 1] scan = 0;
@@ -1070,7 +1116,7 @@ internal fn u32[0 max] StructKnownByteAlignmentWithEnums(
                         {
                             stack mut u32[0 max] fieldSize = 0;
                             stack mut u32[0 max] fieldAlign = 0;
-                            if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])segmentStart, fieldSize, fieldAlign))
+                            if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])segmentStart, aggregateDepth, fieldSize, fieldAlign))
                             {
                                 return 0;
                             }
@@ -1095,7 +1141,7 @@ internal fn u32[0 max] StructKnownByteAlignmentWithEnums(
                 {
                     stack mut u32[0 max] fieldSize = 0;
                     stack mut u32[0 max] fieldAlign = 0;
-                    if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])field, fieldSize, fieldAlign))
+                    if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])field, aggregateDepth, fieldSize, fieldAlign))
                     {
                         return 0;
                     }
@@ -1128,6 +1174,16 @@ internal fn u32[0 max] StructKnownByteExtentWithEnums(
     borrow i8[min max][] source,
     borrow SourceModuleLoweringFacts moduleFacts,
     u32[0 max] typeToken)
+{
+    return StructKnownByteExtentWithEnumsAtDepth(stream, source, moduleFacts, typeToken, 0);
+}
+
+internal fn u32[0 max] StructKnownByteExtentWithEnumsAtDepth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u8[0 16] aggregateDepth)
 {
     stack u64[0 2 ** 63 - 1] count = stream.Count();
     stack mut u64[0 2 ** 63 - 1] scan = 0;
@@ -1173,7 +1229,7 @@ internal fn u32[0 max] StructKnownByteExtentWithEnums(
                         {
                             stack mut u32[0 max] fieldSize = 0;
                             stack mut u32[0 max] fieldAlign = 0;
-                            if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])segmentStart, fieldSize, fieldAlign))
+                            if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])segmentStart, aggregateDepth, fieldSize, fieldAlign))
                             {
                                 return 0;
                             }
@@ -1200,7 +1256,7 @@ internal fn u32[0 max] StructKnownByteExtentWithEnums(
                 {
                     stack mut u32[0 max] fieldSize = 0;
                     stack mut u32[0 max] fieldAlign = 0;
-                    if (!TryGetKnownSourceStorageLayoutWithEnums(stream, source, moduleFacts, (u32[0 max])field, fieldSize, fieldAlign))
+                    if (!TryGetKnownSourceStorageLayoutWithEnumsAtDepth(stream, source, moduleFacts, (u32[0 max])field, aggregateDepth, fieldSize, fieldAlign))
                     {
                         return 0;
                     }
@@ -2647,6 +2703,16 @@ internal inline finite law u32[0 max] SourceStorageMutationKindEnum()
     return 3;
 }
 
+// A local declaration's position in the ordered statement timeline. The
+// function driver lowers the local's override value and its initializers at
+// this point during replay, so a storage-reading initializer (a `var` bound
+// from a field read, or a stored scalar initialized from one) observes every
+// mutation that precedes it in source order.
+internal inline finite law u32[0 max] SourceStorageMutationKindLocalDecl()
+{
+    return 4;
+}
+
 internal struct SourceStorageMutationStatement
 {
     u32[0 max] Kind;
@@ -3147,7 +3213,9 @@ internal fn bool StatementStartsConstructedObjectFieldAssignment(borrow TokenStr
         && stream.KindAt(start) == TokenKind.Identifier
         && stream.KindAt(start + 1) == TokenKind.Dot
         && stream.KindAt(start + 2) == TokenKind.Identifier
-        && stream.KindAt(start + 3) == TokenKind.Assign)
+        && (stream.KindAt(start + 3) == TokenKind.Assign
+            || stream.KindAt(start + 3) == TokenKind.AddAssign
+            || stream.KindAt(start + 3) == TokenKind.SubAssign))
     {
         return true;
     }
@@ -3177,7 +3245,10 @@ internal fn bool StatementStartsConstructedObjectFieldAssignment(borrow TokenStr
             scan = scan + 2;
         }
 
-        if (scan < end && stream.KindAt(scan) == TokenKind.Assign)
+        if (scan < end
+            && (stream.KindAt(scan) == TokenKind.Assign
+                || stream.KindAt(scan) == TokenKind.AddAssign
+                || stream.KindAt(scan) == TokenKind.SubAssign))
         {
             return true;
         }
@@ -5652,7 +5723,15 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
                                 stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
                                 if (elementTypeCode != SourceResolvedFieldTypeCodeInvalid())
                                 {
-                                    return MakeParseResult(MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, elementOffset, elementAlignment, elementTypeCode), (u64[0 2 ** 63 - 1])closeBracket + 1);
+                                    stack u32[0 max] constElementNode = MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, elementOffset, elementAlignment, elementTypeCode);
+                                    stack mut i64[min max] constElementLower = 0;
+                                    stack mut i64[min max] constElementUpperExclusive = 0;
+                                    if (TryDeclaredElementRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, leafMemberFactRow, constElementLower, constElementUpperExclusive))
+                                    {
+                                        SetNodeDeclaredRange(nodes, constElementNode, constElementLower, constElementUpperExclusive);
+                                    }
+
+                                    return MakeParseResult(constElementNode, (u64[0 2 ** 63 - 1])closeBracket + 1);
                                 }
                             }
                         }
@@ -5685,8 +5764,16 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
                                     stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
                                     if (elementTypeCode != SourceResolvedFieldTypeCodeInvalid())
                                     {
+                                        stack u32[0 max] indexedElementNode = MakeResolvedIndexedFieldRead(nodes, objectLocal.ParamIndex, indexExpr.NodeId, baseByteOffset, elementSizeBytes, elementAlignment, elementTypeCode);
+                                        stack mut i64[min max] indexedElementLower = 0;
+                                        stack mut i64[min max] indexedElementUpperExclusive = 0;
+                                        if (TryDeclaredElementRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, leafMemberFactRow, indexedElementLower, indexedElementUpperExclusive))
+                                        {
+                                            SetNodeDeclaredRange(nodes, indexedElementNode, indexedElementLower, indexedElementUpperExclusive);
+                                        }
+
                                         return MakeParseResult(
-                                            MakeResolvedIndexedFieldRead(nodes, objectLocal.ParamIndex, indexExpr.NodeId, baseByteOffset, elementSizeBytes, elementAlignment, elementTypeCode),
+                                            indexedElementNode,
                                             (u64[0 2 ** 63 - 1])closeBracket + 1);
                                     }
                                 }
@@ -7394,8 +7481,11 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
     stack mut u64[0 2 ** 63 - 1] exprStart = statementStart + 4;
     stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
     stack mut u32[0 max] targetMemberFactRow = 0;
+    stack mut TokenKind assignOperator = TokenKind.Assign;
     if (stream.KindAt(statementStart + 3) == TokenKind.Dot
         || stream.KindAt(statementStart + 3) == TokenKind.Assign
+        || stream.KindAt(statementStart + 3) == TokenKind.AddAssign
+        || stream.KindAt(statementStart + 3) == TokenKind.SubAssign
         || stream.KindAt(statementStart + 3) == TokenKind.LBrack)
     {
         stack mut u64[0 2 ** 63 - 1] nextToken = statementStart;
@@ -7416,7 +7506,9 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
             return false;
         }
 
-        if (stream.KindAt(nextToken) == TokenKind.Assign)
+        if (stream.KindAt(nextToken) == TokenKind.Assign
+            || stream.KindAt(nextToken) == TokenKind.AddAssign
+            || stream.KindAt(nextToken) == TokenKind.SubAssign)
         {
             if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, fieldTypeToken, fieldType, fieldTypeCode))
             {
@@ -7429,6 +7521,7 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
             }
 
             targetMemberFactRow = leafMemberFactRow;
+            assignOperator = stream.KindAt(nextToken);
             exprStart = nextToken + 1;
         }
         else if (stream.KindAt(nextToken) == TokenKind.LBrack)
@@ -7611,13 +7704,36 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
         return false;
     }
 
+    // Compound assignments store `field OP value`: desugar to a binary over a
+    // range-carrying field read, so the declared-range store proof judges the
+    // widened result exactly like an explicit `field = field OP value`.
+    stack mut u32[0 max] storedRoot = expr.NodeId;
+    if (assignOperator != TokenKind.Assign)
+    {
+        stack u32[0 max] compoundFieldRead = MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, fieldOffset, fieldAlignment, fieldTypeCode);
+        stack mut i64[min max] compoundLower = 0;
+        stack mut i64[min max] compoundUpperExclusive = 0;
+        if (TryDeclaredRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, targetMemberFactRow, compoundLower, compoundUpperExclusive))
+        {
+            SetNodeDeclaredRange(nodes, compoundFieldRead, compoundLower, compoundUpperExclusive);
+        }
+
+        stack mut TokenKind binaryOperator = TokenKind.Plus;
+        if (assignOperator == TokenKind.SubAssign)
+        {
+            binaryOperator = TokenKind.Minus;
+        }
+
+        storedRoot = MakeBinary(nodes, binaryOperator, compoundFieldRead, expr.NodeId);
+    }
+
     if (targetMemberFactRow != 0
-        && !SourceStoredValueSatisfiesDeclaredFieldRange(nodes, expr.NodeId, sourceValueFacts, moduleFacts, targetMemberFactRow))
+        && !SourceStoredValueSatisfiesDeclaredFieldRange(nodes, storedRoot, sourceValueFacts, moduleFacts, targetMemberFactRow))
     {
         return false;
     }
 
-    if (!FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, expr.NodeId, localTypes))
+    if (!FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, storedRoot, localTypes))
     {
         return false;
     }
@@ -7630,7 +7746,7 @@ internal fn bool TryParseConstructedObjectFieldAssignmentStatement(
     assignment.FieldAlignment = fieldAlignment;
     assignment.FieldType = fieldType;
     assignment.FieldTypeCode = fieldTypeCode;
-    assignment.ExprRoot = expr.NodeId;
+    assignment.ExprRoot = storedRoot;
     assignment.IndexHasKnownBounds = indexHasKnownBounds;
     stack u32[0 max] added = assignments.Add(assignment);
     return added != 0;
@@ -7707,6 +7823,16 @@ internal fn bool TryParseConstructedObjectFieldTryAssignmentStatement(
             }
 
             if (!SourceMemberPathFactAgreesWithFieldTypeCode(moduleFacts.MemberPathFacts, leafMemberFactRow, fieldTypeCode))
+            {
+                return false;
+            }
+
+            // A try-assignment stores the [Ok] payload, whose value range is
+            // not yet decoded into node facts; a field with a narrower
+            // declared range than its storage width therefore has no store
+            // proof, so reject it instead of storing unproven. Decoding the
+            // payload's declared range for a subset proof is the follow-up.
+            if (!SourceMemberPathFactDeclaredRangeIsFullWidth(moduleFacts.MemberPathFacts, leafMemberFactRow))
             {
                 return false;
             }

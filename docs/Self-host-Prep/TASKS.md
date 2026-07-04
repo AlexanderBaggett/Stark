@@ -526,17 +526,18 @@ Execution constraints:
     - [~] Lower general typed member chains from HIR.
       - [x] Lower scalar and enum leaf chains on storage-backed constructed object locals.
       - [x] Lower fixed-array leaves reached through nested member chains.
-      - [ ] Fix nested member chain runtime lowering end-to-end (probe matrix 2026-07-01: nested chains fail at HEAD even for all-i64 fields; only single-step member paths execute).
-      - [ ] Fix heap constructed-object bool member stores and if-condition member reads at runtime (probe matrix 2026-07-01: fails at HEAD).
-      - [ ] Fix `var` locals initialized from member field reads (probe matrix 2026-07-01: `var copy = box.value` fails at HEAD even for plain i64 fields).
+      - [x] Fix nested member chain runtime lowering end-to-end (root cause: the per-field layout resolver `TryGetKnownSourceStorageLayoutWithEnums` never recursed into named aggregate fields, so any struct containing a struct had extent 0 and its constructed-object local was rejected before member access; fixed 2026-07-02 with depth-capped recursive extent/alignment — the cap rejects cyclic aggregates instead of hanging. Two- and three-level chains now lower with correct accumulated byte offsets; probe + IrTests facts cover store/load, offset accumulation, scalar-after-aggregate, and cyclic rejection).
+      - [ ] Fix constructed-object field try-assignment lowering through the single-function entry (discovered 2026-07-03, HEAD-worktree verified pre-existing: `box.value = try f()` rejects for every field width even though the body matcher fires and the module-path slices landed the machinery; the IrTests facts asserting these shapes have never executed green — root-cause with the probe recipe as its own slice).
+      - [x] Fix if-condition member reads in the single-function dialect paths (fixed 2026-07-02; three stacked causes: `CompileFunctionWithLocalsToLlvm` never dispatched to the terminal-if lowerings at all — wired in `LowerModuleLocalIfReturnFunctionToBlocks` with the real module facts, which alone fixed bare-bool param conditions; the typing-side statement walker only extracted parenthesized if/while conditions, so paren-free dialect conditions (and real-Stark `while willexit (…)` conditions) had no typed member rows — the extraction now skips the `willexit` marker and the optional paren; and the driver's shared tail emitted a linear instruction range that truncated multi-block bodies mid-CFG — block-shaped bodies now record `BlockEmit` ranges and emit through `EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts`. Heap and stack bool member conditions branch correctly on the loaded flag; all probe batteries green).
+      - [x] Fix `var` locals initialized from member field reads (fixed 2026-07-02; two stacked root causes: the statement-kind classifier in Parsing.stark mapped every storage class to StatementKind.Local except `var`, so var initializers never entered the expression table and typing produced no member rows for them — one classifier case fixes the facts; and the single-function driver batched locals before mutation replay, so accepting interleaved statements required making `storageMutationStatements` the ordered statement timeline with LocalDecl rows — a local's override and initializers now lower at their source position, which also fixes stored-scalar initializers that read fields after mutations. Probes: var-from-field, var-from-ranged-field, and both var-indexed bounds-proof shapes flipped to passing; emitted LLVM verified load-after-store with !range-carried bounds).
       - [~] Lower typed HIR member path rows through shared storage-place addressing.
         - [x] Route constructed-object field reads and address-taking through a shared storage-place address helper.
         - [x] Route constructed-object field assignments through the shared storage-place address helper.
         - [x] Route direct and indexed constructed-object field parsing through the member-chain resolver.
         - [x] Import typed HIR member path rows into the shared place-address resolver.
-        - [ ] Extend declared-range facts to indexed fixed-array element reads.
-        - [ ] Prove compound-assignment and try-assignment stored ranges against narrow declared field ranges.
-        - [ ] Record declared field-load result range facts through MIR value facts and LLVM load range metadata.
+        - [x] Extend declared-range facts to indexed fixed-array element reads (2026-07-02: fixed-array member-path facts decode the ELEMENT's declared range from the element type head; const- and dynamic-index element reads attach it to their nodes, and the indexed load lowers through the declared-range typed LoadPtr — element loads carry `!range` and their values prove second-array index bounds; unranged elements still reject as unproven indexes).
+        - [x] Prove compound-assignment and try-assignment stored ranges against narrow declared field ranges (2026-07-02: `+=`/`-=` on simple and nested field targets desugar at parse into `field OP value` over a range-carrying field read, so the existing declared-range store proof judges the widened result — full-width fields lower, narrow fields reject without evidence, matching the host's conservatism; try-assignments into narrow-ranged fields reject as unproven because the [Ok] payload's range is not yet decoded into node facts; the guard is currently shadowed by the pre-existing shape gap above (try field-assignments reject for every width in this entry) — payload-range subset proofs, indexed compound targets, and the shape gap are the follow-ups).
+        - [x] Record declared field-load result range facts through MIR value facts and LLVM load range metadata (verified complete 2026-07-02: declared ranges ride the typed LoadPtr's ConstInt range operands into MIR value facts — consumed by fixed-array bounds proofs and return-range validation — and narrow ranges emit `!range` load metadata while full-width spans are skipped as unrepresentable; probes `ranged-return-through-declared-load-facts` and both var-index bounds shapes, plus the `!range`-asserting IrTests facts, cover the chain).
         - [x] Share module-level typed member tables between the effect prepass and the main lowering pass (the `SourceModuleLoweringFacts` bundle is built once in `CompileModuleFromAstStream` and threaded through the effect prepass; see the 2026-07-01 pain-point-fixes entry in TestPassLedger.md).
     - [~] Lower address-taking place reads for locals, fields, and parameters.
       - [x] Lower address-taking for storage-backed scalar and aggregate locals.
@@ -796,6 +797,7 @@ Execution constraints:
         - [x] Lower storage-backed enum locals through terminal `if` branches.
         - [x] Lower storage-backed enum locals through switch arms.
       - [x] Lower enum-valued field and member reads and writes on storage-backed object places.
+    - [ ] Lower enum-valued function returns through owner-aware enum return carriers (the single-function entry currently rejects `return Pick.First`; a prior instrumented build accepted the shape while emitting an invalid `unknown`-typed module — evidence retracted, see the 2026-07-04 ledger entry; `selfhost/probe/EnumReturnProbe.stark` pins the shapes and must validate the emitted module when this lands).
   - [~] Lower dynamic storage.
     - [x] Lower arena-backed HIR dynamic storage init and reserve operations to MIR.
   - [~] Lower all storage selectors.
@@ -1100,6 +1102,8 @@ Execution constraints:
     - [ ] Decode `MANF` and materialize logical package-image facts without source reconstruction.
   - [x] Add `stark inspect-pkg` as a top-level compiler command.
   - [x] Update package-image docs and tests after public spelling lands.
+  - [x] Add per-fact test progress streaming to `stark test` (2026-07-03): the driver streams runner output line-by-line (never buffers until exit); `--test-progress` passes `--progress` to the generated runner, which prints `run <name>` markers and `ok|FAILED <name> (k/N)` counters via the new `System.Testing.BeginFact`/`RunFactCounted`, and the driver stamps `[elapsed]` prefixes; `--test-timeout <seconds>` kills the process tree and reports the in-flight fact. Default output stays byte-identical.
+  - [x] Preserve the test-runner progress protocol in the stage1 `stark test` port (2026-07-03): the protocol components are ported and golden-parity verified — `Compiler.TestRunner` emits the generated runner byte-identically to stage0, and `Compiler.TestDriver` reproduces the streaming/prefix/timeout contract against the normative `tests/fixtures/test-progress` goldens (pinned by `tests-stark/selfhost.TestRunner`, 4/4). The eventual stage1 CLI port wires these components into project discovery/build orchestration (tracked with the CLI port items; see docs/Self-host-Prep/30-test-progress-streaming.md).
   - [ ] Smooth the package-consumer edges found by the probe-recipe work (2026-07-01):
     - [ ] Raw `--target` invocations derive a different LLVM data layout than project builds embed, so consuming a project-built package requires copying `--target-data-layout` from `--inspect-pkg` by hand; derive the same layout by default for a bare `--target` triple.
     - [ ] Search-dir resolution enumerates `*.starkpkg` recursively, so a package image left under a source search root (e.g. `selfhost/build/` under `-I selfhost`) poisons source-only compiles with STK7312; scope package discovery away from source roots or prefer fresh source over images outside the project driver. Worse, the root file's own directory joins the search, so a stale test-project package (e.g. `tests-stark/selfhost.Ir/build/.../libSystem.starkpkg`) silently SHADOWS fresh stdlib source in raw `--check` runs — observed 2026-07-01 as phantom STK4107 kind errors against pre-fix `List.Get`; the raw CLI has no freshness stamps, only the project driver does. Delete the stale image (build output) to unblock.
@@ -1159,6 +1163,29 @@ Execution constraints:
 ---
 
 ## 4. Standard Library And Porting APIs
+
+- [x] Stdlib surface for the stage1 `stark test` driver (T30.7 audit +
+  implementation, 2026-07-03; see
+  docs/Self-host-Prep/30-test-progress-streaming.md §5.2). Landed in
+  `System.Process`: `ChildProcess` (public spawned-child handle),
+  `Spawn` (piped stdout/stderr, child in its own process group),
+  `ReadStdoutChunk`/`ReadStderrChunk` (blocking appends, Ok(0)=EOF),
+  `TryWaitExit`/`WaitExit`, `KillTree` (group kill), `Close`, and public
+  `MonotonicMilliseconds`. Platform layer: `StartProcessCaptureGrouped` +
+  `KillProcessGroup` through the full 4-dispatch + 3-backend fan-out
+  (macOS: `posix_spawnattr` + `POSIX_SPAWN_SETPGROUP`, and `posix_spawnp`'s
+  attributes parameter corrected to the pointer-to-pointer shape; Linux:
+  child-side `setpgid(0,0)` in the fork/exec path; Windows: grouped spawn
+  falls back to plain spawn and `KillProcessGroup` to single-process
+  terminate — job-object tree kill is a follow-up). Runtime-verified on
+  macOS via probe: spawn+stream+wait `/bin/echo` (exit 0, 9 bytes),
+  `KillTree` on a `sh -c 'sleep 60'` group with clean reap and no orphaned
+  `sleep`, monotonic clock sane. The deadline-wait piece stays composed in
+  the driver from `TryWaitExit` + the clock (no extra stdlib surface
+  needed). Regression: `SystemProcessStandardLibraryTests` fails 5/7
+  IDENTICALLY at unmodified HEAD (shared-stdlib fixture STK7312 target
+  mismatch — pre-existing environment issue, same family as the
+  PackageImage unit-test failures).
 
 - [~] Migrate stdlib and compiler-port APIs to `Option<T>` / `Result<T, E>` conventions.
   - [x] Implement role-based `[Ok]` propagation.
@@ -1352,7 +1379,126 @@ historical triage.
 
 ## 6. Known Compiler Bugs Blocking Self-Host
 
-No known host-compiler blockers currently tracked.
+- [x] Fixed (2026-07-03): package-imported struct holding a `List<T>` field
+  broke consumer drop lowering (found by the stage1 test-runner port; repro:
+  `RowPlan { List<NamedRow> Rows; }` imported from a package — a consumer
+  that merely holds and drops one crashed `lower-mir`, while a
+  consumer-local `List<NamedRow>` worked). Root cause: package images
+  publish no parse tree, and `MaterializeImportedSourceInstantiations`
+  explicitly skipped package-image modules — so generic instantiations
+  nested in imported field declarations were never materialized: no
+  registered instantiated named type, no type trigger, no monomorphization
+  plan entry, no concrete layout, and no LLVM struct-type definition
+  (`EmitNamedTypeDefinitions` emits only from `typeModel.NamedTypes`). The
+  drop glue then inline-lowered `List<T>.Drop` against an unregistered
+  instantiation and failed member resolution. Fix (three pieces, all
+  landed):
+  1. `MaterializeImportedSourceInstantiations` (TypeChecking.cs) now walks
+     package-image modules' published concrete struct/enum field and variant
+     types through `EnsureMonomorphizedType`, mirroring the source-import
+     walk — this is the load-bearing fix.
+  2. `TryBuildMemberCall`/`TryBuildMemberCallStatement` gained the
+     `GetGenericBaseName` receiver fallback that the destructor/enum-layout
+     lookups already used (defensive; matches existing convention).
+  3. A latent secondary defect was characterized along the way: destructor-
+     trigger-derived specializations for UNREGISTERED instantiations emitted
+     open receivers (opaque `ptr`, `dereferenceable(8)`, invalid GEPs) —
+     with (1) in place the instantiations are always registered before
+     specialization, so the broken combination can no longer occur.
+  Validation: `build/pkgbug` repro prints `ok plan`;
+  `tests-stark/selfhost.TestRunner` 3/3 green (package-backed emission
+  byte-identical to stage0); 21 generator/emission unit tests green;
+  allocator wrong-code repros still green; the 7 failing
+  `FullyQualifiedName~PackageImage` unit tests fail identically at
+  unmodified HEAD (pre-existing, tracked separately). Still open from this
+  investigation: the template-coordinate diagnostics leak (crash locations
+  like `<root>:1986:19` stamp template-body coordinates onto the root file
+  path).
+
+- [x] Fixed (2026-07-03): stale dynamic `Length` after a mutating loop.
+  Root cause was ORDER-DEPENDENT FACT RECORDING in
+  `SsaValueFactAnalyzer.RefineDynamicStorageLocalFacts`: consumer-visible
+  per-value facts (e.g. a dynamic's length range) were recorded into
+  `values` DURING the entry-state fixpoint — a loop exit block processed on
+  the first iteration recorded the not-yet-joined pre-loop state (length 0
+  from `new()`), and nothing retracted it after the back edge merged in.
+  The emitted IR then carried `range(i64 0, 1)` on the loaded length and
+  the `!= 9` branch was folded at emission (the runtime value stayed
+  correct — hence the interleaved-read "heisenbug" mask). Statically
+  visible in the UNOPTIMIZED emitted module; unaffected by any
+  `STARK_SKIP_PASSES` combination because the analyzer itself was the
+  source. Fix: the fixpoint now runs against a scratch copy of the value
+  facts and records once from the CONVERGED entry states. Verified: the
+  hermetic `stale_min` repro and the original spawn-probe branch both
+  correct; v_cross/v_ownedascii/pkgbug/bundle_field2 repros green; 21
+  generator/emission unit tests green; full `LlvmIrEmissionTests` 455/458
+  with the 3 failures byte-identical at unmodified HEAD (pre-existing).
+  NOTE: this did NOT fix the bundle heisenbug below (verified with a clean
+  probe rebuild — an earlier apparent fix was a stale bisect-era binary);
+  given this bug's shape, the bundle bug's next suspect is the analogous
+  order-dependence in memory-opt-ssa's single-predecessor known-state
+  propagation (`TryGetSinglePredecessorExitKnownLocals` runs one in-order
+  pass with no fixpoint over loop back edges).
+
+- [x] Closed (2026-07-04): bundle field-store elimination heisenbug.
+  `BuildSourceModuleLoweringFacts` lost `built.Declarations`/
+  `built.EnumPayloads` (bundle fields 0/1) in package-backed probes. Root
+  cause was `SsaOwnershipTrafficOptimizer`'s dead-aggregate-copy
+  elimination treating a copy into a FIELD as a whole-local kill (a later
+  sibling-field copy killed the aggregate's liveness and earlier sibling
+  copies died as "dead"); fixed 2026-07-03 with a whole-local-only resolver
+  (`TryResolveWholeLocalAddress`) at both kill sites. The suspected
+  "remaining layer" (stock LLVM `opt -O3` removing the 144/576-byte field
+  copies from correct per-module IR) was a copy-COUNT phantom: the
+  store-level semantic check shows SROA scalarizes the bundle and stores
+  every `slot_built` value directly into `%arg_moduleFacts` on the success
+  path — legitimate forwarding, not deletion (which is also why
+  single-category attribute strips could never "preserve" the memcpys).
+  The post-fix "runtime probe still loses fields" observation was a
+  stale-artifact ghost: the loss is baked into `libStarkCompiler.a` at
+  PACKAGE-build time, and the verification rebuilt only the probe (~15 s
+  path), which links the old archive — a probe-only rebuild can never see
+  a compiler fix. Rule recorded in the Internals probe recipe: after any
+  compiler or selfhost change, rebuild the PACKAGE before probing.
+  Verified 2026-07-04 against a fresh de-instrumented package (clean-room:
+  package-free CWD, single package candidate): MemberFactsProbe 19/19 and
+  NestedChainFactsProbe/NestedChainProbe green with zero crumb reads — the
+  copies survive without instrumentation keeping them alive. The temporary
+  tooling (`STARK_SKIP_PASSES` gate, per-pass SSA dump hooks, ECM/WALK
+  emit traces, MFDBG/ENDBG/ECDBG crumbs) is removed. IMPORTANT RETRACTION
+  discovered during that re-verification: the enum-return slice's prior
+  evidence (`ok enum-return-only` whenever the copies survive) was
+  accept-plus-INVALID-emission — dumping the accepted module shows
+  `define unknown @main()` / `ret unknown` (the enum return-type mapping
+  was never implemented; the probe checked only the boolean). The
+  crumb-free package rejects the shape instead, which is the safe behavior
+  of the same unfinished path. #34 is therefore still open work (tracked
+  in §1 under enum payload lowering), no longer masked by this bug; its
+  probe (`selfhost/probe/EnumReturnProbe.stark`) pins the shapes as
+  expect-reject with a construction-control check, and must validate the
+  emitted module (not just the accept boolean) when the slice lands. Probe recipe caveat (still true): the selfhost package
+  embeds `System.Process`/Platform modules (via `Compiler.TestDriver`), so
+  package-backed probes must NOT also pass `-I stdlib/src` — compile
+  probes with `-I <pkg>` only.
+
+- [x] Fixed (2026-07-03): wrong-code from LLVM allocator attributes on
+  visible allocator bodies. The emitter attached `allockind`/`allocsize`/
+  `alloc-family` to `__stark_runtime_(try_)alloc`/`(try_)realloc`/`free`,
+  `__stark_heap_alloc/free`, and `__stark_arena_alloc` while also emitting
+  their bucket/bump bodies `linkonce_odr` into every module; the bodies read
+  the allocation header at `ptr - 24`, which is out of bounds of the abstract
+  fresh-object model the attributes assert, so whole-program O3 proved UB on
+  every successful allocation that later flowed into realloc/free and deleted
+  the path (`llvm.assume(alloc == null)`, silently lost appends, spurious
+  SIGTRAPs — e.g. `OwnedAscii` dropping its first `AppendConstAscii` once a
+  later append crossed capacity, and `dynamic` list contents vanishing).
+  Reproduced and bisected with stock `llvm-link` + `opt -O3` on the
+  `--save-temps` modules; stripping only those attributes fixed the runtime
+  behavior with no other change. Attributes remain on opaque libc/Win32
+  declarations and the model-consistent `__stark_os_*` wrappers (see the
+  policy comment in `LlvmBuiltinAndHelperEmitter.cs`). Every prior probe or
+  test observation made through binaries that grew dynamic storage is suspect
+  and needs re-verification (tracked per item).
 
 ---
 

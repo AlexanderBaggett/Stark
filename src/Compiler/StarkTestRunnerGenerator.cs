@@ -445,6 +445,7 @@ internal static class StarkTestRunnerGenerator
         builder.AppendLine("export fn i32[min max] main()");
         builder.AppendLine("{");
         builder.AppendLine("    stack mut u8[0 1] failed = 0;");
+        builder.AppendLine("    stack mut bool progress = false;");
 
         // Runtime collection filtering: every process argument after the
         // executable is a collection name (the CLI normalizes flags), plus
@@ -462,6 +463,19 @@ internal static class StarkTestRunnerGenerator
         }
 
         var emitCollectionFilter = knownCollectionNames.Count > 0;
+        if (!emitCollectionFilter)
+        {
+            builder.AppendLine("    stack u64[0 2 ** 63 - 1] progressArgumentCount = System.Testing.CollectionArgumentCount();");
+            builder.AppendLine("    for willexit (stack mut u64[0 2 ** 63 - 1] progressArgumentIndex = 1; progressArgumentIndex < progressArgumentCount; progressArgumentIndex += 1)");
+            builder.AppendLine("    {");
+            builder.AppendLine("        if (System.Testing.CollectionArgumentEquals(progressArgumentIndex, \"--progress\"))");
+            builder.AppendLine("        {");
+            builder.AppendLine("            progress = true;");
+            builder.AppendLine("        }");
+            builder.AppendLine("    }");
+            builder.AppendLine();
+        }
+
         if (emitCollectionFilter)
         {
         builder.AppendLine("    stack mut bool anyFilter = false;");
@@ -480,6 +494,12 @@ internal static class StarkTestRunnerGenerator
         builder.AppendLine("        if (System.Testing.CollectionArgumentEquals(argumentIndex, \"--list-collections\"))");
         builder.AppendLine("        {");
         builder.AppendLine("            listOnly = true;");
+        builder.AppendLine("            continue;");
+        builder.AppendLine("        }");
+        builder.AppendLine();
+        builder.AppendLine("        if (System.Testing.CollectionArgumentEquals(argumentIndex, \"--progress\"))");
+        builder.AppendLine("        {");
+        builder.AppendLine("            progress = true;");
         builder.AppendLine("            continue;");
         builder.AppendLine("        }");
         builder.AppendLine();
@@ -525,8 +545,10 @@ internal static class StarkTestRunnerGenerator
         }
 
         string? currentCollectionName = null;
+        var entryOrdinal = 0;
         foreach (var entry in entries)
         {
+            entryOrdinal++;
             var fact = entry.Fact;
             if (emitCollectionFilter)
             {
@@ -585,7 +607,14 @@ internal static class StarkTestRunnerGenerator
                 builder.AppendLine(");");
             }
 
-            builder.Append("    if (System.Testing.RunFact(\"");
+            builder.Append("    System.Testing.BeginFact(progress, \"");
+            builder.Append(EscapeAsciiString(entry.DisplayName));
+            builder.AppendLine("\");");
+            builder.Append("    if (System.Testing.RunFactCounted(progress, ");
+            builder.Append(entryOrdinal.ToString(CultureInfo.InvariantCulture));
+            builder.Append(", ");
+            builder.Append(entries.Count.ToString(CultureInfo.InvariantCulture));
+            builder.Append(", \"");
             builder.Append(EscapeAsciiString(entry.DisplayName));
             builder.Append("\", ");
             builder.Append(entry.CallExpression);

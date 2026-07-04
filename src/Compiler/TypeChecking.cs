@@ -4133,8 +4133,43 @@ internal sealed class TypeChecker
     {
         foreach (var module in _loadedModules.Modules.Values)
         {
-            if (module.Reference.IsRoot || module.PackageImageFacts is not null)
+            if (module.Reference.IsRoot)
             {
+                continue;
+            }
+
+            if (module.PackageImageFacts is { } packageImageFacts)
+            {
+                // Package images publish no parse tree, so the source walk
+                // below cannot see them — but their concrete struct/enum
+                // declarations can nest generic instantiations in field types
+                // (e.g. `RowPlan { List<Row> Rows; }`). A consumer that only
+                // holds and drops such a struct needs those instantiations
+                // materialized here exactly like a source import, or the
+                // drop path meets an instantiation with no registered named
+                // type, no layout, and no LLVM struct definition.
+                var packageLocation = new SourceLocation(module.Reference.FilePath, 1, 1);
+                foreach (var importedNamedType in packageImageFacts.NamedTypes.Values)
+                {
+                    if (importedNamedType.IsGeneric)
+                    {
+                        continue;
+                    }
+
+                    foreach (var field in importedNamedType.OrderedFields)
+                    {
+                        EnsureMonomorphizedType(field.Type, packageLocation);
+                    }
+
+                    foreach (var variant in importedNamedType.Variants)
+                    {
+                        foreach (var field in variant.Fields)
+                        {
+                            EnsureMonomorphizedType(field.Type, packageLocation);
+                        }
+                    }
+                }
+
                 continue;
             }
 

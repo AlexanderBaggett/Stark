@@ -2369,6 +2369,54 @@ public fn u8[0 1] RunFact(unicode name, bool assertion)
     return 1;
 }
 
+// Prints the `run <name>` start marker when per-fact progress is enabled
+// (`stark test --test-progress` passes `--progress` to the generated
+// runner), so a hung or timed-out run's last line names the fact that was
+// in flight. No-ops when progress is off, keeping default output identical
+// to plain RunFact runs.
+public fn void BeginFact(bool progress, ascii name)
+{
+    if (!progress)
+    {
+        return;
+    }
+
+    System.Console.Write("run ");
+    System.Console.WriteLine(name);
+    return;
+}
+
+// RunFact plus a positional counter: with progress enabled the result line
+// carries `(ordinal/total)` over the project's generated entries, so partial
+// output shows how far a run got before a timeout; with progress off the
+// line matches RunFact exactly.
+public fn u8[0 1] RunFactCounted(bool progress, u32[0 2 ** 31 - 1] ordinal, u32[0 2 ** 31 - 1] total, ascii name, bool assertion)
+{
+    if (!progress)
+    {
+        return RunFact(name, assertion);
+    }
+
+    stack mut OwnedAscii counter = new();
+    stack System.Memory.MemoryStatus openStatus = counter.AppendConstAscii(" (");
+    stack System.Memory.MemoryStatus ordinalStatus = counter.AppendI64((i64[min max])ordinal);
+    stack System.Memory.MemoryStatus slashStatus = counter.AppendConstAscii("/");
+    stack System.Memory.MemoryStatus totalStatus = counter.AppendI64((i64[min max])total);
+    stack System.Memory.MemoryStatus closeStatus = counter.AppendConstAscii(")");
+    if (assertion)
+    {
+        System.Console.Write("ok ");
+        System.Console.Write(name);
+        System.Console.WriteLine(counter.View());
+        return 0;
+    }
+
+    System.Console.WriteError("FAILED ");
+    System.Console.WriteError(name);
+    System.Console.WriteErrorLine(counter.View());
+    return 1;
+}
+
 public fn u8[0 1] SkipFact(ascii name, ascii reason)
 {
     System.Console.Write("skipped ");

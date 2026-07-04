@@ -9677,9 +9677,7 @@ fn bool CompileFunctionNestedDynamicFixedArrayElementAssignmentStoresThroughInde
 
 // A ranged field read carries its declared integer range imported from the
 // typed member path facts, so using it directly as a fixed-array index proves
-// bounds and lowers through the bounded indexed pointer path. (The `var`-local
-// form of this capability is blocked by the pre-existing var-from-field
-// runtime gap tracked in TASKS.md.)
+// bounds and lowers through the bounded indexed pointer path.
 [Fact]
 fn bool CompileFunctionRangedFieldReadProvesFixedArrayIndexBounds()
 {
@@ -9692,6 +9690,168 @@ fn bool CompileFunctionRangedFieldReadProvesFixedArrayIndexBounds()
         && System.Text.Contains(sink.View(), "load i8")
         && System.Text.Contains(sink.View(), "load i64")
         && ClangVerifiesLlvmText(sink);
+}
+
+// Nested member chains lower end-to-end through the shared chain resolver:
+// the aggregate-in-aggregate local allocates the full recursive extent, and
+// the leaf store/load address accumulates every step's field offset (head 8
+// + pad 8 puts `value` at byte 16 of a 24-byte object).
+[Fact]
+fn bool CompileFunctionNestedMemberChainStoreLoadUsesFieldByteOffset()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i64 pad; i64 value; } struct Box { i64 head; Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.value = 5; return box.inner.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8]")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 16")
+        && System.Text.Contains(sink.View(), "store i64")
+        && System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// Three-level chains accumulate offsets across two aggregate steps: Box.head
+// is 8 bytes, Inner.pad is 8 bytes, so Leaf.value lands at byte 16.
+[Fact]
+fn bool CompileFunctionThreeLevelMemberChainAccumulatesOffsets()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Leaf { i64 value; } struct Inner { i64 pad; Leaf leaf; } struct Box { i64 head; Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.leaf.value = 9; return box.inner.leaf.value }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8]")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 16")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// A scalar field following an aggregate field sits past the aggregate's full
+// recursive extent, so layout must recurse instead of rejecting the struct.
+[Fact]
+fn bool CompileFunctionScalarFieldAfterAggregateFieldUsesRecursiveExtent()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Inner { i64 value; } struct Box { Inner inner; i64 tail; } fn i64 main() { stack Box box = new Box(); box.tail = 5; return box.tail }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [16 x i8]")
+        && System.Text.Contains(sink.View(), "getelementptr inbounds i8, ptr %v1, i64 8")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// A `var` local bound from a field read lowers as an ordered statement: the
+// declaration's load is emitted after the mutation that precedes it in
+// source order (the store consumes %v2; the index scale consumes the later
+// %v8 load), so the var observes the stored value, and the field's declared
+// range rides the load as !range to prove the fixed-array index bounds.
+[Fact]
+fn bool CompileFunctionVarFromRangedFieldLowersInSourceOrderAndProvesBounds()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.count = 2; var idx = box.count; box.values[idx] = 17; return box.values[2] }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "store i8 %v2, ptr %v3")
+        && System.Text.Contains(sink.View(), "load i8, ptr %v5, align 1, !range")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %v8, 8")
+        && System.Text.Contains(sink.View(), "store i64 %v9")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// A `var` local bound from a plain field read compiles and returns the field
+// value through the var's materialized load.
+[Fact]
+fn bool CompileFunctionVarFromFieldReadLowers()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { i64 value; } fn i64 main() { stack Box box = new Box(); box.value = 3; var copy = box.value; return copy }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "store i64")
+        && System.Text.Contains(sink.View(), "load i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// A bool member read lowers as a terminal-if condition: the flag loads from
+// its field offset and the branch selects the return arms, emitted as a
+// complete three-block CFG through the single-function entry.
+[Fact]
+fn bool CompileFunctionMemberBoolIfConditionBranchesOnLoadedFlag()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { bool flag; i64 pad; } fn i64 main() { stack Box box = new Box(); box.flag = true; if box.flag return 1 else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "store i1")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && System.Text.Contains(sink.View(), "b2:")
+        && System.Text.Contains(sink.View(), "b3:")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// The same condition works on a heap constructed object: the flag loads from
+// the heap allocation and drives the branch.
+[Fact]
+fn bool CompileFunctionHeapMemberBoolIfConditionBranchesOnLoadedFlag()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { bool flag; i64 pad; } fn i64 main() { heap Box box = new Box(); box.flag = true; if box.flag return 1 else return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "__stark_heap_alloc(i64 noundef 16")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && ClangVerifiesLlvmText(sink);
+}
+
+// A fixed-array field's ELEMENT declared range rides indexed element reads:
+// the element load carries !range, and the loaded value proves the bounds of
+// a second fixed-array index without any extra comparison.
+[Fact]
+fn bool CompileFunctionRangedElementReadProvesSecondIndexBounds()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2][4] slots; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.slots[1] = 2; box.values[2] = 17; return box.values[box.slots[1]] }", sink);
+    stack mut OwnedAscii unranged = new();
+    return ok
+        && System.Text.Contains(sink.View(), "load i8, ptr %v8, align 1, !range")
+        && System.Text.Contains(sink.View(), ".scale = mul i64 %v11, 8")
+        && ClangVerifiesLlvmText(sink)
+        && !CompileFunctionWithLocalsToLlvm("struct Box { i64[min max][4] slots; i64[min max][3] values; } fn i64 main() { stack Box box = new Box(); box.slots[1] = 2; return box.values[box.slots[1]] }", unranged);
+}
+
+// Compound field assignments desugar to `field OP value` over a
+// range-carrying field read: full-width fields lower (the store consumes the
+// add of the reloaded field), while a narrow declared range rejects the
+// widened result as unprovable.
+[Fact]
+fn bool CompileFunctionCompoundFieldAssignmentDesugarsAndProvesRange()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { i64 value; } fn i64 main() { stack Box box = new Box(); box.value = 3; box.value += 1; return box.value }", sink);
+    stack mut OwnedAscii narrow = new();
+    return ok
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), "store i64")
+        && ClangVerifiesLlvmText(sink)
+        && !CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64 pad; } fn i64 main() { stack Box box = new Box(); box.count = 1; box.count += 1; return 7 }", narrow);
+}
+
+// Try-assignments into constructed-object fields do not lower through this
+// entry yet (pre-existing shape gap, HEAD-worktree verified 2026-07-03 and
+// tracked in TASKS.md), so both spellings reject today. The narrow variant
+// additionally carries the declared-range guard: when the shape gap is
+// fixed, the full-width spelling flips to accepted and the narrow one must
+// keep rejecting as an unproven store.
+[Fact]
+fn bool RejectsTryAssignmentIntoNarrowRangedField()
+{
+    stack mut OwnedAscii fullWidth = new();
+    stack mut OwnedAscii narrow = new();
+    return !CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }", fullWidth)
+        && !CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(u8[0 max]), [Err] Failed(u8[0 max]) } struct Box { u8[0 2] count; i64 pad; } fn Outcome main() { stack Box box = new Box(); box.count = try Outcome.Value(1); return Outcome.Value(0) }", narrow);
+}
+
+// Cyclic aggregate fields have no finite layout; the depth-capped recursive
+// extent computation rejects them instead of recursing forever.
+[Fact]
+fn bool RejectsCyclicAggregateFieldLayout()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileFunctionWithLocalsToLlvm("struct A { B b; } struct B { A a; } fn i64 main() { stack A a = new A(); return 7 }", sink);
 }
 
 // A ranged scalar field load imports its declared range into MIR value facts

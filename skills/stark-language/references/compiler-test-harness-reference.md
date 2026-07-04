@@ -206,6 +206,13 @@ the `ArtifactTextRenderer` forms (e.g. `$tmp5_dyn_vtable: temp
 rawptr<Speaker.Vtable>`, `= dynview<Speaker>(context,table)`); probe the
 rendering with a one-off server request before asserting fragments.
 
+## Test Run Progress And Timeouts
+
+`stark test` streams runner output live. Add `--test-progress` to print a
+`run <name>` marker before each fact, `(k/N)` counters on results, and
+`[elapsed]` prefixes — a timed-out run's last `run` line names the hung fact.
+`--test-timeout <seconds>` kills the run at a deadline instead of hanging.
+
 ## Fast Verification Outside The Harness
 
 For compiler-development changes (host or selfhost), two workflows are cheaper

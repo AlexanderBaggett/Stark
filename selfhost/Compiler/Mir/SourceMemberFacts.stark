@@ -38,6 +38,13 @@ public struct SourceMemberPathFact
     bool HasDeclaredRange;
     i64[min max] DeclaredRangeLower;
     i64[min max] DeclaredRangeUpperExclusive;
+    // For fixed-array fields: the ELEMENT's declared integer range, decoded
+    // from the element type head (`u8[0 2][4]` decodes the `u8[0 2]` span),
+    // so indexed element reads can carry the same range facts scalar field
+    // reads do.
+    bool ElementHasDeclaredRange;
+    i64[min max] ElementDeclaredRangeLower;
+    i64[min max] ElementDeclaredRangeUpperExclusive;
 
     SourceMemberPathFact()
     {
@@ -48,6 +55,9 @@ public struct SourceMemberPathFact
         self.HasDeclaredRange = false;
         self.DeclaredRangeLower = 0;
         self.DeclaredRangeUpperExclusive = 0;
+        self.ElementHasDeclaredRange = false;
+        self.ElementDeclaredRangeLower = 0;
+        self.ElementDeclaredRangeUpperExclusive = 0;
     }
 }
 
@@ -146,6 +156,20 @@ internal fn bool BuildSourceMemberPathFacts(
                 fact.HasDeclaredRange = true;
                 fact.DeclaredRangeLower = rangeFacts.IntegerRangeLower();
                 fact.DeclaredRangeUpperExclusive = rangeFacts.IntegerRangeUpperExclusive();
+            }
+        }
+        else if (fact.Kind == TypedSignatureTypeKind.FixedArray)
+        {
+            // The primary token of a fixed-array field is the element's
+            // integer type head, so the same range reader decodes the
+            // element's declared span.
+            stack mut ValueFacts elementRangeFacts = new();
+            if (TryReadIntegerRangeFact(stream, source, typedMembers.TypePrimaryTokenAt(index), elementRangeFacts)
+                && elementRangeFacts.HasIntegerRange())
+            {
+                fact.ElementHasDeclaredRange = true;
+                fact.ElementDeclaredRangeLower = elementRangeFacts.IntegerRangeLower();
+                fact.ElementDeclaredRangeUpperExclusive = elementRangeFacts.IntegerRangeUpperExclusive();
             }
         }
 
@@ -355,6 +379,33 @@ internal finite law bool SourceMemberPathFactDeclaredRangeIsFullWidth(
 
     return fact.DeclaredRangeLower == widthLower
         && fact.DeclaredRangeUpperExclusive == widthUpperExclusive;
+}
+
+// Reads the declared ELEMENT integer range fact for a fixed-array
+// member-path fact row. Returns false when the element carries no decodable
+// declared range.
+internal finite bool TryDeclaredElementRangeFactForMemberPathFact(
+    borrow IrTable<SourceMemberPathFact> memberPathFacts,
+    u32[0 max] factRowPlusOne,
+    out i64[min max] lower,
+    out i64[min max] upperExclusive)
+{
+    lower = 0;
+    upperExclusive = 0;
+    if (factRowPlusOne == 0 || !memberPathFacts.Contains(factRowPlusOne))
+    {
+        return false;
+    }
+
+    stack SourceMemberPathFact fact = memberPathFacts.Get(factRowPlusOne);
+    if (!fact.ElementHasDeclaredRange)
+    {
+        return false;
+    }
+
+    lower = fact.ElementDeclaredRangeLower;
+    upperExclusive = fact.ElementDeclaredRangeUpperExclusive;
+    return true;
 }
 
 // Reads the declared integer range fact for a member-path fact row into value

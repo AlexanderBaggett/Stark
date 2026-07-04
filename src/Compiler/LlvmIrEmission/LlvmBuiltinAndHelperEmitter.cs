@@ -40,9 +40,17 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string OsAllocateHelperName = "__stark_os_allocate";
     private const string OsReallocateHelperName = "__stark_os_reallocate";
     private const string OsFreeHelperName = "__stark_os_free";
-    private const string HeapAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_heap_alloc\"";
-    private const string ArenaAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_arena_alloc\"";
-    private const string RuntimeAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_runtime_alloc\"";
+    // Allocator attributes (allockind/allocsize/alloc-family) are only legal on
+    // allocators the optimizer cannot see into: external declarations (libc,
+    // Win32) and the thin os_* wrappers whose visible bodies return exactly the
+    // object of the wrapped call. The runtime bucket allocator, the heap
+    // wrappers over it, and the arena bump allocator emit visible bodies that
+    // read the allocation header before the returned pointer (or return
+    // interior pointers of a larger block), which contradicts the abstract
+    // fresh-object model the attributes assert; whole-program optimization then
+    // proves UB on every successful allocation that later flows into
+    // realloc/free and deletes the path (lost appends, assume(ptr==null),
+    // spurious traps). Those helpers must stay unattributed.
     private const string OsAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_os_allocate\"";
     private const string RuntimeAllocatorLockName = "__stark_alloc_lock";
     private const string RuntimeAllocatorLockAcquireHelperName = "__stark_alloc_lock_acquire";
@@ -481,7 +489,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitHeapAllocateHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") {HeapAllocatorFamilyAttribute} nounwind {{");
+            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %raw = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef %alignment)");
         builder.AppendLine("  ret ptr %raw");
@@ -490,7 +498,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private void EmitHeapFreeHelperDefinition(StringBuilder builder)
     {
-        builder.AppendLine($"define internal dso_local void @{HeapFreeHelperName}(ptr %ptr) unnamed_addr allockind(\"free\") {HeapAllocatorFamilyAttribute} nounwind {{");
+        builder.AppendLine($"define internal dso_local void @{HeapFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %ptr)");
         builder.AppendLine("  ret void");
@@ -596,7 +604,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "noalias noundef";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden {returnAttributes} @{helperName}(ptr {CapturesNoneAttribute} %frame, {AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") {ArenaAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden {returnAttributes} @{helperName}(ptr {CapturesNoneAttribute} %frame, {AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %head_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 0");
         builder.AppendLine("  %cursor_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 1");
@@ -1467,7 +1475,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "noalias noundef ptr";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden {returnAttributes} @{helperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden {returnAttributes} @{helperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %size_is_zero = icmp eq {AllocatorSizeType} %size, 0");
         builder.AppendLine($"  %requested_size = select i1 %size_is_zero, {AllocatorSizeType} 1, {AllocatorSizeType} %size");
@@ -1687,7 +1695,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "fallback";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
         builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
@@ -1766,7 +1774,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "fallback";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden ptr @{RuntimeTryReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden ptr @{RuntimeTryReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
         builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
@@ -1883,7 +1891,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
         var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
 
-        builder.AppendLine($"define linkonce_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr allockind(\"free\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
+        builder.AppendLine($"define linkonce_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %is_null = icmp eq ptr %ptr, null");
         builder.AppendLine("  br i1 %is_null, label %done, label %free");

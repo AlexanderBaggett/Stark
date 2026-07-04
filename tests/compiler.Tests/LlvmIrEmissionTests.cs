@@ -1950,7 +1950,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@__stark_arena_dynamic_alloc", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("dynamic_free_ptr", runBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
-        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind comdat", llvm, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -9282,9 +9282,9 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_heap_alloc\" nounwind", llvm);
-        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr allockind(\"free\") \"alloc-family\"=\"__stark_heap_alloc\" nounwind", llvm);
-        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind", llvm);
+        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr nounwind", llvm);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
         Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
         Assert.Contains("@__stark_alloc_lock = linkonce_odr hidden global i32 0, comdat, align 4", llvm);
         Assert.Contains("@__stark_alloc_bucket_16 = linkonce_odr hidden thread_local(localexec) global ptr null, comdat, align 8", llvm);
@@ -9361,7 +9361,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame", runBody, StringComparison.Ordinal);
         Assert.Contains("define linkonce_odr hidden void @__stark_arena_enter(ptr captures(none) %frame) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
         Assert.Contains("define linkonce_odr hidden void @__stark_arena_leave(ptr captures(none) %frame) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
-        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind comdat", llvm, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -9457,12 +9457,12 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
-        Assert.Contains("define linkonce_odr hidden noalias noundef ptr @__stark_runtime_try_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
-        Assert.Contains("define linkonce_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden noalias noundef ptr @__stark_runtime_try_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
         Assert.DoesNotContain("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
-        Assert.Contains("define linkonce_odr hidden ptr @__stark_runtime_try_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
-        Assert.Contains("define linkonce_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr allockind(\"free\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden ptr @__stark_runtime_try_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr nounwind comdat", llvm);
+        Assert.Contains("define linkonce_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr nounwind comdat", llvm);
         Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
         Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
         Assert.Contains("@Allocate(", llvm);

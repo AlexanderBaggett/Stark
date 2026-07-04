@@ -32,6 +32,7 @@ internal unsafe ffi(c) fn i32[min max] dup2(i32[min max] oldFileDescriptor, i32[
 internal unsafe ffi(c) fn i32[min max] execvp(rawptr<System.C.c_char> file, rawptr<rawptr<System.C.c_char>> argv)
     where overlap(file, argv);
 internal unsafe ffi(c) fn i32[min max] fork();
+internal unsafe ffi(c) fn i32[min max] setpgid(i32[min max] processId, i32[min max] processGroupId);
 internal unsafe ffi(c) fn rawptr<System.C.c_char> getenv(rawptr<System.C.c_char> name);
 internal unsafe ffi(c) fn i32[min max] kill(i32[min max] processId, i32[min max] signal);
 internal unsafe ffi(c) fn i32[min max] pipe(rawmutptr<i32[min max]> fileDescriptors);
@@ -1083,11 +1084,12 @@ internal unsafe fn void CloseProcessDescriptorIfOpen(i32[min max] descriptor)
 // failures as exit code 126 and exec failures as exit code 127, matching
 // shell conventions; platforms without a fork/exec split return those codes
 // directly from this call instead.
-internal unsafe fn i32[min max] StartProcessCapture(
+internal unsafe fn i32[min max] StartProcessCaptureCore(
     rawptr<System.C.c_char> executable,
     borrow rawptr<System.C.c_char>[] argv,
     rawptr<System.C.c_char> workingDirectory,
     bool captureStdin,
+    bool newProcessGroup,
     rawmutptr<i32[min max]> processId,
     rawmutptr<i32[min max]> stdinDescriptor,
     rawmutptr<i32[min max]> stdoutDescriptor,
@@ -1155,6 +1157,11 @@ internal unsafe fn i32[min max] StartProcessCapture(
 
     if (forkResult == 0)
     {
+        if (newProcessGroup)
+        {
+            stack i32[min max] ignoredGroup = setpgid(0, 0);
+        }
+
         CloseProcessDescriptorIfOpen(stdinPipe[1]);
         CloseProcessDescriptorIfOpen(stdoutPipe[0]);
         CloseProcessDescriptorIfOpen(stderrPipe[0]);
@@ -1209,6 +1216,66 @@ internal unsafe fn i32[min max] StartProcessCapture(
     return 0;
 }
 
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCaptureCore(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        false,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+// Spawns like StartProcessCapture but places the child in its own process
+// group (setpgid in the child), so KillProcessGroup can end the whole tree.
+internal unsafe fn i32[min max] StartProcessCaptureGrouped(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCaptureCore(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        true,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
 internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
 {
     if (status == null)
@@ -1232,6 +1299,18 @@ internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmut
 internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
 {
     return kill(processId, LinuxSignalKill);
+}
+
+// Kills every process in the child's process group (kill(-pgid)); pair with
+// StartProcessCaptureGrouped, whose child is its own group leader.
+internal unsafe fn i32[min max] KillProcessGroup(i32[min max] processId)
+{
+    if (processId <= 0)
+    {
+        return -1;
+    }
+
+    return kill(-processId, LinuxSignalKill);
 }
 
 // Appends the current process argument vector to the destination as

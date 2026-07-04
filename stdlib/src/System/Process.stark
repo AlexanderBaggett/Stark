@@ -1209,6 +1209,208 @@ public unsafe fn ProcessResult<ProcessOutput> RunCaptureWithInputTimeout(
     }
 }
 
+// A spawned child with piped stdout/stderr, running in its own process group
+// (T30.7 gap surface for the stage1 test driver). Read the pipes with
+// ReadStdoutChunk/ReadStderrChunk (blocking; Ok(0) is end-of-stream), poll or
+// block on the exit with TryWaitExit/WaitExit, end the whole tree with
+// KillTree, and always Close to release the descriptors.
+public struct ChildProcess
+{
+    internal i32[min max] ProcessIdValue;
+    internal i32[min max] StdoutDescriptorValue;
+    internal i32[min max] StderrDescriptorValue;
+
+    ChildProcess()
+    {
+        self.ProcessIdValue = -1;
+        self.StdoutDescriptorValue = -1;
+        self.StderrDescriptorValue = -1;
+    }
+
+    public inline finite law i32[min max] ProcessId(borrow ChildProcess self)
+    {
+        return self.ProcessIdValue;
+    }
+}
+
+// Spawns the command with piped stdout/stderr, placing the child in its own
+// process group so KillTree can end every descendant. Setup failures that the
+// platform reports through shell-convention codes (126/127) surface as
+// ProcessError.Platform with that positive code: no child exists either way.
+public unsafe fn ProcessResult<ChildProcess> Spawn(mut borrow ProcessCommand command)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ChildProcess>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ChildProcess>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max] processId = -1;
+    stack mut i32[min max] stdinDescriptor = -1;
+    stack mut i32[min max] stdoutDescriptor = -1;
+    stack mut i32[min max] stderrDescriptor = -1;
+    stack mut rawptr<System.C.c_char> workingDirectory = null;
+    if (command.HasWorkingDirectory)
+    {
+        workingDirectory = command.WorkingDirectory.Data();
+    }
+
+    stack rawptr<System.C.c_char>[] argvSlice = argv[0, argv.Length];
+    stack i32[min max] startResult = System.Runtime.Platform.StartProcessCaptureGrouped(
+        command.Executable.Data(),
+        argvSlice,
+        workingDirectory,
+        false,
+        &processId,
+        &stdinDescriptor,
+        &stdoutDescriptor,
+        &stderrDescriptor);
+    if (startResult != 0)
+    {
+        return ProcessResult<ChildProcess>.Err(ProcessError.Platform(startResult));
+    }
+
+    stack mut ChildProcess child = new();
+    child.ProcessIdValue = processId;
+    child.StdoutDescriptorValue = stdoutDescriptor;
+    child.StderrDescriptorValue = stderrDescriptor;
+    return ProcessResult<ChildProcess>.Ok(child);
+}
+
+// Blocking chunk read from the child's stdout pipe, appended to destination.
+// Ok(0) means the pipe reached end-of-stream (child closed its end).
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ReadStdoutChunk(
+    borrow ChildProcess child,
+    mut borrow dynamic i8[min max] destination)
+{
+    return AppendPipeBytes(child.StdoutDescriptorValue, destination);
+}
+
+// Blocking chunk read from the child's stderr pipe, appended to destination.
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ReadStderrChunk(
+    borrow ChildProcess child,
+    mut borrow dynamic i8[min max] destination)
+{
+    return AppendPipeBytes(child.StderrDescriptorValue, destination);
+}
+
+// Non-blocking exit poll: None while the child is still running, Some(code)
+// once it exited.
+public unsafe fn ProcessResult<ProcessOption<i32[min max]>> TryWaitExit(borrow ChildProcess child)
+{
+    stack mut i32[min max] status = 0;
+    stack i32[min max] waitResult = System.Runtime.Platform.WaitProcessNoHang(child.ProcessIdValue, &status);
+    if (waitResult < 0)
+    {
+        return ProcessResult<ProcessOption<i32[min max]>>.Err(ProcessError.Platform(waitResult));
+    }
+
+    if (waitResult == 0)
+    {
+        return ProcessResult<ProcessOption<i32[min max]>>.Ok(ProcessOption<i32[min max]>.None);
+    }
+
+    return ProcessResult<ProcessOption<i32[min max]>>.Ok(ProcessOption<i32[min max]>.Some(DecodeExitStatus(status)));
+}
+
+// Blocking exit wait; returns the decoded exit code.
+public unsafe fn ProcessResult<i32[min max]> WaitExit(borrow ChildProcess child)
+{
+    stack mut i32[min max] status = 0;
+    stack i32[min max] waitResult = System.Runtime.Platform.WaitProcess(child.ProcessIdValue, &status);
+    if (waitResult < 0)
+    {
+        return ProcessResult<i32[min max]>.Err(ProcessError.Platform(waitResult));
+    }
+
+    return ProcessResult<i32[min max]>.Ok(DecodeExitStatus(status));
+}
+
+// Kills the child's whole process group (the child is its own group leader).
+// On Windows this currently terminates only the direct child.
+public unsafe fn ProcessStatus KillTree(borrow ChildProcess child)
+{
+    stack i32[min max] killResult = System.Runtime.Platform.KillProcessGroup(child.ProcessIdValue);
+    if (killResult != 0)
+    {
+        return ProcessStatus.Err(ProcessError.Platform(killResult));
+    }
+
+    return ProcessStatus.Ok;
+}
+
+// Releases the pipe descriptors. Safe to call once after the child exited
+// (or was killed and reaped); double closes are prevented by the -1 reset.
+public unsafe fn ProcessStatus Close(mut borrow ChildProcess child)
+{
+    stack i32[min max] stdoutClose = CloseDescriptorIfOpen(child.StdoutDescriptorValue);
+    child.StdoutDescriptorValue = -1;
+    stack i32[min max] stderrClose = CloseDescriptorIfOpen(child.StderrDescriptorValue);
+    child.StderrDescriptorValue = -1;
+    if (stdoutClose != 0 || stderrClose != 0)
+    {
+        return ProcessStatus.Err(ProcessError.Platform(-1));
+    }
+
+    return ProcessStatus.Ok;
+}
+
+// Polls the child's pipes for readable data (or closure, which a following
+// chunk read observes as end-of-stream). Returns a mask: bit 1 for stdout,
+// bit 2 for stderr, 0 when the timeout elapsed first. A negative timeout
+// blocks indefinitely.
+public unsafe fn ProcessResult<u8[0 3]> PollChildPipes(
+    borrow ChildProcess child,
+    i32[min max] timeoutMilliseconds)
+{
+    stack mut i16[min max] stdoutEvents = 0;
+    stack mut i16[min max] stderrEvents = 0;
+    stack i32[min max] pollResult = System.Runtime.Platform.PollProcessPipesTimed(
+        child.StdoutDescriptorValue,
+        child.StderrDescriptorValue,
+        &stdoutEvents,
+        &stderrEvents,
+        timeoutMilliseconds);
+    if (pollResult < 0)
+    {
+        return ProcessResult<u8[0 3]>.Err(ProcessError.Platform(pollResult));
+    }
+
+    if (pollResult == 0)
+    {
+        return ProcessResult<u8[0 3]>.Ok(0);
+    }
+
+    stack mut u8[0 3] readyMask = 0;
+    if (System.Runtime.Platform.ProcessPipeReadable(stdoutEvents))
+    {
+        readyMask += 1;
+    }
+
+    if (System.Runtime.Platform.ProcessPipeReadable(stderrEvents))
+    {
+        readyMask += 2;
+    }
+
+    return ProcessResult<u8[0 3]>.Ok(readyMask);
+}
+
+// Monotonic elapsed clock for deadline math and progress prefixes (T30.7 gap
+// surface): milliseconds from an arbitrary fixed origin, unaffected by wall
+// clock changes.
+public unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    return System.Runtime.Platform.MonotonicMilliseconds();
+}
+
 public unsafe fn ProcessResult<ProcessOption<System.Text.OwnedAscii>> GetEnvironment(ascii name)
 {
     stack i64[min max] signedNameLength = System.Text.AsciiLength(name);

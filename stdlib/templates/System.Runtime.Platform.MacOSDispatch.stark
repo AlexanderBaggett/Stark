@@ -610,6 +610,34 @@ internal unsafe fn i32[min max] StartProcessCapture(
         stderrDescriptor);
 }
 
+internal unsafe fn i32[min max] StartProcessCaptureGrouped(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return System.Runtime.Platform.MacOS.StartProcessCaptureGrouped(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
 internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
 {
     return System.Runtime.Platform.MacOS.WaitProcess(processId, status);
@@ -623,6 +651,11 @@ internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmut
 internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
 {
     return System.Runtime.Platform.MacOS.KillProcess(processId);
+}
+
+internal unsafe fn i32[min max] KillProcessGroup(i32[min max] processId)
+{
+    return System.Runtime.Platform.MacOS.KillProcessGroup(processId);
 }
 
 internal unsafe fn i32[min max] PollProcessPipesTimed(

@@ -112,7 +112,7 @@ internal unsafe ffi fn i32[min max] posix_spawnp(
     rawmutptr<i32[min max]> processId,
     rawptr<System.C.c_char> file,
     rawptr<rawmutptr<i8[min max]>> fileActions,
-    rawptr<i8[min max]> attributes,
+    rawptr<rawmutptr<i8[min max]>> attributes,
     rawptr<rawptr<System.C.c_char>> argv,
     rawmutptr<MacOSCStringSlot> envp);
 internal unsafe ffi fn i32[min max] posix_spawn_file_actions_init(rawmutptr<rawmutptr<i8[min max]>> fileActions);
@@ -120,6 +120,10 @@ internal unsafe ffi fn i32[min max] posix_spawn_file_actions_destroy(rawmutptr<r
 internal unsafe ffi fn i32[min max] posix_spawn_file_actions_adddup2(rawmutptr<rawmutptr<i8[min max]>> fileActions, i32[min max] fileDescriptor, i32[min max] targetDescriptor);
 internal unsafe ffi fn i32[min max] posix_spawn_file_actions_addclose(rawmutptr<rawmutptr<i8[min max]>> fileActions, i32[min max] fileDescriptor);
 internal unsafe ffi fn i32[min max] posix_spawn_file_actions_addchdir_np(rawmutptr<rawmutptr<i8[min max]>> fileActions, rawptr<System.C.c_char> path);
+internal unsafe ffi fn i32[min max] posix_spawnattr_init(rawmutptr<rawmutptr<i8[min max]>> attributes);
+internal unsafe ffi fn i32[min max] posix_spawnattr_destroy(rawmutptr<rawmutptr<i8[min max]>> attributes);
+internal unsafe ffi fn i32[min max] posix_spawnattr_setflags(rawmutptr<rawmutptr<i8[min max]>> attributes, i16[min max] flags);
+internal unsafe ffi fn i32[min max] posix_spawnattr_setpgroup(rawmutptr<rawmutptr<i8[min max]>> attributes, i32[min max] processGroupId);
 internal unsafe ffi fn rawmutptr<i32[min max]> _NSGetArgc();
 internal unsafe ffi fn rawmutptr<rawmutptr<MacOSCStringSlot>> _NSGetArgv();
 internal unsafe ffi fn rawmutptr<rawmutptr<MacOSCStringSlot>> _NSGetEnviron();
@@ -170,6 +174,7 @@ const MacOSSyncAddressSizeI32 = 4;
 const MacOSSyncAddressDefaultFlags = 0;
 const MacOSWaitNoHangOption = 1;
 const MacOSSignalKill = 9;
+const MacOSSpawnSetPGroup = 2;
 const MacOSPollErrorEvent = 8;
 const MacOSPollHangupEvent = 16;
 const MacOSProcessArgumentMaxLength = 1048576;
@@ -2591,11 +2596,12 @@ internal unsafe fn bool ProcessWorkingDirectoryExists(rawptr<System.C.c_char> pa
 // reports through the child's own exit status are returned directly as the
 // shell-convention codes: 126 for a bad working directory and 127 when the
 // executable cannot be found or run.
-internal unsafe fn i32[min max] StartProcessCapture(
+internal unsafe fn i32[min max] StartProcessCaptureCore(
     rawptr<System.C.c_char> executable,
     borrow rawptr<System.C.c_char>[] argv,
     rawptr<System.C.c_char> workingDirectory,
     bool captureStdin,
+    bool newProcessGroup,
     rawmutptr<i32[min max]> processId,
     rawmutptr<i32[min max]> stdinDescriptor,
     rawmutptr<i32[min max]> stdoutDescriptor,
@@ -2748,14 +2754,55 @@ internal unsafe fn i32[min max] StartProcessCapture(
         return -actionResult;
     }
 
+    // Attributes are always initialized so the spawn call has one shape; the
+    // process-group flag is only set when the caller asked for a grouped
+    // child (pgroup 0 makes the child its own group leader).
+    stack mut rawmutptr<i8[min max]> spawnAttributes = null;
+    stack i32[min max] attributesInit = posix_spawnattr_init(&spawnAttributes);
+    if (attributesInit != 0)
+    {
+        stack i32[min max] ignoredDestroyActionsForAttributes = posix_spawn_file_actions_destroy(&fileActions);
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return -attributesInit;
+    }
+
+    stack mut i32[min max] attributesResult = 0;
+    if (newProcessGroup)
+    {
+        attributesResult = posix_spawnattr_setflags(&spawnAttributes, MacOSSpawnSetPGroup);
+        if (attributesResult == 0)
+        {
+            attributesResult = posix_spawnattr_setpgroup(&spawnAttributes, 0);
+        }
+    }
+
+    if (attributesResult != 0)
+    {
+        stack i32[min max] ignoredDestroyAttributes = posix_spawnattr_destroy(&spawnAttributes);
+        stack i32[min max] ignoredDestroyActionsForFlags = posix_spawn_file_actions_destroy(&fileActions);
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return -attributesResult;
+    }
+
     stack mut i32[min max] spawnedId = -1;
     stack i32[min max] spawnResult = posix_spawnp(
         &spawnedId,
         executable,
         &fileActions,
-        null,
+        &spawnAttributes,
         &argv[0],
         *_NSGetEnviron());
+    stack i32[min max] ignoredDestroyAttributesAfterSpawn = posix_spawnattr_destroy(&spawnAttributes);
     stack i32[min max] ignoredDestroy = posix_spawn_file_actions_destroy(&fileActions);
 
     CloseProcessDescriptorIfOpen(stdinPipe[0]);
@@ -2808,6 +2855,67 @@ internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i3
     return processId;
 }
 
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCaptureCore(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        false,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+// Spawns like StartProcessCapture but places the child in its own process
+// group (POSIX_SPAWN_SETPGROUP with pgroup 0), so KillProcessGroup can end
+// the whole tree.
+internal unsafe fn i32[min max] StartProcessCaptureGrouped(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return StartProcessCaptureCore(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        true,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
 internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
 {
     if (status == null)
@@ -2827,6 +2935,23 @@ internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmut
 internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
 {
     if (kill(processId, MacOSSignalKill) != 0)
+    {
+        return NegativeErrno();
+    }
+
+    return 0;
+}
+
+// Kills every process in the child's process group (kill(-pgid)); pair with
+// StartProcessCaptureGrouped, whose child is its own group leader.
+internal unsafe fn i32[min max] KillProcessGroup(i32[min max] processId)
+{
+    if (processId <= 0)
+    {
+        return -1;
+    }
+
+    if (kill(-processId, MacOSSignalKill) != 0)
     {
         return NegativeErrno();
     }

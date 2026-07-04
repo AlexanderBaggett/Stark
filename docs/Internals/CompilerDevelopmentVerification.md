@@ -67,6 +67,11 @@ Conventions that keep probes honest:
   evidence tools, not shipped artifacts.
 - A probe run is runtime evidence: it exercises lowering, emission, linking,
   and execution, which `--check` does not.
+- An accept BOOLEAN is not lowering evidence. For at least one accepted
+  shape per slice, dump the emitted module (`WriteLine(sink.View())`) and
+  check it is well-formed — the enum-return slice's "ok" turned out to be
+  an accepted `define unknown @main()` / `ret unknown` module (2026-07-04
+  ledger entry), and only dumping the emission caught it.
 
 ## Package-Backed Probe Compiles
 
@@ -85,7 +90,7 @@ passing). The recipe:
 
 ```
 ./stark selfhost/probe/MemberFactsProbe.stark --emit-exe \
-    -I <scratch>/stage0/pkg -I stdlib/src --no-stark-path \
+    -I <scratch>/stage0/pkg --no-stark-path \
     --target <triple> \
     --target-data-layout "<layout from ./stark --inspect-pkg <image>>" \
     -o <scratch>/probe
@@ -96,11 +101,45 @@ Sharp edges (tracked in TASKS.md tooling section):
 - Raw `--target` runs derive a different LLVM data layout than project
   builds embed; pass `--target-data-layout` copied from `--inspect-pkg` or
   the image is rejected with STK7312.
-- A library package embeds only the stdlib subset its root imports; keep
-  `-I stdlib/src` so probe-only imports (for example `System.Console`)
-  resolve from source. The resolver mixes package and source modules.
-- Rebuild the package after changing selfhost sources; the image is a
-  snapshot, and probes against a stale image verify the old code.
+- Pass `-I <pkg>` ONLY — do not add `-I stdlib/src`. The selfhost package
+  embeds the `System.Process`/Platform modules (via `Compiler.TestDriver`),
+  and mixing the package's stdlib subset with stdlib source breaks
+  internal-symbol resolution in the swapped platform dispatch template.
+  (Before the package embedded those modules, `-I stdlib/src` was needed
+  for probe-only imports; the embedded subset now covers them.)
+- Rebuild the PACKAGE after changing selfhost sources or the host
+  compiler; the image and its static library are snapshots. A probe-only
+  rebuild links the old `libStarkCompiler.a`, so it can never observe a
+  compiler fix to package-side code — the bundle field-store "remaining
+  layer" (TASKS.md §6, closed 2026-07-04) was exactly this ghost: the fix
+  was in, the probe was fresh, and the archive was stale.
+
+## Test Runner Progress
+
+`stark test` streams runner output line-by-line as it happens (it never
+buffers until exit), so partial output survives a kill. Two flags sharpen
+timeout diagnosis:
+
+- `--test-progress` passes `--progress` to the generated runner, which then
+  prints `run <name>` before each fact and `ok|FAILED <name> (k/N)` after it
+  (N counts the generated — post-filter — entries). The driver prefixes every
+  forwarded line with elapsed wall-clock (`[12.3s]`). A hung or timed-out
+  run's last `run <name>` line names the fact in flight, and successive
+  prefixes give per-fact durations. Without the flag, output is byte-identical
+  to the legacy `ok <name>` format.
+- `--test-timeout <seconds>` kills the runner process tree at the deadline
+  and reports the timeout explicitly instead of hanging the harness.
+
+The protocol is a stage contract: the runner and `System.Testing`
+(`BeginFact`, `RunFactCounted`) are Stark and shared by every stage. The
+normative artifacts are the fixtures and byte-exact goldens under
+`tests/fixtures/test-progress`, enforced by the
+`TestProgressProtocolTests` integration harness. The stage1 components
+(`Compiler.TestRunner` for generated-runner emission,
+`Compiler.TestDriver` for streaming/prefix/timeout execution) are
+golden-parity verified and pinned by `tests-stark/selfhost.TestRunner`;
+the full design record is
+docs/Self-host-Prep/30-test-progress-streaming.md.
 
 ## Diagnostic Probes
 
