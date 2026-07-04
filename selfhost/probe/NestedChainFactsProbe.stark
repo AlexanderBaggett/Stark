@@ -1,0 +1,22 @@
+import Compiler.Mir
+import System.Console
+import System.Text
+module Compiler.Probe.NestedChainFacts
+
+// Renders the typed member rows and prevalidated member-path facts for a
+// nested-chain source, so the failing per-step validation in
+// TryResolveConstructedObjectMemberChainStorageField is visible field by
+// field instead of as a bare rejection.
+export fn i32[min max] main()
+{
+    stack ascii source = "struct Inner { i64 value; } struct Box { Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.value = 5; return box.inner.value }";
+    stack mut OwnedAscii sink = new();
+    if (!ProbeSourceMemberPathFacts(source, sink))
+    {
+        WriteLine("probe failed");
+        return 1;
+    }
+
+    WriteLine(sink.View());
+    return 0;
+}

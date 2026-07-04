@@ -896,7 +896,6 @@ internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlice
 {
     arms = new();
     stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
-
     stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
     stack mut ExprParseResult thenArm = new();
     stack mut bool thenBecome = false;

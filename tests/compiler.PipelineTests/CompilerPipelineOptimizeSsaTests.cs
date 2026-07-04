@@ -1339,6 +1339,72 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void OwnershipTrafficSsaKeepsSiblingFieldCopiesIntoLiveAggregate()
+    {
+        // Regression: dead-aggregate-copy elimination treated a copy into a
+        // FIELD as a whole-local kill, so the later sibling-field copy killed
+        // the aggregate's liveness and the earlier sibling copy was deleted as
+        // "dead" (the bundle field-store wrong-code bug — emptied
+        // SourceModuleLoweringFacts.Declarations/EnumPayloads in package
+        // builds). Field copies must not kill whole-local liveness.
+        const string source = """
+            module Demo
+
+            struct Table
+            {
+                i64[min max][16] Values;
+            }
+
+            struct Bundle
+            {
+                Table First;
+                Table Second;
+            }
+
+            fn bool Run(out Bundle bundle)
+            {
+                stack mut Table first = new Table();
+                first.Values[0] = 7;
+                stack mut Table second = new Table();
+                second.Values[0] = 9;
+
+                stack mut Bundle built = new Bundle();
+                built.First = first;
+                built.Second = second;
+                bundle = built;
+                return true;
+            }
+            """;
+
+        var pipeline = DefaultCompilerPipeline.Create();
+        var before = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "sroa-ssa"));
+        Assert.True(before.Succeeded, string.Join(", ", before.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(before.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? beforeSsa));
+        Assert.NotNull(beforeSsa);
+        var beforeRun = Assert.Single(beforeSsa.Functions, static function => function.Name == "Run");
+        var beforeCopies = beforeRun.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaCopyMemoryInstruction>()
+            .Count();
+        Assert.True(beforeCopies >= 2, $"expected at least the two sibling field copies before ownership traffic, saw {beforeCopies}");
+
+        var after = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "ownership-traffic-ssa"));
+        Assert.True(after.Succeeded, string.Join(", ", after.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(after.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? afterSsa));
+        Assert.NotNull(afterSsa);
+        var afterRun = Assert.Single(afterSsa.Functions, static function => function.Name == "Run");
+        var afterCopies = afterRun.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaCopyMemoryInstruction>()
+            .Count();
+        Assert.Equal(beforeCopies, afterCopies);
+    }
+
+    [Fact]
     public void OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRoots()
     {
         const string source = """

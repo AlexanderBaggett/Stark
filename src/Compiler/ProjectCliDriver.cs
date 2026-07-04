@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -272,7 +273,7 @@ internal static class ProjectCliDriver
                     return 1;
                 }
 
-                var exitCode = await RunTestExecutableAsync(buildResult, session.TestCollections, session.ListTestCollections, stdout, stderr);
+                var exitCode = await RunTestExecutableAsync(buildResult, session.TestCollections, session.ListTestCollections, session.TestProgress, session.TestTimeoutSeconds, stdout, stderr);
                 if (exitCode != 0)
                 {
                     failed = true;
@@ -350,6 +351,8 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("- `--filter <text>` may be repeated; matching is ordinal substring over generated test names.");
                 await stdout.WriteLineAsync("- `--collection <name[,name...]>` may be repeated; runs only facts tagged with the named [Collection]s (union).");
                 await stdout.WriteLineAsync("- `--list-collections` prints the project's collection names without running facts.");
+                await stdout.WriteLineAsync("- `--test-progress` streams a `run <name>` marker before each fact and `(k/N)` counters with elapsed-time prefixes, so a hung or timed-out run names the fact in flight.");
+                await stdout.WriteLineAsync("- `--test-timeout <seconds>` kills the test process after the deadline and reports the timeout explicitly.");
                 return;
             case ProjectCommand.Clean:
                 await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
@@ -366,6 +369,8 @@ internal static class ProjectCliDriver
         BuildResult buildResult,
         IReadOnlyList<string> testCollections,
         bool listTestCollections,
+        bool testProgress,
+        int testTimeoutSeconds,
         TextWriter stdout,
         TextWriter stderr)
     {
@@ -382,10 +387,16 @@ internal static class ProjectCliDriver
         };
 
         // The generated runner treats every argument as a collection name,
-        // plus the literal --list-collections discovery request.
+        // plus the literal --list-collections discovery request and the
+        // --progress per-fact marker toggle.
         if (listTestCollections)
         {
             startInfo.ArgumentList.Add("--list-collections");
+        }
+
+        if (testProgress)
+        {
+            startInfo.ArgumentList.Add("--progress");
         }
 
         foreach (var collectionName in testCollections)
@@ -400,21 +411,69 @@ internal static class ProjectCliDriver
             return 1;
         }
 
-        var testStdoutTask = process.StandardOutput.ReadToEndAsync();
-        var testStderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var testStdout = await testStdoutTask;
-        var testStderr = await testStderrTask;
+        // Stream runner output line-by-line as it happens instead of
+        // buffering until exit: on a timeout or kill the partial transcript
+        // survives, and with --test-progress the last `run <name>` line
+        // identifies the fact that was in flight. Elapsed-time prefixes are
+        // stamped by the driver so the runner needs no clock.
+        var runClock = Stopwatch.StartNew();
+        var writeGate = new object();
 
-        if (!string.IsNullOrEmpty(testStdout))
+        void ForwardLine(TextWriter writer, string? line)
         {
-            await stdout.WriteAsync(testStdout);
+            if (line is null)
+            {
+                return;
+            }
+
+            lock (writeGate)
+            {
+                if (testProgress)
+                {
+                    writer.Write('[');
+                    writer.Write(runClock.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture));
+                    writer.Write("s] ");
+                }
+
+                writer.WriteLine(line);
+            }
         }
 
-        if (!string.IsNullOrEmpty(testStderr))
+        process.OutputDataReceived += (_, eventArgs) => ForwardLine(stdout, eventArgs.Data);
+        process.ErrorDataReceived += (_, eventArgs) => ForwardLine(stderr, eventArgs.Data);
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        if (testTimeoutSeconds > 0)
         {
-            await stderr.WriteAsync(testStderr);
+            using var timeoutSource = new CancellationTokenSource(TimeSpan.FromSeconds(testTimeoutSeconds));
+            try
+            {
+                await process.WaitForExitAsync(timeoutSource.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+
+                await process.WaitForExitAsync();
+                await stderr.WriteLineAsync(
+                    $"Test run timed out after {testTimeoutSeconds}s; the last `run <name>` line above names the fact that was in flight.");
+                return 1;
+            }
         }
+        else
+        {
+            await process.WaitForExitAsync();
+        }
+
+        // Drain any final buffered lines before reading the exit code.
+        process.WaitForExit();
 
         if (process.ExitCode == 0)
         {
@@ -1823,6 +1882,8 @@ internal static class ProjectCliDriver
             TestFilters: options.TestFilters,
             TestCollections: options.TestCollections,
             ListTestCollections: options.ListTestCollections,
+            TestProgress: options.TestProgress,
+            TestTimeoutSeconds: options.TestTimeoutSeconds,
             Stdout: stdout,
             Stderr: stderr);
         return true;
@@ -2646,6 +2707,8 @@ internal static class ProjectCliDriver
         IReadOnlyList<string> TestFilters,
         IReadOnlyList<string> TestCollections,
         bool ListTestCollections,
+        bool TestProgress,
+        int TestTimeoutSeconds,
         TextWriter Stdout,
         TextWriter Stderr)
     {
@@ -2773,7 +2836,9 @@ internal static class ProjectCliDriver
         bool ShowHelp,
         IReadOnlyList<string> TestFilters,
         IReadOnlyList<string> TestCollections,
-        bool ListTestCollections)
+        bool ListTestCollections,
+        bool TestProgress,
+        int TestTimeoutSeconds)
     {
         public static ProjectCommandOptions? Parse(ProjectCommand command, string[] args, TextWriter stderr)
         {
@@ -2787,6 +2852,8 @@ internal static class ProjectCliDriver
             var testFilters = new List<string>();
             var testCollections = new List<string>();
             var listTestCollections = false;
+            var testProgress = false;
+            var testTimeoutSeconds = 0;
 
             for (var index = 0; index < args.Length; index++)
             {
@@ -2893,6 +2960,33 @@ internal static class ProjectCliDriver
 
                         listTestCollections = true;
                         break;
+                    case "--test-progress":
+                        if (command != ProjectCommand.Test)
+                        {
+                            stderr.WriteLine("--test-progress is only valid for `stark test`.");
+                            return null;
+                        }
+
+                        testProgress = true;
+                        break;
+                    case "--test-timeout":
+                        if (command != ProjectCommand.Test)
+                        {
+                            stderr.WriteLine("--test-timeout is only valid for `stark test`.");
+                            return null;
+                        }
+
+                        if (index + 1 >= args.Length
+                            || !int.TryParse(args[index + 1], NumberStyles.None, CultureInfo.InvariantCulture, out var timeoutSeconds)
+                            || timeoutSeconds <= 0)
+                        {
+                            stderr.WriteLine("--test-timeout requires a positive whole number of seconds.");
+                            return null;
+                        }
+
+                        index++;
+                        testTimeoutSeconds = timeoutSeconds;
+                        break;
                     default:
                         if (argument.StartsWith("--target=", StringComparison.Ordinal))
                         {
@@ -2973,7 +3067,9 @@ internal static class ProjectCliDriver
                 showHelp,
                 testFilters,
                 testCollections,
-                listTestCollections);
+                listTestCollections,
+                testProgress,
+                testTimeoutSeconds);
         }
 
         private static bool TryNormalizeToolchainDirectory(string value, TextWriter stderr, out string? toolchainDirectory)

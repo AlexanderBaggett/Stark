@@ -1791,7 +1791,15 @@ internal sealed class SsaValueFactAnalyzer
         entryStates[function.EntryBlockId] = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         initializedEntries.Add(function.EntryBlockId);
 
-        var changedFacts = false;
+        // Run the entry-state fixpoint against a scratch copy of the value
+        // facts: recording refined per-value facts DURING iteration is
+        // order-dependent — a loop body's first pass records ranges from the
+        // not-yet-joined entry state (e.g. a dynamic's zero-init length before
+        // the mutating back edge merges in) and nothing retracts them once the
+        // states converge. Facts are recorded once, after convergence, from
+        // the joined entry states.
+        var scratchValues = new Dictionary<string, SsaValueFacts>(values, StringComparer.Ordinal);
+        var scratchChangedFacts = false;
         var changedStates = true;
         var iterationLimit = Math.Max(4, reachableBlocks.Length * 4);
         for (var iteration = 0; changedStates && iteration < iterationLimit; iteration++)
@@ -1809,9 +1817,9 @@ internal sealed class SsaValueFactAnalyzer
                     block,
                     entryState,
                     definitions,
-                    values,
+                    scratchValues,
                     directCallParameterEffects,
-                    ref changedFacts);
+                    ref scratchChangedFacts);
                 foreach (var target in EnumerateTerminatorTargets(block.Terminator))
                 {
                     if (!reachableBlockIds.Contains(target))
@@ -1825,7 +1833,7 @@ internal sealed class SsaValueFactAnalyzer
                         transfer.ExitState,
                         transfer.ConditionalMutations,
                         definitions,
-                        values,
+                        scratchValues,
                         out var edgeState))
                     {
                         continue;
@@ -1837,6 +1845,24 @@ internal sealed class SsaValueFactAnalyzer
                     }
                 }
             }
+        }
+
+        var changedFacts = false;
+        foreach (var block in reachableBlocks)
+        {
+            if (!initializedEntries.Contains(block.Id)
+                || !entryStates.TryGetValue(block.Id, out var entryState))
+            {
+                continue;
+            }
+
+            AnalyzeDynamicStorageBlockTransfer(
+                block,
+                entryState,
+                definitions,
+                values,
+                directCallParameterEffects,
+                ref changedFacts);
         }
 
         return changedFacts;

@@ -13,6 +13,8 @@ export import Compiler.Llvm
 export import Compiler.AsmFacts
 export import Compiler.TargetFacts
 export import Compiler.NativeFacts
+export import Compiler.TestRunner
+export import Compiler.TestDriver
 module Compiler
 
 // Stage 1 self-hosted Stark compiler (pre-/src-cutover staging package).

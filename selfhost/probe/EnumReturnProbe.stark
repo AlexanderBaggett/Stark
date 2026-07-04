@@ -1,0 +1,63 @@
+import Compiler.Mir
+import System.Console
+import System.Text
+module Compiler.Probe.EnumReturn
+
+// The enum-return slice's target shapes (TASKS.md §1, enum payload
+// lowering). Enum-valued RETURNS are unimplemented: the single-function
+// entry rejects them, and a 2026-07-03 instrumented build that "accepted"
+// them emitted an invalid `unknown`-typed module (evidence retracted —
+// TestPassLedger 2026-07-04). Construction into locals works (control
+// below). When the slice lands: flip expectOk to true AND validate the
+// emitted module text, not just the accept boolean.
+fn u8[0 1] Check(ascii name, ascii source, bool expectOk)
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(source, sink);
+    if (ok == expectOk)
+    {
+        Write("ok   ");
+        WriteLine(name);
+        return 0;
+    }
+
+    Write("FAIL ");
+    WriteLine(name);
+    if (sink.Length() > 0)
+    {
+        WriteLine(sink.View());
+    }
+
+    return 1;
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] failures = 0;
+
+    failures += (i32[min max])Check(
+        "enum-return-only",
+        "enum Pick { First, Second } fn Pick main() { return Pick.First }",
+        false);
+
+    failures += (i32[min max])Check(
+        "enum-local-then-return",
+        "enum Pick { First, Second } fn Pick main() { stack Pick pick = Pick.Second; return pick }",
+        false);
+
+    // Constructing into a local WORKS (the bundle tables flow); only the
+    // enum-valued return rejects. Keep this green control so a table-level
+    // regression is distinguishable from the return-shape gap.
+    failures += (i32[min max])Check(
+        "enum-local-scalar-return-control",
+        "enum Pick { First, Second } fn i64 main() { stack Pick pick = Pick.First; return 7 }",
+        true);
+
+    if (failures == 0)
+    {
+        WriteLine("all enum return probes passed");
+        return 0;
+    }
+
+    return 1;
+}

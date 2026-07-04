@@ -1,0 +1,85 @@
+import Compiler.Mir
+import System.Console
+import System.Text
+module Compiler.Probe.NestedChain
+
+// Bisection probe for the nested member chain gap. Layer-peeling shapes:
+// does a struct-in-struct local even lower, does the layout walk survive an
+// aggregate field, and only then the chain access itself.
+
+fn u8[0 1] Check(ascii name, ascii source, bool dump)
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(source, sink);
+    if (ok)
+    {
+        Write("ok     ");
+        WriteLine(name);
+        if (dump)
+        {
+            WriteLine(sink.View());
+            WriteLine("----");
+        }
+        return 0;
+    }
+
+    Write("reject ");
+    WriteLine(name);
+    return 1;
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] rejected = 0;
+
+    rejected += (i32[min max])Check(
+        "flat-local-control",
+        "struct Box { i64 value; } fn i64 main() { stack Box box = new Box(); return 7 }",
+        false);
+
+    rejected += (i32[min max])Check(
+        "nested-local-no-access",
+        "struct Inner { i64 value; } struct Box { Inner inner; } fn i64 main() { stack Box box = new Box(); return 7 }",
+        false);
+
+    rejected += (i32[min max])Check(
+        "agg-field-then-scalar-store",
+        "struct Inner { i64 value; } struct Box { Inner inner; i64 tail; } fn i64 main() { stack Box box = new Box(); box.tail = 5; return box.tail }",
+        false);
+
+    rejected += (i32[min max])Check(
+        "scalar-then-agg-field-store",
+        "struct Inner { i64 value; } struct Box { i64 tail; Inner inner; } fn i64 main() { stack Box box = new Box(); box.tail = 5; return box.tail }",
+        false);
+
+    rejected += (i32[min max])Check(
+        "nested-read-only",
+        "struct Inner { i64 value; } struct Box { Inner inner; } fn i64 main() { stack Box box = new Box(); return box.inner.value }",
+        false);
+
+    rejected += (i32[min max])Check(
+        "nested-store-then-read",
+        "struct Inner { i64 value; } struct Box { Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.value = 5; return box.inner.value }",
+        false);
+
+    rejected += (i32[min max])Check(
+        "nested-offset-field-dump",
+        "struct Inner { i64 pad; i64 value; } struct Box { i64 head; Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.value = 5; return box.inner.value }",
+        true);
+
+    rejected += (i32[min max])Check(
+        "three-level-chain-dump",
+        "struct Leaf { i64 value; } struct Inner { i64 pad; Leaf leaf; } struct Box { i64 head; Inner inner; } fn i64 main() { stack Box box = new Box(); box.inner.leaf.value = 9; return box.inner.leaf.value }",
+        true);
+
+    rejected += (i32[min max])Check(
+        "cyclic-aggregate-rejected",
+        "struct A { B b; } struct B { A a; } fn i64 main() { stack A a = new A(); return 7 }",
+        false);
+
+    Write("rejected count: ");
+    stack mut OwnedAscii count = new();
+    stack System.Memory.MemoryStatus s = count.AppendI64((i64[min max])rejected);
+    WriteLine(count.View());
+    return 0;
+}

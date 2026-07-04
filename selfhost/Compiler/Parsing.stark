@@ -4193,6 +4193,8 @@ finite law StatementKind ClassifyStatementKind(TokenKind kind)
             return StatementKind.Local;
         case TokenKind.Arena:
             return StatementKind.Local;
+        case TokenKind.Var:
+            return StatementKind.Local;
         case TokenKind.Const:
             return StatementKind.Local;
         default:
@@ -5202,10 +5204,24 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
             stack ExprParse expression = ParseAssignment(stream, list.Expressions, statementStart);
             exprRoot = expression.Node;
         }
-        else if ((kind == StatementKind.If || kind == StatementKind.While)
-            && stream.KindAt((u64[0 2 ** 63 - 1])(statementStart + 1)) == TokenKind.LParen)
+        else if (kind == StatementKind.If || kind == StatementKind.While)
         {
-            stack ExprParse condition = ParseAssignment(stream, list.Expressions, (u32[0 max])(statementStart + 2));
+            // The condition may be parenthesized (`if (x)`), bare (`if x` in
+            // the mini-Stark dialect), or led by a loop-exit marker
+            // (`while willexit (x)`); skip the marker and the optional `(` so
+            // typing walks the condition expression in every spelling.
+            stack mut u32[0 max] conditionStart = (u32[0 max])(statementStart + 1);
+            if (stream.KindAt((u64[0 2 ** 63 - 1])conditionStart) == TokenKind.Willexit)
+            {
+                conditionStart = (u32[0 max])(conditionStart + 1);
+            }
+
+            if (stream.KindAt((u64[0 2 ** 63 - 1])conditionStart) == TokenKind.LParen)
+            {
+                conditionStart = (u32[0 max])(conditionStart + 1);
+            }
+
+            stack ExprParse condition = ParseAssignment(stream, list.Expressions, conditionStart);
             exprRoot = condition.Node;
         }
         else if (kind == StatementKind.Switch)
