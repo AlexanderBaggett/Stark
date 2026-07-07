@@ -337,6 +337,10 @@ internal fn MemoryStatus EmitLlvmParamListWithRangeAndAbiFacts(
         {
             try EmitLlvmFixedArrayAbiType(abi, sink);
         }
+        else if (abi.IsStructValue)
+        {
+            try EmitLlvmStructValueAbiType(abi, sink);
+        }
         else if (abi.IsPointer)
         {
             try sink.AppendConstAscii("ptr");
@@ -441,7 +445,7 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
     stack MirType returnType = MirBlockScalarReturnType(instrs, blocks, entryBlockIndex);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmTypeName(returnType, sink);
+    try EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, entryBlockIndex, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(name);
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
@@ -756,7 +760,7 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
     stack MirType returnType = MirBlockRangesScalarReturnType(instrs, blocks, ranges);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmTypeName(returnType, sink);
+    try EmitLlvmRangesReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, ranges, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(name);
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
@@ -1112,7 +1116,7 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
     stack MirType returnType = MirBlockRangesScalarReturnType(instrs, blocks, ranges);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmTypeName(returnType, sink);
+    try EmitLlvmRangesReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, ranges, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);
@@ -1492,7 +1496,7 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
     stack MirType returnType = MirBlockScalarReturnType(instrs, blocks, entryBlock);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmTypeName(returnType, sink);
+    try EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, entryBlock, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);

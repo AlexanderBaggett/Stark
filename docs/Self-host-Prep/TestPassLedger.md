@@ -17,6 +17,503 @@ diagnostics that previously only surfaced on executable builds.
 
 ---
 
+## 2026-07-07 MIR Enum Payload Capture Assignment Switch Slice
+
+- Parsed tuple and named enum payload `var` captures for non-terminal assignment switch labels without adding them to the scalar payload-test table.
+- Seeded capture names into each assignment arm's section-local scope after the pre-target locals and before ordinary arm-local declarations.
+- Preserved concrete scalar payload type facts for capture locals while type-checking assignment arm expressions.
+- Lowered captured enum payload values with `extractvalue` in the matched assignment arm block, so unmatched cases do not evaluate capture extracts.
+- Added focused IR facts for tuple payload capture assignment switches and named payload capture assignment switches with a scalar payload test.
+- Marked the enum payload assignment capture subtasks complete in `TASKS.md` while leaving terminal, aggregate, list, and capture-merge work open.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CompilesEnumPayloadCaptureAssignmentSwitchFromAst --filter CompilesNamedEnumPayloadCaptureAssignmentSwitchFromAst --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: interrupted after about two and a half minutes because the filtered project build/run remained silent.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Guarded Fixed-Array Storage/Field List Switch Pattern Slice
+
+- Parsed `when` guards on storage-local and field-backed fixed-array list switch labels and preserved guard nodes beside the element-pattern rows.
+- Allowed guarded storage-local and field-backed list labels to fall through to later unguarded fallbacks with the same element pattern, while still rejecting overlaps after an unguarded prior label.
+- Lowered scalar-return and enum-return guarded storage-local list labels through constant-offset element loads with declared element range facts preserved.
+- Lowered scalar-return and enum-return guarded field-backed list labels through typed member-path element loads with declared element range facts preserved.
+- Lowered non-terminal assignment guarded storage-local and field-backed list labels through the existing assignment switch merge path.
+- Added focused IR facts for guarded terminal-return, guarded enum-return, and guarded assignment fixed-array list switches over storage-local and field-backed scrutinees.
+- Marked the guarded no-capture fixed-array storage-local and field-backed list subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Guarded Fixed-Array Parameter List Switch Pattern Slice
+
+- Parsed `when` guards on direct fixed-array parameter list switch labels and preserved guard nodes beside the element-pattern rows.
+- Allowed a guarded fixed-array list label to fall through to a later unguarded fallback with the same element pattern, while still rejecting overlaps after an unguarded prior label.
+- Lowered terminal-return guarded fixed-array parameter list labels through direct `extractvalue` element tests followed by separate guard branch blocks.
+- Lowered non-terminal assignment guarded fixed-array parameter list labels through the existing assignment switch merge path, with true guard edges routed to ordinary case assignment blocks.
+- Kept storage-local and field-backed fixed-array list guards out of this slice so their memory-backed element-load paths remain unchanged.
+- Added focused IR facts for terminal-return and assignment guarded fixed-array parameter list switches.
+- Marked the guarded no-capture fixed-array parameter list subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter SourceModuleLowersTerminalFixedArrayListGuardedSwitchToLlvm --filter CompileFixedArrayListSwitchParamGuardedScalarAssignmentFallsThroughToUnguardedFallback --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: interrupted after remaining silent past the configured timeout window during build/startup.
+  - A standalone two-case probe that compiled and ran only the guarded-list terminal and assignment scenarios was interrupted after continued compiler stage progress without a final result.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Guarded Struct Aggregate Assignment Switch Pattern Slice
+
+- Parsed `when` guards on non-terminal assignment struct aggregate switch labels and preserved the guard node beside the field-pattern rows.
+- Lowered assignment-switch guards into separate MIR condition blocks after successful struct field tests, with false guards falling through to the next case/default tail.
+- Kept existing assignment phi-chain construction unchanged by routing guarded true edges into the ordinary case assignment block.
+- Validated guard roots through the same module-call contract path used by assignment arms and lowered guards with the preserved local override facts.
+- Added focused IR facts for guarded stack-backed struct aggregate assignments and guarded by-value struct parameter aggregate assignments.
+- Marked the guarded no-capture struct aggregate switch-label task complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Guarded Struct Aggregate Switch Pattern Slice
+
+- Parsed `when` guards on terminal-return no-capture struct aggregate switch labels after the aggregate field pattern label is accepted.
+- Rejected guards that introduce unknown names or do not type-check as `bool` in the existing local type context.
+- Preserved ordered field-test lowering and inserted a separate guard branch block only after the field tests succeed.
+- Allowed a guarded struct aggregate label to fall through to a later unguarded fallback with the same field pattern, while still rejecting overlaps after an unguarded prior label.
+- Routed guarded terminal-return struct aggregate switches over both stack-backed struct locals and by-value struct parameters.
+- Added focused IR facts for guarded local struct aggregate returns and guarded by-value struct parameter aggregate returns.
+- Split the guarded struct aggregate task in `TASKS.md` so non-terminal assignment guards remain explicit follow-up work.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CompileStructAggregateSwitchLocalGuardedScalarReturnFallsThroughToUnguardedFallback --filter CompileStructAggregateSwitchValueParamGuardedScalarReturnUsesDirectFieldExtracts --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: interrupted after about two and a half minutes because the filtered project build/run remained silent.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR By-Value Struct Parameter Switch Pattern Slice
+
+- Resolved single-identifier struct aggregate switch scrutinees to by-value struct parameter ABI facts after the existing constructed-object storage lookup fails.
+- Threaded the struct-value parameter flag and ABI shape facts through terminal-return and assignment switch parsing.
+- Lowered terminal struct aggregate switch conditions over by-value parameters through direct `StructParamField` extracts instead of stack materialization.
+- Lowered non-terminal assignment struct aggregate switch conditions over by-value parameters through the same direct field extract path.
+- Preserved declared scalar field range facts by using the range-bearing `StructParamField` builder when the pattern row has a member-path range fact.
+- Added focused IR facts for terminal-return and assignment struct aggregate switches over by-value struct parameters; both assert LLVM `extractvalue`, branch tests, and no struct alloca or scalar field loads.
+- Marked the by-value struct aggregate switch-routing subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CompileStructAggregateSwitchValueParamScalarReturnUsesDirectFieldExtracts --filter CompileStructPropertyPatternSwitchValueParamScalarAssignmentUsesDirectFieldExtracts --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about five minutes because the filtered project build/run remained silent.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Parameter Extract Range Fact Slice
+
+- Packed the `StructParamField` aggregate field count and shape code into the instruction immediate so operands C/D are available for backend fact payloads.
+- Added a range-bearing struct parameter field builder that records declared lower and exclusive upper bounds as constant operands.
+- Imported declared range constants for direct struct-parameter field extracts in the MIR value-fact pass without stack materialization.
+- Kept unannotated scalar struct-parameter extracts useful by deriving conservative full-width facts for supported compact integer result types.
+- Added a focused IR fact that proves an extracted `i64` field carries its declared `[5, 9)` range and an extracted `i1` field carries `[0, 2)`.
+- Marked the declared field range import subtask complete in `TASKS.md`; switch routing over by-value parameters remains open.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/Builder.stark selfhost/Compiler/Mir/Facts.stark selfhost/Compiler/Mir/LlvmInstructions.stark selfhost/Compiler/Mir/TextRendering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR By-Value Struct Parameter Direct Extract Slice
+
+- Added a first-class `StructParamField` MIR opcode for extracting a scalar field directly from a by-value struct parameter.
+- Stored the struct parameter field count and compact LLVM aggregate shape on the extraction instruction so LLVM emission does not need source lookup or stack materialization.
+- Reused the struct-value LLVM aggregate type emitter for both function signatures and `extractvalue` instruction operands.
+- Plumbed the new opcode through MIR text rendering, artifact opcode names, and the package codec.
+- Added a focused IR fact that emits `extractvalue { i32, i1 } %p0, 0` from a `{ i32, i1 }` struct parameter and returns the scalar field.
+- Marked the direct struct-parameter field extraction subtask complete in `TASKS.md`; field range facts and switch routing over by-value parameters remain open.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/Builder.stark selfhost/Compiler/Mir/LlvmFacts.stark selfhost/Compiler/Mir/LlvmInstructions.stark selfhost/Compiler/Mir/TextRendering.stark selfhost/Compiler/ArtifactRendering.stark selfhost/Compiler/Mir/PackageCodec.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR By-Value Struct Parameter LLVM Signature Slice
+
+- Added LLVM aggregate parameter type emission for by-value struct ABI facts using the preserved scalar field shape code.
+- Moved the struct-value shape multiplier helpers into `LlvmFacts.stark` so fact production and LLVM consumption share the same base-8 field-code convention.
+- Kept ordinary integer range attributes on scalar parameters and left struct-value call argument lowering blocked until the later direct struct argument/extract subtasks.
+- Added a focused IR fact that compiles `fn i64 classify(Box box, i64 scalar)` and checks the emitted signature uses `{ i32, i1 } %p0`.
+- Marked the by-value struct LLVM signature subtask complete in `TASKS.md`; direct `extractvalue` lowering, range facts, and switch routing remain open.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/LlvmFacts.stark selfhost/Compiler/Mir/LlvmFunctions.stark selfhost/Compiler/Mir/SourceLocalLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR By-Value Struct Parameter ABI Fact Slice
+
+- Added by-value struct parameter ABI facts that retain the owner type token, known byte size, known byte alignment, scalar field count, and compact LLVM scalar aggregate shape.
+- Kept by-value struct ABI facts distinct from memory-backed pointer/slice facts so `dead_on_return`, alias, and lifetime contracts do not attach to aggregate values.
+- Reused the existing self-host struct layout probes and rejected unsupported nested or fixed-array field shapes instead of emitting incomplete LLVM shape facts.
+- Rejected generic call-argument validation for struct-value ABI requirements until direct struct-value argument lowering is implemented.
+- Added a focused IR fact that parses a tiny `Box` parameter signature and checks `{ i32, i1 }` shape facts for the by-value struct parameter.
+- Marked the by-value struct parameter ABI-fact subtask complete in `TASKS.md`; LLVM signature emission, direct `extractvalue` lowering, range facts, and switch routing remain open.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/LlvmFacts.stark selfhost/Compiler/Mir/SourceFunctionContext.stark selfhost/Compiler/Mir/SourceLocalLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Aggregate Field-Backed Switch Slice
+
+- Accepted terminal and non-terminal struct aggregate switch labels when the scrutinee is a struct field on a constructed object local.
+- Resolved field-backed aggregate scrutinees through typed member-chain facts and kept the root object storage pointer.
+- Folded the resolved field base byte offset into each scalar field-pattern load, preserving direct constant-offset loads instead of materializing aggregate temporaries.
+- Preserved declared struct field range facts on scalar field-pattern loads so LLVM emission can attach range metadata.
+- Added focused IR facts for field-backed terminal returns and field-backed assignment switches that check direct field loads, range metadata, branch tests, and absence of aggregate `extractvalue`.
+- Marked the field-backed struct aggregate switch subtask complete in `TASKS.md` and split the larger by-value struct parameter item into ABI/MIR subtasks.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - A filtered `stark test` fact run was not started because this machine has no `timeout`/`gtimeout` wrapper and recent filtered runs for `tests-stark/selfhost.Ir` have stalled silently during project build.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Aggregate Assignment Switch Slice
+
+- Accepted non-terminal struct aggregate switch labels when the scrutinee is a constructed object local.
+- Reused the terminal struct aggregate pattern parser for positional and property labels with scalar or discard field subpatterns.
+- Routed struct aggregate assignment switches through the existing assigned-switch branch-chain and phi merge lowering.
+- Lowered each field test through object storage overrides and typed member-path facts so LLVM receives direct constant-offset field loads.
+- Preserved declared struct field range facts on scalar field loads in assignment-switch tests.
+- Added focused positional and property-pattern IR facts that check direct field loads, range metadata, phi continuation, and absence of aggregate `extractvalue`.
+- Marked the non-terminal constructed-object struct aggregate assignment subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - A filtered `stark test` fact run was not started because this machine has no `timeout`/`gtimeout` wrapper and recent filtered runs for `tests-stark/selfhost.Ir` have stalled silently during project build.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Aggregate Terminal Switch Slice
+
+- Accepted terminal struct aggregate switch labels when the scrutinee is a constructed object local.
+- Lowered positional and property struct labels with scalar or discard field subpatterns to ordered field branch tests.
+- Reused object storage overrides and typed member-path facts so field tests lower to direct constant-offset field loads.
+- Preserved declared struct field range facts on scalar field loads so LLVM emission can attach range metadata.
+- Rejected duplicate property fields and overlapping scalar field intervals before emitting branch blocks.
+- Added focused scalar-return, property-pattern, and enum-return IR facts that check direct field loads, range metadata, enum construction, and absence of aggregate `extractvalue`.
+- Marked the completed terminal struct aggregate subtasks in `TASKS.md`; non-terminal assignments, parameter/field-backed scrutinees, nested field patterns, and guarded labels remain open.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - A filtered `stark test` fact run was not started because this machine has no `timeout`/`gtimeout` wrapper and recent filtered runs for `tests-stark/selfhost.Ir` have stalled silently during project build.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Field-Backed List Switch Assignment Slice
+
+- Accepted non-terminal fixed-array list switch assignments when the scrutinee is a fixed-array field on a constructed object local.
+- Reused typed member-path facts and object storage overrides so assignment switch tests lower to constant-offset element pointer loads.
+- Preserved declared fixed-array element range facts on field-backed element loads so LLVM emission can attach range metadata.
+- Added a focused IR fact that checks direct field element loads, range metadata, phi continuation, and absence of fixed-array parameter `extractvalue`.
+- Marked the non-terminal field-backed assignment subtask and its completed fixed-array local/field-backed parents complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CompileFixedArrayFieldListSwitchLocalScalarAssignmentUsesDirectElementLoads --test-progress --test-timeout 240 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after a 300-second external alarm because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Field-Backed Terminal List Switch Slice
+
+- Accepted terminal fixed-array list switch labels when the scrutinee is a fixed-array field on a constructed object local.
+- Lowered field-backed list label tests through typed member-path facts, object storage overrides, and constant-offset element pointer loads.
+- Preserved declared fixed-array element range facts on field-backed element loads so LLVM emission can attach range metadata.
+- Added focused scalar-return and enum-return IR facts that check direct field element loads, range metadata, and absence of fixed-array parameter `extractvalue`.
+- Marked the scalar-return and enum-return fixed-array field-backed list-pattern subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter FixedArrayFieldListSwitch --test-progress --test-timeout 240 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after a 300-second external alarm because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Storage-Local List Switch Assignment Slice
+
+- Accepted non-terminal fixed-array list switch assignments when the scrutinee is an initialized stack fixed-array local.
+- Reused storage-local constant-offset element branch tests so assignment switches load only the tested elements from backing storage.
+- Preserved setup-local storage overrides through switch assignment lowering so post-switch expressions keep the same local fact table shape.
+- Added a focused IR fact that checks stack storage initializer stores, typed element loads with range metadata, phi continuation, and absence of fixed-array parameter `extractvalue`.
+- Marked the non-terminal fixed-array storage-local list switch assignment subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CompileFixedArrayStorageLocalListSwitchLocalScalarAssignmentUsesDirectElementLoads --test-progress --test-timeout 240 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after a 120-second external alarm because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Storage-Local Enum-Return List Switch Slice
+
+- Accepted enum-return terminal fixed-array list switch labels when the scrutinee is an initialized stack fixed-array local.
+- Reused the storage-local constant-offset element branch tests so list labels load only the tested elements from the fixed-array backing storage.
+- Routed enum-return list switch arms through the enum-return parser and existing enum constructor lowering, preserving return enum layout facts.
+- Added a focused IR fact that checks storage-local element loads retain range metadata and enum returns emit aggregate construction without fixed-array `extractvalue`.
+- Marked the enum-return fixed-array storage-local list-pattern subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter SourceModuleLowersTerminalFixedArrayStorageLocalListSwitchEnumReturnToLlvm --test-progress --test-timeout 240 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after staying silent for more than 90 seconds during the filtered project build.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Storage-Local List Switch Slice
+
+- Accepted scalar-return terminal fixed-array list switch labels when the scrutinee is an initialized stack fixed-array local.
+- Lowered storage-local list label tests through constant byte-offset pointer loads instead of parameter `extractvalue` instructions.
+- Preserved declared fixed-array element range facts on storage-local element loads by attaching the declared range to the typed aligned load.
+- Emitted fixed-array storage initializer stores before the first switch test block so list-pattern tests observe initialized values.
+- Added a focused IR fact for terminal stack fixed-array local list labels and direct pointer-load branch tests.
+- Split the local/field-backed fixed-array list-pattern task into scalar terminal, enum terminal, non-terminal assignment, and field-backed subtasks in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter SourceModuleLowersTerminalFixedArrayStorageLocalListSwitchToLlvm --test-progress --test-timeout 240 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after staying silent beyond the intended timeout window during the filtered project build.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array List Switch Assignment Slice
+
+- Accepted no-capture fixed-array list switch labels over fixed-array parameters for non-terminal local switch assignments.
+- Reused the assigned-switch merge path so list-pattern assignments continue after the switch through the existing phi/return logic.
+- Lowered assignment switch label tests through direct fixed-array parameter element extracts instead of materializing the array parameter.
+- Added focused IR facts for direct fixed-array element tests in a local assignment switch and AST range validation after the switch continuation.
+- Marked the non-terminal fixed-array list switch assignment subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter CompileFixedArrayListSwitchLocalScalarAssignmentUsesDirectElementTests --filter CompilesFixedArrayListLocalSwitchStatementAssignmentThenReturnFromAst --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project build stayed silent.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array List Switch Slice
+
+- Accepted no-capture fixed-array list switch labels over fixed-array parameters, such as `case [1, _, 3]:`, for terminal switch lowering.
+- Lowered fixed-array list label tests through direct `FixedArrayParamElement` extracts so constant-index element reads stay on the by-value array ABI path.
+- Preserved declared fixed-array element range facts on direct parameter element extracts so return validation and LLVM call/return range facts can consume them.
+- Rejected overlapping terminal fixed-array list labels before emitting MIR branch blocks.
+- Added focused IR facts for scalar-return list labels, enum-return list labels, overlapping-label rejection, and direct element range preservation.
+- Split the remaining fixed-array list switch work in `TASKS.md` into non-terminal switch assignments and local/field-backed scrutinees.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark selfhost/Compiler/Mir/Facts.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter BuildMirValueRangeFactsImportsFixedArrayElementDeclaredRange --filter CompileFunctionFixedArrayParameterConstantReadPreservesElementRangeFacts --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project build stayed silent.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Disjoint Enum Payload Switch Label Slice
+
+- Allowed repeated same-variant enum payload switch labels when scalar payload intervals prove the labels are disjoint.
+- Kept overlap rejection conservative: unit/all-discard labels, partially unrelated payload constraints, and touching intervals such as `0..5` plus `5..9` still reject.
+- Reused the existing branch-chain lowering so repeated labels keep one tag read, typed payload extracts, and direct scalar/enum return or assignment lowering.
+- Added focused IR facts for terminal scalar-return labels, terminal enum-return labels, named bool payload disjoint labels, local switch assignments, and overlapping-label rejection.
+- Completed the scalar payload enum aggregate label subgroup in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter CompilesTerminalEnumDisjointScalarPayloadLabelsFromAst --filter CompilesTerminalNamedEnumDisjointScalarPayloadLabelsFromAst --filter RejectsOverlappingEnumScalarPayloadLabelsFromAst --filter SourceModuleLowersTerminalEnumDisjointPayloadSwitchEnumReturnToLlvm --filter CompileEnumDisjointScalarPayloadSwitchStackScalarAssignmentsUsePayloadTests --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0`: stopped after the filtered project build stayed silent for about 90 seconds.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Enum Payload Switch Return and Assignment Slice
+
+- Routed enum-return terminal enum switches through the payload-aware label parser so scalar payload subpatterns keep their typed payload facts.
+- Extended payload-aware terminal enum switch lowering to build enum return values with the existing enum-return helper instead of scalar return lowering.
+- Routed non-terminal local switch assignments through the payload-aware enum label parser.
+- Generalized assigned integer/enum switch lowering with an enum-payload condition mode that reads the tag once, extracts only constrained payloads, and reuses the existing phi/merge assignment path.
+- Added focused IR facts for tuple and named scalar payload labels returning enums and for tuple and named scalar payload labels assigning stack scalar locals.
+- Left repeated same-variant disjoint scalar payload labels as the remaining open payload-switch subtask.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter SourceModuleLowersTerminalEnumPayloadSwitchEnumReturnToLlvm --filter SourceModuleLowersTerminalNamedEnumPayloadSwitchEnumReturnToLlvm --filter CompileEnumScalarPayloadSwitchStackScalarAssignmentsUsePayloadTests --filter CompileNamedEnumScalarPayloadSwitchStackScalarAssignmentsUsePayloadTests --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0`: stopped after the filtered project build stayed silent for about 90 seconds.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Enum Scalar-Payload Switch Pattern Slice
+
+- Added a payload-aware enum switch-label parser for terminal scalar-return switches.
+- Accepted no-capture tuple and named enum payload scalar labels such as `case Packet.Other(7..9):` and `case Packet.Move { X: 7, Flag: true }:`.
+- Lowered scalar payload labels by reading the enum tag once, extracting only tested payload fields, and emitting typed bool/integer comparisons so LLVM sees the original tag and payload facts.
+- Preserved the existing tag-only switch path for unit and all-discard enum labels.
+- Kept enum-return switches, non-terminal switch assignments, and repeated same-variant scalar labels as explicit remaining subtasks.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter CompilesTerminalEnumScalarPayloadSwitchFromAst --filter CompilesTerminalNamedEnumScalarPayloadSwitchFromAst --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0`: stopped after the filtered project build stayed silent for about 90 seconds.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Named Enum Discard-Payload Switch Pattern Slice
+
+- Accepted no-capture named enum aggregate case labels with all-discard payload members, such as `case Packet.Move { X: _, Flag: _ }:`, in the shared enum switch label parser.
+- Matched named payload members through the typed enum layout rows so payload names, variant owner identity, and tag facts stay layout-backed.
+- Kept named payload captures, missing members, duplicate members, unknown members, struct aggregate patterns, and list patterns rejected until typed pattern rows and capture storage exist.
+- Preserved the existing fast path: accepted named discard-payload enum cases lower to the same compact tag branch tests as unit and tuple-discard enum cases.
+- Added focused IR facts for terminal return switches, switch assignment arms, and unsupported named payload pattern rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileNamedEnumPayloadSwitchStackScalarAssignmentsUseTagTests --filter CompilesTerminalNamedEnumDiscardPayloadSwitchFromAst --filter RejectsUnsupportedNamedEnumPayloadSwitchPatternsFromAst --test-timeout 180`: stopped after the filtered project build stayed silent for about 90 seconds.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Enum Discard-Payload Switch Pattern Slice
+
+- Split the oversized aggregate/list switch-pattern task into sentence-sized subtasks grounded in the stage0 C# switch-pattern lowerer.
+- Accepted no-capture enum aggregate case labels with all-discard positional payloads, such as `case Packet.Other(_):`, in the shared enum switch label parser.
+- Kept payload captures, wrong-arity payload patterns, struct aggregate patterns, and list patterns rejected until typed pattern rows and capture storage exist.
+- Preserved the existing fast path: accepted discard-payload enum cases lower to the same compact tag branch tests as unit enum cases, with enum layout facts unchanged.
+- Added focused IR facts for terminal return switches, switch assignment arms, and unsupported payload pattern rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter EnumDiscardPayloadSwitch --filter EnumPayloadSwitchStackScalar --filter UnsupportedEnumPayloadSwitchPatterns --test-timeout 180`: stopped after the filtered project build stayed silent for about 2.5 minutes.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Constructed-Object Field Try-Assignment Range Slice
+
+- Carried target declared-range facts on constructed-object field try-assignment descriptors for scalar fields and fixed-array elements.
+- Proved the `[Ok]` payload's declared integer or bool range is a subset of the target field range before lowering the success-path store.
+- Kept wider success payloads rejected so returned field loads can continue to advertise sound LLVM `!range` metadata.
+- Updated `MemberFactsProbe.stark` and `IrTests.stark` to accept matching ranged `try` stores and reject wider payload stores.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - Attempted focused probe executable build with `./stark selfhost/probe/MemberFactsProbe.stark --emit-exe -o /tmp/stark-memberfacts-probe -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`, but stopped it after it continued into expensive compile/link work.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Arena Dynamic Terminal Branch Slice
+
+- Routed local-prefixed terminal `if` lowering in the effect prepass through module facts instead of an empty facts bundle.
+- Routed enum-valued local-prefixed terminal `if` emission through owner-layout LLVM rendering.
+- Added focused IR facts for scalar and enum-valued terminal `if` return arms with arena-backed dynamic locals.
+- Accepted arena-backed `dynamic` locals before local-prefixed terminal integer, boolean, and enum-case switches.
+- Routed local-prefixed boolean terminal switches through the boolean parser and lowerer.
+- Routed local-prefixed enum-case terminal switches through declaration-aware module facts and enum-owner validation before tag comparison lowering.
+- Emitted arena frame leaves for every terminal switch return arm when the switch prefix allocates arena dynamic storage.
+- Routed enum-valued local-prefixed terminal switches through the enum-return parser and owner-layout LLVM emitter.
+- Preserved enum return carrier layouts and arena frame cleanup for integer, boolean, and enum-case terminal switch arms.
+- Added focused IR facts for terminal integer, boolean, and enum-case switch return arms with arena-backed dynamic locals.
+- Added focused IR facts for enum-valued terminal integer, boolean, and enum-case switch return arms with arena-backed dynamic locals.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+  - `../../stark test --filter CompileTerminalSwitchArenaDynamicLocalLeavesEveryReturnArm --target arm64-apple-macosx26.0.0 --test-progress --test-timeout 120`: stopped after it stayed silent in the filtered project build path for about two minutes.
+  - `../../stark test --filter CompileTerminalBooleanSwitchArenaDynamicLocalLeavesEveryReturnArm --target arm64-apple-macosx26.0.0 --test-progress --test-timeout 120`: stopped after it stayed silent in the filtered project build path for about one minute.
+  - `../../stark test --filter CompileTerminalEnumCaseSwitchArenaDynamicLocalLeavesEveryReturnArm --target arm64-apple-macosx26.0.0 --test-progress --test-timeout 120`: stopped after it stayed silent in the filtered project build path for about one minute.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Arena Dynamic Switch Storage Slice
+
+- Lowered arena-backed dynamic storage locals in switch storage-assignment functions.
+- Accepted `Reserve`, `TryReserve`, and `TryReserveCapacity` as ordered switch-arm mutations.
+- Emitted arena frame leaves on switch merge returns and terminal-if switch exits.
+- Added focused IR facts for integer and boolean switch arms that call arena dynamic reserve helpers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Enum-Valued Terminal Branch Return Slice
+
+- Lowered enum-valued terminal `if` returns through source-owner and MIR-owner validation before emitting return blocks.
+- Added enum-aware terminal integer, boolean, and enum-case switch return parsing so direct enum constructors in `case` and `default` returns lower to owner-carrying MIR values.
+- Routed terminal-switch LLVM emission through enum layout facts so enum return carriers render from layout rows instead of `unknown`.
+- Updated `selfhost/probe/EnumReturnProbe.stark` and `tests-stark/selfhost.Ir/IrTests.stark` with terminal `if`, integer-switch, boolean-switch, and enum-case-switch enum-return coverage.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `./stark selfhost/probe/EnumReturnProbe.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+- Attempted focused probe executable run with `./stark selfhost/probe/EnumReturnProbe.stark -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --emit-exe -o /tmp/stark-enum-return-probe && /tmp/stark-enum-return-probe`, but stopped it after it continued into expensive compile/link work.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-06 MIR Enum-Valued Return Carrier Slice
+
+- Lowered direct enum-constructor terminal returns and storage-backed enum local terminal returns through the single-function MIR entry.
+- Added enum-owner resolution for value-producing MIR enum instructions and used owner layout facts for enum-valued LLVM function return types.
+- Routed enum-aware return type rendering through range-fact function emitters and whole-module enum-layout emitters.
+- Changed unresolved enum owners during enum-valued return type emission to fail with `InvalidLayout` instead of emitting `unknown`.
+- Updated `selfhost/probe/EnumReturnProbe.stark` to expect enum returns to compile and to reject emitted `unknown` LLVM text.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed after deleting the stale generated `tests-stark/selfhost.Ir/.../libStarkCompiler.starkpkg` cache that triggered STK7312.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `./stark selfhost/probe/EnumReturnProbe.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed.
+  - The exact filtered `stark test` run for the four new enum-return facts was stopped after about 90 seconds of silence.
+  - Building the probe executable was stopped after it kept compiling imported compiler code for several minutes.
+- No broad test sweep was run.
+
+---
+
 ## 2026-07-04 Bundle Field-Store Heisenbug Closed: Stale-Archive Ghost
 
 - Closed the TASKS.md §6 bundle entry. The real defect was the
@@ -60,17 +557,22 @@ diagnostics that previously only surfaced on executable builds.
   The de-instrumented build REJECTS the same shapes (`return Pick.First`,
   `stack Pick pick = ...; return pick`) while enum construction into
   locals keeps working (`enum-local-scalar-return` control passes) —
-  the safe behavior at the ragged edge of the parked #34 work; which side
-  the partial matcher lands on is incidental (single-WriteLine and
-  every-optimizer-skipped host experiments do not flip it; a Jul 3 dll
-  vintage agrees with today's). Chased to ground via: probe-shape
-  bisection (construction vs return), package-vs-source compile parity
-  (both reject), host pass-skip sweep (all optimizers), old-dll
-  cross-check, and finally dumping the "accepted" emission. New §1 task
-  records the enum-valued-return lowering work;
-  `selfhost/probe/EnumReturnProbe.stark` pins the shapes expect-reject
-  with a construction control and must validate the emitted module (not
-  just the boolean) when the slice lands.
+  the safe behavior at the ragged edge of the parked #34 work. The valid
+  evidence chain: probe-shape bisection over both packages (honest,
+  package-backed by design) and the emission dump. CORRECTION
+  (2026-07-04, later the same day): the side experiments first recorded
+  here (a "from-source parity" leg, a host pass-skip sweep, and an
+  old-dll cross-check) were INVALID — the probe file sat in a scratch
+  directory whose `stage0/pkg` sibling joined the package search via the
+  root-file-directory rule, so every "from-source" compile silently
+  linked the de-instrumented package (and ran in ~10 s, which should
+  have been the tell: honest from-source compiles take ~12 min). Those
+  legs say nothing about the flip mechanism; only the two-package A/B
+  and the `define unknown` dump stand. New §1 task records the
+  enum-valued-return lowering work;
+  `selfhost/probe/EnumReturnProbe.stark` originally pinned the shapes
+  expect-reject with a construction control; the 2026-07-06 enum-return
+  slice flipped it to expect-success and reject emitted `unknown` text.
 - Process lesson recorded in the probe conventions: an accept BOOLEAN
   from a compile probe is not lowering evidence — dump and validate the
   emitted module for at least one accepted shape per slice.

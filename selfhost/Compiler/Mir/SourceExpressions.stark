@@ -1520,6 +1520,8 @@ internal struct ParsedSwitchAssignmentArm
     ExprParseResult Assigned;
     u32[0 max] AssignedRootStart;
     u32[0 max] AssignedRootCount;
+    u32[0 max] CaptureStart;
+    u32[0 max] CaptureCount;
     u32[0 max] LocalRootStart;
     u32[0 max] LocalRootCount;
 
@@ -1528,6 +1530,8 @@ internal struct ParsedSwitchAssignmentArm
         self.Assigned = new();
         self.AssignedRootStart = 0;
         self.AssignedRootCount = 0;
+        self.CaptureStart = 0;
+        self.CaptureCount = 0;
         self.LocalRootStart = 0;
         self.LocalRootCount = 0;
     }

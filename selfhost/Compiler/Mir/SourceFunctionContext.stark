@@ -748,6 +748,25 @@ internal fn ParamAbiFacts ClassifySignatureParamAbi(
             }
         }
     }
+    else if (stream.KindAt((u64[0 2 ** 63 - 1])signature.ParamTypeTokenAt(paramIndex)) == TokenKind.Identifier)
+    {
+        stack u32[0 max] typeToken = signature.ParamTypeTokenAt(paramIndex);
+        stack u32[0 max] byteSize = TypeKnownByteExtentForLocal(stream, source, typeToken);
+        stack u32[0 max] byteAlignment = TypeKnownByteAlignment(stream, source, typeToken);
+        stack mut u32[0 max] fieldCount = 0;
+        stack mut u32[0 max] shapeCode = 0;
+        if (byteSize != 0
+            && byteAlignment != 0
+            && TryReadStructKnownLlvmScalarShape(stream, source, typeToken, fieldCount, shapeCode))
+        {
+            facts.IsStructValue = true;
+            facts.StructValueTypeToken = typeToken;
+            facts.StructValueSize = byteSize;
+            facts.StructValueAlignment = byteAlignment;
+            facts.StructValueFieldCount = fieldCount;
+            facts.StructValueShapeCode = shapeCode;
+        }
+    }
 
     if (SignatureParamHasDeadOnReturnContract(stream, source, signature, paramIndex))
     {
@@ -2030,6 +2049,11 @@ internal fn bool ValidateCallArgumentTypeWithSlices(
     if (expected.IsPointer)
     {
         return actual == ExprType.PtrType;
+    }
+
+    if (expected.IsStructValue)
+    {
+        return false;
     }
 
     return actual == ExprType.IntType;

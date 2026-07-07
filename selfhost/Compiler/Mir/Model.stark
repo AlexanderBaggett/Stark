@@ -34,6 +34,10 @@ public enum MirOp
     // Extracts constant element B from fixed-array parameter A. C is the array
     // length, and ResType is the element type.
     FixedArrayParamElement,
+    // Extracts constant field B from struct-value parameter A. The immediate
+    // packs field count and compact LLVM aggregate shape; optional C/D constants
+    // carry declared range lower/upper facts, and ResType is the field type.
+    StructParamField,
     // Materializes fixed-array parameter A into an addressable stack slot. B is
     // the array length, C is slot alignment, and D is the element type code.
     FixedArrayParamSlot,
@@ -283,6 +287,21 @@ public struct MirInstruction
     {
         return self.Imm;
     }
+}
+
+public inline finite law i64[min max] MirStructParamFieldShapeImmediate(u32[0 max] fieldCount, u32[0 max] shapeCode)
+{
+    return (i64[min max])shapeCode * 16 + (i64[min max])fieldCount;
+}
+
+public inline finite law u32[0 max] MirStructParamFieldFieldCount(MirInstruction instr)
+{
+    return (u32[0 max])(instr.Immediate() % 16);
+}
+
+public inline finite law u32[0 max] MirStructParamFieldShapeCode(MirInstruction instr)
+{
+    return (u32[0 max])(instr.Immediate() / 16);
 }
 
 public inline finite law bool MirOpIsDirectCall(MirOp op)

@@ -86,6 +86,17 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try sink.AppendConstAscii(", length ");
             try sink.AppendU64((u64[0 max])instr.OperandCIndex());
             try sink.AppendConstAscii("\n");
+        case MirOp.StructParamField:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = struct.param.field param ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(", field ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", count ");
+            try sink.AppendU64((u64[0 max])MirStructParamFieldFieldCount(instr));
+            try sink.AppendConstAscii(", shape ");
+            try sink.AppendU64((u64[0 max])MirStructParamFieldShapeCode(instr));
+            try sink.AppendConstAscii("\n");
         case MirOp.FixedArrayParamSlot:
             try EmitMirValue(sink, index);
             try sink.AppendConstAscii(" = fixed-array.param.slot param ");

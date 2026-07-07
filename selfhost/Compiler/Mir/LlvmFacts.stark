@@ -260,6 +260,7 @@ internal struct ParamAbiFacts
     bool IsPointer;
     bool IsSlice;
     bool IsFixedArray;
+    bool IsStructValue;
     // 0 = none, 1 = captures(none), 2 = ret read-provenance,
     // 3 = ret provenance, 4 = address read-provenance, 5 = address provenance.
     u32[0 max] CaptureKind;
@@ -282,12 +283,18 @@ internal struct ParamAbiFacts
     u32[0 max] RawPointerElementAlignment;
     u32[0 max] RawPointerFieldTypeCode;
     bool RawPointerMutable;
+    u32[0 max] StructValueTypeToken;
+    u32[0 max] StructValueSize;
+    u32[0 max] StructValueAlignment;
+    u32[0 max] StructValueFieldCount;
+    u32[0 max] StructValueShapeCode;
 
     ParamAbiFacts()
     {
         self.IsPointer = false;
         self.IsSlice = false;
         self.IsFixedArray = false;
+        self.IsStructValue = false;
         self.CaptureKind = 0;
         self.ReadOnly = false;
         self.WriteOnly = false;
@@ -308,6 +315,11 @@ internal struct ParamAbiFacts
         self.RawPointerElementAlignment = 0;
         self.RawPointerFieldTypeCode = 0;
         self.RawPointerMutable = false;
+        self.StructValueTypeToken = 0;
+        self.StructValueSize = 0;
+        self.StructValueAlignment = 0;
+        self.StructValueFieldCount = 0;
+        self.StructValueShapeCode = 0;
     }
 }
 
@@ -316,9 +328,90 @@ internal inline finite law bool ParamAbiFactsIsMemoryBacked(ParamAbiFacts facts)
     return facts.IsPointer || facts.IsSlice;
 }
 
+internal inline finite law u32[0 max] StructValueShapeMaxFields()
+{
+    return 10;
+}
+
+internal finite law u32[0 max] StructValueShapeMultiplierForIndex(u32[0 max] index)
+{
+    switch (index)
+    {
+        case 0:
+            return 1;
+        case 1:
+            return 8;
+        case 2:
+            return 64;
+        case 3:
+            return 512;
+        case 4:
+            return 4096;
+        case 5:
+            return 32768;
+        case 6:
+            return 262144;
+        case 7:
+            return 2097152;
+        case 8:
+            return 16777216;
+        case 9:
+            return 134217728;
+        default:
+            return 0;
+    }
+}
+
+internal finite law u32[0 max] StructValueShapeFieldStorageCodeAt(ParamAbiFacts facts, u32[0 max] index)
+{
+    return StructValueShapeCodeFieldStorageCodeAt(facts.StructValueShapeCode, index);
+}
+
+internal finite law u32[0 max] StructValueShapeCodeFieldStorageCodeAt(u32[0 max] shapeCode, u32[0 max] index)
+{
+    stack u32[0 max] multiplier = StructValueShapeMultiplierForIndex(index);
+    if (multiplier == 0)
+    {
+        return 0;
+    }
+
+    return (shapeCode / multiplier) % 8;
+}
+
 internal fn MemoryStatus EmitLlvmFixedArrayAbiType(ParamAbiFacts facts, mut borrow OwnedAscii sink)
 {
     try EmitLlvmFixedArrayTypeName(facts.FixedArrayElementType, facts.FixedArrayLength, sink);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmStructValueAbiType(ParamAbiFacts facts, mut borrow OwnedAscii sink)
+{
+    return EmitLlvmStructValueShapeType(facts.StructValueFieldCount, facts.StructValueShapeCode, sink);
+}
+
+internal fn MemoryStatus EmitLlvmStructValueShapeType(u32[0 max] fieldCount, u32[0 max] shapeCode, mut borrow OwnedAscii sink)
+{
+    if (fieldCount == 0 || fieldCount > StructValueShapeMaxFields())
+    {
+        try sink.AppendConstAscii("i64");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("{ ");
+    stack mut u32[0 max] i = 0;
+    while willexit (i < fieldCount)
+    {
+        if (i > 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        stack u32[0 max] fieldCode = StructValueShapeCodeFieldStorageCodeAt(shapeCode, i);
+        try EmitLlvmTypeName(MirTypeFromStorageCode(fieldCode), sink);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii(" }");
     return MemoryStatus.Ok;
 }
 

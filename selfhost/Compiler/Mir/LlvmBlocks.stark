@@ -106,6 +106,84 @@ internal fn MirType MirBlockRangesScalarReturnType(
     return MirType.I64;
 }
 
+// Appends the LLVM type of the value at `valueIndex`. An `EnumValue`-typed
+// value renders as its owner's concrete storage type (`{ i8 }`-style) from the
+// enum layout facts; every scalar type keeps the plain type-name path. An
+// enum value whose owner cannot be resolved propagates `InvalidLayout`; a
+// resolved owner with no layout fact does the same through
+// `EmitLlvmEnumStorageType`.
+internal fn MemoryStatus EmitLlvmValueTypeNameWithEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    u32[0 max] valueIndex,
+    mut borrow OwnedAscii sink)
+{
+    stack MirType valueType = MirValueType(instrs, valueIndex);
+    if (valueType == MirType.EnumValue)
+    {
+        stack mut TypeId ownerType = TypeIdOf(0);
+        if (!TryGetMirEnumValueOwnerType(instrs, valueIndex, ownerType))
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        return EmitLlvmEnumStorageType(enumLayoutFacts, ownerType, sink);
+    }
+
+    try EmitLlvmTypeName(valueType, sink);
+    return MemoryStatus.Ok;
+}
+
+// Appends the function return type for the entry block at `blockIndex`:
+// the returned value's type through the enum-aware renderer for `Return`
+// terminators, the tail call's result type for `TailCall`, and `i64`
+// otherwise (matching `MirBlockScalarReturnType`).
+internal fn MemoryStatus EmitLlvmReturnTypeNameWithEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    u32[0 max] blockIndex,
+    mut borrow OwnedAscii sink)
+{
+    if (blocks.Contains(blockIndex))
+    {
+        stack MirBlock block = blocks.Get(blockIndex);
+        if (block.Terminator() == MirTermKind.Return)
+        {
+            return EmitLlvmValueTypeNameWithEnumLayouts(instrs, enumLayoutFacts, block.Slot0Index(), sink);
+        }
+    }
+
+    try EmitLlvmTypeName(MirBlockScalarReturnType(instrs, blocks, blockIndex), sink);
+    return MemoryStatus.Ok;
+}
+
+// The block-ranges variant of `EmitLlvmReturnTypeNameWithEnumLayouts`: renders
+// the return type from the first return-shaped block in `ranges`.
+internal fn MemoryStatus EmitLlvmRangesReturnTypeNameWithEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    borrow IrTable<BlockEmit> ranges,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack u32[0 max] blockIndex = ranges.Get(i).BlockIndex;
+        if (MirBlockHasScalarReturnType(blocks, blockIndex))
+        {
+            return EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, blockIndex, sink);
+        }
+
+        i = i + 1;
+    }
+
+    try EmitLlvmTypeName(MirType.I64, sink);
+    return MemoryStatus.Ok;
+}
+
 internal fn bool MirInstructionRangesUseArenaRuntime(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
 {
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
@@ -356,6 +434,7 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
     borrow IrTable<ValueFacts> valueFacts,
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
     borrow IrTable<DistinctStoragePair> separateStorageFacts,
     borrow IrTable<MirBlock> blocks,
@@ -375,7 +454,7 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
     {
         case MirTermKind.Return:
             try sink.AppendConstAscii("  ret ");
-            try EmitLlvmTypeName(MirValueType(instrs, blk.Slot0Index()), sink);
+            try EmitLlvmValueTypeNameWithEnumLayouts(instrs, enumLayoutFacts, blk.Slot0Index(), sink);
             try sink.AppendConstAscii(" ");
             try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
             try sink.AppendConstAscii("\n");
@@ -629,6 +708,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
         remaining = remaining - 1;
     }
 
+    stack mut IrTable<MirEnumLayoutFact> noEnumLayoutFacts = new();
     try EmitLlvmTerminatorWithRangeFacts(
         instrs,
         funcTailFlags,
@@ -638,6 +718,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
         valueFacts,
         globalFacts,
         functionReturnFacts,
+        noEnumLayoutFacts,
         rangeMetadata,
         separateStorageFacts,
         blocks,
@@ -718,6 +799,7 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparat
         valueFacts,
         globalFacts,
         functionReturnFacts,
+        enumLayoutFacts,
         rangeMetadata,
         separateStorageFacts,
         blocks,
