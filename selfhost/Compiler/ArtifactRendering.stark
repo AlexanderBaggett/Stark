@@ -412,6 +412,8 @@ public finite law ascii MirOpName(MirOp op)
             return "slice-value";
         case MirOp.FixedArrayParamElement:
             return "fixed-array-param-element";
+        case MirOp.StructParamField:
+            return "struct-param-field";
         case MirOp.FixedArrayParamSlot:
             return "fixed-array-param-slot";
         case MirOp.FixedArrayLoad:

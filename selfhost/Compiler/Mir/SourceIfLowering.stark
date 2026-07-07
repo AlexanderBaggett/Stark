@@ -2,6 +2,7 @@ import Compiler.Ir
 import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
 import Compiler.Mir.Facts
 import Compiler.Mir.LlvmBlocks
 import Compiler.Mir.LlvmFacts
@@ -20,6 +21,85 @@ import Compiler.Typing.TypedEnumLayoutModel
 import System.Memory
 import System.Text
 module Compiler.Mir.SourceIfLowering
+
+internal fn bool TryValidateMirEnumReturnCarrier(
+    borrow IrTable<MirInstruction> instrs,
+    MirValueId value,
+    u32[0 max] returnOwnerDeclarationIndex)
+{
+    stack mut TypeId returnOwnerType = TypeIdOf(0);
+    if (!TryGetMirEnumValueOwnerType(instrs, value.Index(), returnOwnerType))
+    {
+        return false;
+    }
+
+    stack TypeId declaredOwnerType = TypeIdOf(returnOwnerDeclarationIndex + 1);
+    return returnOwnerType.Equals(declaredOwnerType);
+}
+
+internal fn bool TryLowerEnumReturnExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    u32[0 max] returnOwnerDeclarationIndex,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    stack mut u32[0 max] expressionOwnerDeclarationIndex = 0;
+    if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, id, localTypes, expressionOwnerDeclarationIndex)
+        || expressionOwnerDeclarationIndex != returnOwnerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack MirValueId loweredValue = LowerExprNodeWithTypesAndLocals(nodes, id, instrs, localTypes, localOverrides);
+    if (!TryValidateMirEnumReturnCarrier(instrs, loweredValue, returnOwnerDeclarationIndex))
+    {
+        return false;
+    }
+
+    value = loweredValue;
+    return true;
+}
+
+internal fn bool TryLowerEnumReturnExprNodeWithCallContext(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    u32[0 max] returnOwnerDeclarationIndex,
+    out MirValueId value)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    value = MirValueIdOf(0);
+    stack mut u32[0 max] expressionOwnerDeclarationIndex = 0;
+    if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, id, localTypes, expressionOwnerDeclarationIndex)
+        || expressionOwnerDeclarationIndex != returnOwnerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack MirValueId loweredValue = LowerExprNodeWithCallContext(
+        nodes,
+        id,
+        instrs,
+        localTypes,
+        localOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals);
+    if (!TryValidateMirEnumReturnCarrier(instrs, loweredValue, returnOwnerDeclarationIndex))
+    {
+        return false;
+    }
+
+    value = loweredValue;
+    return true;
+}
 
 internal fn bool LowerIfStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
 {
@@ -11868,7 +11948,22 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     stack ExprType elseType = TypeOfNodeWithLocals(nodes, elseResult.NodeId, loweringLocalTypes);
     stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
     stack bool bothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType && !thenBecome && !elseBecome;
-    if (!bothInt && !bothBool)
+    stack bool bothEnum = thenType == ExprType.EnumType && elseType == ExprType.EnumType && !thenBecome && !elseBecome;
+    if (!bothInt && !bothBool && !bothEnum)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] returnOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem returnEnumItem = new();
+    if (bothEnum
+        && !TryGetSourceEnumOwnerDeclarationForToken(
+            stream,
+            source,
+            moduleFacts,
+            signature.ReturnTypeTokenAt(),
+            returnOwnerDeclarationIndex,
+            returnEnumItem))
     {
         return false;
     }
@@ -12011,17 +12106,36 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     }
     else
     {
-        thenValue = LowerScalarReturnExprNodeWithCallContext(
-            nodes,
-            thenResult.NodeId,
-            instrs,
-            loweringLocalTypes,
-            localOverrides,
-            functionCallContractFacts,
-            sliceArgumentLocals,
-            thenType,
-            hasDeclaredReturnType,
-            declaredReturnType);
+        if (bothEnum)
+        {
+            if (!TryLowerEnumReturnExprNodeWithCallContext(
+                nodes,
+                thenResult.NodeId,
+                instrs,
+                loweringLocalTypes,
+                localOverrides,
+                functionCallContractFacts,
+                sliceArgumentLocals,
+                returnOwnerDeclarationIndex,
+                thenValue))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            thenValue = LowerScalarReturnExprNodeWithCallContext(
+                nodes,
+                thenResult.NodeId,
+                instrs,
+                loweringLocalTypes,
+                localOverrides,
+                functionCallContractFacts,
+                sliceArgumentLocals,
+                thenType,
+                hasDeclaredReturnType,
+                declaredReturnType);
+        }
 
         if (usesArenaFrame)
         {
@@ -12039,17 +12153,36 @@ internal fn bool LowerModuleLocalIfReturnFunctionToBlocks(
     }
     else
     {
-        elseValue = LowerScalarReturnExprNodeWithCallContext(
-            nodes,
-            elseResult.NodeId,
-            instrs,
-            loweringLocalTypes,
-            localOverrides,
-            functionCallContractFacts,
-            sliceArgumentLocals,
-            elseType,
-            hasDeclaredReturnType,
-            declaredReturnType);
+        if (bothEnum)
+        {
+            if (!TryLowerEnumReturnExprNodeWithCallContext(
+                nodes,
+                elseResult.NodeId,
+                instrs,
+                loweringLocalTypes,
+                localOverrides,
+                functionCallContractFacts,
+                sliceArgumentLocals,
+                returnOwnerDeclarationIndex,
+                elseValue))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            elseValue = LowerScalarReturnExprNodeWithCallContext(
+                nodes,
+                elseResult.NodeId,
+                instrs,
+                loweringLocalTypes,
+                localOverrides,
+                functionCallContractFacts,
+                sliceArgumentLocals,
+                elseType,
+                hasDeclaredReturnType,
+                declaredReturnType);
+        }
 
         if (usesArenaFrame)
         {
@@ -12972,7 +13105,7 @@ internal fn bool EmitModuleLocalIfReturnFunction(
 
     stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
 
-    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts(
         instrs,
         funcTailFlags,
         functionEffectFacts,
@@ -12990,6 +13123,7 @@ internal fn bool EmitModuleLocalIfReturnFunction(
         valueFacts,
         globalFacts,
         functionReturnFacts,
+        moduleFacts.EnumLayoutFacts,
         rangeMetadata,
         functionEffects,
         body.ParamCount,

@@ -103,15 +103,12 @@ export fn i32[min max] main()
         "struct Box { u8[0 2] count; i64 pad; } fn i64 main() { stack Box box = new Box(); box.count = 1; box.count += 1; return 7 }",
         false);
 
-    // Pre-existing gap (HEAD-worktree verified 2026-07-03, tracked in
-    // TASKS.md): constructed-object field try-assignments have never lowered
-    // through this single-function entry, so even full-width targets reject.
-    // Flips to true when the shape lands; the narrow variant below must KEEP
-    // rejecting then (range guard).
+    // The try success payload's declared range proves the field store when it
+    // is a subset of the field's declared range.
     failures += (i32[min max])Check(
-        "try-store-full-width-field",
+        "try-store-matching-ranged-field",
         "enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }",
-        false);
+        true);
 
     failures += (i32[min max])Check(
         "try-store-narrow-field-rejected",

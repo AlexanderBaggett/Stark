@@ -188,6 +188,46 @@ public fn MirValueId MirFixedArrayParamElement(
     return MirValueIdOf(instrs.Add(instr));
 }
 
+public fn MirValueId MirStructParamField(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] paramIndex,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldCount,
+    u32[0 max] shapeCode,
+    MirType fieldType)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.StructParamField;
+    instr.AIndex = paramIndex;
+    instr.BIndex = fieldIndex;
+    instr.Imm = MirStructParamFieldShapeImmediate(fieldCount, shapeCode);
+    instr.ResType = fieldType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirStructParamFieldWithDeclaredRange(
+    mut borrow IrTable<MirInstruction> instrs,
+    u32[0 max] paramIndex,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldCount,
+    u32[0 max] shapeCode,
+    MirType fieldType,
+    i64[min max] declaredLower,
+    i64[min max] declaredUpperExclusive)
+{
+    stack MirValueId lowerConst = MirConstInt(instrs, declaredLower);
+    stack MirValueId upperConst = MirConstInt(instrs, declaredUpperExclusive);
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.StructParamField;
+    instr.AIndex = paramIndex;
+    instr.BIndex = fieldIndex;
+    instr.CIndex = lowerConst.Index();
+    instr.DIndex = upperConst.Index();
+    instr.Imm = MirStructParamFieldShapeImmediate(fieldCount, shapeCode);
+    instr.ResType = fieldType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
 public fn MirValueId MirFixedArrayParamSlot(
     mut borrow IrTable<MirInstruction> instrs,
     u32[0 max] paramIndex,

@@ -47,7 +47,7 @@ internal fn MemoryStatus EmitLlvmDefinitionNumberedWithEnumLayouts(
     mut borrow OwnedAscii sink)
 {
     try sink.AppendConstAscii("define ");
-    try EmitLlvmTypeName(MirBlockScalarReturnType(instrs, blocks, entryBlockIndex), sink);
+    try EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, entryBlockIndex, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);

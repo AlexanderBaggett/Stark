@@ -1173,8 +1173,37 @@ internal fn bool TryBuildPtrIndexOffsetFacts(
         || resultFacts.HasAlignment();
 }
 
+internal fn bool TryReadDeclaredRangeConstantOperands(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    out i64[min max] declaredLower,
+    out i64[min max] declaredUpperExclusive)
+{
+    declaredLower = 0;
+    declaredUpperExclusive = 0;
+    if (instr.OperandCIndex() == 0
+        || instr.OperandDIndex() == 0
+        || !instrs.Contains(instr.OperandCIndex())
+        || !instrs.Contains(instr.OperandDIndex()))
+    {
+        return false;
+    }
+
+    stack MirInstruction lowerConst = instrs.Get(instr.OperandCIndex());
+    stack MirInstruction upperConst = instrs.Get(instr.OperandDIndex());
+    if (lowerConst.Opcode() != MirOp.ConstInt || upperConst.Opcode() != MirOp.ConstInt)
+    {
+        return false;
+    }
+
+    declaredLower = lowerConst.Immediate();
+    declaredUpperExclusive = upperConst.Immediate();
+    return true;
+}
+
 internal fn bool TryBuildGeneratedValueFactsForInstruction(
     borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
     borrow IrTable<ValueFacts> valueFacts,
     MirInstruction instr,
     out ValueFacts facts)
@@ -1219,6 +1248,30 @@ internal fn bool TryBuildGeneratedValueFactsForInstruction(
             built.SetAlignment(instr.OperandCIndex());
             built.MarkNoAlias();
             built.MarkKnownNonNull();
+            facts = built;
+            return true;
+        case MirOp.FixedArrayParamElement:
+            stack u32[0 max] paramFactIndex = instr.OperandAIndex() + 1;
+            if (!paramFacts.Contains(paramFactIndex))
+            {
+                return false;
+            }
+
+            stack ValueFacts elementFacts = ValueFactsAtIndex(paramFacts, paramFactIndex);
+            if (!elementFacts.HasIntegerRange())
+            {
+                return false;
+            }
+
+            built.SetIntegerRange(elementFacts.IntegerRangeLower(), elementFacts.IntegerRangeUpperExclusive());
+            facts = built;
+            return true;
+        case MirOp.StructParamField:
+            if (!TrySetFullIntegerRangeForMirType(built, instr.ResultType()))
+            {
+                return false;
+            }
+
             facts = built;
             return true;
         case MirOp.HeapAlloc:
@@ -1562,25 +1615,31 @@ internal fn bool BuildMirValueRangeFactForInstruction(
             // `MirLoadPtrAlignedTypedWithDeclaredRange`). Importing them here
             // is what lets declared field ranges reach return-range validation
             // and LLVM range metadata.
-            if (instr.OperandCIndex() != 0
-                && instr.OperandDIndex() != 0
-                && instrs.Contains(instr.OperandCIndex())
-                && instrs.Contains(instr.OperandDIndex()))
+            stack mut i64[min max] loadDeclaredLower = 0;
+            stack mut i64[min max] loadDeclaredUpperExclusive = 0;
+            if (TryReadDeclaredRangeConstantOperands(instrs, instr, loadDeclaredLower, loadDeclaredUpperExclusive))
             {
-                stack MirInstruction lowerConst = instrs.Get(instr.OperandCIndex());
-                stack MirInstruction upperConst = instrs.Get(instr.OperandDIndex());
-                if (lowerConst.Opcode() == MirOp.ConstInt && upperConst.Opcode() == MirOp.ConstInt)
-                {
-                    stack mut ValueFacts declaredFacts = new();
-                    declaredFacts.SetIntegerRange(lowerConst.Immediate(), upperConst.Immediate());
-                    return RecordGeneratedValueFactsForMirValue(valueFacts, value, declaredFacts);
-                }
+                stack mut ValueFacts loadDeclaredFacts = new();
+                loadDeclaredFacts.SetIntegerRange(loadDeclaredLower, loadDeclaredUpperExclusive);
+                return RecordGeneratedValueFactsForMirValue(valueFacts, value, loadDeclaredFacts);
+            }
+        case MirOp.StructParamField:
+            // A direct struct parameter extract may carry the source field's
+            // declared integer range in operands C/D, preserving the field fact
+            // without materializing the parameter aggregate on the stack.
+            stack mut i64[min max] fieldDeclaredLower = 0;
+            stack mut i64[min max] fieldDeclaredUpperExclusive = 0;
+            if (TryReadDeclaredRangeConstantOperands(instrs, instr, fieldDeclaredLower, fieldDeclaredUpperExclusive))
+            {
+                stack mut ValueFacts fieldDeclaredFacts = new();
+                fieldDeclaredFacts.SetIntegerRange(fieldDeclaredLower, fieldDeclaredUpperExclusive);
+                return RecordGeneratedValueFactsForMirValue(valueFacts, value, fieldDeclaredFacts);
             }
         default:
     }
 
     stack mut ValueFacts facts = new();
-    if (TryBuildGeneratedValueFactsForInstruction(instrs, valueFacts, instr, facts))
+    if (TryBuildGeneratedValueFactsForInstruction(instrs, paramFacts, valueFacts, instr, facts))
     {
         return RecordGeneratedValueFactsForMirValue(valueFacts, value, facts);
     }
@@ -1600,7 +1659,8 @@ public fn bool RecomputeMirGeneratedValueFactsForMirValue(
 
     stack MirInstruction instr = instrs.Get(value.Index());
     stack mut ValueFacts facts = new();
-    if (TryBuildGeneratedValueFactsForInstruction(instrs, valueFacts, instr, facts))
+    stack mut IrTable<ValueFacts> noParamFacts = new();
+    if (TryBuildGeneratedValueFactsForInstruction(instrs, noParamFacts, valueFacts, instr, facts))
     {
         return RecordGeneratedValueFactsForMirValue(valueFacts, value, facts);
     }

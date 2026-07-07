@@ -91,6 +91,23 @@ internal fn MemoryStatus EmitLlvmFixedArrayParamElementInstruction(
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmStructParamFieldInstruction(
+    mut borrow OwnedAscii sink,
+    u32[0 max] index,
+    MirInstruction instr)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, index);
+    try sink.AppendConstAscii(" = extractvalue ");
+    try EmitLlvmStructValueShapeType(MirStructParamFieldFieldCount(instr), MirStructParamFieldShapeCode(instr), sink);
+    try sink.AppendConstAscii(" %p");
+    try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+    try sink.AppendConstAscii(", ");
+    try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
 internal fn MemoryStatus EmitLlvmFixedArrayParamSlotInstruction(
     mut borrow OwnedAscii sink,
     u32[0 max] index,
@@ -1288,6 +1305,8 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirIn
             try EmitLlvmSliceValueInstruction(instrs, sink, index, instr);
         case MirOp.FixedArrayParamElement:
             try EmitLlvmFixedArrayParamElementInstruction(sink, index, instr);
+        case MirOp.StructParamField:
+            try EmitLlvmStructParamFieldInstruction(sink, index, instr);
         case MirOp.FixedArrayParamSlot:
             try EmitLlvmFixedArrayParamSlotInstruction(sink, index, instr);
         case MirOp.FixedArrayLoad:
@@ -1505,6 +1524,8 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
             try EmitLlvmSliceValueInstruction(instrs, sink, index, instr);
         case MirOp.FixedArrayParamElement:
             try EmitLlvmFixedArrayParamElementInstruction(sink, index, instr);
+        case MirOp.StructParamField:
+            try EmitLlvmStructParamFieldInstruction(sink, index, instr);
         case MirOp.FixedArrayParamSlot:
             try EmitLlvmFixedArrayParamSlotInstruction(sink, index, instr);
         case MirOp.FixedArrayLoad:
@@ -2094,6 +2115,8 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
             try EmitLlvmSliceValueInstruction(instrs, sink, index, instr);
         case MirOp.FixedArrayParamElement:
             try EmitLlvmFixedArrayParamElementInstruction(sink, index, instr);
+        case MirOp.StructParamField:
+            try EmitLlvmStructParamFieldInstruction(sink, index, instr);
         case MirOp.FixedArrayParamSlot:
             try EmitLlvmFixedArrayParamSlotInstruction(sink, index, instr);
         case MirOp.FixedArrayLoad:

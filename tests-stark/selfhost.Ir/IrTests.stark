@@ -351,6 +351,60 @@ fn bool BuildMirValueRangeFactsImportsTypedCallReturnFacts()
 }
 
 [Fact]
+fn bool BuildMirValueRangeFactsImportsFixedArrayElementDeclaredRange()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId element = MirFixedArrayParamElement(instrs, 0, 1, 3, MirType.I32);
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut ValueFacts elementRangeFacts = new();
+    elementRangeFacts.SetIntegerRange(4, 10);
+    stack u32[0 max] addedParam = paramFacts.Add(elementRangeFacts);
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts elementFacts = ValueFactsForMirValue(valueFacts, element);
+    return addedParam == 1
+        && valueFacts.Count() == 1
+        && elementFacts.HasIntegerRange()
+        && elementFacts.IntegerRangeLower() == 4
+        && elementFacts.IntegerRangeUpperExclusive() == 10;
+}
+
+[Fact]
+fn bool BuildMirValueRangeFactsImportsStructParamFieldDeclaredRange()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack u32[0 max] shape = MirTypeStorageCode(MirType.I64) + MirTypeStorageCode(MirType.I1) * 8;
+    stack MirValueId rangedField = MirStructParamFieldWithDeclaredRange(instrs, 0, 0, 2, shape, MirType.I64, 5, 9);
+    stack MirValueId flagField = MirStructParamField(instrs, 0, 1, 2, shape, MirType.I1);
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts rangedFacts = ValueFactsForMirValue(valueFacts, rangedField);
+    stack ValueFacts flagFacts = ValueFactsForMirValue(valueFacts, flagField);
+    return rangedFacts.HasIntegerRange()
+        && rangedFacts.IntegerRangeLower() == 5
+        && rangedFacts.IntegerRangeUpperExclusive() == 9
+        && flagFacts.HasIntegerRange()
+        && flagFacts.IntegerRangeLower() == 0
+        && flagFacts.IntegerRangeUpperExclusive() == 2;
+}
+
+[Fact]
 fn bool BuildMirValueRangeFactsImportsPointerCallReturnBackendFacts()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -1879,6 +1933,170 @@ fn bool EmitsLlvmAlignedGlobalLoadStoreFacts()
                 && LlvmTextEquals(
                     sink,
                     "define i64 @aligned_globals() {\nb1:\n  %v1 = load i64, ptr @g1, align 16, !range !0\n  %v2 = add i64 0, 13\n  store i64 %v2, ptr @g2, align 8\n  ret i64 %v1\n}\n!0 = !{i64 1, i64 10}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool BuildParamAbiFactsForFirstFunction(ascii source, out TokenStream stream, out IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stream = new();
+    paramAbiFacts = new();
+
+    stack mut OwnedAscii sourceText = new();
+    stack MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    if (copyStatus != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    stack mut TokenStream parsedStream = new();
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var lexed):
+            parsedStream = lexed;
+    }
+
+    stack mut bool foundFunction = false;
+    stack mut u32[0 max] fnIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < parsedStream.Count())
+    {
+        if (parsedStream.KindAt(scan) == TokenKind.Fn)
+        {
+            foundFunction = true;
+            fnIndex = (u32[0 max])scan;
+            scan = parsedStream.Count();
+        }
+        else
+        {
+            scan = scan + 1;
+        }
+    }
+
+    if (!foundFunction)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(parsedStream, fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> builtFacts = new();
+    if (!BuildParamAbiFacts(parsedStream, sourceBytes, signature, builtFacts))
+    {
+        return false;
+    }
+
+    stream = parsedStream;
+    paramAbiFacts = builtFacts;
+    return true;
+}
+
+[Fact]
+fn bool BuildParamAbiFactsRecordsByValueStructParameterShape()
+{
+    stack ascii source = "struct Box { i32 value; bool flag; } fn i64 classify(Box box, i64 scalar) { return scalar }";
+    stack mut TokenStream stream = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFactsForFirstFunction(source, stream, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack ParamAbiFacts boxFacts = AbiFactAt(paramAbiFacts, 1);
+    stack ParamAbiFacts scalarFacts = AbiFactAt(paramAbiFacts, 2);
+    stack ascii ownerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])boxFacts.StructValueTypeToken);
+    stack u32[0 max] expectedShape = MirTypeStorageCode(MirType.I32) + MirTypeStorageCode(MirType.I1) * 8;
+    return boxFacts.IsStructValue
+        && !boxFacts.IsPointer
+        && !boxFacts.IsSlice
+        && !boxFacts.IsFixedArray
+        && ownerName == "Box"
+        && boxFacts.StructValueSize == 8
+        && boxFacts.StructValueAlignment == 4
+        && boxFacts.StructValueFieldCount == 2
+        && boxFacts.StructValueShapeCode == expectedShape
+        && !scalarFacts.IsStructValue;
+}
+
+[Fact]
+fn bool CompileFunctionByValueStructParameterEmitsAggregateSignature()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("struct Box { i32 value; bool flag; } fn i64 classify(Box box, i64 scalar) { return scalar }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main({ i32, i1 } %p0, i64 %p1) {\nb1:\n  ret i64 %p1\n}\n");
+}
+
+[Fact]
+fn bool EmitLlvmStructParamFieldExtractsAggregateParameterDirectly()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack u32[0 max] shape = MirTypeStorageCode(MirType.I32) + MirTypeStorageCode(MirType.I1) * 8;
+    stack MirValueId field = MirStructParamField(instrs, 0, 0, 2, shape, MirType.I32);
+    stack MirBlockId entry = MirReturnBlock(blocks, field);
+
+    stack mut ParamAbiFacts abi = new();
+    abi.IsStructValue = true;
+    abi.StructValueSize = 8;
+    abi.StructValueAlignment = 4;
+    abi.StructValueFieldCount = 2;
+    abi.StructValueShapeCode = shape;
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (paramAbiFacts.Add(abi) != 1)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    stack mut IrTable<FunctionEffectFacts> noFunctionEffectFacts = new();
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<FunctionLinkageFacts> noFunctionLinkageFacts = new();
+    stack mut IrTable<FunctionCallingConventionFacts> noFunctionCallingConventionFacts = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<DistinctStoragePair> separateStorageFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut ValueFacts returnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFactsCore(
+        instrs,
+        noTailCallees,
+        noFunctionEffectFacts,
+        noFunctionCallContractFacts,
+        noFunctionLinkageFacts,
+        noFunctionCallingConventionFacts,
+        blocks,
+        "read_box",
+        false,
+        returnFacts,
+        paramFacts,
+        paramAbiFacts,
+        separateStorageFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        NoFunctionEffectFacts(),
+        1,
+        entry.Index(),
+        1,
+        1,
+        sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i32 @read_box({ i32, i1 } %p0) {\nb1:\n  %v1 = extractvalue { i32, i1 } %p0, 0\n  ret i32 %v1\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -6359,6 +6577,7 @@ fn bool SourceModuleLowersLocalTryBindingThroughSuccessorScalarStorageToLlvm()
         && System.Text.Contains(sink.View(), "extractvalue")
         && System.Text.Contains(sink.View(), "store i32")
         && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
         && System.Text.Contains(sink.View(), "ret {");
 }
 
@@ -8485,6 +8704,362 @@ fn bool SourceModuleLowersNamedPayloadEnumConstructorLocalToLlvm()
 }
 
 [Fact]
+fn bool SourceModuleLowersDirectEnumConstructorReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet main() { return Packet.Other(99) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define {")
+        && System.Text.Contains(sink.View(), "ret {")
+        && System.Text.Contains(sink.View(), "zeroinitializer, i8 1, 0")
+        && System.Text.Contains(sink.View(), "add i32 0, 99")
+        && !System.Text.Contains(sink.View(), "unknown");
+}
+
+[Fact]
+fn bool SourceModuleLowersEnumLocalReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet main() { stack Packet packet = Packet.Empty; return packet }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define {")
+        && System.Text.Contains(sink.View(), "ret {")
+        && System.Text.Contains(sink.View(), "load {")
+        && !System.Text.Contains(sink.View(), "unknown");
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalIfEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet main(bool flag) { if flag return Packet.Empty else return Packet.Other(99) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define {")
+        && System.Text.Contains(sink.View(), "ret {")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "unknown");
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(i64[min max] selector) { switch (selector) { case 0: return Packet.Empty; default: return Packet.Other(99); } } fn i64 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "ret {")
+        && System.Text.Contains(sink.View(), "icmp eq i64 %p0")
+        && !System.Text.Contains(sink.View(), "unknown");
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalBooleanSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(bool flag) { switch (flag) { case true: return Packet.Empty; default: return Packet.Other(99); } } fn i64 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "ret {")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "unknown");
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalEnumCaseSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Tag { A, B } enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(Tag tag) { switch (tag) { case Tag.A: return Packet.Empty; default: return Packet.Other(99); } } fn i64 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "unknown");
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalEnumPayloadSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Input { Empty, Other(u32[0 max]) } enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(Input input) { switch (input) { case Input.Other(7..9): return Packet.Other(99); case Input.Empty: return Packet.Empty; default: return Packet.Other(1); } } fn i64 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "icmp sge i32")
+        && System.Text.Contains(sink.View(), "icmp sle i32")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalEnumDisjointPayloadSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Input { Empty, Other(u32[0 max]) } enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(Input input) { switch (input) { case Input.Other(0..4): return Packet.Other(44); case Input.Other(5..9): return Packet.Other(99); default: return Packet.Other(1); } } fn i64 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "icmp sge i32")
+        && System.Text.Contains(sink.View(), "icmp sle i32")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalNamedEnumPayloadSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Input { Empty, Move { X: u32[0 max], Flag: bool } } enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(Input input) { switch (input) { case Input.Move { X: 7, Flag: true }: return Packet.Other(99); case Input.Empty: return Packet.Empty; default: return Packet.Other(1); } } fn i64 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayListSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "fn i32[min max] pick(i32[min max][3] values) { switch (values) { case [1, _, 3]: return 10; case [2, _, _]: return 20; default: return 30; } } fn i32 main() { stack i32[min max][3] values = { 1, 9, 3 }; return pick(values) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1([3 x i32] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 2")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayListGuardedSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "fn i32[min max] pick(i32[min max][3] values, bool gate) { switch (values) { case [1, _, 3] when gate: return 10; case [1, _, 3]: return 20; default: return 30; } } fn i32 main() { stack i32[min max][3] values = { 1, 9, 3 }; return pick(values, false) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1([3 x i32] %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 2")
+        && System.Text.Contains(sink.View(), "br i1 %p1")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayStorageLocalListGuardedSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "fn i32[min max] main(bool gate) { stack i32[0 20][3] values = { 1, 9, 3 }; switch (values) { case [1, _, 3] when gate: return 10; case [1, _, 3]: return 20; default: return 30; } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayFieldListGuardedSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "struct Box { i32[0 20][3] values; } fn i32[min max] main(bool gate) { stack Box box = new Box(); switch (box.values) { case [0, _, 0] when gate: return 10; case [0, _, 0]: return 20; default: return 30; } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayStorageLocalListSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "fn i32[min max] main() { stack i32[0 20][3] values = { 1, 9, 3 }; switch (values) { case [1, _, 3]: return 10; case [2, _, _]: return 20; default: return 30; } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 1")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "store i32 3")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayStorageLocalListSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet main() { stack i32[0 20][2] values = { 2, 3 }; switch (values) { case [1, _]: return Packet.Empty; case [2, 3]: return Packet.Other(99); default: return Packet.Other(1); } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 2")
+        && System.Text.Contains(sink.View(), "store i32 3")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "extractvalue [2 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayStorageLocalListGuardedSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet main(bool gate) { stack i32[0 20][2] values = { 2, 3 }; switch (values) { case [2, 3] when gate: return Packet.Empty; case [2, 3]: return Packet.Other(99); default: return Packet.Other(1); } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "extractvalue [2 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayFieldListSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "struct Box { i32[0 20][3] values; } fn i32[min max] main() { stack Box box = new Box(); switch (box.values) { case [1, _, 3]: return 10; case [2, _, _]: return 20; default: return 30; } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayFieldListSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } struct Box { i32[0 20][2] values; } fn Packet main() { stack Box box = new Box(); switch (box.values) { case [1, _]: return Packet.Empty; case [2, 3]: return Packet.Other(99); default: return Packet.Other(1); } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "extractvalue [2 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayFieldListGuardedSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "enum Packet { Empty, Other(u32[0 max]) } struct Box { i32[0 20][2] values; } fn Packet main(bool gate) { stack Box box = new Box(); switch (box.values) { case [0, 0] when gate: return Packet.Empty; case [0, 0]: return Packet.Other(99); default: return Packet.Other(1); } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "extractvalue [2 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayListSwitchEnumReturnToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "enum Packet { Empty, Other(u32[0 max]) } fn Packet pick(i32[min max][2] values) { switch (values) { case [1, _]: return Packet.Empty; case [2, 3]: return Packet.Other(99); default: return Packet.Other(1); } } fn i32 main() { return 0 }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 1")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleRejectsOverlappingFixedArrayListSwitchLabels()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAst(
+        "fn i32[min max] pick(i32[min max][2] values) { switch (values) { case [1, _]: return 10; case [_, 2]: return 20; default: return 30; } } fn i32 main() { return 0 }",
+        sink);
+}
+
+[Fact]
 fn bool SourceModuleRejectsIncompleteNamedPayloadEnumConstructor()
 {
     stack mut OwnedAscii sink = new();
@@ -9830,19 +10405,18 @@ fn bool CompileFunctionCompoundFieldAssignmentDesugarsAndProvesRange()
         && !CompileFunctionWithLocalsToLlvm("struct Box { u8[0 2] count; i64 pad; } fn i64 main() { stack Box box = new Box(); box.count = 1; box.count += 1; return 7 }", narrow);
 }
 
-// Try-assignments into constructed-object fields do not lower through this
-// entry yet (pre-existing shape gap, HEAD-worktree verified 2026-07-03 and
-// tracked in TASKS.md), so both spellings reject today. The narrow variant
-// additionally carries the declared-range guard: when the shape gap is
-// fixed, the full-width spelling flips to accepted and the narrow one must
-// keep rejecting as an unproven store.
+// Try-assignments into constructed-object fields prove the success payload's
+// declared range against the target field's declared range before storing.
 [Fact]
-fn bool RejectsTryAssignmentIntoNarrowRangedField()
+fn bool TryAssignmentIntoRangedFieldProvesOkPayloadRange()
 {
-    stack mut OwnedAscii fullWidth = new();
-    stack mut OwnedAscii narrow = new();
-    return !CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }", fullWidth)
-        && !CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(u8[0 max]), [Err] Failed(u8[0 max]) } struct Box { u8[0 2] count; i64 pad; } fn Outcome main() { stack Box box = new Box(); box.count = try Outcome.Value(1); return Outcome.Value(0) }", narrow);
+    stack mut OwnedAscii matchingI32 = new();
+    stack mut OwnedAscii matchingU8 = new();
+    stack mut OwnedAscii tooWide = new();
+    return CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(i32[0 max]), [Err] Failed(u8[0 max]) } struct Box { i32[0 max] value; } fn Outcome main() { stack Box box = new Box(); box.value = try Outcome.Value(7); return Outcome.Value(box.value) }", matchingI32)
+        && System.Text.Contains(matchingI32.View(), "!range")
+        && CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(u8[0 2]), [Err] Failed(u8[0 max]) } struct Box { u8[0 2] count; i64 pad; } fn Outcome main() { stack Box box = new Box(); box.count = try Outcome.Value(1); return Outcome.Value(0) }", matchingU8)
+        && !CompileFunctionWithLocalsToLlvm("enum Outcome { [Ok] Value(u8[0 max]), [Err] Failed(u8[0 max]) } struct Box { u8[0 2] count; i64 pad; } fn Outcome main() { stack Box box = new Box(); box.count = try Outcome.Value(1); return Outcome.Value(0) }", tooWide);
 }
 
 // Cyclic aggregate fields have no finite layout; the depth-capped recursive
@@ -10013,6 +10587,18 @@ fn bool CompileFunctionFixedArrayParameterConstantReadsUseDirectValueAbi()
         && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 0")
         && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 1")
         && System.Text.Contains(sink.View(), "load [2 x i32], ptr")
+        && System.Text.Contains(sink.View(), "call i32 @f1([2 x i32] %v")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionFixedArrayParameterConstantReadPreservesElementRangeFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i32[0 10] read(i32[0 10][2] values) { return values[0] } fn i32 main() { stack i32[0 10][2] values = { 4, 7 }; return read(values) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local range(i32 0, 11) i32 @f1([2 x i32] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [2 x i32] %p0, 0")
         && System.Text.Contains(sink.View(), "call i32 @f1([2 x i32] %v")
         && ClangVerifiesLlvmText(sink);
 }
@@ -11783,6 +12369,351 @@ fn bool CompileIntegerSwitchUninitializedStackScalarAssignmentsStoreBeforeMerge(
 }
 
 [Fact]
+fn bool CompileStructAggregateSwitchLocalScalarReturnUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 7, flag = true }; switch (box) { case Box(7, true): return 10; case Box(8..9, _): return 20; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchLocalGuardedScalarReturnFallsThroughToUnguardedFallback()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] main(bool gate) { stack Box box = new Box() { value = 7, flag = true }; switch (box) { case Box(7, true) when gate: return 10; case Box(7, true): return 20; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructPropertyPatternSwitchLocalScalarReturnUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 8, flag = false }; switch (box) { case Box { value: 7, flag: true }: return 10; case Box { flag: false, value: 8..9 }: return 20; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchLocalEnumReturnUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Packet { Empty, Other(u32[0 max]) } struct Box { i32[0 20] value; bool flag; } fn Packet main() { stack Box box = new Box() { value = 8, flag = false }; switch (box) { case Box(7, true): return Packet.Empty; case Box(8..9, false): return Packet.Other(99); default: return Packet.Other(1); } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "insertvalue")
+        && System.Text.Contains(sink.View(), "ret {")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchLocalScalarAssignmentUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 8, flag = false }; var score = 0; switch (box) { case Box(7, true): score = 10; case Box(8..9, _): { score = 20; } default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchLocalGuardedScalarAssignmentFallsThroughToUnguardedFallback()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] main(bool gate) { stack Box box = new Box() { value = 7, flag = true }; var score = 0; switch (box) { case Box(7, true) when gate: score = 10; case Box(7, true): score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructPropertyPatternSwitchLocalScalarAssignmentUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 8, flag = false }; var score = 0; switch (box) { case Box { value: 7, flag: true }: score = 10; case Box { flag: false, value: 8..9 }: score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchValueParamScalarReturnUsesDirectFieldExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] classify(Box box) { switch (box) { case Box(7, true): return 10; case Box(8..9, _): return 20; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "alloca [8 x i8]")
+        && !System.Text.Contains(sink.View(), "load i32")
+        && !System.Text.Contains(sink.View(), "load i1")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchValueParamGuardedScalarReturnUsesDirectFieldExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] classify(Box box, bool gate) { switch (box) { case Box(7, true) when gate: return 10; case Box(7, true): return 20; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "br i1 %p1")
+        && !System.Text.Contains(sink.View(), "alloca [8 x i8]")
+        && !System.Text.Contains(sink.View(), "load i32")
+        && !System.Text.Contains(sink.View(), "load i1")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchValueParamGuardedScalarAssignmentUsesDirectFieldExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] classify(Box box, bool gate) { var score = 0; switch (box) { case Box(7, true) when gate: score = 10; case Box(7, true): score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1 %p1")
+        && !System.Text.Contains(sink.View(), "alloca [8 x i8]")
+        && !System.Text.Contains(sink.View(), "load i32")
+        && !System.Text.Contains(sink.View(), "load i1")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructPropertyPatternSwitchValueParamScalarAssignmentUsesDirectFieldExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case Box { value: 7, flag: true }: score = 10; case Box { flag: false, value: 8..9 }: score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i32, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "alloca [8 x i8]")
+        && !System.Text.Contains(sink.View(), "load i32")
+        && !System.Text.Contains(sink.View(), "load i1")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchFieldScalarReturnUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } struct Holder { bool ready; Box box; } fn i64[min max] main() { stack Holder holder = new Holder(); switch (holder.box) { case Box(0, false): return 10; case Box(1..2, _): return 20; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "i64 4")
+        && System.Text.Contains(sink.View(), "i64 8")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructPropertyPatternSwitchFieldScalarAssignmentUsesDirectFieldTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20] value; bool flag; } struct Holder { bool ready; Box box; } fn i64[min max] main() { stack Holder holder = new Holder(); var score = 0; switch (holder.box) { case Box { value: 0, flag: false }: score = 10; case Box { flag: true, value: 1..2 }: score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "i64 4")
+        && System.Text.Contains(sink.View(), "i64 8")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayListSwitchLocalScalarAssignmentUsesDirectElementTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values) { var score = 0; switch (values) { case [1, _, 3]: score = 10; case [2, _, _]: { score = 20; } default: score = 30; } return score } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1([3 x i32] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 2")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayListSwitchParamGuardedScalarAssignmentFallsThroughToUnguardedFallback()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values, bool gate) { var score = 0; switch (values) { case [1, _, 3] when gate: score = 10; case [1, _, 3]: score = 20; default: score = 30; } return score } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values, false) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1([3 x i32] %p0, i1 %p1)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 2")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1 %p1")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayStorageLocalListSwitchGuardedScalarAssignmentFallsThroughToUnguardedFallback()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] main(bool gate) { stack i32[0 20][3] values = { 1, 9, 3 }; var score = 0; switch (values) { case [1, _, 3] when gate: score = 10; case [1, _, 3]: score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayFieldListSwitchGuardedScalarAssignmentFallsThroughToUnguardedFallback()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20][3] values; } fn i64[min max] main(bool gate) { stack Box box = new Box(); var score = 0; switch (box.values) { case [0, _, 0] when gate: score = 10; case [0, _, 0]: score = 20; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1 %p0")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayStorageLocalListSwitchLocalScalarAssignmentUsesDirectElementLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] main() { stack i32[0 20][3] values = { 1, 9, 3 }; var score = 0; switch (values) { case [1, _, 3]: score = 10; case [2, _, _]: { score = 20; } default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "store i32 1")
+        && System.Text.Contains(sink.View(), "store i32 9")
+        && System.Text.Contains(sink.View(), "store i32 3")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayFieldListSwitchLocalScalarAssignmentUsesDirectElementLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i32[0 20][3] values; } fn i64[min max] main() { stack Box box = new Box(); var score = 0; switch (box.values) { case [1, _, 3]: score = 10; case [2, _, _]: { score = 20; } default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool CompileBooleanSwitchStackBoolAssignmentsFeedTerminalIf()
 {
     stack mut OwnedAscii sink = new();
@@ -11812,6 +12743,87 @@ fn bool CompileEnumSwitchStackScalarAssignmentsStoreTypedValue()
         && System.Text.Contains(sink.View(), "store i64 30")
         && System.Text.Contains(sink.View(), "load i64")
         && System.Text.Contains(sink.View(), "icmp eq i64 %p0")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileEnumPayloadSwitchStackScalarAssignmentsUseTagTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Packet { Empty, Other(u32[0 max]) } fn pick(Packet packet) { stack mut i64 value = 0; switch (packet) { case Packet.Other(_): value = 4; case Packet.Empty: value = 20; default: value = 30; } return value } fn main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "store i64 20")
+        && System.Text.Contains(sink.View(), "store i64 30")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileNamedEnumPayloadSwitchStackScalarAssignmentsUseTagTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn pick(Packet packet) { stack mut i64 value = 0; switch (packet) { case Packet.Move { Flag: _, X: _ }: value = 4; case Packet.Empty: value = 20; default: value = 30; } return value } fn main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "store i64 20")
+        && System.Text.Contains(sink.View(), "store i64 30")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileEnumScalarPayloadSwitchStackScalarAssignmentsUsePayloadTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Packet { Empty, Other(u32[0 max]) } fn pick(Packet packet) { stack mut i64 value = 0; switch (packet) { case Packet.Other(7..9): value = 4; case Packet.Empty: value = 20; default: value = 30; } return value } fn main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "store i64 20")
+        && System.Text.Contains(sink.View(), "store i64 30")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "icmp sge i32")
+        && System.Text.Contains(sink.View(), "icmp sle i32")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileEnumDisjointScalarPayloadSwitchStackScalarAssignmentsUsePayloadTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Packet { Empty, Other(u32[0 max]) } fn pick(Packet packet) { stack mut i64 value = 0; switch (packet) { case Packet.Other(0..4): value = 4; case Packet.Other(5..9): value = 5; default: value = 30; } return value } fn main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "store i64 5")
+        && System.Text.Contains(sink.View(), "store i64 30")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "icmp sge i32")
+        && System.Text.Contains(sink.View(), "icmp sle i32")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileNamedEnumScalarPayloadSwitchStackScalarAssignmentsUsePayloadTests()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn pick(Packet packet) { stack mut i64 value = 0; switch (packet) { case Packet.Move { X: 7, Flag: true }: value = 4; case Packet.Empty: value = 20; default: value = 30; } return value } fn main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1")
+        && System.Text.Contains(sink.View(), "alloca [8 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64 4")
+        && System.Text.Contains(sink.View(), "store i64 20")
+        && System.Text.Contains(sink.View(), "store i64 30")
+        && System.Text.Contains(sink.View(), "extractvalue")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -12003,6 +13015,166 @@ fn bool CompileFunctionArenaDynamicTryReserveCapacityEmitsExactGrowCopyHelper()
         && System.Text.Contains(sink.View(), "i64 noundef 16, i64 noundef 8, i64 noundef 8")
         && System.Text.Contains(sink.View(), "call noalias noundef ptr @__stark_arena_try_alloc")
         && System.Text.Contains(sink.View(), "call void @llvm.memcpy.p0.p0.i64")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileIntegerSwitchArenaDynamicReserveArmsEmitGrowCopyHelpers()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64 main(i64 selector) { stack mut dynamic u64 values = new(arena, 1); switch (selector) { case 0: values.Reserve(8); case 1: { values.TryReserve(4); } default: values.TryReserveCapacity(16); } return 5 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_dynamic_reserve(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), " = call i1 @__stark_arena_dynamic_try_reserve(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), " = call i1 @__stark_arena_dynamic_try_reserve_capacity(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), "i64 noundef 16, i64 noundef 8, i64 noundef 8")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 5")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileBooleanSwitchArenaDynamicReserveThenTerminalIfLeavesBothBranches()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64 main(bool flag) { stack mut dynamic u32 values = new(arena, 2); switch (flag) { case true: values.Reserve(4); case false: values.TryReserve(5); default: values.TryReserveCapacity(6); } if flag return 1 else return 2 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_dynamic_reserve(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), " = call i1 @__stark_arena_dynamic_try_reserve(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), " = call i1 @__stark_arena_dynamic_try_reserve_capacity(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), "i64 noundef 6, i64 noundef 4, i64 noundef 4")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 1")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 2")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalSwitchArenaDynamicLocalLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64 main(i64 selector) { stack mut dynamic u64 values = new(arena, 1); switch (selector) { case 0: return 1; case 1: return 2; default: return 3; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 1")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 2")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 3")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalBooleanSwitchArenaDynamicLocalLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64 main(bool flag) { stack mut dynamic u64 values = new(arena, 1); switch (flag) { case true: return 1; default: return 3; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 1")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 3")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalEnumCaseSwitchArenaDynamicLocalLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Tag { Left, Right, Other } fn i64 main(Tag tag) { stack mut dynamic u64 values = new(arena, 1); switch (tag) { case Tag.Left: return 1; default: return 3; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 1")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 3")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalIfArenaDynamicLocalLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64 main(bool flag) { stack mut dynamic u64 values = new(arena, 1); if flag return 1 else return 3 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 1")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 3")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalIntegerSwitchArenaDynamicLocalEnumReturnLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Pick { First, Second } fn Pick pick(i64 selector) { stack mut dynamic u64 values = new(arena, 1); switch (selector) { case 0: return Pick.First; default: return Pick.Second; } } fn i64 main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.CountOccurrences(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret {") == 2
+        && !System.Text.Contains(sink.View(), "unknown")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalIfArenaDynamicLocalEnumReturnLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Pick { First, Second } fn Pick pick(bool flag) { stack mut dynamic u64 values = new(arena, 1); if flag return Pick.First else return Pick.Second } fn i64 main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.CountOccurrences(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret {") == 2
+        && !System.Text.Contains(sink.View(), "unknown")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalBooleanSwitchArenaDynamicLocalEnumReturnLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Pick { First, Second } fn Pick pick(bool flag) { stack mut dynamic u64 values = new(arena, 1); switch (flag) { case true: return Pick.First; default: return Pick.Second; } } fn i64 main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.CountOccurrences(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret {") == 2
+        && !System.Text.Contains(sink.View(), "unknown")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileTerminalEnumCaseSwitchArenaDynamicLocalEnumReturnLeavesEveryReturnArm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("enum Tag { Left, Right } enum Pick { First, Second } fn Pick pick(Tag tag) { stack mut dynamic u64 values = new(arena, 1); switch (tag) { case Tag.Left: return Pick.First; default: return Pick.Second; } } fn i64 main() { return 0 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 8 dereferenceable(8) ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "define internal dso_local {")
+        && System.Text.CountOccurrences(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret {") == 2
+        && !System.Text.Contains(sink.View(), "unknown")
         && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
         && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
         && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
@@ -12562,6 +13734,63 @@ fn bool EmitsRangeFactLlvmDefinitionWithEnumLayoutFacts()
 }
 
 [Fact]
+fn bool EmitsRangeFactLlvmDefinitionWithEnumReturnTypeFromLayoutFacts()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(1), 2);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 99);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(1), 2, 0, tagged, payload);
+    stack MirBlockId entry = MirReturnBlock(blocks, inserted);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack ValueFacts returnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFactsAndEnumLayouts(
+        instrs,
+        blocks,
+        facts,
+        "enum_return",
+        returnFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        0,
+        entry.Index(),
+        1,
+        3,
+        sink))
+    {
+        case MemoryStatus.Err(var emitError):
+            return false;
+        case MemoryStatus.Ok:
+            return MirOpcodeOf(instrs, inserted) == MirOp.EnumPayloadInsert
+                && System.Text.Contains(sink.View(), "define { i8, i8, [2 x i8], i32 } @enum_return()")
+                && System.Text.Contains(sink.View(), "ret { i8, i8, [2 x i8], i32 } %v3")
+                && !System.Text.Contains(sink.View(), "unknown");
+    }
+}
+
+[Fact]
 fn bool EmitsLlvmModuleWithEnumLayoutFacts()
 {
     stack ascii source = raw"""
@@ -12601,6 +13830,47 @@ fn bool EmitsLlvmModuleWithEnumLayoutFacts()
                 && System.Text.Contains(sink.View(), "%v1 = insertvalue { i8, i8, [2 x i8], i32 } zeroinitializer, i8 2, 0")
                 && System.Text.Contains(sink.View(), "%v3 = insertvalue { i8, i8, [2 x i8], i32 } %v1, i32 %v2, 3")
                 && System.Text.Contains(sink.View(), "ret i64 %v4");
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmModuleWithEnumReturnTypeFromLayoutFacts()
+{
+    stack ascii source = raw"""
+    enum Packet
+    {
+        Data(u8[0 max]),
+        Empty,
+        Other(u32[0 max])
+    }
+    """;
+
+    stack mut TokenStream stream = new();
+    stack mut IrTable<MirEnumLayoutFact> facts = new();
+    if (!BuildMirEnumLayoutFactsForSource(source, stream, facts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId tagged = MirEnumVariantTag(instrs, TypeIdOf(1), 2);
+    stack MirValueId payload = MirConstIntTyped(instrs, MirType.I32, 99);
+    stack MirValueId inserted = MirEnumPayloadInsert(instrs, TypeIdOf(1), 2, 0, tagged, payload);
+    stack MirBlockId entry = MirReturnBlock(blocks, inserted);
+    stack MirFuncId function = MirDefineFunction(funcs, entry, entry, 1, tagged, 3);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmModuleWithEnumLayouts(instrs, blocks, funcs, facts, sink))
+    {
+        case MemoryStatus.Err(var emitError):
+            return false;
+        case MemoryStatus.Ok:
+            return function.Index() == 1
+                && MirOpcodeOf(instrs, inserted) == MirOp.EnumPayloadInsert
+                && System.Text.Contains(sink.View(), "define { i8, i8, [2 x i8], i32 } @f1()")
+                && System.Text.Contains(sink.View(), "ret { i8, i8, [2 x i8], i32 } %v3")
+                && !System.Text.Contains(sink.View(), "unknown");
     }
 }
 
@@ -14023,6 +15293,141 @@ fn bool CompilesTerminalEnumUnitSwitchFromAst()
 }
 
 [Fact]
+fn bool CompilesTerminalEnumDiscardPayloadSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64[10 40] classify(Packet packet) { switch (packet) { case Packet.Other(_): return 10; case Packet.Empty: return 20; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1")
+        && System.Text.Contains(s.View(), "icmp eq i64")
+        && !System.Text.Contains(s.View(), "switch i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesTerminalNamedEnumDiscardPayloadSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64[10 40] classify(Packet packet) { switch (packet) { case Packet.Move { Flag: _, X: _ }: return 10; case Packet.Empty: return 20; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1")
+        && System.Text.Contains(s.View(), "icmp eq i64")
+        && !System.Text.Contains(s.View(), "switch i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesTerminalEnumScalarPayloadSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64[10 40] classify(Packet packet) { switch (packet) { case Packet.Other(7..9): return 10; case Packet.Empty: return 20; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1")
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "icmp sge i32")
+        && System.Text.Contains(s.View(), "icmp sle i32")
+        && !System.Text.Contains(s.View(), "switch i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesTerminalEnumDisjointScalarPayloadLabelsFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64[10 40] classify(Packet packet) { switch (packet) { case Packet.Other(0..4): return 10; case Packet.Other(5..9): return 20; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1")
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "icmp sge i32")
+        && System.Text.Contains(s.View(), "icmp sle i32")
+        && !System.Text.Contains(s.View(), "switch i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesTerminalNamedEnumScalarPayloadSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64[10 40] classify(Packet packet) { switch (packet) { case Packet.Move { X: 7, Flag: true }: return 10; case Packet.Empty: return 20; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1")
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "icmp eq i32")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && !System.Text.Contains(s.View(), "switch i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesTerminalNamedEnumDisjointScalarPayloadLabelsFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64[10 40] classify(Packet packet) { switch (packet) { case Packet.Move { X: _, Flag: true }: return 10; case Packet.Move { X: _, Flag: false }: return 20; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 10, 41) i64 @f1")
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && !System.Text.Contains(s.View(), "switch i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesEnumPayloadCaptureAssignmentSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Other(i64[0 max]) } fn i64 classify(Packet packet) { var result = 0; switch (packet) { case Packet.Other(var value): result = value + 1; default: result = 40; } return result } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "add i64")
+        && System.Text.Contains(s.View(), "phi i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesNamedEnumPayloadCaptureAssignmentSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Move { X: i64[0 max], Flag: bool } } fn i64 classify(Packet packet) { var result = 0; switch (packet) { case Packet.Move { X: var value, Flag: true }: result = value + 2; default: result = 40; } return result } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "add i64")
+        && System.Text.Contains(s.View(), "phi i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool RejectsOverlappingEnumScalarPayloadLabelsFromAst()
+{
+    stack mut OwnedAscii intervalSink = new();
+    stack mut OwnedAscii unconstrainedSink = new();
+    return !CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64 classify(Packet packet) { switch (packet) { case Packet.Other(0..5): return 10; case Packet.Other(5..9): return 20; default: return 40; } } fn main() { return 0 }", intervalSink)
+        && !CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64 classify(Packet packet) { switch (packet) { case Packet.Other(_): return 10; case Packet.Other(5..9): return 20; default: return 40; } } fn main() { return 0 }", unconstrainedSink);
+}
+
+[Fact]
+fn bool RejectsUnsupportedEnumPayloadSwitchPatternsFromAst()
+{
+    stack mut OwnedAscii captureSink = new();
+    stack mut OwnedAscii wrongAritySink = new();
+    return !CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64 classify(Packet packet) { switch (packet) { case Packet.Other(value): return 10; default: return 40; } } fn main() { return 0 }", captureSink)
+        && !CompileModuleFromAst("enum Packet { Empty, Other(u32[0 max]) } fn i64 classify(Packet packet) { switch (packet) { case Packet.Other(_, _): return 10; default: return 40; } } fn main() { return 0 }", wrongAritySink);
+}
+
+[Fact]
+fn bool RejectsUnsupportedNamedEnumPayloadSwitchPatternsFromAst()
+{
+    stack mut OwnedAscii captureSink = new();
+    stack mut OwnedAscii duplicateSink = new();
+    stack mut OwnedAscii missingSink = new();
+    stack mut OwnedAscii unknownSink = new();
+    return !CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64 classify(Packet packet) { switch (packet) { case Packet.Move { X: var value, Flag: _ }: return 10; default: return 40; } } fn main() { return 0 }", captureSink)
+        && !CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64 classify(Packet packet) { switch (packet) { case Packet.Move { X: _, X: _ }: return 10; default: return 40; } } fn main() { return 0 }", duplicateSink)
+        && !CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64 classify(Packet packet) { switch (packet) { case Packet.Move { X: _ }: return 10; default: return 40; } } fn main() { return 0 }", missingSink)
+        && !CompileModuleFromAst("enum Packet { Empty, Move { X: u32[0 max], Flag: bool } } fn i64 classify(Packet packet) { switch (packet) { case Packet.Move { Missing: _, Flag: _ }: return 10; default: return 40; } } fn main() { return 0 }", unknownSink);
+}
+
+[Fact]
 fn bool CompilesLocalPrefixedMultiCaseTerminalIntegerSwitchFromAst()
 {
     stack mut OwnedAscii s = new();
@@ -14199,6 +15604,24 @@ fn bool CompilesRangeCaseLocalSwitchStatementAssignmentThenReturnFromAst()
         && !System.Text.Contains(s.View(), "switch i64 %p0")
         && ClangVerifiesLlvmText(s)
         && !CompileModuleFromAst("fn i64[5 40] classify(i64[min max] x) { var y = 0; switch (x) { case 0..3: y = 4; case 10: y = 20; default: y = 40; } return y + 1 } fn main() { return classify(2) }", tooNarrow);
+}
+
+[Fact]
+fn bool CompilesFixedArrayListLocalSwitchStatementAssignmentThenReturnFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn i64[11 31] classify(i32[min max][3] values) { var y = 0; switch (values) { case [1, _, 3]: y = 10; case [2, _, _]: y = 20; default: y = 30; } return y + 1 } fn main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", s);
+    stack mut OwnedAscii tooNarrow = new();
+    return ok
+        && System.Text.Contains(s.View(), "define internal dso_local range(i64 11, 32) i64 @f1([3 x i32] %p0)")
+        && System.Text.Contains(s.View(), "extractvalue [3 x i32] %p0, 0")
+        && System.Text.Contains(s.View(), "extractvalue [3 x i32] %p0, 2")
+        && System.Text.Contains(s.View(), "icmp eq i32")
+        && System.Text.Contains(s.View(), " phi i64 ")
+        && System.Text.Contains(s.View(), "add i64")
+        && !System.Text.Contains(s.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(s)
+        && !CompileModuleFromAst("fn i64[11 30] classify(i32[min max][3] values) { var y = 0; switch (values) { case [1, _, 3]: y = 10; case [2, _, _]: y = 20; default: y = 30; } return y + 1 } fn main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", tooNarrow);
 }
 
 [Fact]

@@ -527,7 +527,7 @@ Execution constraints:
       - [x] Lower scalar and enum leaf chains on storage-backed constructed object locals.
       - [x] Lower fixed-array leaves reached through nested member chains.
       - [x] Fix nested member chain runtime lowering end-to-end (root cause: the per-field layout resolver `TryGetKnownSourceStorageLayoutWithEnums` never recursed into named aggregate fields, so any struct containing a struct had extent 0 and its constructed-object local was rejected before member access; fixed 2026-07-02 with depth-capped recursive extent/alignment — the cap rejects cyclic aggregates instead of hanging. Two- and three-level chains now lower with correct accumulated byte offsets; probe + IrTests facts cover store/load, offset accumulation, scalar-after-aggregate, and cyclic rejection).
-      - [ ] Fix constructed-object field try-assignment lowering through the single-function entry (discovered 2026-07-03, HEAD-worktree verified pre-existing: `box.value = try f()` rejects for every field width even though the body matcher fires and the module-path slices landed the machinery; the IrTests facts asserting these shapes have never executed green — root-cause with the probe recipe as its own slice).
+      - [x] Fix constructed-object field try-assignment lowering through the single-function entry (fixed 2026-07-06: the try-assignment parser now carries the target field or fixed-array element declared range into the assignment descriptor, and lowering proves the `[Ok]` payload range is a subset before storing; matching ranged payloads lower, wider payloads reject, and returned field loads keep their LLVM `!range` metadata).
       - [x] Fix if-condition member reads in the single-function dialect paths (fixed 2026-07-02; three stacked causes: `CompileFunctionWithLocalsToLlvm` never dispatched to the terminal-if lowerings at all — wired in `LowerModuleLocalIfReturnFunctionToBlocks` with the real module facts, which alone fixed bare-bool param conditions; the typing-side statement walker only extracted parenthesized if/while conditions, so paren-free dialect conditions (and real-Stark `while willexit (…)` conditions) had no typed member rows — the extraction now skips the `willexit` marker and the optional paren; and the driver's shared tail emitted a linear instruction range that truncated multi-block bodies mid-CFG — block-shaped bodies now record `BlockEmit` ranges and emit through `EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts`. Heap and stack bool member conditions branch correctly on the loaded flag; all probe batteries green).
       - [x] Fix `var` locals initialized from member field reads (fixed 2026-07-02; two stacked root causes: the statement-kind classifier in Parsing.stark mapped every storage class to StatementKind.Local except `var`, so var initializers never entered the expression table and typing produced no member rows for them — one classifier case fixes the facts; and the single-function driver batched locals before mutation replay, so accepting interleaved statements required making `storageMutationStatements` the ordered statement timeline with LocalDecl rows — a local's override and initializers now lower at their source position, which also fixes stored-scalar initializers that read fields after mutations. Probes: var-from-field, var-from-ranged-field, and both var-indexed bounds-proof shapes flipped to passing; emitted LLVM verified load-after-store with !range-carried bounds).
       - [~] Lower typed HIR member path rows through shared storage-place addressing.
@@ -536,7 +536,7 @@ Execution constraints:
         - [x] Route direct and indexed constructed-object field parsing through the member-chain resolver.
         - [x] Import typed HIR member path rows into the shared place-address resolver.
         - [x] Extend declared-range facts to indexed fixed-array element reads (2026-07-02: fixed-array member-path facts decode the ELEMENT's declared range from the element type head; const- and dynamic-index element reads attach it to their nodes, and the indexed load lowers through the declared-range typed LoadPtr — element loads carry `!range` and their values prove second-array index bounds; unranged elements still reject as unproven indexes).
-        - [x] Prove compound-assignment and try-assignment stored ranges against narrow declared field ranges (2026-07-02: `+=`/`-=` on simple and nested field targets desugar at parse into `field OP value` over a range-carrying field read, so the existing declared-range store proof judges the widened result — full-width fields lower, narrow fields reject without evidence, matching the host's conservatism; try-assignments into narrow-ranged fields reject as unproven because the [Ok] payload's range is not yet decoded into node facts; the guard is currently shadowed by the pre-existing shape gap above (try field-assignments reject for every width in this entry) — payload-range subset proofs, indexed compound targets, and the shape gap are the follow-ups).
+        - [x] Prove compound-assignment and try-assignment stored ranges against narrow declared field ranges (2026-07-06 update: `+=`/`-=` on simple and nested field targets still prove through range-carrying field reads, and constructed-object field `try` assignments now decode the `[Ok]` payload range and require it to fit the target field or fixed-array element range before storing; wider payload ranges reject without weakening field-load `!range` facts).
         - [x] Record declared field-load result range facts through MIR value facts and LLVM load range metadata (verified complete 2026-07-02: declared ranges ride the typed LoadPtr's ConstInt range operands into MIR value facts — consumed by fixed-array bounds proofs and return-range validation — and narrow ranges emit `!range` load metadata while full-width spans are skipped as unrepresentable; probes `ranged-return-through-declared-load-facts` and both var-index bounds shapes, plus the `!range`-asserting IrTests facts, cover the chain).
         - [x] Share module-level typed member tables between the effect prepass and the main lowering pass (the `SourceModuleLoweringFacts` bundle is built once in `CompileModuleFromAstStream` and threaded through the effect prepass; see the 2026-07-01 pain-point-fixes entry in TestPassLedger.md).
     - [~] Lower address-taking place reads for locals, fields, and parameters.
@@ -718,7 +718,75 @@ Execution constraints:
         - [x] Lower terminal enum unit switches to compact tag comparisons.
         - [x] Lower non-terminal enum unit switch assignments to compact tag comparisons.
       - [x] Lower integer range-pattern switch cases through MIR branch tests.
-      - [ ] Lower aggregate and list pattern switch cases through MIR branch tests.
+      - [~] Lower aggregate and list pattern switch cases through MIR branch tests.
+        - [ ] Import typed switch pattern rows into the self-host MIR source-lowering facts.
+        - [ ] Represent lowerable switch labels for discard and whole-value capture patterns.
+        - [ ] Represent lowerable aggregate-pattern descriptors with owner type, optional enum variant, and field pattern rows.
+        - [ ] Represent lowerable list-pattern descriptors with element type, fixed length, and element pattern rows.
+        - [ ] Validate aggregate and list switch labels before emitting any MIR branch blocks.
+        - [x] Lower no-capture enum aggregate patterns to tag branch tests with preserved enum layout facts.
+          - [x] Lower tuple enum aggregate labels with all-discard payloads to tag branch tests.
+          - [x] Lower named enum aggregate labels with all-discard payloads to tag branch tests.
+          - [x] Lower no-capture enum aggregate labels with scalar payload subpatterns to payload field branch tests.
+            - [x] Lower terminal scalar-return enum labels with bool and integer payload subpatterns through typed payload extracts.
+            - [x] Lower enum-return enum labels with scalar payload subpatterns through typed payload extracts.
+            - [x] Lower non-terminal enum switch assignments with scalar payload subpatterns through typed payload extracts.
+            - [x] Allow repeated same-variant scalar payload labels when their payload intervals are provably disjoint.
+        - [~] Lower no-capture struct aggregate patterns to ordered field branch tests with preserved field range facts.
+          - [x] Lower terminal constructed-object struct aggregate labels whose arms return scalar values to ordered field branch tests.
+          - [x] Lower terminal constructed-object struct aggregate labels whose arms return enum values to ordered field branch tests.
+          - [x] Preserve declared struct field range facts on scalar field-pattern loads.
+          - [x] Reject duplicate property fields and overlapping scalar field intervals before emitting branch blocks.
+          - [x] Lower non-terminal constructed-object struct aggregate switch assignments to ordered field branch tests.
+          - [x] Lower struct aggregate labels over by-value struct parameters.
+            - [x] Represent by-value struct parameter ABI facts with owner type identity and LLVM aggregate shape.
+            - [x] Emit by-value struct parameters as LLVM aggregate types in self-host function signatures.
+            - [x] Add direct struct-parameter field extraction that lowers to LLVM `extractvalue` without stack materialization.
+            - [x] Import declared field range facts for direct struct-parameter field extracts.
+            - [x] Route terminal and assignment struct aggregate switch labels over by-value parameters through direct field extracts.
+          - [x] Lower struct aggregate labels over field-backed struct scrutinees.
+          - [ ] Lower struct aggregate labels with nested aggregate or list field subpatterns through shared pattern-decision block construction.
+          - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
+            - [x] Lower terminal-return guarded no-capture struct aggregate labels after successful field tests.
+            - [x] Lower non-terminal assignment guarded no-capture struct aggregate labels after successful field tests.
+        - [~] Lower no-capture fixed-array list patterns to indexed element branch tests with preserved element range facts.
+          - [x] Lower terminal fixed-array parameter list labels to direct constant-index element branch tests.
+          - [x] Preserve declared fixed-array element range facts on direct parameter element extracts.
+          - [x] Reject overlapping terminal fixed-array list labels before emitting MIR branch blocks.
+          - [x] Lower terminal fixed-array list labels whose arms return enum values.
+          - [x] Lower non-terminal fixed-array list switch assignments that continue after the switch.
+          - [x] Lower terminal guarded no-capture fixed-array parameter list labels after successful element tests.
+          - [x] Lower non-terminal assignment guarded no-capture fixed-array parameter list labels after successful element tests.
+          - [x] Lower fixed-array list patterns whose scrutinee is a local or field-backed value.
+            - [x] Lower scalar-return terminal fixed-array storage-local list labels through constant-offset element branch tests.
+            - [x] Lower enum-return terminal fixed-array storage-local list labels through constant-offset element branch tests.
+            - [x] Lower non-terminal fixed-array storage-local list switch assignments through constant-offset element branch tests.
+            - [x] Lower fixed-array field-backed list labels through typed member-path element branch tests.
+              - [x] Lower scalar-return terminal fixed-array field-backed list labels through typed member-path element branch tests.
+              - [x] Lower enum-return terminal fixed-array field-backed list labels through typed member-path element branch tests.
+              - [x] Lower non-terminal fixed-array field-backed list switch assignments through typed member-path element branch tests.
+        - [ ] Lower nested aggregate and list field patterns through shared pattern-decision block construction.
+        - [~] Lower switch capture bindings into section-local storage without aliasing unrelated locals.
+          - [x] Lower tuple enum payload capture bindings for non-terminal assignment switch arms.
+          - [x] Lower named enum payload capture bindings for non-terminal assignment switch arms.
+          - [x] Keep enum payload capture locals scoped to their matched assignment arm.
+          - [x] Extract captured enum payload values in the matched assignment arm block.
+          - [ ] Lower enum payload capture bindings for terminal return switch arms.
+          - [ ] Lower struct aggregate field capture bindings for terminal and assignment switch arms.
+          - [ ] Lower fixed-array list element capture bindings for terminal and assignment switch arms.
+        - [ ] Merge pattern capture facts across sibling labels before lowering section bodies.
+        - [~] Lower guarded aggregate and list switch labels after guard expression lowering can consume capture locals.
+          - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
+          - [x] Lower guarded no-capture fixed-array parameter list labels after successful element tests.
+          - [x] Lower guarded no-capture fixed-array storage-local and field-backed list labels after successful element tests.
+            - [x] Lower scalar-return terminal guarded fixed-array storage-local list labels after successful element tests.
+            - [x] Lower enum-return terminal guarded fixed-array storage-local list labels after successful element tests.
+            - [x] Lower non-terminal assignment guarded fixed-array storage-local list labels after successful element tests.
+            - [x] Lower scalar-return terminal guarded fixed-array field-backed list labels after successful element tests.
+            - [x] Lower enum-return terminal guarded fixed-array field-backed list labels after successful element tests.
+            - [x] Lower non-terminal assignment guarded fixed-array field-backed list labels after successful element tests.
+          - [ ] Lower guarded aggregate and list labels that use capture locals.
+        - [ ] Reject duplicate or overlapping aggregate and list switch labels before emitting partial MIR.
     - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
   - [~] Lower `try`.
     - [x] Represent source `try` expressions in the MIR source expression model without erasing operand identity.
@@ -797,9 +865,27 @@ Execution constraints:
         - [x] Lower storage-backed enum locals through terminal `if` branches.
         - [x] Lower storage-backed enum locals through switch arms.
       - [x] Lower enum-valued field and member reads and writes on storage-backed object places.
-    - [ ] Lower enum-valued function returns through owner-aware enum return carriers (the single-function entry currently rejects `return Pick.First`; a prior instrumented build accepted the shape while emitting an invalid `unknown`-typed module — evidence retracted, see the 2026-07-04 ledger entry; `selfhost/probe/EnumReturnProbe.stark` pins the shapes and must validate the emitted module when this lands).
+    - [x] Lower enum-valued function returns through owner-aware enum return carriers.
+      - [x] Render enum-valued MIR return types from owner layout facts instead of `unknown`.
+      - [x] Lower direct enum-constructor terminal returns through the single-function entry.
+      - [x] Lower storage-backed enum local terminal returns through the single-function entry.
+      - [x] Lower enum-valued terminal `if` and `switch` returns through the same owner validation path.
+        - [x] Lower enum-valued terminal `if` returns through the owner validation path.
+        - [x] Lower enum-valued integer terminal `switch` returns through the owner validation path.
+        - [x] Lower enum-valued boolean and enum-case terminal `switch` returns through the owner validation path.
   - [~] Lower dynamic storage.
     - [x] Lower arena-backed HIR dynamic storage init and reserve operations to MIR.
+    - [x] Lower arena-backed dynamic reserve statements inside switch storage arms.
+    - [x] Emit arena frame leaves for switch paths that allocate arena dynamic storage.
+    - [x] Lower arena-backed dynamic locals before terminal `if` returns.
+    - [x] Lower arena-backed dynamic locals before terminal integer switch returns.
+    - [x] Lower arena-backed dynamic locals before terminal boolean switch returns.
+    - [x] Lower arena-backed dynamic locals before terminal enum-case switch returns.
+    - [x] Lower arena-backed dynamic locals before enum-valued terminal `if` returns.
+    - [x] Lower arena-backed dynamic locals before enum-valued terminal integer switch returns.
+    - [x] Lower arena-backed dynamic locals before enum-valued terminal boolean switch returns.
+    - [x] Lower arena-backed dynamic locals before enum-valued terminal enum-case switch returns.
+    - [x] Emit arena frame leaves for terminal switch return arms that allocate arena dynamic storage.
   - [~] Lower all storage selectors.
     - [x] Lower fixed-size HIR arena allocations to MIR arena allocation instructions.
     - [x] Lower fixed-size source stack allocations to MIR stack allocation instructions.

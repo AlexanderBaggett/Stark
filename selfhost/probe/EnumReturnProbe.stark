@@ -4,17 +4,35 @@ import System.Text
 module Compiler.Probe.EnumReturn
 
 // The enum-return slice's target shapes (TASKS.md §1, enum payload
-// lowering). Enum-valued RETURNS are unimplemented: the single-function
-// entry rejects them, and a 2026-07-03 instrumented build that "accepted"
-// them emitted an invalid `unknown`-typed module (evidence retracted —
-// TestPassLedger 2026-07-04). Construction into locals works (control
-// below). When the slice lands: flip expectOk to true AND validate the
-// emitted module text, not just the accept boolean.
+// lowering). Enum-valued returns must compile and avoid the former invalid
+// `unknown` LLVM return type. Construction into locals remains the control
+// below.
 fn u8[0 1] Check(ascii name, ascii source, bool expectOk)
 {
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileFunctionWithLocalsToLlvm(source, sink);
-    if (ok == expectOk)
+    if (ok == expectOk && (!ok || !System.Text.Contains(sink.View(), "unknown")))
+    {
+        Write("ok   ");
+        WriteLine(name);
+        return 0;
+    }
+
+    Write("FAIL ");
+    WriteLine(name);
+    if (sink.Length() > 0)
+    {
+        WriteLine(sink.View());
+    }
+
+    return 1;
+}
+
+fn u8[0 1] CheckModule(ascii name, ascii source, bool expectOk)
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(source, sink);
+    if (ok == expectOk && (!ok || !System.Text.Contains(sink.View(), "unknown")))
     {
         Write("ok   ");
         WriteLine(name);
@@ -38,12 +56,32 @@ export fn i32[min max] main()
     failures += (i32[min max])Check(
         "enum-return-only",
         "enum Pick { First, Second } fn Pick main() { return Pick.First }",
-        false);
+        true);
 
     failures += (i32[min max])Check(
         "enum-local-then-return",
         "enum Pick { First, Second } fn Pick main() { stack Pick pick = Pick.Second; return pick }",
-        false);
+        true);
+
+    failures += (i32[min max])Check(
+        "enum-terminal-if-return",
+        "enum Pick { First, Second } fn Pick main(bool flag) { if flag return Pick.First else return Pick.Second }",
+        true);
+
+    failures += (i32[min max])CheckModule(
+        "enum-terminal-switch-return",
+        "enum Pick { First, Second } fn Pick choose(i64[min max] selector) { switch (selector) { case 0: return Pick.First; default: return Pick.Second; } } fn i64 main() { return 0 }",
+        true);
+
+    failures += (i32[min max])CheckModule(
+        "enum-terminal-boolean-switch-return",
+        "enum Pick { First, Second } fn Pick choose(bool flag) { switch (flag) { case true: return Pick.First; default: return Pick.Second; } } fn i64 main() { return 0 }",
+        true);
+
+    failures += (i32[min max])CheckModule(
+        "enum-terminal-enum-case-switch-return",
+        "enum Tag { Left, Right } enum Pick { First, Second } fn Pick choose(Tag tag) { switch (tag) { case Tag.Left: return Pick.First; default: return Pick.Second; } } fn i64 main() { return 0 }",
+        true);
 
     // Constructing into a local WORKS (the bundle tables flow); only the
     // enum-valued return rejects. Keep this green control so a table-level

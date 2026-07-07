@@ -890,6 +890,43 @@ public fn MemoryStatus EmitLlvmEnumStorageType(
     return MemoryStatus.Ok;
 }
 
+// Resolves the enum owner type carried by a value-producing enum instruction:
+// `EnumVariantTag` (owner in A), `EnumPayloadInsert` (owner in C), and
+// `LoadEnumPtr` (owner in B). Non-enum producers return false, so callers
+// validate an enum-typed value's owner before emitting owner-shaped storage.
+public fn bool TryGetMirEnumValueOwnerType(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] valueIndex,
+    out TypeId ownerType)
+{
+    ownerType = TypeIdOf(0);
+    if (!instrs.Contains(valueIndex))
+    {
+        return false;
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    if (instr.Opcode() == MirOp.EnumVariantTag)
+    {
+        ownerType = TypeIdOf(instr.OperandAIndex());
+        return ownerType.Index() != 0;
+    }
+
+    if (instr.Opcode() == MirOp.EnumPayloadInsert)
+    {
+        ownerType = TypeIdOf(instr.OperandCIndex());
+        return ownerType.Index() != 0;
+    }
+
+    if (instr.Opcode() == MirOp.LoadEnumPtr)
+    {
+        ownerType = TypeIdOf(instr.OperandBIndex());
+        return ownerType.Index() != 0;
+    }
+
+    return false;
+}
+
 public fn bool TryGetMirEnumVariantFact(
     borrow IrTable<MirEnumLayoutFact> facts,
     TypeId ownerType,

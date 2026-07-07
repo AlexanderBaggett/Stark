@@ -53,7 +53,6 @@ import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSwitchLowering
 import Compiler.Mir.SourceSymbols
 import Compiler.Mir.TestSupport
-import System.Console
 import Compiler.Typing.TypedEnumLayoutModel
 import System.Memory
 import System.Text
@@ -575,11 +574,10 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     body))
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
-                    stack mut SourceModuleLoweringFacts noModuleFacts = new();
                     if (!LowerModuleLocalIfReturnFunctionToBlocks(
                         stream,
                         source,
-                        noModuleFacts,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
@@ -795,12 +793,13 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     return false;
                 }
             }
-            else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, f))
+            else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
                 if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
                     stream,
                     source,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -817,11 +816,10 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             else if (FunctionBodyHasLocalPrefixedTerminalIf(stream, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
-                stack mut SourceModuleLoweringFacts noModuleFacts = new();
                 if (!LowerModuleLocalIfReturnFunctionToBlocks(
                     stream,
                     source,
-                    noModuleFacts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -840,11 +838,10 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             else if (FunctionBodyStartsWithIfStatement(stream, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
-                stack mut SourceModuleLoweringFacts noModuleFacts = new();
                 if (!LowerModuleLocalIfReturnFunctionToBlocks(
                     stream,
                     source,
-                    noModuleFacts,
+                    moduleFacts,
                     funcNames,
                     funcParamCounts,
                     functionCallContractFacts,
@@ -2980,6 +2977,57 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
         stack MirBlockId entry = MirTailCallBlock(blocks, tailValue);
         result.Ok = true;
         result.EntryBlock = entry.Index();
+        result.ParamCount = (u32[0 max])signatureParamCount;
+        return result;
+    }
+
+    if (rootType == ExprType.EnumType)
+    {
+        // Enum-valued terminal return: the declared return type must resolve
+        // to an enum owner, and the lowered value's carried owner must match
+        // it before the return block is emitted — the emitter renders the
+        // define/ret type from that owner's layout fact.
+        stack mut u32[0 max] returnOwnerDeclarationIndex = 0;
+        stack mut Compiler.Parsing.DeclItem returnEnumItem = new();
+        if (!TryGetSourceEnumOwnerDeclarationForToken(
+            stream,
+            source,
+            moduleFacts,
+            signature.ReturnTypeTokenAt(),
+            returnOwnerDeclarationIndex,
+            returnEnumItem))
+        {
+            return result;
+        }
+
+        stack MirValueId enumReturnValue = LowerExprNodeWithCallContext(
+            nodes,
+            returnRoot.NodeId,
+            instrs,
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+        stack mut TypeId returnOwnerType = TypeIdOf(0);
+        if (!TryGetMirEnumValueOwnerType(instrs, enumReturnValue.Index(), returnOwnerType))
+        {
+            return result;
+        }
+
+        stack TypeId declaredOwnerType = TypeIdOf(returnOwnerDeclarationIndex + 1);
+        if (!returnOwnerType.Equals(declaredOwnerType))
+        {
+            return result;
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId enumLeave = MirArenaFrameLeave(instrs);
+        }
+
+        stack MirBlockId enumEntry = MirReturnBlock(blocks, enumReturnValue);
+        result.Ok = true;
+        result.EntryBlock = enumEntry.Index();
         result.ParamCount = (u32[0 max])signatureParamCount;
         return result;
     }
@@ -5739,7 +5787,15 @@ internal fn bool LowerModuleLocalSourceSliceElementTryAssignmentFunctionToBlocks
     }
 
     stack SourceTryPropagationRoleFacts operandRoles = compatibility.OperandRoles();
-    if (operandRoles.OkPayloadCount() != 1 || operandRoles.OkPayloadTypeCode() != fieldAssignment.FieldTypeCode)
+    if (operandRoles.OkPayloadCount() != 1
+        || operandRoles.OkPayloadTypeCode() != fieldAssignment.FieldTypeCode
+        || !SourceTryOkPayloadSatisfiesDeclaredAssignmentRange(
+            stream,
+            source,
+            moduleFacts,
+            operandOwnerDeclarationIndex,
+            operandRoles,
+            fieldAssignment))
     {
         return false;
     }
@@ -6491,7 +6547,15 @@ internal fn bool LowerModuleSourceSliceElementTryAssignmentFunctionToBlocks(
     }
 
     stack SourceTryPropagationRoleFacts operandRoles = compatibility.OperandRoles();
-    if (operandRoles.OkPayloadCount() != 1 || operandRoles.OkPayloadTypeCode() != fieldAssignment.FieldTypeCode)
+    if (operandRoles.OkPayloadCount() != 1
+        || operandRoles.OkPayloadTypeCode() != fieldAssignment.FieldTypeCode
+        || !SourceTryOkPayloadSatisfiesDeclaredAssignmentRange(
+            stream,
+            source,
+            moduleFacts,
+            operandOwnerDeclarationIndex,
+            operandRoles,
+            fieldAssignment))
     {
         return false;
     }
@@ -6923,7 +6987,15 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
     }
 
     stack SourceTryPropagationRoleFacts operandRoles = compatibility.OperandRoles();
-    if (operandRoles.OkPayloadCount() != 1 || operandRoles.OkPayloadTypeCode() != fieldAssignment.FieldTypeCode)
+    if (operandRoles.OkPayloadCount() != 1
+        || operandRoles.OkPayloadTypeCode() != fieldAssignment.FieldTypeCode
+        || !SourceTryOkPayloadSatisfiesDeclaredAssignmentRange(
+            stream,
+            source,
+            moduleFacts,
+            operandOwnerDeclarationIndex,
+            operandRoles,
+            fieldAssignment))
     {
         return false;
     }
@@ -7582,6 +7654,7 @@ internal fn bool EmitModuleFunctionAst(
             sourceText,
             stream,
             source,
+            moduleFacts,
             funcNames,
             funcParamCounts,
             functionCallContractFacts,
@@ -7639,11 +7712,12 @@ internal fn bool EmitModuleFunctionAst(
             sink);
     }
 
-    if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, fnIndex))
+    if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, fnIndex))
     {
         return EmitModuleLocalTerminalIntegerSwitchFunction(
             stream,
             source,
+            moduleFacts,
             funcNames,
             funcParamCounts,
             functionCallContractFacts,
@@ -8587,12 +8661,13 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         return false;
                     }
                 }
-                else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, f))
+                else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, f))
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
                     if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
                         stream,
                         source,
+                        moduleFacts,
                         funcNames,
                         funcParamCounts,
                         functionCallContractFacts,
