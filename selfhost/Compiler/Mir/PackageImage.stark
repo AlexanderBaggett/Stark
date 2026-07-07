@@ -107,6 +107,16 @@ internal fn u32[0 max] PackageSectionEnumLayoutFacts()
     return FourCc(77, 69, 76, 70); // MELF
 }
 
+internal fn u32[0 max] PackageSectionTextPayloadBytes()
+{
+    return FourCc(77, 84, 80, 66); // MTPB
+}
+
+internal fn u32[0 max] PackageSectionTextConstants()
+{
+    return FourCc(77, 84, 88, 67); // MTXC
+}
+
 public enum PackageImageInspectionFormat
 {
     Text,
@@ -169,6 +179,8 @@ internal struct PackageImageSummary
     u32[0 max] GlobalCount;
     u32[0 max] AsmFunctionCount;
     u32[0 max] EnumLayoutFactCount;
+    u32[0 max] TextPayloadByteCount;
+    u32[0 max] TextConstantCount;
     u32[0 max] SectionCount;
     u32[0 max] StringCount;
     u32[0 max] TargetFeatureCount;
@@ -177,6 +189,7 @@ internal struct PackageImageSummary
     bool HasCDataModel;
     bool HasAggregateLayout;
     bool HasEnumLayoutFacts;
+    bool HasTextConstants;
 
     PackageImageSummary()
     {
@@ -208,6 +221,8 @@ internal struct PackageImageSummary
         self.GlobalCount = 0;
         self.AsmFunctionCount = 0;
         self.EnumLayoutFactCount = 0;
+        self.TextPayloadByteCount = 0;
+        self.TextConstantCount = 0;
         self.SectionCount = 0;
         self.StringCount = 0;
         self.TargetFeatureCount = 0;
@@ -216,6 +231,7 @@ internal struct PackageImageSummary
         self.HasCDataModel = false;
         self.HasAggregateLayout = false;
         self.HasEnumLayoutFacts = false;
+        self.HasTextConstants = false;
     }
 }
 
@@ -479,7 +495,13 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithE
     out bool hasAsm,
     out u32[0 max] enumLayoutOffset,
     out u32[0 max] enumLayoutFactCount,
-    out bool hasEnumLayoutFacts)
+    out bool hasEnumLayoutFacts,
+    out u32[0 max] textPayloadOffset,
+    out u32[0 max] textPayloadByteCount,
+    out bool hasTextPayloadBytes,
+    out u32[0 max] textConstantOffset,
+    out u32[0 max] textConstantCount,
+    out bool hasTextConstants)
 {
     instrOffset = 0;
     blockOffset = 0;
@@ -491,6 +513,12 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithE
     enumLayoutOffset = 0;
     enumLayoutFactCount = 0;
     hasEnumLayoutFacts = false;
+    textPayloadOffset = 0;
+    textPayloadByteCount = 0;
+    hasTextPayloadBytes = false;
+    textConstantOffset = 0;
+    textConstantCount = 0;
+    hasTextConstants = false;
 
     if (!CanReadImageBytes(buf, 1, 24))
     {
@@ -528,6 +556,8 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithE
     stack mut bool foundGlobal = false;
     stack mut bool foundAsm = false;
     stack mut bool foundEnumLayoutFacts = false;
+    stack mut bool foundTextPayloadBytes = false;
+    stack mut bool foundTextConstants = false;
     stack mut u64[0 max] previousSectionEnd = dataOffset;
     stack mut u32[0 max] index = 0;
     while willexit (index < sectionCount)
@@ -680,6 +710,59 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithE
             enumLayoutOffset = payloadOffset;
             enumLayoutFactCount = localEnumLayoutFactCount;
         }
+        else if (sectionId == PackageSectionTextPayloadBytes())
+        {
+            if (foundTextPayloadBytes || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack mut u64[0 max] localPayloadByteSectionLength = 0;
+            stack mut u32[0 max] localPayloadByteCount = 0;
+            if (!TryReadTextPayloadByteSectionSize(buf, payloadOffset, localPayloadByteSectionLength, localPayloadByteCount))
+            {
+                return PackageImageValidationStatus.TruncatedSection;
+            }
+
+            if (localPayloadByteSectionLength != length)
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            foundTextPayloadBytes = true;
+            textPayloadOffset = payloadOffset;
+            textPayloadByteCount = localPayloadByteCount;
+        }
+        else if (sectionId == PackageSectionTextConstants())
+        {
+            if (foundTextConstants || flags != SectionFlagsRequired() || encoding != SectionEncodingRaw())
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            stack u32[0 max] payloadOffset = (u32[0 max])(offset + 1);
+            stack mut u32[0 max] localTextConstantCount = 0;
+            stack mut u64[0 max] localTextConstantByteCount = 0;
+            if (!TryReadFixedRecordSectionSize(
+                buf,
+                payloadOffset,
+                MirTextConstantRecordSize(),
+                localTextConstantCount,
+                localTextConstantByteCount))
+            {
+                return PackageImageValidationStatus.TruncatedSection;
+            }
+
+            if (localTextConstantByteCount != length)
+            {
+                return PackageImageValidationStatus.MalformedSectionDirectory;
+            }
+
+            foundTextConstants = true;
+            textConstantOffset = payloadOffset;
+            textConstantCount = localTextConstantCount;
+        }
         else if (flags == SectionFlagsRequired())
         {
             return PackageImageValidationStatus.UnsupportedFormat;
@@ -693,8 +776,15 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectoryWithE
         return PackageImageValidationStatus.MalformedSectionDirectory;
     }
 
+    if (foundTextPayloadBytes != foundTextConstants)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
     hasAsm = foundAsm;
     hasEnumLayoutFacts = foundEnumLayoutFacts;
+    hasTextPayloadBytes = foundTextPayloadBytes;
+    hasTextConstants = foundTextConstants;
     return PackageImageValidationStatus.Ok;
 }
 
@@ -711,6 +801,12 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectory(
     stack mut u32[0 max] enumLayoutOffset = 0;
     stack mut u32[0 max] enumLayoutFactCount = 0;
     stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
     return ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
         buf,
         instrOffset,
@@ -722,7 +818,13 @@ internal fn PackageImageValidationStatus ReadSectionedPackageImageDirectory(
         hasAsm,
         enumLayoutOffset,
         enumLayoutFactCount,
-        hasEnumLayoutFacts);
+        hasEnumLayoutFacts,
+        textPayloadOffset,
+        textPayloadByteCount,
+        hasTextPayloadBytes,
+        textConstantOffset,
+        textConstantCount,
+        hasTextConstants);
 }
 
 internal fn PackageImageValidationStatus ReadLogicalPackageImageDirectory(
@@ -1883,6 +1985,12 @@ internal fn bool TryReadPackageImageSummary(borrow IrTable<u8[0 max]> buf, out P
         stack mut u32[0 max] enumLayoutOffset = 0;
         stack mut u32[0 max] enumLayoutFactCount = 0;
         stack mut bool hasEnumLayoutFacts = false;
+        stack mut u32[0 max] textPayloadOffset = 0;
+        stack mut u32[0 max] textPayloadByteCount = 0;
+        stack mut bool hasTextPayloadBytes = false;
+        stack mut u32[0 max] textConstantOffset = 0;
+        stack mut u32[0 max] textConstantCount = 0;
+        stack mut bool hasTextConstants = false;
         stack PackageImageValidationStatus mirStatus = ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
             buf,
             instrOffset,
@@ -1894,7 +2002,13 @@ internal fn bool TryReadPackageImageSummary(borrow IrTable<u8[0 max]> buf, out P
             hasAsm,
             enumLayoutOffset,
             enumLayoutFactCount,
-            hasEnumLayoutFacts);
+            hasEnumLayoutFacts,
+            textPayloadOffset,
+            textPayloadByteCount,
+            hasTextPayloadBytes,
+            textConstantOffset,
+            textConstantCount,
+            hasTextConstants);
         if (mirStatus != PackageImageValidationStatus.Ok)
         {
             return TryReadLogicalPackageImageSummary(buf, summary);
@@ -1910,6 +2024,9 @@ internal fn bool TryReadPackageImageSummary(borrow IrTable<u8[0 max]> buf, out P
             asmFunctionCount);
         summary.HasEnumLayoutFacts = hasEnumLayoutFacts;
         summary.EnumLayoutFactCount = enumLayoutFactCount;
+        summary.HasTextConstants = hasTextConstants;
+        summary.TextPayloadByteCount = textPayloadByteCount;
+        summary.TextConstantCount = textConstantCount;
         return true;
     }
 
@@ -2301,6 +2418,15 @@ internal fn MemoryStatus AppendPackageImageSummaryText(PackageImageSummary summa
         try sink.AppendConstAscii(" enum layout facts");
     }
 
+    if (summary.HasTextConstants)
+    {
+        try sink.AppendConstAscii(", ");
+        try sink.AppendU64((u64[0 max])summary.TextPayloadByteCount);
+        try sink.AppendConstAscii(" text payload bytes, ");
+        try sink.AppendU64((u64[0 max])summary.TextConstantCount);
+        try sink.AppendConstAscii(" text constants");
+    }
+
     try sink.AppendConstAscii("\n");
     return MemoryStatus.Ok;
 }
@@ -2448,6 +2574,14 @@ internal fn MemoryStatus AppendPackageImageSummaryJson(PackageImageSummary summa
     {
         try sink.AppendConstAscii(",\"enumLayoutFacts\":");
         try sink.AppendU64((u64[0 max])summary.EnumLayoutFactCount);
+    }
+
+    if (summary.HasTextConstants)
+    {
+        try sink.AppendConstAscii(",\"textPayloadBytes\":");
+        try sink.AppendU64((u64[0 max])summary.TextPayloadByteCount);
+        try sink.AppendConstAscii(",\"textConstants\":");
+        try sink.AppendU64((u64[0 max])summary.TextConstantCount);
     }
 
     try sink.AppendConstAscii("}\n");
@@ -2679,6 +2813,55 @@ public fn void SerializeSectionedPackageImage(
     AppendBytes(buf, globalBuf);
 }
 
+public fn void SerializeSectionedPackageImageWithTextConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<u8[0 max]> textPayloadBytes,
+    borrow IrTable<MirTextConstant> textConstants,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> textPayloadBuf = new();
+    SerializeTextPayloadBytes(textPayloadBytes, textPayloadBuf);
+    stack mut IrTable<u8[0 max]> textConstantBuf = new();
+    SerializeTextConstants(textConstants, textConstantBuf);
+
+    stack u32[0 max] sectionCount = 6;
+    stack u64[0 max] directoryLength = (u64[0 max])sectionCount * 32;
+    stack u64[0 max] instrOffset = 24 + directoryLength;
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] textPayloadOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] textConstantOffset = textPayloadOffset + (u64[0 max])textPayloadBuf.Count();
+
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, directoryLength);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionTextPayloadBytes(), SectionFlagsRequired(), textPayloadOffset, (u64[0 max])textPayloadBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionTextConstants(), SectionFlagsRequired(), textConstantOffset, (u64[0 max])textConstantBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, textPayloadBuf);
+    AppendBytes(buf, textConstantBuf);
+}
+
 public fn void SerializeSectionedPackageImageWithAsm(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<MirBlock> blocks,
@@ -2831,6 +3014,12 @@ public fn bool DeserializePackageImageEnumLayoutFacts(borrow IrTable<u8[0 max]> 
     stack mut u32[0 max] enumLayoutOffset = 0;
     stack mut u32[0 max] enumLayoutFactCount = 0;
     stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
     if (ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
         buf,
         instrOffset,
@@ -2842,13 +3031,140 @@ public fn bool DeserializePackageImageEnumLayoutFacts(borrow IrTable<u8[0 max]> 
         hasAsm,
         enumLayoutOffset,
         enumLayoutFactCount,
-        hasEnumLayoutFacts) != PackageImageValidationStatus.Ok
+        hasEnumLayoutFacts,
+        textPayloadOffset,
+        textPayloadByteCount,
+        hasTextPayloadBytes,
+        textConstantOffset,
+        textConstantCount,
+        hasTextConstants) != PackageImageValidationStatus.Ok
         || !hasEnumLayoutFacts)
     {
         return false;
     }
 
     return DeserializeEnumLayoutFactsAt(buf, enumLayoutOffset, outFacts);
+}
+
+public fn bool DeserializePackageImageTextConstants(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<u8[0 max]> outTextPayloadBytes,
+    mut borrow IrTable<MirTextConstant> outTextConstants)
+{
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    if (ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+        buf,
+        instrOffset,
+        blockOffset,
+        funcOffset,
+        globalOffset,
+        asmOffset,
+        asmFunctionCount,
+        hasAsm,
+        enumLayoutOffset,
+        enumLayoutFactCount,
+        hasEnumLayoutFacts,
+        textPayloadOffset,
+        textPayloadByteCount,
+        hasTextPayloadBytes,
+        textConstantOffset,
+        textConstantCount,
+        hasTextConstants) != PackageImageValidationStatus.Ok
+        || !hasTextPayloadBytes
+        || !hasTextConstants)
+    {
+        return false;
+    }
+
+    if (!DeserializeTextPayloadBytesAt(buf, textPayloadOffset, outTextPayloadBytes))
+    {
+        return false;
+    }
+
+    return DeserializeTextConstantsAt(buf, textConstantOffset, outTextPayloadBytes, outTextConstants);
+}
+
+public fn bool DeserializePackageImageWithTextConstants(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow IrTable<u8[0 max]> outTextPayloadBytes,
+    mut borrow IrTable<MirTextConstant> outTextConstants)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    if (!HasStarkPackageImageMagic(buf)
+        || ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+            buf,
+            instrOffset,
+            blockOffset,
+            funcOffset,
+            globalOffset,
+            asmOffset,
+            asmFunctionCount,
+            hasAsm,
+            enumLayoutOffset,
+            enumLayoutFactCount,
+            hasEnumLayoutFacts,
+            textPayloadOffset,
+            textPayloadByteCount,
+            hasTextPayloadBytes,
+            textConstantOffset,
+            textConstantCount,
+            hasTextConstants) != PackageImageValidationStatus.Ok
+        || hasAsm
+        || !hasTextPayloadBytes
+        || !hasTextConstants)
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    if (!DeserializeTextPayloadBytesAt(buf, textPayloadOffset, outTextPayloadBytes))
+    {
+        return false;
+    }
+
+    return DeserializeTextConstantsAt(buf, textConstantOffset, outTextPayloadBytes, outTextConstants);
 }
 
 // Reads a package image into the four out-tables. Returns false (touching nothing)

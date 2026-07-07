@@ -606,6 +606,15 @@ internal sealed class LlvmFunctionAttributeBuilder
 
     private static void AddOrStrengthenDereferenceableAttribute(List<string> attributes, BigInteger byteCount)
     {
+        // LLVM rejects `dereferenceable(0)` outright, and a zero extent carries
+        // no information: an unresolved instantiated-receiver layout must drop
+        // the hint rather than poison the module (seen as 460 invalid
+        // attributes in the selfhost.Ir dependency build, 2026-07-07).
+        if (byteCount <= BigInteger.Zero)
+        {
+            return;
+        }
+
         var replacement = $"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})";
         for (var index = 0; index < attributes.Count; index++)
         {

@@ -233,7 +233,7 @@ Execution constraints:
     - [x] Run focused lower-MIR checks for the copyability and thread-safety fact splits.
 ### Typing.stark
 - [~] Decompose the oversized self-host typing implementation into focused modules.
-  - [ ] Record the target `Compiler.Typing.*` module map from the stage0 C# counterpart files.
+  - [x] Record the target `Compiler.Typing.*` module map from the stage0 C# counterpart files.
   - [x] Keep `Compiler.Typing` as an API-compatible facade that re-exports the new typing submodules.
   - [x] Move coarse expression classification and non-boolean condition checks into an expression-classification module.
   - [x] Move typed function signature tables into a typed-signatures module.
@@ -455,8 +455,29 @@ Execution constraints:
     - [x] Lower integer and boolean literals to typed MIR constants with exact range facts.
     - [x] Validate literal fact rows before emitting MIR constants.
     - [x] Reject unsupported literal families before emitting partial MIR.
-    - [ ] Lower character and text literals through the MIR constant storage model.
-    - [ ] Lower floating-point literals once MIR has typed float constants.
+    - [x] Lower character and text literals through the MIR constant storage model.
+      - [x] Add MIR constant-storage rows for decoded ASCII and Unicode text literal payloads.
+      - [x] Add MIR value operations for building ASCII and Unicode text view descriptors from constant-storage rows.
+      - [x] Preserve text literal payload, byte length, code point length, and storage encoding facts through MIR value facts.
+      - [x] Emit LLVM private constant data and zero-copy text descriptors for MIR text literals.
+        - [x] Add deterministic LLVM symbol and private byte-array declaration emission for MIR text constant rows.
+        - [x] Add focused LLVM text constant data tests for byte escaping, UTF-8 payloads, and invalid span rejection.
+        - [x] Thread MIR text payload byte tables into LLVM module emission.
+        - [x] Emit each referenced MIR text constant row once before LLVM function bodies.
+        - [x] Replace `TextConstantValue` LLVM no-op lowering with zero-copy text view construction.
+        - [x] Preserve text byte length and code point length operands through descriptor lowering.
+      - [x] Parse character and string literal expression nodes with stable links to typed literal rows.
+      - [x] Lower character and text literal expression nodes through the MIR text descriptor operations.
+      - [x] Preserve MIR text literal constants through package codec and deterministic text rendering.
+      - [x] Add focused IR tests for ASCII strings, Unicode strings, character literals, and package round trips.
+        - [x] Add focused IR tests for ASCII string, Unicode string, and character literal MIR text constants.
+        - [x] Add focused IR tests for MIR text literal package round trips.
+    - [~] Lower floating-point literals once MIR has typed float constants.
+      - [x] Add f32/f64 MIR value-type plumbing across type codes, package codec, text rendering, LLVM type names, and struct ABI shape facts.
+      - [x] Add MIR float constant storage rows that preserve f32/f64 literal text or canonical bits without widening instruction rows.
+      - [x] Lower parsed f32/f64 literal expression nodes to MIR float constant values.
+      - [x] Emit LLVM f32/f64 float constants from MIR float constant rows with canonical hex literal spelling.
+      - [ ] Add focused IR tests for f32 and f64 literal return, call argument, and package round trips.
     - [x] Lower null pointer literals to typed pointer constants with nullability facts.
   - [~] Lower locals and parameters.
     - [x] Lower dense i64 parameters with translated backend facts.
@@ -720,10 +741,38 @@ Execution constraints:
       - [x] Lower integer range-pattern switch cases through MIR branch tests.
       - [~] Lower aggregate and list pattern switch cases through MIR branch tests.
         - [ ] Import typed switch pattern rows into the self-host MIR source-lowering facts.
-        - [ ] Represent lowerable switch labels for discard and whole-value capture patterns.
-        - [ ] Represent lowerable aggregate-pattern descriptors with owner type, optional enum variant, and field pattern rows.
-        - [ ] Represent lowerable list-pattern descriptors with element type, fixed length, and element pattern rows.
-        - [ ] Validate aggregate and list switch labels before emitting any MIR branch blocks.
+          - [ ] Port the self-host typed aggregate-pattern row model from the stage0 aggregate pattern typing records.
+          - [ ] Build typed aggregate-pattern rows during self-host typing for top-level switch labels.
+          - [ ] Build typed nested aggregate-pattern member rows during self-host typing.
+          - [ ] Build typed nested list-pattern element rows during self-host typing.
+          - [ ] Preserve pattern row owner type, enum variant, field ordinal, element ordinal, literal, range, capture, and nested-shape facts.
+          - [ ] Store typed switch pattern row tables in `SourceModuleLoweringFacts`.
+          - [ ] Validate that source switch labels match their typed pattern rows before MIR lowering.
+          - [ ] Replace ad hoc aggregate/list pattern token parsing in source MIR lowering with typed pattern row lookup.
+          - [ ] Add focused typing and MIR tests for imported top-level, nested aggregate, and nested list pattern rows.
+        - [x] Represent lowerable switch labels for discard and whole-value capture patterns.
+          - [x] Represent top-level discard labels for fixed-array list and struct aggregate switch lowering.
+          - [x] Represent whole-value capture labels for fixed-array list and struct aggregate switch lowering.
+            - [x] Add aggregate-valued source expression typing for fixed-array and struct local type codes.
+            - [x] Add aggregate-valued source expression lowering for direct fixed-array and struct parameter reads.
+            - [x] Carry whole-value capture local type rows without routing through scalar capture type conversion.
+            - [x] Lower fixed-array parameter whole-value capture overrides as direct aggregate parameter values (2026-07-07: terminal fixed-array parameter `case var capture` rows now lower to direct `MirParamTyped` aggregate overrides, carry capture-name fixed-array ABI descriptor and argument facts as aliases of the original parameter, and validate/lower calls in fixed-array switch guards and scalar-return arms through the call-context path; storage-backed whole captures still reject pending explicit copy/borrow semantics).
+            - [x] Lower by-value struct parameter whole-value capture overrides as direct aggregate parameter values (2026-07-07: terminal by-value struct parameter `case var capture` rows now recognize the field-count sentinel, lower to direct `MirParamTyped` aggregate overrides, forward those overrides through struct call-argument lowering, and keep storage-backed whole-struct captures rejected pending explicit copy/borrow semantics).
+            - [x] Define storage-backed whole-value capture copy or borrow semantics before lowering local and field-backed scrutinees.
+              - [x] Lower terminal fixed-array address-backed whole-value captures as by-value aggregate copies for fixed-array callees (2026-07-07: local or field-backed `case var captured` over a fixed-array scrutinee now records a fixed-array value-override descriptor, lowers the capture through one `MirLoadFixedArray` with field byte offsets preserved, and rejects slice conversion until an addressable capture-copy slot exists).
+              - [x] Define addressable copy storage for storage-backed fixed-array whole captures used as slices or indexed values.
+                - [x] Materialize address-backed fixed-array whole captures into a capture-owned stack copy for slice call arguments (2026-07-07: address-backed fixed-array whole captures now copy each element with typed loads and stores, point slice descriptors at the capture copy slot, and reuse the slot for slice calls and by-value fixed-array callees).
+                - [x] Thread whole-capture slice descriptors into captured indexed-expression parsing so `captured[index]` can lower through the copy slot (2026-07-07: fixed-array list switch parsers now build capture-aware local type, range fact, and slice descriptor tables before parsing captured guards and return arms, so storage-backed whole captures resolve indexed reads through the capture-owned copy slot).
+              - [x] Lower storage-backed struct whole-value captures as explicit by-value copies with preserved struct ABI facts (2026-07-07: local and field-backed `case var captured` over struct scrutinees now build struct-value ABI facts from the source type token, preserve field alignment for field-backed storage, emit a by-value `StructValueLoad`, and feed struct-value callees through exact type-token checked capture overrides).
+            - [x] Add focused IR facts for by-value fixed-array and struct whole-value capture labels (2026-07-07: selfhost IR facts now cover fixed-array and struct `case var captured` labels feeding by-value aggregate callees directly from `%p0`, with negative checks against byte-buffer materialization and scalarized calls).
+        - [x] Represent lowerable aggregate-pattern descriptors with owner type, optional enum variant, and field pattern rows.
+          - [x] Add compact aggregate-pattern descriptor rows with owner type, optional enum variant, and field row spans.
+          - [x] Store aggregate-pattern descriptor row ids for terminal and assignment struct aggregate labels.
+          - [x] Store aggregate-pattern descriptor row ids for enum aggregate labels.
+        - [x] Represent lowerable list-pattern descriptors with element type, fixed length, and element pattern rows.
+          - [x] Add compact list-pattern descriptor rows with element type, fixed length, and element row spans.
+          - [x] Store list-pattern descriptor row ids for terminal and assignment fixed-array labels.
+        - [x] Validate aggregate and list switch labels before emitting any MIR branch blocks.
         - [x] Lower no-capture enum aggregate patterns to tag branch tests with preserved enum layout facts.
           - [x] Lower tuple enum aggregate labels with all-discard payloads to tag branch tests.
           - [x] Lower named enum aggregate labels with all-discard payloads to tag branch tests.
@@ -745,7 +794,16 @@ Execution constraints:
             - [x] Import declared field range facts for direct struct-parameter field extracts.
             - [x] Route terminal and assignment struct aggregate switch labels over by-value parameters through direct field extracts.
           - [x] Lower struct aggregate labels over field-backed struct scrutinees.
+          - [x] Lower top-level discard struct aggregate labels through the zero-pattern branch path.
           - [ ] Lower struct aggregate labels with nested aggregate or list field subpatterns through shared pattern-decision block construction.
+            - [ ] Build a shared pattern-decision node model for scalar, discard, capture, aggregate, enum aggregate, and list subpatterns.
+            - [ ] Translate typed struct field-pattern rows into shared pattern-decision nodes.
+            - [ ] Lower nested struct-field aggregate patterns over by-value struct parameters.
+            - [ ] Lower nested struct-field aggregate patterns over storage-backed struct scrutinees.
+            - [ ] Lower nested struct-field list patterns over fixed-array fields.
+            - [ ] Preserve declared scalar range facts while testing nested field and element subpatterns.
+            - [ ] Preserve capture-local facts for values captured inside nested struct aggregate patterns.
+            - [ ] Add focused IR tests for nested struct, nested list-field, and capture-bearing struct aggregate labels.
           - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
             - [x] Lower terminal-return guarded no-capture struct aggregate labels after successful field tests.
             - [x] Lower non-terminal assignment guarded no-capture struct aggregate labels after successful field tests.
@@ -765,17 +823,35 @@ Execution constraints:
               - [x] Lower scalar-return terminal fixed-array field-backed list labels through typed member-path element branch tests.
               - [x] Lower enum-return terminal fixed-array field-backed list labels through typed member-path element branch tests.
               - [x] Lower non-terminal fixed-array field-backed list switch assignments through typed member-path element branch tests.
+          - [x] Lower top-level discard fixed-array list labels through the zero-pattern branch path.
         - [ ] Lower nested aggregate and list field patterns through shared pattern-decision block construction.
+          - [ ] Use the shared pattern-decision node model for enum payload subpatterns.
+          - [ ] Use the shared pattern-decision node model for fixed-array element subpatterns.
+          - [ ] Lower nested enum aggregate subpatterns inside enum payload fields.
+          - [ ] Lower nested aggregate subpatterns inside fixed-array list elements.
+          - [ ] Lower nested list subpatterns inside fixed-array list elements.
+          - [ ] Route nested pattern failures to the next sibling label without leaking captures.
+          - [ ] Add overlap validation for nested aggregate and list descriptors before emitting MIR.
+          - [ ] Add focused IR tests for nested enum-payload, list-element aggregate, and list-element list patterns.
         - [~] Lower switch capture bindings into section-local storage without aliasing unrelated locals.
           - [x] Lower tuple enum payload capture bindings for non-terminal assignment switch arms.
           - [x] Lower named enum payload capture bindings for non-terminal assignment switch arms.
           - [x] Keep enum payload capture locals scoped to their matched assignment arm.
           - [x] Extract captured enum payload values in the matched assignment arm block.
-          - [ ] Lower enum payload capture bindings for terminal return switch arms.
-          - [ ] Lower struct aggregate field capture bindings for terminal and assignment switch arms.
-          - [ ] Lower fixed-array list element capture bindings for terminal and assignment switch arms.
+          - [x] Lower enum payload capture bindings for terminal return switch arms.
+          - [~] Lower struct aggregate field capture bindings for terminal and assignment switch arms.
+            - [x] Parse tuple and property struct aggregate field captures into arm-local capture rows.
+            - [x] Lower terminal struct field captures through direct field extracts or typed aligned loads.
+            - [x] Lower assignment struct field captures through arm-local override values.
+            - [x] Preserve declared scalar field range facts on captured struct field values.
+            - [x] Add focused IR facts for storage-backed and by-value struct field capture switches.
+            - [x] Add a focused self-host probe for struct aggregate field capture lowering.
+            - [ ] Finish focused front-end verification for struct aggregate field capture lowering.
+          - [x] Lower fixed-array list element capture bindings for terminal and assignment switch arms.
+            - [x] Lower fixed-array list element capture bindings for terminal return switch arms.
+            - [x] Lower fixed-array list element capture bindings for non-terminal assignment switch arms.
         - [ ] Merge pattern capture facts across sibling labels before lowering section bodies.
-        - [~] Lower guarded aggregate and list switch labels after guard expression lowering can consume capture locals.
+        - [x] Lower guarded aggregate and list switch labels after guard expression lowering can consume capture locals.
           - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
           - [x] Lower guarded no-capture fixed-array parameter list labels after successful element tests.
           - [x] Lower guarded no-capture fixed-array storage-local and field-backed list labels after successful element tests.
@@ -785,8 +861,12 @@ Execution constraints:
             - [x] Lower scalar-return terminal guarded fixed-array field-backed list labels after successful element tests.
             - [x] Lower enum-return terminal guarded fixed-array field-backed list labels after successful element tests.
             - [x] Lower non-terminal assignment guarded fixed-array field-backed list labels after successful element tests.
-          - [ ] Lower guarded aggregate and list labels that use capture locals.
-        - [ ] Reject duplicate or overlapping aggregate and list switch labels before emitting partial MIR.
+          - [x] Lower guarded aggregate and list labels that use capture locals.
+        - [~] Reject duplicate or overlapping aggregate and list switch labels before emitting partial MIR.
+          - [x] Treat `when true` aggregate and list labels as unconditional for overlap validation.
+          - [ ] Reject overlapping nested aggregate and list labels after shared pattern-decision block construction lands.
+          - [x] Reject overlapping top-level discard labels against unconditional aggregate/list sibling labels.
+          - [x] Reject overlapping whole-value capture labels once those label forms are represented (2026-07-07: whole captures now reuse the zero-pattern overlap path, so unconditional fixed-array and struct `case var capture` labels reject both before and after sibling aggregate/list labels, with `when true` treated as unconditional).
     - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
   - [~] Lower `try`.
     - [x] Represent source `try` expressions in the MIR source expression model without erasing operand identity.

@@ -1048,7 +1048,13 @@ internal fn bool ExprNodeCanBeDiscardedIfOverwritten(borrow IrTable<ExprNode> no
     {
         case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
             return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return true;
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             return true;

@@ -410,6 +410,10 @@ public finite law ascii MirOpName(MirOp op)
             return "slice-param-length";
         case MirOp.SliceValue:
             return "slice-value";
+        case MirOp.TextConstantValue:
+            return "text-constant-value";
+        case MirOp.FloatConstantValue:
+            return "float-constant-value";
         case MirOp.FixedArrayParamElement:
             return "fixed-array-param-element";
         case MirOp.StructParamField:
@@ -418,6 +422,8 @@ public finite law ascii MirOpName(MirOp op)
             return "fixed-array-param-slot";
         case MirOp.FixedArrayLoad:
             return "fixed-array-load";
+        case MirOp.StructValueLoad:
+            return "struct-value-load";
         case MirOp.Add:
             return "add";
         case MirOp.Sub:
@@ -541,6 +547,10 @@ public finite law ascii MirTypeName(MirType type)
             return "i32";
         case MirType.I64:
             return "i64";
+        case MirType.F32:
+            return "f32";
+        case MirType.F64:
+            return "f64";
         case MirType.Ptr:
             return "ptr";
         case MirType.EnumValue:
@@ -709,6 +719,18 @@ public fn System.Memory.MemoryStatus AppendSsaValueFactsArtifact(
         try AppendI64Text(writer, row.IntegerRangeLower());
         try writer.AppendAscii("..");
         try AppendI64Text(writer, row.IntegerRangeUpperExclusive());
+        try writer.AppendAscii(" text-present=");
+        try AppendBoolText(writer, row.HasTextConstant());
+        try writer.AppendAscii(" text-row=");
+        try AppendU32Text(writer, row.TextConstantRowIndex());
+        try writer.AppendAscii(" text-start=");
+        try AppendU32Text(writer, row.TextConstantPayloadStart());
+        try writer.AppendAscii(" text-bytes=");
+        try AppendU32Text(writer, row.TextConstantPayloadByteLength());
+        try writer.AppendAscii(" text-codepoints=");
+        try AppendU32Text(writer, row.TextConstantCodePointLength());
+        try writer.AppendAscii(" text-encoding=");
+        try AppendU32Text(writer, row.TextConstantStorageEncodingCode());
         try writer.AppendAscii("\n");
         index += 1;
     }

@@ -818,9 +818,11 @@ public fn bool ProgramFunctionNamesUnique(ascii source)
 public enum ExprType
 {
     IntType,
+    FloatType,
     BoolType,
     EnumType,
     PtrType,
+    AggregateType,
     ErrorType,
 }
 

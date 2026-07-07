@@ -504,6 +504,12 @@ public struct ValueFacts
     i64[min max] RangeUpperExclusive;
     bool IsKnownNullValue;
     bool IsKnownNonNullValue;
+    bool HasTextLiteralConstant;
+    u32[0 max] TextConstantRow;
+    u32[0 max] TextPayloadStart;
+    u32[0 max] TextPayloadBytes;
+    u32[0 max] TextCodePoints;
+    u32[0 max] TextEncoding;
 
     ValueFacts()
     {
@@ -518,6 +524,12 @@ public struct ValueFacts
         self.RangeUpperExclusive = 0;
         self.IsKnownNullValue = false;
         self.IsKnownNonNullValue = false;
+        self.HasTextLiteralConstant = false;
+        self.TextConstantRow = 0;
+        self.TextPayloadStart = 0;
+        self.TextPayloadBytes = 0;
+        self.TextCodePoints = 0;
+        self.TextEncoding = 0;
     }
 
     public inline finite law bool HasAlignment(borrow ValueFacts self)
@@ -582,6 +594,36 @@ public struct ValueFacts
         return self.IsKnownNonNullValue;
     }
 
+    public inline finite law bool HasTextConstant(borrow ValueFacts self)
+    {
+        return self.HasTextLiteralConstant;
+    }
+
+    public inline finite law u32[0 max] TextConstantRowIndex(borrow ValueFacts self)
+    {
+        return self.TextConstantRow;
+    }
+
+    public inline finite law u32[0 max] TextConstantPayloadStart(borrow ValueFacts self)
+    {
+        return self.TextPayloadStart;
+    }
+
+    public inline finite law u32[0 max] TextConstantPayloadByteLength(borrow ValueFacts self)
+    {
+        return self.TextPayloadBytes;
+    }
+
+    public inline finite law u32[0 max] TextConstantCodePointLength(borrow ValueFacts self)
+    {
+        return self.TextCodePoints;
+    }
+
+    public inline finite law u32[0 max] TextConstantStorageEncodingCode(borrow ValueFacts self)
+    {
+        return self.TextEncoding;
+    }
+
     public fn void SetAlignment(mut borrow ValueFacts self, u32[0 max] bytes)
     {
         self.HasAlign = true;
@@ -621,6 +663,22 @@ public struct ValueFacts
     {
         self.IsKnownNullValue = false;
         self.IsKnownNonNullValue = true;
+    }
+
+    public fn void SetTextConstant(
+        mut borrow ValueFacts self,
+        u32[0 max] rowIndex,
+        u32[0 max] payloadStart,
+        u32[0 max] payloadByteLength,
+        u32[0 max] codePointLength,
+        u32[0 max] storageEncoding)
+    {
+        self.HasTextLiteralConstant = true;
+        self.TextConstantRow = rowIndex;
+        self.TextPayloadStart = payloadStart;
+        self.TextPayloadBytes = payloadByteLength;
+        self.TextCodePoints = codePointLength;
+        self.TextEncoding = storageEncoding;
     }
 
     // Carries each PRESENT fact of `src` onto `self`; an absent source fact leaves
@@ -666,6 +724,16 @@ public struct ValueFacts
         {
             self.IsKnownNullValue = false;
             self.IsKnownNonNullValue = true;
+        }
+
+        if (src.HasTextLiteralConstant)
+        {
+            self.HasTextLiteralConstant = true;
+            self.TextConstantRow = src.TextConstantRow;
+            self.TextPayloadStart = src.TextPayloadStart;
+            self.TextPayloadBytes = src.TextPayloadBytes;
+            self.TextCodePoints = src.TextCodePoints;
+            self.TextEncoding = src.TextEncoding;
         }
     }
 }
@@ -828,6 +896,7 @@ public enum IrFactCategory
     PackageCompatibility,
     DiagnosticSourceLocation,
     ValueNullability,
+    ValueTextConstant,
 }
 
 public enum IrFactAttachPoint
@@ -1014,7 +1083,7 @@ internal finite law IrFactCategoryDescriptor MakeIrFactDescriptor(
 
 public inline finite law u32[0 max] IrConcreteFactCategoryCount()
 {
-    return 17;
+    return 18;
 }
 
 public finite law IrFactCategory IrFactCategoryAt(u32[0 max] index)
@@ -1038,6 +1107,7 @@ public finite law IrFactCategory IrFactCategoryAt(u32[0 max] index)
         case 14: return IrFactCategory.PackageCompatibility;
         case 15: return IrFactCategory.DiagnosticSourceLocation;
         case 16: return IrFactCategory.ValueNullability;
+        case 17: return IrFactCategory.ValueTextConstant;
         default: return IrFactCategory.Unknown;
     }
 }
@@ -1119,6 +1189,16 @@ public finite law IrFactCategoryDescriptor DescribeIrFactCategory(IrFactCategory
                 IrFactPhaseOwner.Mir,
                 IrFactDurability.Recomputable,
                 IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.Recompute,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.ValueTextConstant:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.MirLowering,
                 IrFactConsumer.LlvmEmission,
                 IrFactValidationRule.Recompute,
                 IrFactLoweringPolicy.Preserve);
@@ -1428,6 +1508,8 @@ public finite law bool ValueFactsContainCategory(borrow ValueFacts facts, IrFact
             return facts.HasIntegerRange();
         case IrFactCategory.ValueNullability:
             return facts.HasNullability();
+        case IrFactCategory.ValueTextConstant:
+            return facts.HasTextConstant();
         case IrFactCategory.CallableAbi:
             return facts.HasCallingAbi();
         default:

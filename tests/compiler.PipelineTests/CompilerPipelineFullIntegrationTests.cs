@@ -202,6 +202,93 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void ImportedMethodChainInCallArgumentLowersWithoutFieldFallback()
+    {
+        // Regression: `lowered.EntryBlock().Index()` — a method call on an
+        // imported struct chained with a method on its (imported) result, in
+        // call-argument position — crashed lower-mir via the throwing
+        // LowerFieldAccess path ("Field 'EntryBlock' could not be resolved")
+        // instead of binding both steps as member calls. Unchained calls on
+        // the same types lower fine (seen blocking every tests-stark
+        // selfhost.Ir runtime gate, 2026-07-07).
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                import Lib
+                module Demo
+
+                fn i64[min max] Run()
+                {
+                    stack Holder holder = new Holder();
+                    stack Registry registry = new Registry();
+                    return registry.Get(holder.EntryBlock().Index());
+                }
+                """,
+                "/virtual/Demo.stark"),
+            new CompilerOptions(
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Lib", "/virtual/Lib.stark", IsExternal: false),
+                        """
+                        module Lib
+
+                        public struct BlockId
+                        {
+                            u32[0 max] IndexValue;
+
+                            BlockId()
+                            {
+                                self.IndexValue = 3;
+                            }
+
+                            public finite law u32[0 max] Index(borrow BlockId self)
+                            {
+                                return self.IndexValue;
+                            }
+                        }
+
+                        public struct Holder
+                        {
+                            u32[0 max] EntryValue;
+
+                            Holder()
+                            {
+                                self.EntryValue = 1;
+                            }
+
+                            public finite law BlockId EntryBlock(borrow Holder self)
+                            {
+                                stack BlockId id = new BlockId();
+                                return id;
+                            }
+                        }
+
+                        public struct Registry
+                        {
+                            i64[min max] Base;
+
+                            Registry()
+                            {
+                                self.Base = 40;
+                            }
+
+                            public finite law i64[min max] Get(borrow Registry self, u32[0 max] index)
+                            {
+                                return self.Base + (i64[min max])index;
+                            }
+                        }
+                        """,
+                        "/virtual/Lib.stark"
+                    )
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
     {
         var pipeline = DefaultCompilerPipeline.Create();

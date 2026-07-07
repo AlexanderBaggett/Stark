@@ -9052,7 +9052,10 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
-                current = LowerFieldAccess(current, fieldName);
+                // Speculative probe: an unresolvable member here is not a field
+                // at all (for example a method call mid-chain, `a.M().N()`), so
+                // bail to the general member-call path instead of throwing.
+                current = LowerFieldAccess(current, fieldName, requireResolved: false);
                 if (current is null)
                 {
                     return false;

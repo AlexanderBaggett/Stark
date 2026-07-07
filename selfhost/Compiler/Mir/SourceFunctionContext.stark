@@ -1414,6 +1414,10 @@ internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow
     {
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
             return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
+            return false;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             return ParamAbiFactsIsMemoryBacked(AbiFactAt(paramAbiFacts, node.Left + 1));
         case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
@@ -1671,6 +1675,11 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParam(
         return SourceLocalTypeCodePointer();
     }
 
+    if (facts.IsStructValue)
+    {
+        return SourceLocalTypeCodeForStructValueTypeToken(facts.StructValueTypeToken);
+    }
+
     return LocalTypeCodeForScalarTypeToken(stream, source, signature.ParamTypeTokenAt(paramIndex));
 }
 
@@ -1730,6 +1739,11 @@ internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
     if (facts.IsPointer)
     {
         return SourceLocalTypeCodePointer();
+    }
+
+    if (facts.IsStructValue)
+    {
+        return SourceLocalTypeCodeForStructValueTypeToken(facts.StructValueTypeToken);
     }
 
     stack mut u32[0 max] ownerDeclarationIndex = 0;
@@ -1982,6 +1996,7 @@ internal fn bool SeedSignatureParamOverridesForLowering(
 internal fn bool SliceDescriptorMatchesParamAbi(SourceSliceDescriptorLocal descriptor, ParamAbiFacts expected)
 {
     return expected.IsSlice
+        && !descriptor.IsFixedArrayValueOverride
         && descriptor.ElementType == expected.SliceElementType
         && descriptor.ElementSize == expected.SliceElementSize
         && descriptor.Alignment == expected.SliceElementAlignment
@@ -1991,13 +2006,22 @@ internal fn bool SliceDescriptorMatchesParamAbi(SourceSliceDescriptorLocal descr
 internal fn bool SliceDescriptorMatchesFixedArrayParamAbi(SourceSliceDescriptorLocal descriptor, ParamAbiFacts expected)
 {
     return expected.IsFixedArray
-        && descriptor.ParamIndex == descriptor.ReceiverParamIndex
+        && (descriptor.ParamIndex == descriptor.ReceiverParamIndex || descriptor.IsFixedArrayParam || descriptor.IsFixedArrayValueOverride)
         && descriptor.BaseByteOffset == 0
         && descriptor.SliceLength == expected.FixedArrayLength
         && descriptor.ElementType == expected.FixedArrayElementType
         && descriptor.ElementSize == expected.FixedArrayElementSize
         && descriptor.Alignment == expected.FixedArrayAlignment
         && descriptor.FieldTypeCode == expected.FixedArrayFieldTypeCode;
+}
+
+internal fn bool SourceLocalTypeCodeMatchesStructValueParamAbi(u32[0 max] localTypeCode, ParamAbiFacts expected)
+{
+    return expected.IsStructValue
+        && expected.StructValueTypeToken != 0
+        && expected.StructValueFieldCount != 0
+        && SourceLocalTypeCodeIsStructValue(localTypeCode)
+        && SourceLocalTypeCodeStructValueTypeToken(localTypeCode) == expected.StructValueTypeToken;
 }
 
 internal fn bool ValidateCallArgumentTypeWithSlices(
@@ -2053,7 +2077,25 @@ internal fn bool ValidateCallArgumentTypeWithSlices(
 
     if (expected.IsStructValue)
     {
-        return false;
+        if (!nodes.Contains(argNode))
+        {
+            return false;
+        }
+
+        stack ExprNode arg = nodes.Get(argNode);
+        if (arg.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr)
+        {
+            return false;
+        }
+
+        stack u32[0 max] localIndex = arg.Left + 1;
+        if (!localTypes.Contains(localIndex))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localTypeCode = localTypes.Get(localIndex);
+        return SourceLocalTypeCodeMatchesStructValueParamAbi(localTypeCode, expected);
     }
 
     return actual == ExprType.IntType;
@@ -2283,7 +2325,13 @@ internal fn bool ValidateModuleCallsForRootWithSlices(
     {
         case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
             return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return true;
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             return true;

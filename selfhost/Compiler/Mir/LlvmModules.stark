@@ -35,6 +35,28 @@ internal fn MemoryStatus EmitLlvmDefinitionNumbered(borrow IrTable<MirInstructio
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmDefinitionNumberedWithFloatConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<u8[0 max]> floatPayloadBytes,
+    const ascii prefix,
+    u32[0 max] number,
+    u32[0 max] entryBlockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define ");
+    try EmitLlvmTypeName(MirBlockScalarReturnType(instrs, blocks, entryBlockIndex), sink);
+    try sink.AppendConstAscii(" @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try sink.AppendConstAscii("() {\n");
+    try EmitLlvmLabeledBlockWithFloatConstants(instrs, floatPayloadBytes, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
 internal fn MemoryStatus EmitLlvmDefinitionNumberedWithEnumLayouts(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<MirBlock> blocks,
@@ -74,6 +96,25 @@ public fn MemoryStatus EmitLlvmModule(borrow IrTable<MirInstruction> instrs, bor
     return MemoryStatus.Ok;
 }
 
+public fn MemoryStatus EmitLlvmModuleWithFloatConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<u8[0 max]> floatPayloadBytes,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        try EmitLlvmDefinitionNumberedWithFloatConstants(instrs, blocks, floatPayloadBytes, "f", id, f.EntryIndex(), f.FirstInstrIndex(), f.OwnedInstrCount(), sink);
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
 public fn MemoryStatus EmitLlvmModuleWithEnumLayouts(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<MirBlock> blocks,
@@ -90,6 +131,126 @@ public fn MemoryStatus EmitLlvmModuleWithEnumLayouts(
         id = id + 1;
     }
 
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus InitializeLlvmTextConstantReferenceTable(
+    borrow IrTable<MirTextConstant> textConstants,
+    mut borrow IrTable<u8[0 max]> referenced)
+{
+    stack u64[0 2 ** 63 - 1] count = textConstants.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        if (referenced.Add(0) == 0)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus MarkLlvmTextConstantsInInstructionRange(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow IrTable<u8[0 max]> referenced)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.TextConstantValue)
+            {
+                stack u32[0 max] rowIndex = MirTextConstantValueRowIndex(instr);
+                if (!referenced.Contains(rowIndex) || !referenced.Replace(rowIndex, 1))
+                {
+                    return MemoryStatus.Err(MemoryError.InvalidLayout);
+                }
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus MarkLlvmTextConstantsInFunctions(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    mut borrow IrTable<u8[0 max]> referenced)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction func = funcs.Get(id);
+        try MarkLlvmTextConstantsInInstructionRange(instrs, func.FirstInstrIndex(), func.OwnedInstrCount(), referenced);
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmReferencedTextConstantDataDeclarations(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirTextConstant> textConstants,
+    borrow IrTable<u8[0 max]> textPayloadBytes,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u8[0 max]> referenced = new();
+    try InitializeLlvmTextConstantReferenceTable(textConstants, referenced);
+    try MarkLlvmTextConstantsInFunctions(instrs, funcs, referenced);
+
+    stack u64[0 2 ** 63 - 1] count = textConstants.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        if (referenced.Get(id) != 0)
+        {
+            stack MirTextConstant textConstant = textConstants.Get(id);
+            try EmitLlvmTextConstantDataDeclaration(textPayloadBytes, textConstant, id, sink);
+        }
+
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithTextConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirTextConstant> textConstants,
+    borrow IrTable<u8[0 max]> textPayloadBytes,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmReferencedTextConstantDataDeclarations(instrs, funcs, textConstants, textPayloadBytes, sink);
+    try EmitLlvmModule(instrs, blocks, funcs, sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithTextAndFloatConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirTextConstant> textConstants,
+    borrow IrTable<u8[0 max]> textPayloadBytes,
+    borrow IrTable<u8[0 max]> floatPayloadBytes,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmReferencedTextConstantDataDeclarations(instrs, funcs, textConstants, textPayloadBytes, sink);
+    try EmitLlvmModuleWithFloatConstants(instrs, blocks, funcs, floatPayloadBytes, sink);
     return MemoryStatus.Ok;
 }
 

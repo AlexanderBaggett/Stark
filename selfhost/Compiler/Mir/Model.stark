@@ -31,6 +31,14 @@ public enum MirOp
     // Constructs a concrete slice ABI value `{ ptr, i64 }` from base pointer A
     // and length B for calls that pass slices by value.
     SliceValue,
+    // Constructs a text-view descriptor from MIR text constant row A. B is the
+    // payload byte start, C is payload byte length, D is code point length, and
+    // Imm is the storage encoding code.
+    TextConstantValue,
+    // Constructs a typed f32/f64 value from MIR float constant row A. B is the
+    // payload byte start, C is payload byte length, D is the bit width, and Imm
+    // is the MIR value-type storage code.
+    FloatConstantValue,
     // Extracts constant element B from fixed-array parameter A. C is the array
     // length, and ResType is the element type.
     FixedArrayParamElement,
@@ -44,6 +52,9 @@ public enum MirOp
     // Loads a by-value fixed-array aggregate from pointer A. B is the array
     // length, C is load alignment, and D is the element type code.
     FixedArrayLoad,
+    // Loads a by-value struct aggregate from pointer A. B is load alignment,
+    // and the immediate packs field count plus compact LLVM aggregate shape.
+    StructValueLoad,
     Add,
     Sub,
     Mul,
@@ -172,8 +183,8 @@ public enum MirOp
     Return,
 }
 
-// A MIR value type. The integer subset is currently the only modeled family; values
-// default to `I64` so untyped builders emit `i64` exactly as before.
+// A MIR value type. Untyped builders still default to `I64` so legacy integer
+// slices emit `i64` exactly as before.
 public enum MirType
 {
     I1,
@@ -181,6 +192,8 @@ public enum MirType
     I16,
     I32,
     I64,
+    F32,
+    F64,
     Ptr,
     EnumValue,
 }
@@ -203,6 +216,10 @@ public inline finite law u32[0 max] MirTypeStorageCode(MirType type)
             return 6;
         case MirType.EnumValue:
             return 7;
+        case MirType.F32:
+            return 8;
+        case MirType.F64:
+            return 9;
     }
 }
 
@@ -222,8 +239,180 @@ public inline finite law MirType MirTypeFromStorageCode(u32[0 max] code)
             return MirType.Ptr;
         case 7:
             return MirType.EnumValue;
+        case 8:
+            return MirType.F32;
+        case 9:
+            return MirType.F64;
         default:
             return MirType.I64;
+    }
+}
+
+// Text constants live in a side table instead of widening `MirInstruction`. The
+// row stores a span into a dense byte payload table plus the semantic text facts
+// later LLVM lowering needs for zero-copy descriptors.
+public enum MirTextConstantStorageEncoding
+{
+    AsciiBytes,
+    Utf8Bytes,
+}
+
+public inline finite law u32[0 max] MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding encoding)
+{
+    switch (encoding)
+    {
+        case MirTextConstantStorageEncoding.AsciiBytes:
+            return 1;
+        case MirTextConstantStorageEncoding.Utf8Bytes:
+            return 2;
+    }
+}
+
+public inline finite law MirTextConstantStorageEncoding MirTextConstantStorageEncodingFromCode(u32[0 max] code)
+{
+    switch (code)
+    {
+        case 1:
+            return MirTextConstantStorageEncoding.AsciiBytes;
+        default:
+            return MirTextConstantStorageEncoding.Utf8Bytes;
+    }
+}
+
+public inline finite law bool MirTextConstantPayloadRangeIsValid(u32[0 max] payloadStart, u32[0 max] payloadByteLength, u32[0 max] payloadByteCount)
+{
+    if (payloadByteLength == 0)
+    {
+        return payloadStart == 0;
+    }
+
+    if (payloadStart == 0 || payloadStart > payloadByteCount)
+    {
+        return false;
+    }
+
+    return payloadByteLength <= payloadByteCount - payloadStart + 1;
+}
+
+public inline finite law bool MirTextConstantLengthFactsAreValid(MirTextConstantStorageEncoding encoding, u32[0 max] payloadByteLength, u32[0 max] codePointLength)
+{
+    if (codePointLength > payloadByteLength)
+    {
+        return false;
+    }
+
+    switch (encoding)
+    {
+        case MirTextConstantStorageEncoding.AsciiBytes:
+            return payloadByteLength == codePointLength;
+        case MirTextConstantStorageEncoding.Utf8Bytes:
+            return true;
+    }
+}
+
+public struct MirTextConstant
+{
+    u32[0 max] PayloadStart;
+    u32[0 max] PayloadBytes;
+    u32[0 max] CodePoints;
+    MirTextConstantStorageEncoding Encoding;
+
+    MirTextConstant()
+    {
+        self.PayloadStart = 0;
+        self.PayloadBytes = 0;
+        self.CodePoints = 0;
+        self.Encoding = MirTextConstantStorageEncoding.AsciiBytes;
+    }
+
+    public inline finite law u32[0 max] PayloadStartIndex(borrow MirTextConstant self)
+    {
+        return self.PayloadStart;
+    }
+
+    public inline finite law u32[0 max] PayloadByteLength(borrow MirTextConstant self)
+    {
+        return self.PayloadBytes;
+    }
+
+    public inline finite law u32[0 max] PayloadCodePointLength(borrow MirTextConstant self)
+    {
+        return self.CodePoints;
+    }
+
+    public inline finite law MirTextConstantStorageEncoding StorageEncoding(borrow MirTextConstant self)
+    {
+        return self.Encoding;
+    }
+}
+
+// Floating-point constants live in a side table instead of widening
+// `MirInstruction`. The row stores the exact literal byte span and result type;
+// later lowering can canonicalize those bytes for LLVM without losing spelling.
+public inline finite law bool MirFloatConstantTypeIsSupported(MirType type)
+{
+    return type == MirType.F32 || type == MirType.F64;
+}
+
+public inline finite law u32[0 max] MirFloatConstantBitWidth(MirType type)
+{
+    switch (type)
+    {
+        case MirType.F32:
+            return 32;
+        case MirType.F64:
+            return 64;
+        default:
+            return 0;
+    }
+}
+
+public inline finite law bool MirFloatConstantLiteralRangeIsValid(u32[0 max] payloadStart, u32[0 max] payloadByteLength, u32[0 max] payloadByteCount)
+{
+    if (payloadByteLength == 0)
+    {
+        return false;
+    }
+
+    if (payloadStart == 0 || payloadStart > payloadByteCount)
+    {
+        return false;
+    }
+
+    return payloadByteLength <= payloadByteCount - payloadStart + 1;
+}
+
+public struct MirFloatConstant
+{
+    u32[0 max] PayloadStart;
+    u32[0 max] PayloadBytes;
+    MirType Type;
+
+    MirFloatConstant()
+    {
+        self.PayloadStart = 0;
+        self.PayloadBytes = 0;
+        self.Type = MirType.F64;
+    }
+
+    public inline finite law u32[0 max] PayloadStartIndex(borrow MirFloatConstant self)
+    {
+        return self.PayloadStart;
+    }
+
+    public inline finite law u32[0 max] PayloadByteLength(borrow MirFloatConstant self)
+    {
+        return self.PayloadBytes;
+    }
+
+    public inline finite law MirType ValueType(borrow MirFloatConstant self)
+    {
+        return self.Type;
+    }
+
+    public inline finite law u32[0 max] BitWidth(borrow MirFloatConstant self)
+    {
+        return MirFloatConstantBitWidth(self.Type);
     }
 }
 
@@ -302,6 +491,66 @@ public inline finite law u32[0 max] MirStructParamFieldFieldCount(MirInstruction
 public inline finite law u32[0 max] MirStructParamFieldShapeCode(MirInstruction instr)
 {
     return (u32[0 max])(instr.Immediate() / 16);
+}
+
+public inline finite law u32[0 max] MirStructValueLoadFieldCount(MirInstruction instr)
+{
+    return MirStructParamFieldFieldCount(instr);
+}
+
+public inline finite law u32[0 max] MirStructValueLoadShapeCode(MirInstruction instr)
+{
+    return MirStructParamFieldShapeCode(instr);
+}
+
+public inline finite law u32[0 max] MirTextConstantValueRowIndex(MirInstruction instr)
+{
+    return instr.OperandAIndex();
+}
+
+public inline finite law u32[0 max] MirTextConstantValuePayloadStart(MirInstruction instr)
+{
+    return instr.OperandBIndex();
+}
+
+public inline finite law u32[0 max] MirTextConstantValuePayloadByteLength(MirInstruction instr)
+{
+    return instr.OperandCIndex();
+}
+
+public inline finite law u32[0 max] MirTextConstantValueCodePointLength(MirInstruction instr)
+{
+    return instr.OperandDIndex();
+}
+
+public inline finite law MirTextConstantStorageEncoding MirTextConstantValueStorageEncoding(MirInstruction instr)
+{
+    return MirTextConstantStorageEncodingFromCode((u32[0 max])instr.Immediate());
+}
+
+public inline finite law u32[0 max] MirFloatConstantValueRowIndex(MirInstruction instr)
+{
+    return instr.OperandAIndex();
+}
+
+public inline finite law u32[0 max] MirFloatConstantValuePayloadStart(MirInstruction instr)
+{
+    return instr.OperandBIndex();
+}
+
+public inline finite law u32[0 max] MirFloatConstantValuePayloadByteLength(MirInstruction instr)
+{
+    return instr.OperandCIndex();
+}
+
+public inline finite law u32[0 max] MirFloatConstantValueBitWidth(MirInstruction instr)
+{
+    return instr.OperandDIndex();
+}
+
+public inline finite law MirType MirFloatConstantValueType(MirInstruction instr)
+{
+    return MirTypeFromStorageCode((u32[0 max])instr.Immediate());
 }
 
 public inline finite law bool MirOpIsDirectCall(MirOp op)

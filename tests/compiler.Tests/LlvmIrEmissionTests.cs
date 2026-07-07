@@ -396,6 +396,187 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void AggregateAccessorScanLoopDoesNotFoldToMissedMatch()
+    {
+        // Mirror of the selfhost owner-scan shape: a column-backed table, a
+        // by-value accessor copying guarded dynamic reads into a loop-local
+        // aggregate, and a field-compare scan with an early return. The
+        // matching row exists, so a correct pipeline either keeps the loop or
+        // folds Run to `ret i64 1`; folding to `ret i64 0` (scan never
+        // matches) is the wrong-code this pins — observed as the selfhost
+        // enum-owner lookup failing unless IO calls sat in the loop body.
+        var result = Compile(
+            """
+            module Demo
+
+            struct Item
+            {
+                u8[0 max] Kind;
+                u32[0 max] Name;
+                u64[0 max] Start;
+                u64[0 max] End;
+                u64[0 max] Extra;
+
+                Item()
+                {
+                    self.Kind = 0;
+                    self.Name = 0;
+                    self.Start = 0;
+                    self.End = 0;
+                    self.Extra = 0;
+                }
+            }
+
+            struct Table
+            {
+                dynamic u8[0 max] Kinds;
+                dynamic u32[0 max] Names;
+
+                Table()
+                {
+                    self.Kinds = new();
+                    self.Names = new();
+                }
+
+                fn bool Push(mut borrow Table self, u8[0 max] kind, u32[0 max] name)
+                {
+                    if (!self.Kinds.TryReserve(1) || !self.Names.TryReserve(1))
+                    {
+                        return false;
+                    }
+
+                    init self.Kinds[self.Kinds.Length] = kind;
+                    init self.Names[self.Names.Length] = name;
+                    return true;
+                }
+
+                finite law u64[0 2 ** 63 - 1] Count(borrow Table self)
+                {
+                    return self.Kinds.Length;
+                }
+
+                finite law Item ItemAt(borrow Table self, u64[0 2 ** 63 - 1] index)
+                {
+                    stack mut Item item = new();
+                    if (index >= self.Kinds.Length)
+                    {
+                        return item;
+                    }
+
+                    if (index >= self.Names.Length)
+                    {
+                        return item;
+                    }
+
+                    item.Kind = self.Kinds[index];
+                    item.Name = self.Names[index];
+                    return item;
+                }
+            }
+
+            finite bool Scan(borrow u8[0 max][] tags, borrow Table table, u32[0 max] want, out u32[0 max] foundIndex, out Item found)
+            {
+                foundIndex = 0;
+                found = new();
+                stack u64[0 2 ** 63 - 1] count = table.Count();
+                stack mut u64[0 2 ** 63 - 1] index = 0;
+                while willexit (index < count)
+                {
+                    stack Item item = table.ItemAt(index);
+                    if (item.Kind == 1 && item.Name == want)
+                    {
+                        foundIndex = (u32[0 max])index;
+                        found = item;
+                        return true;
+                    }
+
+                    index = index + 1;
+                }
+
+                return false;
+            }
+
+            fn i64[min max] Run()
+            {
+                stack mut Table table = new Table();
+                if (!table.Push(2, 7) || !table.Push(1, 9))
+                {
+                    return -1;
+                }
+
+                stack u8[0 max][2] tags = { 1, 2 };
+                stack mut u32[0 max] foundIndex = 0;
+                stack mut Item found = new();
+                if (!Scan(tags, table, 9, foundIndex, found))
+                {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        // The producing sret call must be allowed to write its own result
+        // slot: the fresh scope claimed by the slot reload's !alias.scope may
+        // not appear in the call's !noalias set, or LLVM proves the reload
+        // independent of the call and forwards stale pre-call bytes.
+        var scanBody = ExtractDefinitionBody(llvm, "Scan");
+        var sretCall = Regex.Match(scanBody, @"call .*sret\(%Item\).*!noalias !(\d+)");
+        Assert.True(sretCall.Success, "expected a scoped sret call to ItemAt inside Scan");
+        var callNoAliasId = sretCall.Groups[1].Value;
+        var freshScopeNode = Regex.Match(llvm, @"!(\d+) = distinct !\{![0-9]+, ![0-9]+, !""[^""]*\.fresh\.[^""]*""\}");
+        Assert.True(freshScopeNode.Success, "expected a fresh-result noalias scope node");
+        var freshId = freshScopeNode.Groups[1].Value;
+        var callNoAliasList = Regex.Match(llvm, $@"^!{callNoAliasId} = !\{{([^}}]*)\}}", RegexOptions.Multiline);
+        Assert.True(callNoAliasList.Success, "expected the call's noalias metadata list");
+        Assert.DoesNotContain($"!{freshId}", callNoAliasList.Groups[1].Value.Split(',').Select(static part => part.Trim()));
+    }
+
+    [Fact]
+    public void ZeroSizedBorrowReceiverOmitsDereferenceableAttribute()
+    {
+        // LLVM rejects `dereferenceable(0)` at module parse. A zero-sized
+        // move-only marker struct (empty body + empty drop) is the legal
+        // source shape that produces a zero-extent borrow receiver; the
+        // attribute must be omitted, never rendered with a zero byte count.
+        // (Regression: the selfhost.Ir dependency build emitted 460
+        // dereferenceable(0) receiver attributes on monomorphized generic
+        // receivers whose instantiated layout resolved to size zero,
+        // 2026-07-07.)
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token
+            {
+                drop
+                {
+                }
+            }
+
+            fn i64[min max] Observe(borrow Token token)
+            {
+                return 5;
+            }
+
+            fn i64[min max] Run()
+            {
+                stack Token token = new Token();
+                return Observe(token);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        Assert.DoesNotContain("dereferenceable(0)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ReadCapturingClosureIndirectCallEmitsReadProvenanceCapture()
     {
         var result = Compile(
@@ -15019,7 +15200,10 @@ public sealed class LlvmIrEmissionTests
                 {
                     i32[min max] Value;
 
-                    unsafe fn void Reset(borrow mut Counter self)
+                    // noinline keeps the imported call a real call under the
+                    // always-on optimizing pipeline, so the consumer emits the
+                    // declare this test inspects instead of folding the body.
+                    unsafe noinline fn void Reset(borrow mut Counter self)
                     {
                         self.Value = 0;
                         return;
@@ -15043,14 +15227,14 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    unsafe fn void Run()
+                    unsafe fn i32[min max] Run()
                     {
                         stack mut Facade.Counter counter = new Facade.Counter()
                         {
                             Value = 1
                         };
                         counter.Reset();
-                        return;
+                        return counter.Value;
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
