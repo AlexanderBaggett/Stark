@@ -8,7 +8,7 @@ import System.Memory
 import System.Text
 module Compiler.Mir.LlvmText
 
-// Appends an LLVM integer type name (`i1`/`i32`/`i64`).
+// Appends an LLVM scalar type name.
 internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
 {
     switch (t)
@@ -23,6 +23,10 @@ internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
             try sink.AppendConstAscii("i32");
         case MirType.I64:
             try sink.AppendConstAscii("i64");
+        case MirType.F32:
+            try sink.AppendConstAscii("float");
+        case MirType.F64:
+            try sink.AppendConstAscii("double");
         case MirType.Ptr:
             try sink.AppendConstAscii("ptr");
         case MirType.EnumValue:
@@ -39,6 +43,77 @@ internal fn MemoryStatus EmitLlvmFixedArrayTypeName(MirType elementType, u32[0 m
     try sink.AppendConstAscii(" x ");
     try EmitLlvmTypeName(elementType, sink);
     try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmTextViewTypeName(mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("{ ptr, i64, i64 }");
+    return MemoryStatus.Ok;
+}
+
+internal inline finite law i8[min max] LlvmUpperHexDigit(u8[0 15] value)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    if (wide < 10)
+    {
+        return (i8[min max])((u16[0 max])48 + (u16[0 max])wide);
+    }
+
+    return (i8[min max])((u16[0 max])55 + (u16[0 max])wide);
+}
+
+internal fn MemoryStatus EmitLlvmEscapedByte(u8[0 max] value, mut borrow OwnedAscii sink)
+{
+    stack u32[0 max] wide = (u32[0 max])value;
+    try sink.AppendByte(92);
+    try sink.AppendByte(LlvmUpperHexDigit((u8[0 15])(wide / 16)));
+    try sink.AppendByte(LlvmUpperHexDigit((u8[0 15])(wide % 16)));
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmTextConstantSymbol(u32[0 max] rowIndex, mut borrow OwnedAscii sink)
+{
+    if (rowIndex == 0)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try sink.AppendConstAscii("@.stark.text.");
+    try sink.AppendU64((u64[0 max])rowIndex);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmTextConstantDataDeclaration(
+    borrow IrTable<u8[0 max]> payloadBytes,
+    MirTextConstant row,
+    u32[0 max] rowIndex,
+    mut borrow OwnedAscii sink)
+{
+    if (rowIndex == 0
+        || !MirTextConstantPayloadRangeIsValid(row.PayloadStartIndex(), row.PayloadByteLength(), (u32[0 max])payloadBytes.Count())
+        || !MirTextConstantLengthFactsAreValid(row.StorageEncoding(), row.PayloadByteLength(), row.PayloadCodePointLength()))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    try EmitLlvmTextConstantSymbol(rowIndex, sink);
+    try sink.AppendConstAscii(" = private unnamed_addr constant [");
+    try sink.AppendU64((u64[0 max])row.PayloadByteLength());
+    try sink.AppendConstAscii(" x i8] c\"");
+
+    stack u32[0 max] payloadStart = row.PayloadStartIndex();
+    stack u32[0 max] payloadLength = row.PayloadByteLength();
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < payloadLength)
+    {
+        stack u32[0 max] payloadIndex = (u32[0 max])(payloadStart + offset);
+        stack u8[0 max] payloadByte = payloadBytes.Get(payloadIndex);
+        try EmitLlvmEscapedByte(payloadByte, sink);
+        offset = (u32[0 max])(offset + 1);
+    }
+
+    try sink.AppendConstAscii("\", align 1\n");
     return MemoryStatus.Ok;
 }
 

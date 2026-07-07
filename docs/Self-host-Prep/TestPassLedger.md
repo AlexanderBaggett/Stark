@@ -17,6 +17,573 @@ diagnostics that previously only surfaced on executable builds.
 
 ---
 
+## 2026-07-07 MIR Float LLVM Emission Slice
+
+- Threaded MIR float constant payload bytes through the LLVM module, block, and instruction emitters without widening ordinary instruction rows.
+- Emitted f32/f64 constants as canonical LLVM hex float literals, preserving f32 rounding by parsing as f32 and widening to f64 bits for LLVM spelling.
+- Kept side-table-less LLVM emission paths rejecting float constants so unsupported lowering routes fail explicitly instead of silently dropping backend facts.
+- Added focused self-host IR coverage for f32 and f64 MIR return values rendered through the float-aware LLVM module emitter.
+- Left source/package call-argument float round trips open for the next focused test slice.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/LlvmInstructions.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmBlocks.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmModules.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `../../stark test --filter EmitsLlvmFloatConstantsWithCanonicalHexLiterals --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stayed silent during project setup and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Float Literal Expression Lowering Slice
+
+- Added `FloatLitExpr` source expression nodes and parser recognition for `TokenKind.FloatLiteral`.
+- Built module-level float literal constant facts from typed literal rows, preserving f32/f64 type, bit width, suffix-stripped ASCII parse payload, and dense typed-literal row alignment.
+- Lowered linked float literal nodes through `MirFloatConstantValue` so row index, payload start, payload byte length, bit width, and MIR float type survive instruction serialization and text rendering.
+- Wired float literal row linking into source module lowering and kept ordinary expression lowering rejecting float literals when module facts are absent.
+- Added f32/f64 source-literal and MIR descriptor facts to the focused self-host IR test file.
+- Fixed two existing retborrow blockers by copying `MirTextConstant` rows before passing them by value to `EmitLlvmTextConstantDataDeclaration`.
+- Left LLVM float constant emission deliberately rejected until the next task implements canonical f32/f64 spelling.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/Builder.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageCodec.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/TextRendering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceLocalLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed with existing recursion warnings.
+  - `./stark selfhost/Compiler/Mir/SourceModuleFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmModules.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed after the retborrow cleanup.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed after the retborrow cleanups.
+  - `./stark selfhost/Compiler/Mir/SourceModuleLowering.stark --check ...`: interrupted with exit code 130 after it expanded into repeated imported-module validation.
+  - `./stark selfhost/Compiler/Mir/SourceExpressionLowering.stark --check ...`: interrupted with exit code 130 after it expanded into repeated imported-module validation.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Float Constant Storage Row Slice
+
+- Added `MirFloatConstant` side-table rows that preserve exact ASCII literal payload spans plus f32/f64 result type without widening `MirInstruction`.
+- Added float constant row validation for non-empty spans, bounds, ASCII payload bytes, and supported MIR float types only.
+- Added package-codec serializers/deserializers for float literal payload bytes and float constant rows using durable `MirTypeStorageCode` values.
+- Added deterministic MIR text rendering for float constant rows so row order, type, byte span, and payload bytes are inspectable.
+- Added focused self-host IR facts for f32/f64 row validation, package codec round-trip, invalid package type rejection, and deterministic text rendering.
+- Marked the MIR float constant storage subtask in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/Builder.stark selfhost/Compiler/Mir/PackageCodec.stark selfhost/Compiler/Mir/TextRendering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/TextRendering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageCodec.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: failed before this slice with existing package-image target/data-layout compatibility diagnostics.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: reached semantic validation, then failed on existing retborrow diagnostics in the older `EmitLlvmTextConstantDataDeclaration(... constants.Get(...))` test lines.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Float Value Type Plumbing Slice
+
+- Added `F32` and `F64` to the self-host MIR value type model, package instruction/global type codec, MIR artifact type names, and LLVM scalar type spelling.
+- Split struct value ABI shape digits away from general `MirTypeStorageCode` so package type codes can grow without corrupting the base-8 packed LLVM aggregate shape fact.
+- Added a compact struct shape mapping for `f32`/`f64` while preserving ten-field shape packing in `u32`.
+- Updated source struct-value shape producers and switch/capture validators to compare compact ABI shape codes instead of general MIR storage codes.
+- Updated MIR/HIR fact guards so float value types can be carried through lowering but integer ranges, shifts, and integer global initializers still reject floats.
+- Added a focused self-host IR fact covering f32/f64 instruction serialization, LLVM parameter/return type spelling, and struct shape rendering.
+- Marked the stale completed text-literal parent tasks and the new MIR float type-plumbing subtask in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/PackageCodec.stark selfhost/Compiler/Mir/LlvmText.stark selfhost/Compiler/Mir/LlvmFacts.stark selfhost/Compiler/Mir/SourceLocalLowering.stark selfhost/Compiler/Mir/SourceSwitchLowering.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark selfhost/Compiler/Mir/Facts.stark selfhost/Compiler/Mir/Builder.stark selfhost/Compiler/Lowering.stark selfhost/Compiler/ArtifactRendering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `../../stark test --filter MirFloatValueTypesRoundTripPackageCodecAndLlvmShapeFacts --test-timeout 120` from `tests-stark/selfhost.Ir`: stayed silent during project build/setup for about 150 seconds and was interrupted with exit code 130.
+  - `./stark selfhost/Compiler/Mir/LlvmFacts.stark --check -I selfhost` with the cached package's macOS arm64 target and data-layout facts: expanded into repeated imported-module type-check work and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant Package Codec Slice
+
+- Added MIR text payload-byte and text-constant row serializers/deserializers that rebuild constants through `MirAddTextConstantRange`.
+- Added optional `STARKPKG` text payload and text constant sections and validated they appear as a pair.
+- Added text-aware package image summary counts for text and JSON inspection.
+- Added text-aware sectioned package image serialization/deserialization helpers.
+- Added deterministic MIR text constant side-table rendering in row order with explicit payload bytes.
+- Added focused IR facts for sectioned package round-tripping of MIR text constants and deterministic text constant row rendering.
+- Marked the MIR text literal package-codec and package-round-trip subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageCodec.stark selfhost/Compiler/Mir/PackageImage.stark selfhost/Compiler/Mir/TextRendering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/TextRendering.stark --check ...`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageCodec.stark --check ...`: reached repeated imported-module type-check work and was interrupted with exit code 130 after no diagnostics from this slice were reported.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check ...`: reached repeated imported-module type-check work and was interrupted with exit code 130 after no diagnostics from this slice were reported.
+  - `../../stark test --filter SectionedPackageImageRoundTripsTextConstants --test-timeout 120 --test-progress`: stayed silent during project build/setup for about 60 seconds and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Literal Expression Descriptor Slice
+
+- Built dense typed-literal row lookup by token in `SourceModuleLoweringFacts` so parsed text literal nodes can link in O(1) instead of scanning literal rows repeatedly.
+- Decoded string and character literal payloads into module-level MIR text constant tables with byte length, code point length, and storage encoding facts preserved.
+- Normalized signed `OwnedAscii` UTF-8 bytes into unsigned MIR payload bytes at the module fact boundary.
+- Lowered linked string and character expression nodes through `MirTextConstantValue` using the module text constant rows.
+- Linked parsed source text literal nodes to their typed literal rows during main source-module lowering.
+- Added focused self-host IR facts for ASCII string payloads, Unicode string payloads, character literal payloads, and text descriptor value facts from lowered source nodes.
+- Split the focused IR test task so package round-trip coverage remains open.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceModuleFacts.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark selfhost/Compiler/Mir/SourceModuleLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceExpressionLowering.stark --check ...`: passed with existing recursion warnings.
+  - `./stark selfhost/Compiler/Mir/SourceModuleFacts.stark --check ...`: reached repeated imported-module type-check work and was interrupted with exit code 130 after no new diagnostics from this slice were reported.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check ...`: reached repeated imported-module type-check work and was interrupted with exit code 130 after no new diagnostics from this slice were reported.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant LLVM Descriptor Slice
+
+- Replaced the `TextConstantValue` LLVM no-op cases with zero-copy descriptor construction in the existing instruction emitters.
+- Added a reusable LLVM text-view descriptor type helper spelling `{ ptr, i64, i64 }`.
+- Lowered each text constant descriptor as a private data pointer plus explicit byte-length and code-point-length operands.
+- Reused MIR text row operands during LLVM lowering instead of recomputing text facts from payload bytes.
+- Added a focused self-host IR fact for UTF-8 descriptor emission where byte length and code point length differ.
+- Updated the module-level text constant test to expect descriptor instructions while still verifying referenced data rows emit once.
+- Marked the LLVM text descriptor subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check`: passed.
+  - `../../stark test --filter EmitsLlvmTextConstantValueDescriptorOperands --test-timeout 120` from `tests-stark/selfhost.Ir`: stayed silent for about 120 seconds and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant LLVM Module Slice
+
+- Added a text-aware LLVM module emission path that accepts MIR text constant rows and payload bytes alongside instruction, block, and function tables.
+- Scanned each emitted function's instruction range once to mark `TextConstantValue` row references in a compact side table.
+- Emitted referenced MIR text constant rows once in deterministic row order before LLVM function bodies.
+- Left `TextConstantValue` instruction body lowering as an explicit remaining task so descriptor construction can land with its own focused checks.
+- Added a focused self-host IR fact for duplicate text constant references, unused text constant rows, and declaration-before-function ordering.
+- Marked the text payload table threading and referenced-row emission subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/LlvmModules.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed before task and ledger updates.
+  - `../../stark test --filter EmitsReferencedLlvmTextConstantsBeforeModuleFunctions --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent past the configured timeout window and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant LLVM Data Slice
+
+- Added deterministic LLVM symbols for MIR text constant rows using `@.stark.text.<row>`.
+- Added private `i8` byte-array declaration emission for MIR text constant payload rows.
+- Escaped every emitted payload byte as an LLVM two-digit hex escape so ASCII syntax bytes, control bytes, and UTF-8 high bytes are stable.
+- Validated text row ids, payload spans, and byte/code point length facts before reading payload bytes for LLVM emission.
+- Added a focused self-host IR fact for ASCII byte escaping, UTF-8 byte escaping, and invalid text-row span rejection.
+- Split the LLVM text literal task into sentence-sized subtasks and marked the private-data helper subtasks complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/LlvmText.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter EmitsLlvmPrivateDataForTextConstantRows --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent past the configured timeout window and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant Value Facts Slice
+
+- Added text constant payload facts to `ValueFacts`: source row id, payload byte start, byte length, code point length, and storage encoding code.
+- Preserved text constant facts through `ValueFacts.InheritFrom` so equivalent lowered values can carry the descriptor facts forward.
+- Added the `ValueTextConstant` fact category and boundary validation hook so backend passes can require text literal facts explicitly.
+- Generated `ValueTextConstant` facts for `MirOp.TextConstantValue` during MIR value-fact construction.
+- Kept text facts compatible only with pointer-like MIR descriptor values in the HIR/MIR fact-fit gate.
+- Exposed text constant facts in the deterministic value-facts artifact output.
+- Added focused self-host IR facts for default/set/inherit behavior, fact-category metadata, boundary validation, and generated MIR text value facts.
+- Marked the MIR text literal value-fact preservation subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Ir.stark selfhost/Compiler/Mir/Facts.stark selfhost/Compiler/ArtifactRendering.stark selfhost/Compiler/Lowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed before task and ledger updates.
+  - `../../stark test --filter MirTextConstantValueBuildsValueFacts --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent for about 130 seconds and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant Descriptor Slice
+
+- Added a MIR text constant descriptor value operation that records the source text row, payload byte start, byte length, code point length, and storage encoding on the instruction.
+- Kept the descriptor result typed as `ptr` so later lowering can build the zero-copy text view without widening scalar MIR value handling.
+- Taught MIR well-formedness that text descriptor fields are side-table facts rather than value operands.
+- Added deterministic text rendering and package opcode mapping for the new MIR operation.
+- Added explicit LLVM no-op switch cases so this MIR operation is acknowledged until the private constant descriptor emission task lands.
+- Added a focused self-host IR fact covering ASCII and UTF-8 descriptor fact preservation plus invalid row rejection.
+- Marked the MIR text descriptor value-operation subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/ArtifactRendering.stark selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/Builder.stark selfhost/Compiler/Mir/PackageCodec.stark selfhost/Compiler/Mir/TextRendering.stark selfhost/Compiler/Mir.stark selfhost/Compiler/Mir/LlvmInstructions.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter MirTextConstantValueCarriesDescriptorFacts --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: first run caught the missing `TextConstantValue` case in `MirOpName`; after adding it, the retry stayed silent for about 130 seconds and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Constant Row Model Slice
+
+- Added flat MIR text constant storage rows for decoded text payloads.
+- Stored payload start, byte length, code point length, and storage encoding facts separately from instruction rows so text constants do not widen every MIR instruction.
+- Added a builder helper that rejects invalid payload spans and impossible byte/code point facts before recording rows.
+- Added a focused self-host IR fact covering empty ASCII rows, non-empty ASCII rows, UTF-8 rows, and invalid row rejection.
+- Marked the first text literal constant-storage subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `../../stark test --filter MirTextConstantRowsRecordPayloadFacts` from `tests-stark/selfhost.Ir`: first run caught the reserved `Ascii` enum-case syntax issue; after renaming the cases, the filtered run stayed silent for about two minutes and was interrupted.
+  - `git diff --check -- selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/Builder.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Text Literal And Nested Pattern Task Split
+
+- Reviewed the next open self-host MIR lowering items after the current switch-pattern batch.
+- Split text-literal lowering into explicit MIR constant-storage, text descriptor, LLVM private constant, package-codec, and focused IR-test subtasks.
+- Split typed switch-pattern import into explicit typing-row, lowering-fact, validation, and typed-row lookup subtasks.
+- Split nested aggregate/list pattern lowering into shared pattern-decision node, typed-row translation, branch-failure routing, range/capture fact preservation, overlap validation, and focused IR-test subtasks.
+- Did not touch compiler code in this slice because text literals currently lack MIR text constant storage and self-host switch lowering lacks typed switch-pattern row facts.
+- Narrow verification:
+  - `git diff --check -- docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Self-Host Typing Module Map
+
+- Recorded the stage0 C# to self-host `Compiler.Typing.*` split map for the remaining typing decomposition work.
+- `src/Compiler/StarkTypeResolver.cs` maps to `Compiler.Typing.TypedTypeResolution` and declaration lookup helpers.
+- `src/Compiler/TypeCompatibilityFacts.cs` maps to `Compiler.Typing.TypedTypeCompatibility` and the conversion/call signature fact helpers.
+- `src/Compiler/TypeChecking.cs` maps to the existing focused modules: `ExpressionClassification`, `StorageSelectors`, `TypedSignatures.*`, `TypedGlobals.*`, `TypedFields.*`, `TypedEnumPayloads.*`, `TypedEnumLayouts.*`, `TypedLocals.*`, `TypedLiterals.*`, `TypedIdentifiers.*`, `TypedCalls.*`, `TypedMembers.*`, `TypedIndexing.*`, `TypedConversions.*`, `TypedAssignments.*`, `TypedReturns.*`, `TypedGenerics`, `TypedDynamicFacts`, `TypedCtfeQueries`, and `TypedPipeline`.
+- `src/Compiler/GenericArgumentSyntaxFacts.cs` and `src/Compiler/FunctionGenericParameterFacts.cs` map to `Compiler.Typing.TypedGenerics` plus the enum-layout generic helper module.
+- `src/Compiler/EnumLayoutBuilder.cs` maps to `Compiler.Typing.TypedEnumLayout*` for typed layout rows and to `Compiler.Mir.EnumLayout` for backend MIR enum layout facts.
+- `src/Compiler/AssociatedTypeFacts.cs` maps to the open associated-type typing module once associated-type consumers exist in selfhost typing.
+- `src/Compiler/DynTraitFacts.cs` maps to `Compiler.Typing.TypedDynamicFacts`, with dispatch and vtable emission consumers staying outside typing.
+- `src/Compiler/CopyabilityFacts.cs`, `src/Compiler/ThreadSafetyLawFacts.cs`, and `src/Compiler/SystemThreadingAtomicFacts.cs` map to the open copyability, thread-safety law, and atomic builtin typing fact modules.
+- `src/Compiler/CompileTimeExpressionEvaluator.cs`, `src/Compiler/CompileTimeFunctionEvaluator.cs`, and `src/Compiler/CompileTimeStructuralFacts.cs` map to `Compiler.Typing.TypedCtfeQueries` plus the remaining open CTFE expression/function/structural-fact typing modules.
+- `src/Compiler/IntegerRangeStorageFacts.cs` maps to typed literal/range fact derivation and backend range fact consumers; exact integer arithmetic should continue to route through `System.Compiler.IntegerFacts` in selfhost code.
+- Adjacent C# validation files such as `SemanticValidation.cs`, `OwnershipValidation.cs`, and `NonLexicalBorrowLifetimeValidation.cs` remain outside `Compiler.Typing.*` and are tracked by binding/validation tasks.
+- Narrow verification:
+  - `./stark selfhost/probe/StructCaptureProbe.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stayed silent for about two minutes and was interrupted.
+  - Re-ran the same `StructCaptureProbe.stark --check` command after reviewing the remaining switch and CTFE split tasks; it again stayed silent for about two minutes and was interrupted with no diagnostics.
+  - `../../stark test --filter CompileStructAggregateSwitchLocalCaptureTerminalReturnUsesDirectFieldLoads --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent for about ninety seconds and was interrupted.
+  - No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Pattern Descriptor Preflight Validation Slice
+
+- Added scalar interval row preflight validation for bool and integer pattern rows before MIR switch branch-test emission.
+- Added list-pattern descriptor preflight validation for descriptor row identity, element type, element index bounds, interval bounds, and stale row spans.
+- Added struct aggregate descriptor preflight validation for descriptor owner identity, field row spans, by-value struct field shape agreement, storage-backed field alignment, and storage offset overflow.
+- Added enum payload aggregate descriptor preflight validation that keeps concrete tags tied to source variant ordinals and checks payload ordinal layout facts before payload extracts are emitted.
+- Threaded the preflight validators through terminal enum payload, terminal fixed-array list, terminal struct aggregate, and non-terminal assignment switch lowering before branch block construction.
+- Added a focused selfhost IR fact for descriptor preflight acceptance and malformed-row rejection across list, struct, and enum descriptor rows.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed before task and ledger updates.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: first caught `out`/retborrow argument issues in the new scalar-row helper; after fixing those, the rerun stayed silent for about 90 seconds and was interrupted.
+  - `../../stark test --filter SourceSwitchPatternDescriptorPreflightRejectsMalformedRows --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent for about 90 seconds and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Enum Aggregate Pattern Descriptor Row Slice
+
+- Added enum aggregate descriptor row construction that maps concrete enum tag values back to source variant ordinals through typed enum layout facts.
+- Threaded enum aggregate descriptor row ids through terminal enum payload-pattern branch-test lowering.
+- Threaded enum aggregate descriptor row ids through non-terminal assignment enum payload-pattern branch-test lowering.
+- Added a focused selfhost IR fact for enum descriptor row owner, variant, and payload-pattern span preservation.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed before task and ledger updates.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stayed silent for about two minutes and was interrupted.
+  - `../../stark test --filter SourceSwitchEnumAggregatePatternDescriptorRowsPreserveVariantFacts --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent beyond the timeout window and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate/List Pattern Descriptor Row Slice
+
+- Added case descriptor row builders for fixed-array list and aggregate pattern spans.
+- Threaded list descriptor row ids through terminal and assignment fixed-array branch-test lowering.
+- Threaded aggregate descriptor row ids through terminal and assignment struct branch-test lowering with explicit struct owner tokens.
+- Added a focused selfhost IR fact for descriptor row-id/span preservation.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed before ledger update.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: first caught direct `IrTable.Get` retborrow arguments in descriptor construction; after copying the scalar values into locals, rerun stayed silent for about two minutes and was interrupted.
+  - `../../stark test --filter SourceSwitchPatternDescriptor --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent beyond the timeout window and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate/List Pattern Descriptor Shape Slice
+
+- Added compact aggregate-pattern descriptors carrying owner type token, optional enum variant ordinal, and field-pattern row spans for MIR switch lowering.
+- Added compact list-pattern descriptors carrying element type code, fixed length, and element-pattern row spans for MIR switch lowering.
+- Added descriptor-level disjoint helpers that reject mismatched list shapes, aggregate owner types, or enum variants before consulting scalar pattern rows.
+- Added focused selfhost IR facts for descriptor shape preservation and descriptor identity checks around provably disjoint scalar rows.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: reached `Check succeeded.` after a silent bounded run was interrupted.
+  - `../../stark test --filter SourceSwitchPatternDescriptor --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stayed silent for roughly two minutes and was interrupted.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stayed silent for about 90 seconds and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Storage Whole Capture Copy Slice
+
+- Added a compact `StructValueLoad` MIR operation, text rendering, package opcode, LLVM emission, and artifact-rendering name for aggregate by-value loads from storage-backed struct pointers.
+- Built storage-backed struct-value ABI facts from source type tokens for local and field-backed struct switch scrutinees, preserving field storage alignment for field-backed loads.
+- Lowered storage-backed struct `case var captured` whole captures as explicit by-value aggregate loads and fed those capture overrides into struct-value call lowering with exact type-token checks.
+- Added focused IR facts for local and field-backed storage struct whole captures feeding a by-value struct callee without scalarizing or routing through a pointer call.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/ArtifactRendering.stark selfhost/Compiler/Mir/Model.stark selfhost/Compiler/Mir/Builder.stark selfhost/Compiler/Mir/LlvmInstructions.stark selfhost/Compiler/Mir/TextRendering.stark selfhost/Compiler/Mir/PackageCodec.stark selfhost/Compiler/Mir/SourceSwitchLowering.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark selfhost/Compiler/Mir/SourceFunctionContext.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --diagnostic-format text --log-level error`: failed before reaching this change on the known stale `libStarkCompiler.starkpkg` target-data-layout mismatch.
+  - The same `Mir.stark --check` with explicit target data layout stayed silent for about 90 seconds and was interrupted.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stayed silent for about 90 seconds and was interrupted.
+  - `./stark selfhost/Compiler/Mir/LlvmInstructions.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stayed silent for about 60 seconds and was interrupted.
+  - `../../stark test --filter CompileStructStorageWholeCaptureValueParamFeedsStructValueCall --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: first caught the missing `MirOpName` case for `StructValueLoad`; after fixing it, rerun stayed silent past the timeout window and was interrupted.
+  - `./stark --host-test-inspect` with `SourceSwitchLowering.stark` stopped after `lower-mir`: stayed silent for about 90 seconds and was interrupted.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Whole Capture Indexed Read Slice
+
+- Threaded fixed-array whole-capture slice descriptor facts into captured guard and return-arm parsing for list-pattern switches.
+- Reused the existing slice-descriptor indexed-read parser so `captured[index]` over an address-backed whole fixed-array capture resolves through the capture-owned copy slot instead of being parsed as a plain aggregate name.
+- Applied the same parser context shape to parameter-backed, storage-backed, and field-backed fixed-array list switch return cases, including enum-return variants.
+- Added a focused IR fact for a storage-backed whole fixed-array capture read with `captured[1]`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: first run caught parser-threading mistakes; after fixes, rerun stayed silent for about 90 seconds and was interrupted.
+  - `../../stark test --filter CompileFixedArrayStorageWholeCaptureIndexedReadFromAst --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stopped after about two minutes because the single-fact project test runner remained silent before reporting selected facts.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Whole Capture Slice Copy Slice
+
+- Materialized address-backed fixed-array whole captures into a capture-owned stack copy slot using per-element typed loads and stores, preserving declared range and alignment facts on each copied element.
+- Pointed whole-capture slice descriptor and argument facts at the capture copy slot so `captured` can feed slice callees through the existing concrete-slice ABI path.
+- Kept by-value fixed-array callees on the same descriptor path by loading the aggregate value from the capture copy slot when the callee expects a fixed-array value.
+- Added a focused IR fact for a storage-backed whole fixed-array capture passed as a slice.
+- Left `captured[index]` parsing as the next explicit subtask; the lowering side now has a copy slot to target once the parser threads whole-capture slice descriptors into indexed-expression parsing.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed before task and ledger updates.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: first run caught an `out MirValueId` read in the new copy helper; after fixing it, a rerun stayed silent for about 90 seconds and was interrupted.
+  - `../../stark test --filter CompileFixedArrayStorageWholeCaptureSliceCallFromAst --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after about 60 seconds because the single-fact project test runner remained silent before reporting selected facts.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array Storage Whole Capture Copy Slice
+
+- Added a fixed-array value-override descriptor and argument fact so address-backed `case var captured` labels can validate and lower by-value fixed-array call arguments without pretending the capture is an addressable fixed-array parameter.
+- Lowered terminal fixed-array address-backed whole captures through one `MirLoadFixedArray` aggregate copy from the storage pointer before using the capture local, applying field byte offsets before the aggregate load when the scrutinee is field-backed.
+- Kept storage-backed whole captures used as slices or indexed values rejected until an addressable capture-copy slot exists.
+- Added focused IR facts for a storage-backed whole fixed-array capture feeding a by-value fixed-array callee and for rejecting slice conversion from that capture.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceLocalLowering.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark selfhost/Compiler/Mir/SourceFunctionContext.stark selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceLocalLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: reached `Summary: 0 errors, 32 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return.
+  - `./stark selfhost/Compiler/Mir/SourceExpressionLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: reached `Summary: 0 errors, 47 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return.
+  - `./stark selfhost/Compiler/Mir/SourceFunctionContext.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: reached `Summary: 0 errors, 46 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: first run caught an unknown-symbol error for the new validation path; after fixing it, a rerun stayed silent for about 90 seconds and was interrupted.
+  - `../../stark test --filter FixedArrayStorageWholeCapture --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after about 90 seconds because the filtered project test runner remained silent before reporting selected facts.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Whole Capture Overlap Rejection Slice
+
+- Confirmed whole-value capture labels reuse the zero-pattern aggregate/list overlap path once represented.
+- Added a focused negative AST fact for fixed-array `case var captured` labels overlapping list-pattern siblings in both source-order directions.
+- Added focused negative AST coverage for struct `case var captured when true` and trailing struct whole-capture labels overlapping struct aggregate siblings.
+- Marked whole-value capture overlap rejection complete in `TASKS.md`; nested aggregate/list overlap remains blocked on shared pattern-decision block construction.
+- Narrow verification:
+  - `git diff --check -- tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter RejectsAggregateAndListWholeCapturePatternOverlapFromAst --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after about 90 seconds because the filtered project test runner remained silent before reporting selected facts.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Whole Capture Param Slice
+
+- Recognized the whole-struct capture sentinel for terminal struct aggregate switch captures on by-value struct parameters.
+- Lowered whole captures from by-value struct parameters as direct aggregate `MirParamTyped` values instead of field extracts or storage loads.
+- Let struct-value call-argument lowering forward a nonzero local override so captured whole structs can feed by-value struct callees without materializing temporary storage.
+- Added focused IR facts for by-value fixed-array and struct `case var captured` labels feeding by-value aggregate callees directly from `%p0`.
+- Kept storage-backed whole-struct captures rejected until the explicit copy or borrow semantics task is resolved.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceExpressionLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: reached `Summary: 0 errors, 47 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: stopped after about 30 seconds because the focused file check remained silent.
+  - `../../stark test --filter WholeCapture --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project test runner remained silent before reporting selected facts.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Whole Capture Local Type Rows
+
+- Added a switch-capture type-code conversion helper that preserves aggregate local type rows for fixed-array parameters and by-value struct parameters before falling back to resolved scalar capture conversion.
+- Let fixed-array list-pattern switch labels record top-level `var name` captures as whole-array rows using the fixed-array length as the out-of-range element sentinel.
+- Let struct aggregate switch labels record top-level `var name` captures as whole-struct rows using the field count as the out-of-range field sentinel.
+- Kept aggregate capture value override lowering as separate work so fixed-array and struct whole-value captures now type correctly but still require the next lowering tasks to produce values.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check`: failed before reaching this module because the direct file check did not include `selfhost` in the module search path.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: interrupted after about 90 seconds of silent front-end work with no diagnostics visible.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate Direct Parameter Read Slice
+
+- Added a struct-value call-argument lowering path that forwards direct by-value struct parameters as `%pN` operands instead of materializing temporary storage.
+- Kept non-parameter aggregate forwarding rejected so storage-backed aggregate copy/borrow semantics remain a separate explicit task.
+- Let struct-value call validation accept struct-valued local type rows instead of rejecting every `expected.IsStructValue` parameter.
+- Taught LLVM call-argument emission to use struct ABI facts when printing by-value struct call operands, matching the existing struct parameter-list emission.
+- Added a focused IR fact for forwarding a direct `Box` parameter into another by-value `Box` callee without an aggregate byte-buffer allocation.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceExpressionLowering.stark selfhost/Compiler/Mir/SourceFunctionContext.stark selfhost/Compiler/Mir/LlvmInstructions.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmInstructions.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceExpressionLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: first caught a direct table-`Get` retborrow call-site issue; after binding the local type code first, it reached `Summary: 0 errors, 47 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return.
+  - `./stark selfhost/Compiler/Mir/SourceFunctionContext.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: first caught the same direct table-`Get` retborrow call-site issue; after binding the local type code first, it reached `Summary: 0 errors, 46 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return.
+  - `../../stark test --filter CompileFunctionStructValueParameterCanFeedStructValueCall --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after about 150 seconds of silent project startup before the filtered fact began.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: interrupted after about 90 seconds of silent front-end work with no diagnostics visible.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate Local Type Slice
+
+- Added an aggregate expression kind for source-level fixed-array and by-value struct locals so they no longer fall through scalar typing.
+- Reserved a struct-value local type-code range below stored-enum codes and bounded its token decoder to that range.
+- Seeded by-value struct signature parameters with struct-value local type codes while preserving existing fixed-array parameter codes.
+- Added a focused IR fact that fixed-array and struct local type rows classify as aggregate while scalar rows remain scalar.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSemanticProbes.stark selfhost/Compiler/Mir/SourceExpressions.stark selfhost/Compiler/Mir/SourceFunctionContext.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceExpressions.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: passed with existing recursion warnings.
+  - `./stark selfhost/Compiler/Mir/SourceFunctionContext.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: reached `Summary: 0 errors, 46 warnings, 0 infos.` and was interrupted after about 60 seconds before the command returned.
+  - `../../stark test --filter SourceAggregateLocalTypeCodesDoNotMasqueradeAsScalars --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after 30 seconds of silent project startup before the filtered fact began.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate/List Discard Overlap Slice
+
+- Added a focused negative AST fact for top-level discard labels overlapping fixed-array list patterns in both source-order directions.
+- Added a focused negative AST fact for a `case _ when true` struct aggregate label that makes a later struct pattern unreachable.
+- Kept dynamically guarded discard labels lowerable when a later sibling can still be reached after the guard fails.
+- Split `TASKS.md` so discard-label overlap is complete and whole-value capture overlap remains open until whole-value capture labels are represented.
+- Narrow verification:
+  - `git diff --check -- tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter RejectsAggregateAndListDiscardPatternOverlapFromAst --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after 30 seconds of silent project startup before the filtered fact began.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate/List Discard Label Slice
+
+- Accepted top-level `case _` labels for fixed-array list and struct aggregate switch lowering.
+- Represented discard labels as zero-pattern rows so the existing branch constructors emit a constant-true condition without extra storage or dynamic dispatch.
+- Kept whole-value capture labels as a separate follow-up because they need explicit capture local type and override facts.
+- Added a focused IR fact covering a guarded fixed-array list pattern falling through to `case _` and a guarded by-value struct aggregate pattern falling through to `case _`.
+- Split `TASKS.md` so discard-label representation is complete and whole-value capture labels remain open.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter CompileAggregateAndListDiscardFallbackLabelsAfterGuardedPatterns --test-timeout 120 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after about 150 seconds of silent project build before the filtered fact began.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: interrupted after about 60 seconds of silent front-end work with no diagnostics visible.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Aggregate/List Unconditional Guard Overlap Slice
+
+- Treated `when true` aggregate and fixed-array list switch labels as unconditional for existing overlap validation.
+- Kept dynamic guards and `when false` guards conservative so guarded fallthrough labels remain lowerable.
+- Reused the existing scalar interval disjointness helpers instead of adding a second overlap implementation.
+- Added focused negative AST facts for fixed-array list labels and struct aggregate labels whose earlier `when true` arm makes a later sibling unreachable.
+- Split the broad overlap task in `TASKS.md` so nested labels and whole-value capture/discard labels remain explicit follow-ups.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: first caught an ambiguous `ExprKind` reference and then a direct table-`Get` retborrow call-site issue; both were fixed.
+  - The same `SourceSwitchLowering.stark --check` command was rerun and interrupted after about 60 seconds of silent front-end work with no diagnostics visible.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Guarded Aggregate/List Capture Switch Slice
+
+- Allowed `when` guards on fixed-array list and struct aggregate switch labels that introduce `var` capture locals.
+- Parsed capture-guard expressions in a capture-aware parameter scope so guard names bind to the matched label captures.
+- Validated guard call contracts and boolean guard types against capture-local type rows instead of the base local table.
+- Lowered guard capture values in the guard block after successful pattern tests, reusing the existing fixed-array and struct capture override builders so direct extracts, typed aligned loads, and declared range facts stay intact.
+- Added focused IR facts for by-value struct terminal capture guards, storage-backed struct assignment capture guards, and fixed-array parameter assignment capture guards.
+- Marked the guarded aggregate/list capture-local task complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md selfhost/probe/StructCaptureProbe.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: interrupted after 60 seconds of silent front-end work with no diagnostics visible.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Struct Aggregate Field Capture Switch Slice
+
+- Parsed tuple and property struct aggregate `var` field captures into per-arm capture rows.
+- Kept capture names scoped to the matched switch arm and continued rejecting guarded capture labels until guard lowering can consume capture locals.
+- Lowered by-value struct field captures through direct struct-parameter field extracts.
+- Lowered storage-backed and field-backed struct field captures through typed aligned field loads.
+- Preserved declared scalar field range facts on captured struct field values so LLVM IR receives the same `!range` metadata as ordinary field tests.
+- Added focused IR facts for storage-backed terminal returns, by-value assignment arms, and field-backed assignment arms.
+- Added `selfhost/probe/StructCaptureProbe.stark` as a focused executable probe for the same three struct capture paths.
+- Narrowed the probe import to `Compiler.Mir.SourceModuleLowering` so the probe pulls only the compile-from-AST entrypoint it needs.
+- Left the struct aggregate field capture task in progress in `TASKS.md` because the focused front-end checks did not complete before interruption.
+- Narrow verification:
+  - `git diff --check -- selfhost/probe/StructCaptureProbe.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated type-check progress warnings with no diagnostics visible.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated type-check progress warnings with no diagnostics visible.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated type-check progress warnings with no diagnostics visible.
+  - `./stark selfhost/probe/StructCaptureProbe.stark --emit-exe -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error -o /tmp/stark-struct-capture-probe`: reached native LLVM verification and failed on an invalid `getelementptr` for `%System_Collections_List_Compiler_Mir_EnumLayout_MirEnumLayoutFact_`, matching the known host-backend generic-aggregate GEP limitation documented in `selfhost/Compiler/Mir/Model.stark`.
+  - `./stark selfhost/probe/StructCaptureProbe.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level warning`: interrupted after repeated type-check progress warnings with no diagnostics visible.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array List Capture Assignment Switch Slice
+
+- Parsed fixed-array list element `var` captures for non-terminal assignment switch labels over direct parameters, storage locals, and field-backed fixed arrays.
+- Kept capture names scoped to the matched assignment arm and continued rejecting guarded capture labels until guard lowering can consume capture locals.
+- Lowered direct fixed-array parameter captures with `extractvalue` in the matched assignment arm block.
+- Lowered storage-local and field-backed captures with typed constant-offset element loads and preserved declared element ranges as LLVM `!range` metadata.
+- Added focused IR facts for direct, storage-local, and field-backed fixed-array list capture assignment switches.
+- Marked the fixed-array list assignment capture subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `../../stark test --filter=CaptureAssignmentUsesDirectElement --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: interrupted after about two and a half minutes because the filtered project build/run stayed silent.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Fixed-Array List Capture Terminal Switch Slice
+
+- Parsed fixed-array list element `var` captures for terminal return switch labels over direct parameters, storage locals, and field-backed fixed arrays.
+- Kept capture names scoped to the matched case arm and rejected guarded capture labels until guard parsing can consume capture locals.
+- Lowered direct fixed-array parameter captures with `extractvalue` and lowered storage/field captures with typed constant-offset element loads.
+- Preserved declared storage/field fixed-array element ranges on captured element loads so LLVM IR receives `!range` metadata.
+- Added focused IR facts for direct fixed-array list capture terminal switches and storage-local fixed-array list capture terminal switches.
+- Marked the fixed-array list terminal capture subtask complete in `TASKS.md` while leaving assignment-arm captures open.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Enum Payload Capture Terminal Switch Slice
+
+- Parsed tuple and named enum payload `var` captures for terminal return switch labels.
+- Seeded capture names into each terminal case arm's section-local scope before parsing the return expression.
+- Preserved concrete scalar payload type facts for captured terminal arm locals.
+- Lowered captured enum payload values with `extractvalue` in the matched terminal return block.
+- Added focused IR facts for tuple payload capture terminal switches and named payload capture terminal switches with a scalar payload test.
+- Marked the enum payload terminal capture subtask complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+- The same `Mir.stark --check` without explicit `--target-data-layout` stopped in module graph on an existing stale package-image target-layout mismatch before reaching this code.
+- No broad test sweep was run.
+
+---
+
 ## 2026-07-07 MIR Enum Payload Capture Assignment Switch Slice
 
 - Parsed tuple and named enum payload `var` captures for non-terminal assignment switch labels without adding them to the scalar payload-test table.
@@ -5037,6 +5604,21 @@ comments explaining which platform is required.
   - `../../stark test --filter FixedArrayParameter --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after several minutes because the filtered project test runner remained silent.
 - No broad test sweep was run.
 
+## 2026-07-07 MIR Fixed Array Whole Capture Param Slice
+
+- Recognized the whole fixed-array capture sentinel in terminal fixed-array list switch capture overrides.
+- Lowered whole captures from by-value fixed-array parameters as direct aggregate `MirParamTyped` values instead of scalar element extracts.
+- Added fixed-array capture alias descriptor and argument rows so capture names preserve the original parameter's fixed-array ABI carrier facts through validation and call lowering.
+- Routed fixed-array terminal switch guards, scalar-return arms, and defaults through the call-context lowering path so direct aggregate call arguments survive lowering.
+- Kept storage-backed whole fixed-array captures rejected until the explicit copy or borrow semantics task is resolved.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark selfhost/Compiler/Mir/SourceExpressionLowering.stark selfhost/Compiler/Mir/SourceFunctionContext.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: stopped after about 60 seconds because the focused file check remained silent.
+  - `./stark selfhost/Compiler/Mir/SourceExpressionLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: stopped after about 30 seconds because the focused file check remained silent.
+  - `./stark selfhost/Compiler/Mir/SourceFunctionContext.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: stopped after about 30 seconds because the focused file check remained silent.
+  - `./stark tests-stark/compiler.MirTests/MidLevelIrLoweringTests_SwitchPatternLowerer.stark --check -I selfhost -I stdlib/src -I tests-stark/compiler.MirTests --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --log-level error`: failed before the affected switch-pattern tests on existing missing macOS runtime symbols `System.Runtime.Platform.MacOS.StartProcessCaptureGrouped` and `System.Runtime.Platform.MacOS.KillProcessGroup`.
+- No broad test sweep was run.
+
 ## 2026-06-30 MIR Address-Taking Place Slice
 
 - Added a selfhost expression AST node for unary address-of expressions.
@@ -5115,4 +5697,22 @@ comments explaining which platform is required.
   - `../../stark IrTests.stark --check -I ../../selfhost --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: passed.
   - `../../stark test --filter RawPointerIndexed --target arm64-apple-macosx26.0.0` in `tests-stark/selfhost.Ir`: stopped after about 90 seconds because the filtered project test runner remained silent.
   - A temporary one-off executable probe for the first indexed-load snippet was stopped after about 90 seconds because compiling the selfhost imports remained silent.
+- No broad test sweep was run.
+
+## 2026-07-07 MIR Text Literal Source Expression Row-Link Slice
+
+- Added string and character literal variants to the MIR source-expression node table.
+- Stored literal token ids and 1-based typed-literal row links on text literal source-expression nodes.
+- Added a context-keyed typed-literal row lookup by literal token.
+- Threaded the typed literal expression table into the module lowering fact bundle for later descriptor lowering.
+- Kept generic expression lowering rejecting text literal nodes until the dedicated MIR text descriptor lowering task wires them in.
+- Added focused IR facts for typed-literal token lookup, source-expression row links, and source parser rejection of text literals as integers.
+- Narrow verification:
+  - `git diff --check`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceExpressions.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed with pre-existing recursive-call warnings.
+  - `./stark selfhost/Compiler/Typing/TypedLiteralModel.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: failed during module graph with stale package-image target-layout compatibility errors in `selfhost/build/.../libStarkCompiler.starkpkg`.
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated type-check progress and no final diagnostics.
+  - `./stark selfhost/Compiler/Mir/SourceModuleFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: first run surfaced a retborrow error in `LlvmText.stark`; rerun after the scalar-copy fix was interrupted after repeated type-check progress and no final diagnostics.
+  - `./stark selfhost/Compiler/Mir/LlvmText.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated type-check progress and no final diagnostics.
 - No broad test sweep was run.

@@ -362,6 +362,94 @@ internal finite law u32[0 max] StructValueShapeMultiplierForIndex(u32[0 max] ind
     }
 }
 
+internal inline finite law bool StructValueShapeTypeIsSupported(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return true;
+        case MirType.I8:
+            return true;
+        case MirType.I16:
+            return true;
+        case MirType.I32:
+            return true;
+        case MirType.I64:
+            return true;
+        case MirType.F32:
+            return true;
+        case MirType.F64:
+            return true;
+        case MirType.Ptr:
+            return true;
+        case MirType.EnumValue:
+            return false;
+    }
+}
+
+// Struct value ABI shape digits stay base-8 so ten scalar fields still fit in u32.
+// This compact code is intentionally separate from MirTypeStorageCode, which can grow
+// for package/image type facts without changing the packed ABI shape contract.
+internal finite law u32[0 max] StructValueShapeTypeCode(MirType type)
+{
+    switch (type)
+    {
+        case MirType.F32:
+            return 0;
+        case MirType.I1:
+            return 1;
+        case MirType.I8:
+            return 2;
+        case MirType.I16:
+            return 3;
+        case MirType.I32:
+            return 4;
+        case MirType.I64:
+            return 5;
+        case MirType.Ptr:
+            return 6;
+        case MirType.F64:
+            return 7;
+        case MirType.EnumValue:
+            return 0;
+    }
+}
+
+internal finite law MirType MirTypeFromStructValueShapeCode(u32[0 max] code)
+{
+    switch (code)
+    {
+        case 0:
+            return MirType.F32;
+        case 1:
+            return MirType.I1;
+        case 2:
+            return MirType.I8;
+        case 3:
+            return MirType.I16;
+        case 4:
+            return MirType.I32;
+        case 5:
+            return MirType.I64;
+        case 6:
+            return MirType.Ptr;
+        case 7:
+            return MirType.F64;
+        default:
+            return MirType.I64;
+    }
+}
+
+internal finite law MirType StructValueShapeCodeFieldTypeAt(u32[0 max] shapeCode, u32[0 max] index)
+{
+    return MirTypeFromStructValueShapeCode(StructValueShapeCodeFieldStorageCodeAt(shapeCode, index));
+}
+
+internal finite law MirType StructValueShapeFieldTypeAt(ParamAbiFacts facts, u32[0 max] index)
+{
+    return StructValueShapeCodeFieldTypeAt(facts.StructValueShapeCode, index);
+}
+
 internal finite law u32[0 max] StructValueShapeFieldStorageCodeAt(ParamAbiFacts facts, u32[0 max] index)
 {
     return StructValueShapeCodeFieldStorageCodeAt(facts.StructValueShapeCode, index);
@@ -406,8 +494,8 @@ internal fn MemoryStatus EmitLlvmStructValueShapeType(u32[0 max] fieldCount, u32
             try sink.AppendConstAscii(", ");
         }
 
-        stack u32[0 max] fieldCode = StructValueShapeCodeFieldStorageCodeAt(shapeCode, i);
-        try EmitLlvmTypeName(MirTypeFromStorageCode(fieldCode), sink);
+        stack MirType fieldType = StructValueShapeCodeFieldTypeAt(shapeCode, i);
+        try EmitLlvmTypeName(fieldType, sink);
         i = i + 1;
     }
 

@@ -407,3 +407,31 @@ public struct TypedLiteralExpressionTable
         return System.Memory.MemoryStatus.Ok;
     }
 }
+
+public fn u32[0 max] FindTypedLiteralExpressionRowByToken(
+    borrow TypedLiteralExpressionTable literals,
+    TypedLiteralContext context,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] ownerNameToken,
+    u32[0 max] functionNameToken,
+    u32[0 max] statementIndexPlusOne,
+    u32[0 max] literalToken)
+{
+    stack mut u32[0 max] found = 0;
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (found == 0
+            && literals.ContextAt(index) == context
+            && literals.OwnerDeclarationIndexAt(index) == ownerDeclarationIndex
+            && literals.OwnerNameTokenAt(index) == ownerNameToken
+            && literals.FunctionNameTokenAt(index) == functionNameToken
+            && literals.StatementIndexPlusOneAt(index) == statementIndexPlusOne
+            && literals.LiteralTokenAt(index) == literalToken)
+        {
+            found = (u32[0 max])(index + 1);
+        }
+    }
+
+    return found;
+}

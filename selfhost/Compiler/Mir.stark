@@ -99,7 +99,12 @@ internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, bo
     while willexit (viRemaining > 0)
     {
         stack MirInstruction instr = instrs.Get(vi);
-        if (instr.Opcode() == MirOp.ArenaAlloc || instr.Opcode() == MirOp.StackAlloc || instr.Opcode() == MirOp.HeapAlloc)
+        if (instr.Opcode() == MirOp.TextConstantValue)
+        {
+            // Text constant fields name constant-storage rows and payload facts,
+            // not MIR value operands.
+        }
+        else if (instr.Opcode() == MirOp.ArenaAlloc || instr.Opcode() == MirOp.StackAlloc || instr.Opcode() == MirOp.HeapAlloc)
         {
             if (instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
             {

@@ -222,6 +222,11 @@ internal inline finite law u32[0 max] SourceLocalTypeCodeEnumBase()
     return 16;
 }
 
+internal inline finite law u32[0 max] SourceLocalTypeCodeStructValueParamBase()
+{
+    return 536870912;
+}
+
 internal inline finite law u32[0 max] SourceLocalTypeCodeStoredEnumBase()
 {
     return 1073741824;
@@ -237,14 +242,24 @@ internal inline finite law u32[0 max] SourceLocalTypeCodeForStoredEnumOwnerDecla
     return SourceLocalTypeCodeStoredEnumBase() + ownerDeclarationIndex;
 }
 
+internal inline finite law u32[0 max] SourceLocalTypeCodeForStructValueTypeToken(u32[0 max] typeToken)
+{
+    return SourceLocalTypeCodeStructValueParamBase() + typeToken;
+}
+
 internal inline finite law bool SourceLocalTypeCodeIsEnum(u32[0 max] typeCode)
 {
-    return typeCode >= SourceLocalTypeCodeEnumBase() && typeCode < SourceLocalTypeCodeStoredEnumBase();
+    return typeCode >= SourceLocalTypeCodeEnumBase() && typeCode < SourceLocalTypeCodeStructValueParamBase();
 }
 
 internal inline finite law bool SourceLocalTypeCodeIsStoredEnum(u32[0 max] typeCode)
 {
     return typeCode >= SourceLocalTypeCodeStoredEnumBase();
+}
+
+internal inline finite law bool SourceLocalTypeCodeIsStructValue(u32[0 max] typeCode)
+{
+    return typeCode >= SourceLocalTypeCodeStructValueParamBase() && typeCode < SourceLocalTypeCodeStoredEnumBase();
 }
 
 internal inline finite law u32[0 max] SourceLocalTypeCodeEnumOwnerDeclarationIndex(u32[0 max] typeCode)
@@ -255,6 +270,16 @@ internal inline finite law u32[0 max] SourceLocalTypeCodeEnumOwnerDeclarationInd
     }
 
     return typeCode - SourceLocalTypeCodeEnumBase();
+}
+
+internal inline finite law u32[0 max] SourceLocalTypeCodeStructValueTypeToken(u32[0 max] typeCode)
+{
+    if (typeCode < SourceLocalTypeCodeStructValueParamBase() || typeCode >= SourceLocalTypeCodeStoredEnumBase())
+    {
+        return 0;
+    }
+
+    return typeCode - SourceLocalTypeCodeStructValueParamBase();
 }
 
 internal inline finite law u32[0 max] SourceLocalTypeCodeStoredEnumOwnerDeclarationIndex(u32[0 max] typeCode)
@@ -484,7 +509,10 @@ internal fn bool IsProductOpToken(TokenKind k)
 public enum ExprKind
 {
     IntLitExpr,
+    FloatLitExpr,
     BoolLitExpr,
+    StringLitExpr,
+    CharacterLitExpr,
     NameExpr,
     FieldExpr,
     IndexedFieldExpr,
@@ -555,6 +583,15 @@ public fn u32[0 max] MakeIntLit(mut borrow IrTable<ExprNode> nodes, i64[min max]
     return nodes.Add(node);
 }
 
+public fn u32[0 max] MakeFloatLit(mut borrow IrTable<ExprNode> nodes, u32[0 max] literalToken, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.FloatLitExpr;
+    node.Left = literalToken;
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Add(node);
+}
+
 public fn u32[0 max] MakeBoolLit(mut borrow IrTable<ExprNode> nodes, bool value)
 {
     stack mut ExprNode node = new();
@@ -569,6 +606,145 @@ public fn u32[0 max] MakeBoolLit(mut borrow IrTable<ExprNode> nodes, bool value)
     }
 
     return nodes.Add(node);
+}
+
+public fn bool SourceFloatLiteralNodeHasTypedLiteralRow(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    return node.Kind == ExprKind.FloatLitExpr && node.Right != 0;
+}
+
+public fn u32[0 max] SourceFloatLiteralNodeLiteralToken(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.FloatLitExpr)
+    {
+        return node.Left;
+    }
+
+    return 0;
+}
+
+public fn u32[0 max] SourceFloatLiteralNodeTypedLiteralRowIndexPlusOne(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.FloatLitExpr)
+    {
+        return node.Right;
+    }
+
+    return 0;
+}
+
+public fn bool TrySetSourceFloatLiteralNodeTypedLiteralRow(mut borrow IrTable<ExprNode> nodes, u32[0 max] nodeId, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    if (!nodes.Contains(nodeId) || typedLiteralRowIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.FloatLitExpr)
+    {
+        return false;
+    }
+
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Replace(nodeId, node);
+}
+
+public fn u32[0 max] MakeStringLit(mut borrow IrTable<ExprNode> nodes, u32[0 max] literalToken, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.StringLitExpr;
+    node.Left = literalToken;
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeCharacterLit(mut borrow IrTable<ExprNode> nodes, u32[0 max] literalToken, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CharacterLitExpr;
+    node.Left = literalToken;
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Add(node);
+}
+
+public fn bool SourceTextLiteralNodeHasTypedLiteralRow(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    return (node.Kind == ExprKind.StringLitExpr || node.Kind == ExprKind.CharacterLitExpr)
+        && node.Right != 0;
+}
+
+public fn u32[0 max] SourceTextLiteralNodeLiteralToken(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.StringLitExpr || node.Kind == ExprKind.CharacterLitExpr)
+    {
+        return node.Left;
+    }
+
+    return 0;
+}
+
+public fn u32[0 max] SourceTextLiteralNodeTypedLiteralRowIndexPlusOne(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return 0;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    if (node.Kind == ExprKind.StringLitExpr || node.Kind == ExprKind.CharacterLitExpr)
+    {
+        return node.Right;
+    }
+
+    return 0;
+}
+
+public fn bool TrySetSourceTextLiteralNodeTypedLiteralRow(mut borrow IrTable<ExprNode> nodes, u32[0 max] nodeId, u32[0 max] typedLiteralRowIndexPlusOne)
+{
+    if (!nodes.Contains(nodeId) || typedLiteralRowIndexPlusOne == 0)
+    {
+        return false;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.StringLitExpr && node.Kind != ExprKind.CharacterLitExpr)
+    {
+        return false;
+    }
+
+    node.Right = typedLiteralRowIndexPlusOne;
+    return nodes.Replace(nodeId, node);
 }
 
 public fn u32[0 max] MakeName(mut borrow IrTable<ExprNode> nodes, u32[0 max] paramIndex)
@@ -959,8 +1135,14 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
     {
         case ExprKind.IntLitExpr:
             return ExprType.IntType;
+        case ExprKind.FloatLitExpr:
+            return ExprType.FloatType;
         case ExprKind.BoolLitExpr:
             return ExprType.BoolType;
+        case ExprKind.StringLitExpr:
+            return ExprType.ErrorType;
+        case ExprKind.CharacterLitExpr:
+            return ExprType.ErrorType;
         case ExprKind.NameExpr:
             if (localTypes.Contains(node.Left + 1))
             {
@@ -1003,6 +1185,11 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
                 if (typeCode == SourceLocalTypeCodeSlice())
                 {
                     return ExprType.ErrorType;
+                }
+
+                if (typeCode == SourceLocalTypeCodeFixedArrayParam() || SourceLocalTypeCodeIsStructValue(typeCode))
+                {
+                    return ExprType.AggregateType;
                 }
 
                 if (SourceLocalTypeCodeIsEnum(typeCode) || SourceLocalTypeCodeIsStoredEnum(typeCode))
@@ -1298,6 +1485,11 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
             return SourceLocalTypeCodeNonValue();
         }
 
+        if (node.Kind == ExprKind.FloatLitExpr)
+        {
+            return SourceLocalTypeCodeNonValue();
+        }
+
         if (node.Kind == ExprKind.NameExpr && localTypes.Contains(node.Left + 1))
         {
             stack u32[0 max] sourceCode = localTypes.Get(node.Left + 1);
@@ -1312,6 +1504,11 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
             }
 
             if (SourceLocalTypeCodeIsEnum(sourceCode))
+            {
+                return sourceCode;
+            }
+
+            if (sourceCode == SourceLocalTypeCodeFixedArrayParam() || SourceLocalTypeCodeIsStructValue(sourceCode))
             {
                 return sourceCode;
             }
@@ -1348,6 +1545,11 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
     if (type == ExprType.PtrType)
     {
         return SourceLocalTypeCodePointer();
+    }
+
+    if (type == ExprType.AggregateType)
+    {
+        return SourceLocalTypeCodeNonValue();
     }
 
     if (type == ExprType.ErrorType)
@@ -2342,6 +2544,11 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
         return MakeParseResult(MakeIntLit(nodes, value), cursor + 1);
     }
 
+    if (k == TokenKind.FloatLiteral)
+    {
+        return MakeParseResult(MakeFloatLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
     if (k == TokenKind.True)
     {
         return MakeParseResult(MakeBoolLit(nodes, true), cursor + 1);
@@ -2350,6 +2557,16 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
     if (k == TokenKind.False)
     {
         return MakeParseResult(MakeBoolLit(nodes, false), cursor + 1);
+    }
+
+    if (k == TokenKind.StringLiteral)
+    {
+        return MakeParseResult(MakeStringLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.CharacterLiteral)
+    {
+        return MakeParseResult(MakeCharacterLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
     }
 
     if (k == TokenKind.Minus)

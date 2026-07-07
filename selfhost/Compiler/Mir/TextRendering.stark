@@ -77,6 +77,37 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try sink.AppendConstAscii(", ");
             try EmitMirValue(sink, instr.OperandBIndex());
             try sink.AppendConstAscii("\n");
+        case MirOp.TextConstantValue:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = text.constant row ");
+            try sink.AppendU64((u64[0 max])MirTextConstantValueRowIndex(instr));
+            try sink.AppendConstAscii(", start ");
+            try sink.AppendU64((u64[0 max])MirTextConstantValuePayloadStart(instr));
+            try sink.AppendConstAscii(", bytes ");
+            try sink.AppendU64((u64[0 max])MirTextConstantValuePayloadByteLength(instr));
+            try sink.AppendConstAscii(", codepoints ");
+            try sink.AppendU64((u64[0 max])MirTextConstantValueCodePointLength(instr));
+            try sink.AppendConstAscii(", encoding ");
+            switch (MirTextConstantValueStorageEncoding(instr))
+            {
+                case MirTextConstantStorageEncoding.AsciiBytes:
+                    try sink.AppendConstAscii("ascii-bytes\n");
+                case MirTextConstantStorageEncoding.Utf8Bytes:
+                    try sink.AppendConstAscii("utf8-bytes\n");
+            }
+        case MirOp.FloatConstantValue:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = float.constant row ");
+            try sink.AppendU64((u64[0 max])MirFloatConstantValueRowIndex(instr));
+            try sink.AppendConstAscii(", type ");
+            try EmitMirFloatConstantTypeName(MirFloatConstantValueType(instr), sink);
+            try sink.AppendConstAscii(", start ");
+            try sink.AppendU64((u64[0 max])MirFloatConstantValuePayloadStart(instr));
+            try sink.AppendConstAscii(", bytes ");
+            try sink.AppendU64((u64[0 max])MirFloatConstantValuePayloadByteLength(instr));
+            try sink.AppendConstAscii(", bits ");
+            try sink.AppendU64((u64[0 max])MirFloatConstantValueBitWidth(instr));
+            try sink.AppendConstAscii("\n");
         case MirOp.FixedArrayParamElement:
             try EmitMirValue(sink, index);
             try sink.AppendConstAscii(" = fixed-array.param.element param ");
@@ -114,6 +145,17 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try sink.AppendU64((u64[0 max])instr.OperandBIndex());
             try sink.AppendConstAscii(", align ");
             try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.StructValueLoad:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = struct-value.load ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", count ");
+            try sink.AppendU64((u64[0 max])MirStructValueLoadFieldCount(instr));
+            try sink.AppendConstAscii(", shape ");
+            try sink.AppendU64((u64[0 max])MirStructValueLoadShapeCode(instr));
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
             try sink.AppendConstAscii("\n");
         case MirOp.Add:
             try EmitMirBinaryLine(sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
@@ -443,6 +485,152 @@ internal fn MemoryStatus EmitMirCallArgsFromLinks(borrow IrTable<MirInstruction>
     }
 
     try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitMirTextConstantEncodingName(MirTextConstantStorageEncoding encoding, mut borrow OwnedAscii sink)
+{
+    switch (encoding)
+    {
+        case MirTextConstantStorageEncoding.AsciiBytes:
+            try sink.AppendConstAscii("ascii-bytes");
+        case MirTextConstantStorageEncoding.Utf8Bytes:
+            try sink.AppendConstAscii("utf8-bytes");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitMirTextConstantPayload(
+    borrow IrTable<u8[0 max]> payloadBytes,
+    MirTextConstant constant,
+    mut borrow OwnedAscii sink)
+{
+    if (!MirTextConstantPayloadRangeIsValid(
+        constant.PayloadStartIndex(),
+        constant.PayloadByteLength(),
+        (u32[0 max])payloadBytes.Count()))
+    {
+        try sink.AppendConstAscii("<invalid>");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("[");
+    stack mut u32[0 max] index = 0;
+    while willexit (index < constant.PayloadByteLength())
+    {
+        if (index != 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        try sink.AppendU64((u64[0 max])payloadBytes.Get(constant.PayloadStartIndex() + index));
+        index = index + 1;
+    }
+
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitMirFloatConstantTypeName(MirType type, mut borrow OwnedAscii sink)
+{
+    switch (type)
+    {
+        case MirType.F32:
+            try sink.AppendConstAscii("f32");
+        case MirType.F64:
+            try sink.AppendConstAscii("f64");
+        default:
+            try sink.AppendConstAscii("<invalid>");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitMirFloatConstantPayload(
+    borrow IrTable<u8[0 max]> payloadBytes,
+    MirFloatConstant constant,
+    mut borrow OwnedAscii sink)
+{
+    if (!MirFloatConstantLiteralRangeIsValid(
+        constant.PayloadStartIndex(),
+        constant.PayloadByteLength(),
+        (u32[0 max])payloadBytes.Count()))
+    {
+        try sink.AppendConstAscii("<invalid>");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("[");
+    stack mut u32[0 max] index = 0;
+    while willexit (index < constant.PayloadByteLength())
+    {
+        if (index != 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        try sink.AppendU64((u64[0 max])payloadBytes.Get(constant.PayloadStartIndex() + index));
+        index = index + 1;
+    }
+
+    try sink.AppendConstAscii("]");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitMirTextConstants(
+    borrow IrTable<u8[0 max]> payloadBytes,
+    borrow IrTable<MirTextConstant> constants,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = constants.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirTextConstant constant = constants.Get(id);
+        try sink.AppendConstAscii("text.constant row ");
+        try sink.AppendU64((u64[0 max])id);
+        try sink.AppendConstAscii(", start ");
+        try sink.AppendU64((u64[0 max])constant.PayloadStartIndex());
+        try sink.AppendConstAscii(", bytes ");
+        try sink.AppendU64((u64[0 max])constant.PayloadByteLength());
+        try sink.AppendConstAscii(", codepoints ");
+        try sink.AppendU64((u64[0 max])constant.PayloadCodePointLength());
+        try sink.AppendConstAscii(", encoding ");
+        try EmitMirTextConstantEncodingName(constant.StorageEncoding(), sink);
+        try sink.AppendConstAscii(", payload ");
+        try EmitMirTextConstantPayload(payloadBytes, constant, sink);
+        try sink.AppendConstAscii("\n");
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitMirFloatConstants(
+    borrow IrTable<u8[0 max]> payloadBytes,
+    borrow IrTable<MirFloatConstant> constants,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = constants.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFloatConstant constant = constants.Get(id);
+        try sink.AppendConstAscii("float.constant row ");
+        try sink.AppendU64((u64[0 max])id);
+        try sink.AppendConstAscii(", type ");
+        try EmitMirFloatConstantTypeName(constant.ValueType(), sink);
+        try sink.AppendConstAscii(", start ");
+        try sink.AppendU64((u64[0 max])constant.PayloadStartIndex());
+        try sink.AppendConstAscii(", bytes ");
+        try sink.AppendU64((u64[0 max])constant.PayloadByteLength());
+        try sink.AppendConstAscii(", payload ");
+        try EmitMirFloatConstantPayload(payloadBytes, constant, sink);
+        try sink.AppendConstAscii("\n");
+        id = id + 1;
+    }
+
     return MemoryStatus.Ok;
 }
 

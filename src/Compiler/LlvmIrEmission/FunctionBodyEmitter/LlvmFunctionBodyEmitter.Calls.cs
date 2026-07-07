@@ -423,7 +423,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
             calleeParameterEffects,
             calleeMemoryEffects,
             scopedNoAliasGroups,
-            loopAccessGroups);
+            loopAccessGroups,
+            abiCallee.ReturnsIndirect && resultName is not null
+                ? CreateScopedAliasFreshResultRootKey(resultName)
+                : null);
 
         if (abiCallee.ReturnsIndirect)
         {
@@ -1470,7 +1473,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
             parameterEffects,
             BuildIndirectCallMemoryEffects(parameterEffects, call.Target.Type),
             scopedNoAliasGroups,
-            loopAccessGroups);
+            loopAccessGroups,
+            abiCallee.ReturnsIndirect && resultName is not null
+                ? CreateScopedAliasFreshResultRootKey(resultName)
+                : null);
 
         if (abiCallee.ReturnsIndirect)
         {
@@ -1752,7 +1758,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         FunctionMemoryEffectSummary? memoryEffects,
         IReadOnlyList<ScopedNoAliasGroup>? scopedNoAliasGroups,
-        IReadOnlyList<string>? loopAccessGroups)
+        IReadOnlyList<string>? loopAccessGroups,
+        string? indirectResultRootKey = null)
     {
         if (memoryEffects is null
             || !CanAttachCallMemoryMetadata(memoryEffects))
@@ -1769,6 +1776,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 parameterEffects,
                 memoryEffects,
                 scopedNoAliasGroups,
+                indirectResultRootKey,
                 out var rootKeys))
         {
             suffix += GetCallScopedNoAliasMetadataSuffix(rootKeys, scopedNoAliasGroups);
@@ -1794,10 +1802,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
         FunctionMemoryEffectSummary memoryEffects,
         IReadOnlyList<ScopedNoAliasGroup>? scopedNoAliasGroups,
+        string? indirectResultRootKey,
         out IReadOnlySet<string> rootKeys)
     {
         var collected = new HashSet<string>(StringComparer.Ordinal);
         var allowedRootKeys = BuildScopedNoAliasRootSet(scopedNoAliasGroups);
+
+        // An indirect (sret) return is a WRITE by the callee into the result
+        // slot. The slot's fresh scope must sit in the call's alias.scope, or
+        // the slot reload after the call — which claims exactly that scope —
+        // is provably independent of the call and LLVM forwards the stale
+        // pre-call bytes (the enum-owner scan folded to `ret false` this way).
+        // The fresh-result root lives in the function-scoped registry; keys
+        // unknown to either ref builder are ignored, so add unconditionally.
+        if (indirectResultRootKey is not null)
+        {
+            collected.Add(indirectResultRootKey);
+        }
+
         var userParameters = abiCallee.UserParameters;
         for (var index = 0; index < userParameters.Count; index++)
         {

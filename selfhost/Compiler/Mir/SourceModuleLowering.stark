@@ -2774,6 +2774,15 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
     }
 
     stack ExprParseResult returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, (u64[0 2 ** 63 - 1])terminalIndex + 1);
+    if (!LinkSourceTextLiteralRowsFromModuleFacts(nodes, moduleFacts))
+    {
+        return result;
+    }
+
+    if (!LinkSourceFloatLiteralRowsFromModuleFacts(nodes, moduleFacts))
+    {
+        return result;
+    }
 
     // Every body name must be a parameter or a declared local — no phantom names.
     if (params.Count() != signatureParamCount + localRoots.Count())
@@ -3034,12 +3043,18 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
 
     stack mut MirType declaredReturnType = MirType.I64;
     stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
-    stack MirValueId returnValue = LowerScalarReturnExprNodeWithCallContext(
+    if (rootType == ExprType.FloatType && (!hasDeclaredReturnType || (declaredReturnType != MirType.F32 && declaredReturnType != MirType.F64)))
+    {
+        return result;
+    }
+
+    stack MirValueId returnValue = LowerScalarReturnExprNodeWithModuleFactsAndCallContext(
         nodes,
         returnRoot.NodeId,
         instrs,
         loweringLocalTypes,
         localOverrides,
+        moduleFacts,
         functionCallContractFacts,
         sliceArgumentLocals,
         rootType,

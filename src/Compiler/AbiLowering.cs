@@ -431,7 +431,16 @@ internal sealed class AbiLowerer
 
         if (qualifiedName.Contains('.', StringComparison.Ordinal))
         {
-            return qualifiedName;
+            // A dotted name is not necessarily module-qualified: an imported
+            // method can lower under its module-relative `Type.Method` name
+            // (the dot is the type separator). The binary symbol must match
+            // the defining library's module-qualified emission, or consumer
+            // declares/calls reference a symbol the archive never exported
+            // (`@Counter_Reset` vs `@Facade_Counter_Reset`).
+            return !string.IsNullOrEmpty(moduleName)
+                   && !qualifiedName.StartsWith($"{moduleName}.", StringComparison.Ordinal)
+                ? $"{moduleName}.{qualifiedName}"
+                : qualifiedName;
         }
 
         return sourceName;

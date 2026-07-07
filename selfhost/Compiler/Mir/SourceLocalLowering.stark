@@ -166,6 +166,33 @@ internal fn bool TokenTextIsArenaDynamicReserveMethod(borrow TokenStream stream,
         || TokenTextIsTryReserveCapacityName(stream, source, token);
 }
 
+internal fn u32[0 max] SourceLocalFloatTypeTokenBitWidth(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 3)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    if (source[start] != 102)
+    {
+        return 0;
+    }
+
+    if (source[start + 1] == 51 && source[start + 2] == 50)
+    {
+        return 32;
+    }
+
+    if (source[start + 1] == 54 && source[start + 2] == 52)
+    {
+        return 64;
+    }
+
+    return 0;
+}
+
 internal fn bool TokenStreamMentionsArenaDynamicRuntime(borrow TokenStream stream, borrow i8[min max][] source)
 {
     stack u64[0 2 ** 63 - 1] count = stream.Count();
@@ -946,7 +973,12 @@ internal fn bool TryAppendStructValueShapeField(
         return false;
     }
 
-    nextShapeCode = shapeCode + MirTypeStorageCode(fieldType) * multiplier;
+    if (!StructValueShapeTypeIsSupported(fieldType))
+    {
+        return false;
+    }
+
+    nextShapeCode = shapeCode + StructValueShapeTypeCode(fieldType) * multiplier;
     nextFieldCount = fieldCount + 1;
     return true;
 }
@@ -1512,6 +1544,24 @@ internal fn bool MirTypeForKnownSourceScalarTypeHead(borrow TokenStream stream, 
     {
         type = MirType.I1;
         return true;
+    }
+
+    if (kind == TokenKind.FloatType)
+    {
+        stack u32[0 max] bits = SourceLocalFloatTypeTokenBitWidth(stream, source, typeToken);
+        if (bits == 32)
+        {
+            type = MirType.F32;
+            return true;
+        }
+
+        if (bits == 64)
+        {
+            type = MirType.F64;
+            return true;
+        }
+
+        return false;
     }
 
     if (kind != TokenKind.IntegerType)
@@ -3152,11 +3202,17 @@ internal fn bool TryBuildSourceValueFactsForNode(
 
             facts = literalFacts;
             return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return false;
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
             stack mut ValueFacts boolFacts = new();
             boolFacts.SetIntegerRange(node.Imm, node.Imm + 1);
             facts = boolFacts;
             return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
+            return false;
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             if (!sourceValueFacts.Contains(node.Left + 1))
             {
@@ -3486,6 +3542,7 @@ internal struct SourceSliceDescriptorLocal
     MirType ElementType;
     u32[0 max] FieldTypeCode;
     bool IsFixedArrayParam;
+    bool IsFixedArrayValueOverride;
 
     SourceSliceDescriptorLocal()
     {
@@ -3501,6 +3558,7 @@ internal struct SourceSliceDescriptorLocal
         self.ElementType = MirType.I64;
         self.FieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
         self.IsFixedArrayParam = false;
+        self.IsFixedArrayValueOverride = false;
     }
 }
 
@@ -3705,6 +3763,7 @@ internal fn bool BuildSourceSliceArgumentLocals(
         local.ElementType = descriptor.ElementType;
         local.FieldTypeCode = descriptor.FieldTypeCode;
         local.IsFixedArrayParam = descriptor.IsFixedArrayParam;
+        local.IsFixedArrayValueOverride = descriptor.IsFixedArrayValueOverride;
         if (sliceArgumentLocals.Add(local) == 0)
         {
             return false;
@@ -5782,6 +5841,16 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
         return MakeParseResult(MakeBoolLit(nodes, false), cursor + 1);
     }
 
+    if (k == TokenKind.StringLiteral)
+    {
+        return MakeParseResult(MakeStringLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.CharacterLiteral)
+    {
+        return MakeParseResult(MakeCharacterLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
     if (k == TokenKind.Minus)
     {
         stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
@@ -6267,6 +6336,11 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
                     && (sliceLocal.SliceLength == 0 || SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, sliceLocal.SliceLength)))
                 {
                     stack mut u32[0 max] indexedRead = 0;
+                    if (sliceLocal.IsFixedArrayValueOverride)
+                    {
+                        return MakeParseResult(0, cursor);
+                    }
+
                     if (sliceLocal.IsFixedArrayParam)
                     {
                         indexedRead = MakeFixedArrayParamElementRead(

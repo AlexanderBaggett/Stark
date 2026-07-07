@@ -396,6 +396,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static void AddOrStrengthenDereferenceableAttribute(List<string> attributes, BigInteger byteCount)
     {
+        // LLVM rejects `dereferenceable(0)`; a zero extent carries no
+        // information, so drop the hint instead of emitting invalid IR.
+        if (byteCount <= BigInteger.Zero)
+        {
+            return;
+        }
+
         var replacement = $"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})";
         for (var index = 0; index < attributes.Count; index++)
         {

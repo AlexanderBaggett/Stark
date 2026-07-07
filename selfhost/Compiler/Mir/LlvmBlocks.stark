@@ -583,6 +583,32 @@ public fn MemoryStatus EmitLlvmLabeledBlockWithTailCallees(borrow IrTable<MirIns
     return MemoryStatus.Ok;
 }
 
+public fn MemoryStatus EmitLlvmLabeledBlockWithFloatConstantsAndTailCallees(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<u8[0 max]> floatPayloadBytes,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithTailCalleesAndFloatConstants(instrs, funcTailFlags, floatPayloadBytes, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try EmitLlvmTerminatorWithTailCallees(instrs, funcTailFlags, blocks, MirBlockIdOf(blockIndex), sink);
+    return MemoryStatus.Ok;
+}
+
 public fn MemoryStatus EmitLlvmLabeledBlockWithEnumLayoutsAndTailCallees(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<u32[0 max]> funcTailFlags,
@@ -814,6 +840,19 @@ public fn MemoryStatus EmitLlvmLabeledBlock(borrow IrTable<MirInstruction> instr
 {
     stack mut IrTable<u32[0 max]> noTailCallees = new();
     return EmitLlvmLabeledBlockWithTailCallees(instrs, noTailCallees, blocks, blockIndex, firstInstr, instrCount, sink);
+}
+
+public fn MemoryStatus EmitLlvmLabeledBlockWithFloatConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u8[0 max]> floatPayloadBytes,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    return EmitLlvmLabeledBlockWithFloatConstantsAndTailCallees(instrs, noTailCallees, floatPayloadBytes, blocks, blockIndex, firstInstr, instrCount, sink);
 }
 
 public fn MemoryStatus EmitLlvmLabeledBlockWithEnumLayouts(

@@ -55,6 +55,378 @@ public fn MirValueId MirConstNullPtr(mut borrow IrTable<MirInstruction> instrs)
     return MirEmitTyped(instrs, MirOp.ConstInt, MirType.Ptr, 0, 0, 0);
 }
 
+// Records a decoded text constant payload span. Returns 0 when the byte span is not
+// contained by `payloadBytes` or the byte/code point facts contradict the encoding.
+public fn u32[0 max] MirAddTextConstantRange(
+    mut borrow IrTable<MirTextConstant> constants,
+    borrow IrTable<u8[0 max]> payloadBytes,
+    MirTextConstantStorageEncoding encoding,
+    u32[0 max] payloadStart,
+    u32[0 max] payloadByteLength,
+    u32[0 max] codePointLength)
+{
+    if (!MirTextConstantPayloadRangeIsValid(payloadStart, payloadByteLength, (u32[0 max])payloadBytes.Count())
+        || !MirTextConstantLengthFactsAreValid(encoding, payloadByteLength, codePointLength))
+    {
+        return 0;
+    }
+
+    stack mut MirTextConstant row = new();
+    row.PayloadStart = payloadStart;
+    row.PayloadBytes = payloadByteLength;
+    row.CodePoints = codePointLength;
+    row.Encoding = encoding;
+    return constants.Add(row);
+}
+
+public fn u32[0 max] MirTextConstantPayloadStart(borrow IrTable<MirTextConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirTextConstant row = constants.Get(id);
+    return row.PayloadStartIndex();
+}
+
+public fn u32[0 max] MirTextConstantPayloadByteLength(borrow IrTable<MirTextConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirTextConstant row = constants.Get(id);
+    return row.PayloadByteLength();
+}
+
+public fn u32[0 max] MirTextConstantPayloadCodePointLength(borrow IrTable<MirTextConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirTextConstant row = constants.Get(id);
+    return row.PayloadCodePointLength();
+}
+
+public fn MirTextConstantStorageEncoding MirTextConstantEncoding(borrow IrTable<MirTextConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return MirTextConstantStorageEncoding.AsciiBytes;
+    }
+
+    stack MirTextConstant row = constants.Get(id);
+    return row.StorageEncoding();
+}
+
+// Builds a text-view descriptor from a validated text constant row. Returns an
+// invalid value id when the row is missing.
+public fn MirValueId MirTextConstantValue(
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirTextConstant> constants,
+    u32[0 max] textConstantId)
+{
+    if (!constants.Contains(textConstantId))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirTextConstant row = constants.Get(textConstantId);
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.TextConstantValue;
+    instr.AIndex = textConstantId;
+    instr.BIndex = row.PayloadStartIndex();
+    instr.CIndex = row.PayloadByteLength();
+    instr.DIndex = row.PayloadCodePointLength();
+    instr.Imm = (i64[min max])MirTextConstantStorageEncodingCode(row.StorageEncoding());
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+internal fn bool MirFloatLiteralPayloadBytesAreAscii(
+    borrow IrTable<u8[0 max]> payloadBytes,
+    u32[0 max] payloadStart,
+    u32[0 max] payloadByteLength)
+{
+    if (!MirFloatConstantLiteralRangeIsValid(payloadStart, payloadByteLength, (u32[0 max])payloadBytes.Count()))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < payloadByteLength)
+    {
+        if (payloadBytes.Get(payloadStart + index) > 127)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+// Records an exact f32/f64 literal payload span. Returns 0 when the span is empty,
+// out of range, non-ASCII, or paired with a non-float MIR type.
+public fn u32[0 max] MirAddFloatConstantRange(
+    mut borrow IrTable<MirFloatConstant> constants,
+    borrow IrTable<u8[0 max]> payloadBytes,
+    MirType type,
+    u32[0 max] payloadStart,
+    u32[0 max] payloadByteLength)
+{
+    if (!MirFloatConstantTypeIsSupported(type)
+        || !MirFloatLiteralPayloadBytesAreAscii(payloadBytes, payloadStart, payloadByteLength))
+    {
+        return 0;
+    }
+
+    stack mut MirFloatConstant row = new();
+    row.PayloadStart = payloadStart;
+    row.PayloadBytes = payloadByteLength;
+    row.Type = type;
+    return constants.Add(row);
+}
+
+public fn u32[0 max] MirFloatConstantPayloadStart(borrow IrTable<MirFloatConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirFloatConstant row = constants.Get(id);
+    return row.PayloadStartIndex();
+}
+
+public fn u32[0 max] MirFloatConstantPayloadByteLength(borrow IrTable<MirFloatConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirFloatConstant row = constants.Get(id);
+    return row.PayloadByteLength();
+}
+
+public fn MirType MirFloatConstantType(borrow IrTable<MirFloatConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return MirType.I64;
+    }
+
+    stack MirFloatConstant row = constants.Get(id);
+    return row.ValueType();
+}
+
+public fn u32[0 max] MirFloatConstantBitWidthOf(borrow IrTable<MirFloatConstant> constants, u32[0 max] id)
+{
+    if (!constants.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirFloatConstant row = constants.Get(id);
+    return row.BitWidth();
+}
+
+// Builds a typed f32/f64 constant value from a validated float constant row. The
+// instruction carries row/span/type facts directly so package and text rendering do not
+// need to rediscover them from side tables.
+public fn MirValueId MirFloatConstantValue(
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirFloatConstant> constants,
+    u32[0 max] floatConstantId)
+{
+    if (!constants.Contains(floatConstantId))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirFloatConstant row = constants.Get(floatConstantId);
+    if (!MirFloatConstantTypeIsSupported(row.ValueType()))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.FloatConstantValue;
+    instr.AIndex = floatConstantId;
+    instr.BIndex = row.PayloadStartIndex();
+    instr.CIndex = row.PayloadByteLength();
+    instr.DIndex = row.BitWidth();
+    instr.Imm = (i64[min max])MirTypeStorageCode(row.ValueType());
+    instr.ResType = row.ValueType();
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn u32[0 max] MirTextConstantValueRowIndexOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.TextConstantValue)
+    {
+        return 0;
+    }
+
+    return MirTextConstantValueRowIndex(instr);
+}
+
+public fn u32[0 max] MirTextConstantValuePayloadStartOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.TextConstantValue)
+    {
+        return 0;
+    }
+
+    return MirTextConstantValuePayloadStart(instr);
+}
+
+public fn u32[0 max] MirTextConstantValuePayloadByteLengthOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.TextConstantValue)
+    {
+        return 0;
+    }
+
+    return MirTextConstantValuePayloadByteLength(instr);
+}
+
+public fn u32[0 max] MirTextConstantValueCodePointLengthOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.TextConstantValue)
+    {
+        return 0;
+    }
+
+    return MirTextConstantValueCodePointLength(instr);
+}
+
+public fn MirTextConstantStorageEncoding MirTextConstantValueStorageEncodingOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirTextConstantStorageEncoding.AsciiBytes;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.TextConstantValue)
+    {
+        return MirTextConstantStorageEncoding.AsciiBytes;
+    }
+
+    return MirTextConstantValueStorageEncoding(instr);
+}
+
+public fn u32[0 max] MirFloatConstantValueRowIndexOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.FloatConstantValue)
+    {
+        return 0;
+    }
+
+    return MirFloatConstantValueRowIndex(instr);
+}
+
+public fn u32[0 max] MirFloatConstantValuePayloadStartOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.FloatConstantValue)
+    {
+        return 0;
+    }
+
+    return MirFloatConstantValuePayloadStart(instr);
+}
+
+public fn u32[0 max] MirFloatConstantValuePayloadByteLengthOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.FloatConstantValue)
+    {
+        return 0;
+    }
+
+    return MirFloatConstantValuePayloadByteLength(instr);
+}
+
+public fn u32[0 max] MirFloatConstantValueBitWidthOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.FloatConstantValue)
+    {
+        return 0;
+    }
+
+    return MirFloatConstantValueBitWidth(instr);
+}
+
+public fn MirType MirFloatConstantValueTypeOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirType.I64;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.FloatConstantValue)
+    {
+        return MirType.I64;
+    }
+
+    return MirFloatConstantValueType(instr);
+}
+
 // A typed integer add of result type `type` over A/B.
 public fn MirValueId MirAddTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId a, MirValueId b)
 {
@@ -259,6 +631,23 @@ public fn MirValueId MirLoadFixedArray(
     instr.CIndex = alignBytes;
     instr.DIndex = MirTypeStorageCode(elementType);
     instr.ResType = elementType;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirLoadStructValue(
+    mut borrow IrTable<MirInstruction> instrs,
+    MirValueId ptr,
+    u32[0 max] fieldCount,
+    u32[0 max] shapeCode,
+    MirType firstFieldType,
+    u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.StructValueLoad;
+    instr.AIndex = ptr.Index();
+    instr.BIndex = alignBytes;
+    instr.Imm = MirStructParamFieldShapeImmediate(fieldCount, shapeCode);
+    instr.ResType = firstFieldType;
     return MirValueIdOf(instrs.Add(instr));
 }
 
@@ -1589,6 +1978,10 @@ internal finite law bool MirGlobalInitialValueFitsType(MirType type, i64[min max
                 && value <= 2147483647;
         case MirType.I64:
             return true;
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
         case MirType.Ptr:
             return true;
         case MirType.EnumValue:

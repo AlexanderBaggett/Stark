@@ -296,6 +296,10 @@ internal finite law bool IntegerValueFitsMirType(MirType type, i64[min max] valu
             return value >= (i64[min max])(-(2 ** 31)) && value <= 2147483647;
         case MirType.I64:
             return true;
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
         case MirType.Ptr:
             return false;
         case MirType.EnumValue:
@@ -348,6 +352,10 @@ internal finite bool TryCheckedShiftAmount(MirType type, i64[min max] value, out
             {
                 return false;
             }
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
         case MirType.Ptr:
             return false;
         case MirType.EnumValue:
@@ -583,6 +591,10 @@ internal finite bool TryMirTypeSignedBounds(MirType type, out i64[min max] lower
             return true;
         case MirType.I1:
             return false;
+        case MirType.F32:
+            return false;
+        case MirType.F64:
+            return false;
         case MirType.Ptr:
             return false;
         case MirType.EnumValue:
@@ -646,7 +658,8 @@ internal finite law bool ValueFactsHasAny(ValueFacts facts)
         || facts.HasNoAlias()
         || facts.Volatile()
         || facts.HasIntegerRange()
-        || facts.HasNullability();
+        || facts.HasNullability()
+        || facts.HasTextConstant();
 }
 
 internal fn bool TryBuildEnumTagReadFacts(
@@ -1230,6 +1243,15 @@ internal fn bool TryBuildGeneratedValueFactsForInstruction(
                 return false;
             }
 
+            facts = built;
+            return true;
+        case MirOp.TextConstantValue:
+            built.SetTextConstant(
+                MirTextConstantValueRowIndex(instr),
+                MirTextConstantValuePayloadStart(instr),
+                MirTextConstantValuePayloadByteLength(instr),
+                MirTextConstantValueCodePointLength(instr),
+                MirTextConstantStorageEncodingCode(MirTextConstantValueStorageEncoding(instr)));
             facts = built;
             return true;
         case MirOp.ArenaAlloc:

@@ -5,6 +5,7 @@ import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Typing.TypedEnumLayoutModel
 import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedLiterals
 import Compiler.Typing.TypedPipeline
 import System.Memory
 import System.Text
@@ -96,7 +97,8 @@ fn bool ValueFactsDefaultToAbsent()
         && !vf.HasNoAlias()
         && !vf.Volatile()
         && !vf.HasIntegerRange()
-        && !vf.HasNullability();
+        && !vf.HasNullability()
+        && !vf.HasTextConstant();
 }
 
 [Fact]
@@ -109,6 +111,7 @@ fn bool ValueFactsSetAndQuery()
     vf.MarkNoAlias();
     vf.SetIntegerRange(2, 9);
     vf.MarkKnownNull();
+    vf.SetTextConstant(7, 11, 5, 4, MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.Utf8Bytes));
     return vf.HasAlignment()
         && vf.AlignmentBytes() == 8
         && vf.HasCallingAbi()
@@ -119,6 +122,12 @@ fn bool ValueFactsSetAndQuery()
         && vf.HasNullability()
         && vf.KnownNull()
         && !vf.KnownNonNull()
+        && vf.HasTextConstant()
+        && vf.TextConstantRowIndex() == 7
+        && vf.TextConstantPayloadStart() == 11
+        && vf.TextConstantPayloadByteLength() == 5
+        && vf.TextConstantCodePointLength() == 4
+        && vf.TextConstantStorageEncodingCode() == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.Utf8Bytes)
         && !vf.Volatile();
 }
 
@@ -132,6 +141,7 @@ fn bool ValueFactsInheritCarriesPresentFactsOnly()
     src.MarkNoAlias();
     src.SetIntegerRange(0, 11);
     src.MarkKnownNonNull();
+    src.SetTextConstant(3, 5, 8, 6, MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.AsciiBytes));
 
     stack mut ValueFacts dst = new();
     dst.MarkVolatile();
@@ -147,6 +157,12 @@ fn bool ValueFactsInheritCarriesPresentFactsOnly()
         && dst.HasNullability()
         && !dst.KnownNull()
         && dst.KnownNonNull()
+        && dst.HasTextConstant()
+        && dst.TextConstantRowIndex() == 3
+        && dst.TextConstantPayloadStart() == 5
+        && dst.TextConstantPayloadByteLength() == 8
+        && dst.TextConstantCodePointLength() == 6
+        && dst.TextConstantStorageEncodingCode() == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.AsciiBytes)
         && dst.Volatile()
         && !dst.HasCallingAbi();
 }
@@ -381,7 +397,8 @@ fn bool BuildMirValueRangeFactsImportsFixedArrayElementDeclaredRange()
 fn bool BuildMirValueRangeFactsImportsStructParamFieldDeclaredRange()
 {
     stack mut IrTable<MirInstruction> instrs = new();
-    stack u32[0 max] shape = MirTypeStorageCode(MirType.I64) + MirTypeStorageCode(MirType.I1) * 8;
+    stack u32[0 max] shape = StructValueShapeTypeCode(MirType.I64)
+        + StructValueShapeTypeCode(MirType.I1) * StructValueShapeMultiplierForIndex(1);
     stack MirValueId rangedField = MirStructParamFieldWithDeclaredRange(instrs, 0, 0, 2, shape, MirType.I64, 5, 9);
     stack MirValueId flagField = MirStructParamField(instrs, 0, 1, 2, shape, MirType.I1);
 
@@ -666,7 +683,7 @@ fn bool ValueFactTransferTranslateUsesProvidedFacts()
 fn bool IrFactCategoryIndexCoversConcreteDescriptors()
 {
     stack u32[0 max] count = IrConcreteFactCategoryCount();
-    if (count != 17 || IrFactCategoryAt(count) != IrFactCategory.Unknown)
+    if (count != 18 || IrFactCategoryAt(count) != IrFactCategory.Unknown)
     {
         return false;
     }
@@ -698,6 +715,7 @@ fn bool IrFactValueDescriptorsMatchCurrentValueFacts()
     stack IrFactCategoryDescriptor align = DescribeIrFactCategory(IrFactCategory.ValueAlignment);
     stack IrFactCategoryDescriptor range = DescribeIrFactCategory(IrFactCategory.ValueIntegerRange);
     stack IrFactCategoryDescriptor nullability = DescribeIrFactCategory(IrFactCategory.ValueNullability);
+    stack IrFactCategoryDescriptor textConstant = DescribeIrFactCategory(IrFactCategory.ValueTextConstant);
     stack IrFactCategoryDescriptor volatileFact = DescribeIrFactCategory(IrFactCategory.ValueVolatile);
     return align.AttachPoint() == IrFactAttachPoint.Value
         && align.PhaseOwner() == IrFactPhaseOwner.Mir
@@ -708,6 +726,11 @@ fn bool IrFactValueDescriptorsMatchCurrentValueFacts()
         && nullability.AttachPoint() == IrFactAttachPoint.Value
         && nullability.Durability() == IrFactDurability.Recomputable
         && nullability.LoweringPolicy() == IrFactLoweringPolicy.Preserve
+        && textConstant.AttachPoint() == IrFactAttachPoint.Value
+        && textConstant.PhaseOwner() == IrFactPhaseOwner.Mir
+        && textConstant.Producer() == IrFactProducer.MirLowering
+        && textConstant.Consumer() == IrFactConsumer.LlvmEmission
+        && textConstant.LoweringPolicy() == IrFactLoweringPolicy.Preserve
         && volatileFact.Consumer() == IrFactConsumer.LlvmEmission
         && volatileFact.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop;
 }
@@ -1128,6 +1151,7 @@ fn bool IrFactValidationChecksMirValueFactsAtBoundary()
     facts.MarkVolatile();
     facts.SetIntegerRange(1, 2);
     facts.MarkKnownNonNull();
+    facts.SetTextConstant(2, 4, 6, 5, MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.Utf8Bytes));
 
     if (!RecordGeneratedValueFactsForMirValue(valueFacts, source, facts))
     {
@@ -1139,8 +1163,10 @@ fn bool IrFactValidationChecksMirValueFactsAtBoundary()
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueVolatile) == IrFactValidationStatus.Ok
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueIntegerRange) == IrFactValidationStatus.Ok
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueNullability) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueTextConstant) == IrFactValidationStatus.Ok
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueNoAlias) == IrFactValidationStatus.MissingAliasFact
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueNullability) == IrFactValidationStatus.MissingRequiredFact
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueTextConstant) == IrFactValidationStatus.MissingRequiredFact
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, MirValueIdOf(3), IrFactCategory.ValueNoAlias) == IrFactValidationStatus.StaleHandle;
 }
 
@@ -1234,6 +1260,304 @@ fn bool MirConstInstructionCarriesImmediate()
     stack mut IrTable<MirInstruction> instrs = new();
     stack MirValueId c = MirConstInt(instrs, 42);
     return MirOpcodeOf(instrs, c) == MirOp.ConstInt && MirImmediateOf(instrs, c) == 42;
+}
+
+[Fact]
+fn bool MirTextConstantRowsRecordPayloadFacts()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    stack u32[0 max] b0 = payloadBytes.Add(104);
+    stack u32[0 max] b1 = payloadBytes.Add(105);
+    stack u32[0 max] b2 = payloadBytes.Add(195);
+    stack u32[0 max] b3 = payloadBytes.Add(169);
+    stack mut IrTable<MirTextConstant> constants = new();
+
+    stack u32[0 max] empty = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 0, 0, 0);
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 2, 2);
+    stack u32[0 max] utf8 = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 3, 2, 1);
+    stack u32[0 max] invalidSpan = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 5, 1, 1);
+    stack u32[0 max] invalidAscii = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 2, 1);
+    stack u32[0 max] invalidUtf8 = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 3, 1, 2);
+
+    return b0 == 1
+        && b1 == 2
+        && b2 == 3
+        && b3 == 4
+        && empty == 1
+        && asciiRow == 2
+        && utf8 == 3
+        && invalidSpan == 0
+        && invalidAscii == 0
+        && invalidUtf8 == 0
+        && constants.Count() == 3
+        && MirTextConstantPayloadStart(constants, empty) == 0
+        && MirTextConstantPayloadByteLength(constants, empty) == 0
+        && MirTextConstantPayloadCodePointLength(constants, empty) == 0
+        && MirTextConstantEncoding(constants, empty) == MirTextConstantStorageEncoding.AsciiBytes
+        && MirTextConstantPayloadStart(constants, asciiRow) == 1
+        && MirTextConstantPayloadByteLength(constants, asciiRow) == 2
+        && MirTextConstantPayloadCodePointLength(constants, asciiRow) == 2
+        && MirTextConstantEncoding(constants, asciiRow) == MirTextConstantStorageEncoding.AsciiBytes
+        && MirTextConstantPayloadStart(constants, utf8) == 3
+        && MirTextConstantPayloadByteLength(constants, utf8) == 2
+        && MirTextConstantPayloadCodePointLength(constants, utf8) == 1
+        && MirTextConstantEncoding(constants, utf8) == MirTextConstantStorageEncoding.Utf8Bytes;
+}
+
+[Fact]
+fn bool MirFloatConstantRowsRecordLiteralFacts()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(49);
+    payloadBytes.Add(46);
+    payloadBytes.Add(53);
+    payloadBytes.Add(102);
+    payloadBytes.Add(45);
+    payloadBytes.Add(50);
+    payloadBytes.Add(46);
+    payloadBytes.Add(50);
+    payloadBytes.Add(53);
+    payloadBytes.Add(200);
+
+    stack mut IrTable<MirFloatConstant> constants = new();
+    stack u32[0 max] f32Row = MirAddFloatConstantRange(constants, payloadBytes, MirType.F32, 1, 4);
+    stack u32[0 max] f64Row = MirAddFloatConstantRange(constants, payloadBytes, MirType.F64, 5, 5);
+    stack u32[0 max] invalidEmpty = MirAddFloatConstantRange(constants, payloadBytes, MirType.F32, 0, 0);
+    stack u32[0 max] invalidSpan = MirAddFloatConstantRange(constants, payloadBytes, MirType.F32, 11, 1);
+    stack u32[0 max] invalidType = MirAddFloatConstantRange(constants, payloadBytes, MirType.I64, 1, 4);
+    stack u32[0 max] invalidAscii = MirAddFloatConstantRange(constants, payloadBytes, MirType.F64, 10, 1);
+
+    return f32Row == 1
+        && f64Row == 2
+        && invalidEmpty == 0
+        && invalidSpan == 0
+        && invalidType == 0
+        && invalidAscii == 0
+        && constants.Count() == 2
+        && MirFloatConstantPayloadStart(constants, f32Row) == 1
+        && MirFloatConstantPayloadByteLength(constants, f32Row) == 4
+        && MirFloatConstantType(constants, f32Row) == MirType.F32
+        && MirFloatConstantBitWidthOf(constants, f32Row) == 32
+        && MirFloatConstantPayloadStart(constants, f64Row) == 5
+        && MirFloatConstantPayloadByteLength(constants, f64Row) == 5
+        && MirFloatConstantType(constants, f64Row) == MirType.F64
+        && MirFloatConstantBitWidthOf(constants, f64Row) == 64
+        && MirFloatConstantPayloadStart(constants, 3) == 0
+        && MirFloatConstantPayloadByteLength(constants, 3) == 0
+        && MirFloatConstantType(constants, 3) == MirType.I64
+        && MirFloatConstantBitWidthOf(constants, 3) == 0;
+}
+
+[Fact]
+fn bool MirFloatConstantRowsRoundTripPackageCodecAndTextRendering()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(49);
+    payloadBytes.Add(46);
+    payloadBytes.Add(53);
+    payloadBytes.Add(102);
+    payloadBytes.Add(45);
+    payloadBytes.Add(50);
+    payloadBytes.Add(46);
+    payloadBytes.Add(50);
+    payloadBytes.Add(53);
+
+    stack mut IrTable<MirFloatConstant> constants = new();
+    stack u32[0 max] f32Row = MirAddFloatConstantRange(constants, payloadBytes, MirType.F32, 1, 4);
+    stack u32[0 max] f64Row = MirAddFloatConstantRange(constants, payloadBytes, MirType.F64, 5, 5);
+
+    stack mut IrTable<u8[0 max]> payloadBuf = new();
+    SerializeFloatLiteralPayloadBytes(payloadBytes, payloadBuf);
+    stack mut IrTable<u8[0 max]> constantBuf = new();
+    SerializeFloatConstants(constants, constantBuf);
+
+    stack mut IrTable<u8[0 max]> restoredPayloadBytes = new();
+    if (!DeserializeFloatLiteralPayloadBytes(payloadBuf, restoredPayloadBytes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirFloatConstant> restoredConstants = new();
+    if (!DeserializeFloatConstants(constantBuf, restoredPayloadBytes, restoredConstants))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> invalidConstantsBuf = new();
+    WriteU32(invalidConstantsBuf, 1);
+    WriteU32(invalidConstantsBuf, 1);
+    WriteU32(invalidConstantsBuf, 4);
+    WriteU32(invalidConstantsBuf, MirTypeStorageCode(MirType.I64));
+    stack mut IrTable<MirFloatConstant> invalidConstants = new();
+    if (DeserializeFloatConstants(invalidConstantsBuf, restoredPayloadBytes, invalidConstants))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitMirFloatConstants(restoredPayloadBytes, restoredConstants, sink))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return f32Row == 1
+        && f64Row == 2
+        && restoredPayloadBytes.Count() == 9
+        && restoredPayloadBytes.Get(1) == 49
+        && restoredPayloadBytes.Get(4) == 102
+        && restoredPayloadBytes.Get(5) == 45
+        && restoredPayloadBytes.Get(9) == 53
+        && restoredConstants.Count() == 2
+        && MirFloatConstantPayloadStart(restoredConstants, 1) == 1
+        && MirFloatConstantPayloadByteLength(restoredConstants, 1) == 4
+        && MirFloatConstantType(restoredConstants, 1) == MirType.F32
+        && MirFloatConstantPayloadStart(restoredConstants, 2) == 5
+        && MirFloatConstantPayloadByteLength(restoredConstants, 2) == 5
+        && MirFloatConstantType(restoredConstants, 2) == MirType.F64
+        && LlvmTextEquals(sink, "float.constant row 1, type f32, start 1, bytes 4, payload [49, 46, 53, 102]\nfloat.constant row 2, type f64, start 5, bytes 5, payload [45, 50, 46, 50, 53]\n");
+}
+
+[Fact]
+fn bool MirFloatConstantValueCarriesDescriptorFacts()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(49);
+    payloadBytes.Add(46);
+    payloadBytes.Add(53);
+    payloadBytes.Add(50);
+    payloadBytes.Add(46);
+    payloadBytes.Add(50);
+    payloadBytes.Add(53);
+
+    stack mut IrTable<MirFloatConstant> constants = new();
+    stack u32[0 max] f32Row = MirAddFloatConstantRange(constants, payloadBytes, MirType.F32, 1, 3);
+    stack u32[0 max] f64Row = MirAddFloatConstantRange(constants, payloadBytes, MirType.F64, 4, 4);
+    stack mut IrTable<MirInstruction> instrs = new();
+
+    stack MirValueId f32Value = MirFloatConstantValue(instrs, constants, f32Row);
+    stack MirValueId f64Value = MirFloatConstantValue(instrs, constants, f64Row);
+    stack MirValueId invalidValue = MirFloatConstantValue(instrs, constants, f64Row + 1);
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 2, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+
+    stack mut OwnedAscii disasm = new();
+    switch (EmitMirInstructions(back, 1, (u32[0 max])back.Count(), disasm))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return f32Value.Index() == 1
+        && f64Value.Index() == 2
+        && !invalidValue.IsValid()
+        && instrs.Count() == 2
+        && back.Count() == 2
+        && MirOpcodeOf(back, f32Value) == MirOp.FloatConstantValue
+        && MirOpcodeOf(back, f64Value) == MirOp.FloatConstantValue
+        && MirValueType(back, f32Value.Index()) == MirType.F32
+        && MirValueType(back, f64Value.Index()) == MirType.F64
+        && MirFloatConstantValueRowIndexOf(back, f32Value) == f32Row
+        && MirFloatConstantValuePayloadStartOf(back, f32Value) == 1
+        && MirFloatConstantValuePayloadByteLengthOf(back, f32Value) == 3
+        && MirFloatConstantValueBitWidthOf(back, f32Value) == 32
+        && MirFloatConstantValueTypeOf(back, f32Value) == MirType.F32
+        && MirFloatConstantValueRowIndexOf(back, f64Value) == f64Row
+        && MirFloatConstantValuePayloadStartOf(back, f64Value) == 4
+        && MirFloatConstantValuePayloadByteLengthOf(back, f64Value) == 4
+        && MirFloatConstantValueBitWidthOf(back, f64Value) == 64
+        && MirFloatConstantValueTypeOf(back, f64Value) == MirType.F64
+        && LlvmTextEquals(disasm, "%v1 = float.constant row 1, type f32, start 1, bytes 3, bits 32\n%v2 = float.constant row 2, type f64, start 4, bytes 4, bits 64\n");
+}
+
+[Fact]
+fn bool MirTextConstantValueCarriesDescriptorFacts()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(65);
+    payloadBytes.Add(66);
+    payloadBytes.Add(67);
+    payloadBytes.Add(226);
+    payloadBytes.Add(130);
+    payloadBytes.Add(172);
+
+    stack mut IrTable<MirTextConstant> constants = new();
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 3, 3);
+    stack u32[0 max] utf8 = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 4, 3, 1);
+    stack mut IrTable<MirInstruction> instrs = new();
+
+    stack MirValueId asciiValue = MirTextConstantValue(instrs, constants, asciiRow);
+    stack MirValueId utf8Value = MirTextConstantValue(instrs, constants, utf8);
+    stack MirValueId invalidValue = MirTextConstantValue(instrs, constants, utf8 + 1);
+
+    return asciiValue.Index() == 1
+        && utf8Value.Index() == 2
+        && !invalidValue.IsValid()
+        && instrs.Count() == 2
+        && MirOpcodeOf(instrs, asciiValue) == MirOp.TextConstantValue
+        && MirOpcodeOf(instrs, utf8Value) == MirOp.TextConstantValue
+        && MirValueType(instrs, asciiValue.Index()) == MirType.Ptr
+        && MirValueType(instrs, utf8Value.Index()) == MirType.Ptr
+        && MirTextConstantValueRowIndexOf(instrs, asciiValue) == asciiRow
+        && MirTextConstantValuePayloadStartOf(instrs, asciiValue) == 1
+        && MirTextConstantValuePayloadByteLengthOf(instrs, asciiValue) == 3
+        && MirTextConstantValueCodePointLengthOf(instrs, asciiValue) == 3
+        && MirTextConstantValueStorageEncodingOf(instrs, asciiValue) == MirTextConstantStorageEncoding.AsciiBytes
+        && MirTextConstantValueRowIndexOf(instrs, utf8Value) == utf8
+        && MirTextConstantValuePayloadStartOf(instrs, utf8Value) == 4
+        && MirTextConstantValuePayloadByteLengthOf(instrs, utf8Value) == 3
+        && MirTextConstantValueCodePointLengthOf(instrs, utf8Value) == 1
+        && MirTextConstantValueStorageEncodingOf(instrs, utf8Value) == MirTextConstantStorageEncoding.Utf8Bytes;
+}
+
+[Fact]
+fn bool MirTextConstantValueBuildsValueFacts()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(65);
+    payloadBytes.Add(66);
+    payloadBytes.Add(226);
+    payloadBytes.Add(130);
+    payloadBytes.Add(172);
+
+    stack mut IrTable<MirTextConstant> constants = new();
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 2, 2);
+    stack u32[0 max] utf8 = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 3, 3, 1);
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId asciiValue = MirTextConstantValue(instrs, constants, asciiRow);
+    stack MirValueId utf8Value = MirTextConstantValue(instrs, constants, utf8);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts asciiFacts = ValueFactsForMirValue(valueFacts, asciiValue);
+    stack ValueFacts utf8Facts = ValueFactsForMirValue(valueFacts, utf8Value);
+    return valueFacts.Count() == 2
+        && asciiFacts.HasTextConstant()
+        && asciiFacts.TextConstantRowIndex() == asciiRow
+        && asciiFacts.TextConstantPayloadStart() == 1
+        && asciiFacts.TextConstantPayloadByteLength() == 2
+        && asciiFacts.TextConstantCodePointLength() == 2
+        && asciiFacts.TextConstantStorageEncodingCode() == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.AsciiBytes)
+        && utf8Facts.HasTextConstant()
+        && utf8Facts.TextConstantRowIndex() == utf8
+        && utf8Facts.TextConstantPayloadStart() == 3
+        && utf8Facts.TextConstantPayloadByteLength() == 3
+        && utf8Facts.TextConstantCodePointLength() == 1
+        && utf8Facts.TextConstantStorageEncodingCode() == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.Utf8Bytes)
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, asciiValue, IrFactCategory.ValueTextConstant) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, MirValueIdOf(3), IrFactCategory.ValueTextConstant) == IrFactValidationStatus.StaleHandle;
 }
 
 [Fact]
@@ -1411,6 +1735,97 @@ fn bool LlvmTextEquals(borrow OwnedAscii actual, const ascii expectedText)
     {
         case MemoryStatus.Ok:
             return OwnedAscii.Equals(actual, expected);
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmPrivateDataForTextConstantRows()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(65);
+    payloadBytes.Add(34);
+    payloadBytes.Add(92);
+    payloadBytes.Add(10);
+    payloadBytes.Add(226);
+    payloadBytes.Add(130);
+    payloadBytes.Add(172);
+
+    stack mut IrTable<MirTextConstant> constants = new();
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 4, 4);
+    stack u32[0 max] utf8 = MirAddTextConstantRange(constants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 5, 3, 1);
+    stack mut OwnedAscii asciiSink = new();
+    stack mut OwnedAscii utf8Sink = new();
+    stack mut OwnedAscii invalidSink = new();
+
+    stack mut bool asciiOk = false;
+    stack MirTextConstant asciiConstant = constants.Get(asciiRow);
+    switch (EmitLlvmTextConstantDataDeclaration(payloadBytes, asciiConstant, asciiRow, asciiSink))
+    {
+        case MemoryStatus.Ok:
+            asciiOk = true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+
+    stack mut bool utf8Ok = false;
+    stack MirTextConstant utf8Constant = constants.Get(utf8);
+    switch (EmitLlvmTextConstantDataDeclaration(payloadBytes, utf8Constant, utf8, utf8Sink))
+    {
+        case MemoryStatus.Ok:
+            utf8Ok = true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+
+    stack mut MirTextConstant invalid = new();
+    invalid.PayloadStart = 8;
+    invalid.PayloadBytes = 1;
+    invalid.CodePoints = 1;
+    invalid.Encoding = MirTextConstantStorageEncoding.AsciiBytes;
+    stack mut bool invalidRejected = false;
+    switch (EmitLlvmTextConstantDataDeclaration(payloadBytes, invalid, 3, invalidSink))
+    {
+        case MemoryStatus.Ok:
+            invalidRejected = false;
+        case MemoryStatus.Err(var error):
+            invalidRejected = true;
+    }
+
+    return asciiRow == 1
+        && utf8 == 2
+        && asciiOk
+        && utf8Ok
+        && invalidRejected
+        && LlvmTextEquals(asciiSink, "@.stark.text.1 = private unnamed_addr constant [4 x i8] c\"\\41\\22\\5C\\0A\", align 1\n")
+        && LlvmTextEquals(utf8Sink, "@.stark.text.2 = private unnamed_addr constant [3 x i8] c\"\\E2\\82\\AC\", align 1\n")
+        && LlvmTextEquals(invalidSink, "");
+}
+
+[Fact]
+fn bool EmitsLlvmTextConstantValueDescriptorOperands()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(226);
+    payloadBytes.Add(130);
+    payloadBytes.Add(172);
+
+    stack mut IrTable<MirTextConstant> textConstants = new();
+    stack u32[0 max] utf8 = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 1, 3, 1);
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId text = MirTextConstantValue(instrs, textConstants, utf8);
+    stack MirValueId value = MirConstInt(instrs, 7);
+    stack MirValueId unusedRet = MirReturn(instrs, value);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "textdesc", 1, 3, sink))
+    {
+        case MemoryStatus.Ok:
+            return utf8 == 1
+                && text.Index() == 1
+                && value.Index() == 2
+                && LlvmTextEquals(sink, "define i64 @textdesc() {\nentry:\n  %v1.data = insertvalue { ptr, i64, i64 } poison, ptr @.stark.text.1, 0\n  %v1.bytes = insertvalue { ptr, i64, i64 } %v1.data, i64 3, 1\n  %v1 = insertvalue { ptr, i64, i64 } %v1.bytes, i64 1, 2\n  %v2 = add i64 0, 7\n  ret i64 %v2\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -2013,7 +2428,8 @@ fn bool BuildParamAbiFactsRecordsByValueStructParameterShape()
     stack ParamAbiFacts boxFacts = AbiFactAt(paramAbiFacts, 1);
     stack ParamAbiFacts scalarFacts = AbiFactAt(paramAbiFacts, 2);
     stack ascii ownerName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])boxFacts.StructValueTypeToken);
-    stack u32[0 max] expectedShape = MirTypeStorageCode(MirType.I32) + MirTypeStorageCode(MirType.I1) * 8;
+    stack u32[0 max] expectedShape = StructValueShapeTypeCode(MirType.I32)
+        + StructValueShapeTypeCode(MirType.I1) * StructValueShapeMultiplierForIndex(1);
     return boxFacts.IsStructValue
         && !boxFacts.IsPointer
         && !boxFacts.IsSlice
@@ -2040,7 +2456,8 @@ fn bool EmitLlvmStructParamFieldExtractsAggregateParameterDirectly()
 {
     stack mut IrTable<MirInstruction> instrs = new();
     stack mut IrTable<MirBlock> blocks = new();
-    stack u32[0 max] shape = MirTypeStorageCode(MirType.I32) + MirTypeStorageCode(MirType.I1) * 8;
+    stack u32[0 max] shape = StructValueShapeTypeCode(MirType.I32)
+        + StructValueShapeTypeCode(MirType.I1) * StructValueShapeMultiplierForIndex(1);
     stack MirValueId field = MirStructParamField(instrs, 0, 0, 2, shape, MirType.I32);
     stack MirBlockId entry = MirReturnBlock(blocks, field);
 
@@ -3595,6 +4012,115 @@ fn bool SectionedPackageImageRoundTripsEnumLayoutFacts()
         && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":1,\"blocks\":1,\"functions\":1,\"globals\":0,\"enumLayoutFacts\":5}\n");
 }
 
+[Fact]
+fn bool SectionedPackageImageRoundTripsTextConstants()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(72);
+    payloadBytes.Add(105);
+    payloadBytes.Add(206);
+    payloadBytes.Add(177);
+
+    stack mut IrTable<MirTextConstant> textConstants = new();
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 2, 2);
+    stack u32[0 max] utf8Row = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 3, 2, 1);
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId asciiValue = MirTextConstantValue(instrs, textConstants, asciiRow);
+    stack MirValueId utf8Value = MirTextConstantValue(instrs, textConstants, utf8Row);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId block = MirReturnBlock(blocks, asciiValue);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId functionId = MirDefineFunction(funcs, block, block, 1, asciiValue, 2);
+    stack mut IrTable<MirGlobal> globals = new();
+
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializeSectionedPackageImageWithTextConstants(instrs, blocks, funcs, globals, payloadBytes, textConstants, image);
+
+    stack mut IrTable<MirInstruction> restoredInstrs = new();
+    stack mut IrTable<MirBlock> restoredBlocks = new();
+    stack mut IrTable<MirFunction> restoredFuncs = new();
+    stack mut IrTable<MirGlobal> restoredGlobals = new();
+    stack mut IrTable<u8[0 max]> restoredPayloadBytes = new();
+    stack mut IrTable<MirTextConstant> restoredTextConstants = new();
+    if (!DeserializePackageImageWithTextConstants(
+        image,
+        restoredInstrs,
+        restoredBlocks,
+        restoredFuncs,
+        restoredGlobals,
+        restoredPayloadBytes,
+        restoredTextConstants))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> directPayloadBytes = new();
+    stack mut IrTable<MirTextConstant> directTextConstants = new();
+    if (!DeserializePackageImageTextConstants(image, directPayloadBytes, directTextConstants))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    switch (InspectPackageImage(image, text))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImageJson(image, json))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return PackageImageIsValid(image)
+        && ReadU32(image, 13) == 6
+        && asciiRow == 1
+        && utf8Row == 2
+        && asciiValue.Index() == 1
+        && utf8Value.Index() == 2
+        && functionId.Index() == 1
+        && restoredInstrs.Count() == 2
+        && restoredBlocks.Count() == 1
+        && restoredFuncs.Count() == 1
+        && restoredGlobals.Count() == 0
+        && restoredPayloadBytes.Count() == 4
+        && restoredPayloadBytes.Get(1) == 72
+        && restoredPayloadBytes.Get(2) == 105
+        && restoredPayloadBytes.Get(3) == 206
+        && restoredPayloadBytes.Get(4) == 177
+        && directPayloadBytes.Count() == 4
+        && directTextConstants.Count() == 2
+        && restoredTextConstants.Count() == 2
+        && MirOpcodeOf(restoredInstrs, MirValueIdOf(1)) == MirOp.TextConstantValue
+        && MirOpcodeOf(restoredInstrs, MirValueIdOf(2)) == MirOp.TextConstantValue
+        && MirTextConstantValueRowIndexOf(restoredInstrs, MirValueIdOf(1)) == 1
+        && MirTextConstantValuePayloadStartOf(restoredInstrs, MirValueIdOf(1)) == 1
+        && MirTextConstantValuePayloadByteLengthOf(restoredInstrs, MirValueIdOf(1)) == 2
+        && MirTextConstantValueCodePointLengthOf(restoredInstrs, MirValueIdOf(1)) == 2
+        && MirTextConstantValueStorageEncodingOf(restoredInstrs, MirValueIdOf(1)) == MirTextConstantStorageEncoding.AsciiBytes
+        && MirTextConstantValueRowIndexOf(restoredInstrs, MirValueIdOf(2)) == 2
+        && MirTextConstantValuePayloadStartOf(restoredInstrs, MirValueIdOf(2)) == 3
+        && MirTextConstantValuePayloadByteLengthOf(restoredInstrs, MirValueIdOf(2)) == 2
+        && MirTextConstantValueCodePointLengthOf(restoredInstrs, MirValueIdOf(2)) == 1
+        && MirTextConstantValueStorageEncodingOf(restoredInstrs, MirValueIdOf(2)) == MirTextConstantStorageEncoding.Utf8Bytes
+        && MirTextConstantPayloadStart(restoredTextConstants, 1) == 1
+        && MirTextConstantPayloadByteLength(restoredTextConstants, 1) == 2
+        && MirTextConstantPayloadCodePointLength(restoredTextConstants, 1) == 2
+        && MirTextConstantEncoding(restoredTextConstants, 1) == MirTextConstantStorageEncoding.AsciiBytes
+        && MirTextConstantPayloadStart(restoredTextConstants, 2) == 3
+        && MirTextConstantPayloadByteLength(restoredTextConstants, 2) == 2
+        && MirTextConstantPayloadCodePointLength(restoredTextConstants, 2) == 1
+        && MirTextConstantEncoding(restoredTextConstants, 2) == MirTextConstantStorageEncoding.Utf8Bytes
+        && LlvmTextEquals(text, "package: STARKPKG, 2 instructions, 1 blocks, 1 functions, 0 globals, 4 text payload bytes, 2 text constants\n")
+        && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":2,\"blocks\":1,\"functions\":1,\"globals\":0,\"textPayloadBytes\":4,\"textConstants\":2}\n");
+}
+
 internal fn void AppendImageByte(mut borrow IrTable<u8[0 max]> image, u8[0 max] value)
 {
     stack u32[0 max] written = image.Add(value);
@@ -4770,6 +5296,30 @@ fn bool EmitsMirTextForArithmetic()
 }
 
 [Fact]
+fn bool EmitsMirTextForTextConstantRows()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(72);
+    payloadBytes.Add(105);
+    payloadBytes.Add(206);
+    payloadBytes.Add(177);
+
+    stack mut IrTable<MirTextConstant> textConstants = new();
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 2, 2);
+    stack u32[0 max] utf8Row = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 3, 2, 1);
+    stack mut OwnedAscii sink = new();
+    switch (EmitMirTextConstants(payloadBytes, textConstants, sink))
+    {
+        case MemoryStatus.Ok:
+            return asciiRow == 1
+                && utf8Row == 2
+                && LlvmTextEquals(sink, "text.constant row 1, start 1, bytes 2, codepoints 2, encoding ascii-bytes, payload [72, 105]\ntext.constant row 2, start 3, bytes 2, codepoints 1, encoding utf8-bytes, payload [206, 177]\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool EmitsMirTextForControlAndMemory()
 {
     // Params, globals, comparisons, stores, and calls each dump in MIR syntax.
@@ -4961,6 +5511,58 @@ fn bool EmitsLlvmTypedFunctionWithParameterTypesAndFacts()
         case MemoryStatus.Err(var error):
             return false;
     }
+}
+
+[Fact]
+fn bool MirFloatValueTypesRoundTripPackageCodecAndLlvmShapeFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId f32Param = MirParamTyped(instrs, MirType.F32, 0);
+    stack MirValueId f64Param = MirParamTyped(instrs, MirType.F64, 1);
+    stack MirValueId unusedRet = MirReturn(instrs, f32Param);
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 3, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+
+    stack u32[0 max] shape = StructValueShapeTypeCode(MirType.F32)
+        + StructValueShapeTypeCode(MirType.F64) * StructValueShapeMultiplierForIndex(1);
+    stack mut ParamAbiFacts shapeFacts = new();
+    shapeFacts.IsStructValue = true;
+    shapeFacts.StructValueFieldCount = 2;
+    shapeFacts.StructValueShapeCode = shape;
+    stack mut OwnedAscii shapeText = new();
+    switch (EmitLlvmStructValueShapeType(2, shape, shapeText))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii fnText = new();
+    switch (EmitLlvmTypedFunctionWithParams(instrs, "floatparams", 2, 1, 3, fnText))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return back.Count() == 3
+        && MirOpcodeOf(back, MirValueIdOf(1)) == MirOp.Param
+        && MirOpcodeOf(back, MirValueIdOf(2)) == MirOp.Param
+        && MirValueType(back, f32Param.Index()) == MirType.F32
+        && MirValueType(back, f64Param.Index()) == MirType.F64
+        && MirTypeFromStorageCode(MirTypeStorageCode(MirType.F32)) == MirType.F32
+        && MirTypeFromStorageCode(MirTypeStorageCode(MirType.F64)) == MirType.F64
+        && StructValueShapeTypeIsSupported(MirType.F32)
+        && StructValueShapeTypeIsSupported(MirType.F64)
+        && StructValueShapeFieldStorageCodeAt(shapeFacts, 0) == StructValueShapeTypeCode(MirType.F32)
+        && StructValueShapeFieldStorageCodeAt(shapeFacts, 1) == StructValueShapeTypeCode(MirType.F64)
+        && StructValueShapeCodeFieldTypeAt(shape, 0) == MirType.F32
+        && StructValueShapeCodeFieldTypeAt(shape, 1) == MirType.F64
+        && LlvmTextEquals(shapeText, "{ float, double }")
+        && LlvmTextEquals(fnText, "define float @floatparams(float %p0, double %p1) {\nentry:\n  ret float %p0\n}\n");
 }
 
 [Fact]
@@ -5283,6 +5885,89 @@ fn bool EmitsLlvmModuleWithGlobals()
     {
         case MemoryStatus.Ok:
             return LlvmTextEquals(sink, "@g1 = global i64 42\ndefine i64 @f1() {\nb1:\n  %v1 = add i64 0, 1\n  %v2 = add i64 0, 2\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsReferencedLlvmTextConstantsBeforeModuleFunctions()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(65);
+    payloadBytes.Add(66);
+    payloadBytes.Add(226);
+    payloadBytes.Add(130);
+    payloadBytes.Add(172);
+    payloadBytes.Add(90);
+
+    stack mut IrTable<MirTextConstant> textConstants = new();
+    stack u32[0 max] asciiRow = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 1, 2, 2);
+    stack u32[0 max] utf8 = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.Utf8Bytes, 3, 3, 1);
+    stack u32[0 max] unused = MirAddTextConstantRange(textConstants, payloadBytes, MirTextConstantStorageEncoding.AsciiBytes, 6, 1, 1);
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId firstText = MirTextConstantValue(instrs, textConstants, asciiRow);
+    stack MirValueId secondText = MirTextConstantValue(instrs, textConstants, utf8);
+    stack MirValueId duplicateText = MirTextConstantValue(instrs, textConstants, asciiRow);
+    stack MirValueId value = MirConstInt(instrs, 9);
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack MirFuncId func = MirDefineFunction(funcs, block, block, 1, firstText, 4);
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmModuleWithTextConstants(instrs, blocks, funcs, textConstants, payloadBytes, sink))
+    {
+        case MemoryStatus.Ok:
+            return asciiRow == 1
+                && utf8 == 2
+                && unused == 3
+                && firstText.Index() == 1
+                && secondText.Index() == 2
+                && duplicateText.Index() == 3
+                && value.Index() == 4
+                && func.Index() == 1
+                && LlvmTextEquals(sink, "@.stark.text.1 = private unnamed_addr constant [2 x i8] c\"\\41\\42\", align 1\n@.stark.text.2 = private unnamed_addr constant [3 x i8] c\"\\E2\\82\\AC\", align 1\ndefine i64 @f1() {\nb1:\n  %v1.data = insertvalue { ptr, i64, i64 } poison, ptr @.stark.text.1, 0\n  %v1.bytes = insertvalue { ptr, i64, i64 } %v1.data, i64 2, 1\n  %v1 = insertvalue { ptr, i64, i64 } %v1.bytes, i64 2, 2\n  %v2.data = insertvalue { ptr, i64, i64 } poison, ptr @.stark.text.2, 0\n  %v2.bytes = insertvalue { ptr, i64, i64 } %v2.data, i64 3, 1\n  %v2 = insertvalue { ptr, i64, i64 } %v2.bytes, i64 1, 2\n  %v3.data = insertvalue { ptr, i64, i64 } poison, ptr @.stark.text.1, 0\n  %v3.bytes = insertvalue { ptr, i64, i64 } %v3.data, i64 2, 1\n  %v3 = insertvalue { ptr, i64, i64 } %v3.bytes, i64 2, 2\n  %v4 = add i64 0, 9\n  ret i64 %v4\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmFloatConstantsWithCanonicalHexLiterals()
+{
+    stack mut IrTable<u8[0 max]> payloadBytes = new();
+    payloadBytes.Add(48);
+    payloadBytes.Add(46);
+    payloadBytes.Add(49);
+    payloadBytes.Add(48);
+    payloadBytes.Add(46);
+    payloadBytes.Add(49);
+
+    stack mut IrTable<MirFloatConstant> floatConstants = new();
+    stack u32[0 max] f32Row = MirAddFloatConstantRange(floatConstants, payloadBytes, MirType.F32, 1, 3);
+    stack u32[0 max] f64Row = MirAddFloatConstantRange(floatConstants, payloadBytes, MirType.F64, 4, 3);
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId f32Value = MirFloatConstantValue(instrs, floatConstants, f32Row);
+    stack MirValueId f64Value = MirFloatConstantValue(instrs, floatConstants, f64Row);
+    stack MirBlockId f32Block = MirReturnBlock(blocks, f32Value);
+    stack MirBlockId f64Block = MirReturnBlock(blocks, f64Value);
+    stack MirFuncId f32Func = MirDefineFunction(funcs, f32Block, f32Block, 1, f32Value, 1);
+    stack MirFuncId f64Func = MirDefineFunction(funcs, f64Block, f64Block, 1, f64Value, 1);
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmModuleWithFloatConstants(instrs, blocks, funcs, payloadBytes, sink))
+    {
+        case MemoryStatus.Ok:
+            return f32Row == 1
+                && f64Row == 2
+                && f32Func.Index() == 1
+                && f64Func.Index() == 2
+                && LlvmTextEquals(sink, "define float @f1() {\nb1:\n  %v1 = select i1 true, float 0x3FB99999A0000000, float 0x0000000000000000\n  ret float %v1\n}\ndefine double @f2() {\nb2:\n  %v2 = select i1 true, double 0x3FB999999999999A, double 0x0000000000000000\n  ret double %v2\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -5729,6 +6414,408 @@ fn bool AstCallLoweringEmitsCallWithArgument()
     return LlvmTextEquals(disasm, "v1 = const 5\nv2 = call f1(v1)\n");
 }
 
+fn bool BuildTypedLiteralInputsForSource(
+    ascii source,
+    out TokenStream stream,
+    out DeclarationList declarations,
+    out TypedLiteralExpressionTable literals)
+{
+    stream = new();
+    declarations = new();
+    literals = new();
+
+    stack mut TokenStream parsedStream = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var lexed):
+            parsedStream = lexed;
+    }
+
+    stack mut DeclarationList parsedDeclarations = new();
+    switch (ParseDeclarations(parsedStream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsed):
+            parsedDeclarations = parsed;
+    }
+
+    switch (BuildTypedLiteralExpressions(source, parsedStream, parsedDeclarations))
+    {
+        case ParseResult<TypedLiteralExpressionTable>.Err(var literalError):
+            return false;
+        case ParseResult<TypedLiteralExpressionTable>.Ok(var builtLiterals):
+            stream = parsedStream;
+            declarations = parsedDeclarations;
+            literals = builtLiterals;
+            return true;
+    }
+}
+
+fn bool TryFindTextLiteralRows(
+    borrow TypedLiteralExpressionTable literals,
+    out u32[0 max] stringRow,
+    out u32[0 max] characterRow)
+{
+    stringRow = 0;
+    characterRow = 0;
+
+    stack u64[0 2 ** 63 - 1] count = literals.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (literals.TextLiteralKindAt(index) == TypedTextLiteralKind.String && stringRow == 0)
+        {
+            stringRow = (u32[0 max])(index + 1);
+        }
+        else if (literals.TextLiteralKindAt(index) == TypedTextLiteralKind.Character && characterRow == 0)
+        {
+            characterRow = (u32[0 max])(index + 1);
+        }
+    }
+
+    return stringRow != 0 && characterRow != 0;
+}
+
+fn bool BuildTextLiteralModuleFactsForSource(
+    ascii source,
+    out TokenStream stream,
+    out SourceModuleLoweringFacts moduleFacts)
+{
+    stream = new();
+    moduleFacts = new();
+
+    stack mut TokenStream parsedStream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedLiteralExpressionTable literals = new();
+    if (!BuildTypedLiteralInputsForSource(source, parsedStream, declarations, literals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> literalRowsByToken = new();
+    if (!BuildSourceTypedLiteralRowsByToken(parsedStream, literals, literalRowsByToken))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> textPayloadBytes = new();
+    stack mut IrTable<MirTextConstant> textConstants = new();
+    stack mut IrTable<u32[0 max]> textConstantRowsByLiteralRow = new();
+    if (!BuildSourceTextLiteralConstantFacts(source, parsedStream, literals, textPayloadBytes, textConstants, textConstantRowsByLiteralRow))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts built = new();
+    built.LiteralExpressions = literals;
+    built.LiteralRowsByToken = literalRowsByToken;
+    built.TextPayloadBytes = textPayloadBytes;
+    built.TextConstants = textConstants;
+    built.TextConstantRowsByLiteralRow = textConstantRowsByLiteralRow;
+    stream = parsedStream;
+    moduleFacts = built;
+    return true;
+}
+
+fn bool BuildFloatLiteralModuleFactsForSource(
+    ascii source,
+    out TokenStream stream,
+    out SourceModuleLoweringFacts moduleFacts)
+{
+    stream = new();
+    moduleFacts = new();
+
+    stack mut TokenStream parsedStream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedLiteralExpressionTable literals = new();
+    if (!BuildTypedLiteralInputsForSource(source, parsedStream, declarations, literals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> literalRowsByToken = new();
+    if (!BuildSourceTypedLiteralRowsByToken(parsedStream, literals, literalRowsByToken))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> floatPayloadBytes = new();
+    stack mut IrTable<MirFloatConstant> floatConstants = new();
+    stack mut IrTable<u32[0 max]> floatConstantRowsByLiteralRow = new();
+    if (!BuildSourceFloatLiteralConstantFacts(source, parsedStream, literals, floatPayloadBytes, floatConstants, floatConstantRowsByLiteralRow))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts built = new();
+    built.LiteralExpressions = literals;
+    built.LiteralRowsByToken = literalRowsByToken;
+    built.FloatPayloadBytes = floatPayloadBytes;
+    built.FloatConstants = floatConstants;
+    built.FloatConstantRowsByLiteralRow = floatConstantRowsByLiteralRow;
+    stream = parsedStream;
+    moduleFacts = built;
+    return true;
+}
+
+[Fact]
+fn bool SourceTextLiteralRowsCanBeFoundByLiteralToken()
+{
+    stack ascii source = "fn ascii Text()\n{\n    return \"hi\";\n    return 'z';\n}\n";
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedLiteralExpressionTable literals = new();
+    if (!BuildTypedLiteralInputsForSource(source, stream, declarations, literals))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] stringRow = 0;
+    stack mut u32[0 max] characterRow = 0;
+    if (!TryFindTextLiteralRows(literals, stringRow, characterRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] stringIndex = (u64[0 2 ** 63 - 1])(stringRow - 1);
+    stack u64[0 2 ** 63 - 1] characterIndex = (u64[0 2 ** 63 - 1])(characterRow - 1);
+    stack u32[0 max] foundString = FindTypedLiteralExpressionRowByToken(
+        literals,
+        literals.ContextAt(stringIndex),
+        literals.OwnerDeclarationIndexAt(stringIndex),
+        literals.OwnerNameTokenAt(stringIndex),
+        literals.FunctionNameTokenAt(stringIndex),
+        literals.StatementIndexPlusOneAt(stringIndex),
+        literals.LiteralTokenAt(stringIndex));
+    stack u32[0 max] foundCharacter = FindTypedLiteralExpressionRowByToken(
+        literals,
+        literals.ContextAt(characterIndex),
+        literals.OwnerDeclarationIndexAt(characterIndex),
+        literals.OwnerNameTokenAt(characterIndex),
+        literals.FunctionNameTokenAt(characterIndex),
+        literals.StatementIndexPlusOneAt(characterIndex),
+        literals.LiteralTokenAt(characterIndex));
+
+    return foundString == stringRow
+        && foundCharacter == characterRow
+        && foundString != foundCharacter;
+}
+
+[Fact]
+fn bool SourceTextLiteralNodesCarryTypedLiteralRows()
+{
+    stack ascii source = "fn ascii Text()\n{\n    return \"hi\";\n    return 'z';\n}\n";
+    stack mut TokenStream stream = new();
+    stack mut DeclarationList declarations = new();
+    stack mut TypedLiteralExpressionTable literals = new();
+    if (!BuildTypedLiteralInputsForSource(source, stream, declarations, literals))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] stringRow = 0;
+    stack mut u32[0 max] characterRow = 0;
+    if (!TryFindTextLiteralRows(literals, stringRow, characterRow))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] stringIndex = (u64[0 2 ** 63 - 1])(stringRow - 1);
+    stack u64[0 2 ** 63 - 1] characterIndex = (u64[0 2 ** 63 - 1])(characterRow - 1);
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] stringNode = MakeStringLit(nodes, literals.LiteralTokenAt(stringIndex), 0);
+    stack u32[0 max] characterNode = MakeCharacterLit(nodes, literals.LiteralTokenAt(characterIndex), characterRow);
+    return !SourceTextLiteralNodeHasTypedLiteralRow(nodes, stringNode)
+        && TrySetSourceTextLiteralNodeTypedLiteralRow(nodes, stringNode, stringRow)
+        && SourceTextLiteralNodeHasTypedLiteralRow(nodes, stringNode)
+        && SourceTextLiteralNodeTypedLiteralRowIndexPlusOne(nodes, stringNode) == stringRow
+        && SourceTextLiteralNodeLiteralToken(nodes, stringNode) == literals.LiteralTokenAt(stringIndex)
+        && SourceTextLiteralNodeHasTypedLiteralRow(nodes, characterNode)
+        && SourceTextLiteralNodeTypedLiteralRowIndexPlusOne(nodes, characterNode) == characterRow
+        && SourceTextLiteralNodeLiteralToken(nodes, characterNode) == literals.LiteralTokenAt(characterIndex)
+        && TypeOfNode(nodes, stringNode) == ExprType.ErrorType
+        && TypeOfNode(nodes, characterNode) == ExprType.ErrorType;
+}
+
+[Fact]
+fn bool SourceTextLiteralParserDoesNotTreatTextAsInteger()
+{
+    return InferSourceExpressionType("\"hi\"") == ExprType.ErrorType
+        && InferSourceExpressionType("'z'") == ExprType.ErrorType;
+}
+
+[Fact]
+fn bool SourceModuleTextLiteralConstantFactsDecodePayloads()
+{
+    stack ascii source = "fn ascii Text()\n{\n    return \"hi\";\n    return \"\\u03B1\";\n    return 'z';\n}\n";
+    stack mut TokenStream stream = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildTextLiteralModuleFactsForSource(source, stream, moduleFacts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] asciiRow = SourceTextConstantRowForTypedLiteralRow(moduleFacts, 1);
+    stack u32[0 max] unicodeRow = SourceTextConstantRowForTypedLiteralRow(moduleFacts, 2);
+    stack u32[0 max] characterRow = SourceTextConstantRowForTypedLiteralRow(moduleFacts, 3);
+    return SourceModuleTextLiteralConstantRowsAreAligned(moduleFacts)
+        && moduleFacts.LiteralExpressions.Count() == 3
+        && moduleFacts.TextConstants.Count() == 3
+        && moduleFacts.TextPayloadBytes.Count() == 5
+        && asciiRow == 1
+        && unicodeRow == 2
+        && characterRow == 3
+        && MirTextConstantPayloadStart(moduleFacts.TextConstants, asciiRow) == 1
+        && MirTextConstantPayloadByteLength(moduleFacts.TextConstants, asciiRow) == 2
+        && MirTextConstantPayloadCodePointLength(moduleFacts.TextConstants, asciiRow) == 2
+        && MirTextConstantEncoding(moduleFacts.TextConstants, asciiRow) == MirTextConstantStorageEncoding.AsciiBytes
+        && MirTextConstantPayloadStart(moduleFacts.TextConstants, unicodeRow) == 3
+        && MirTextConstantPayloadByteLength(moduleFacts.TextConstants, unicodeRow) == 2
+        && MirTextConstantPayloadCodePointLength(moduleFacts.TextConstants, unicodeRow) == 1
+        && MirTextConstantEncoding(moduleFacts.TextConstants, unicodeRow) == MirTextConstantStorageEncoding.Utf8Bytes
+        && MirTextConstantPayloadStart(moduleFacts.TextConstants, characterRow) == 5
+        && MirTextConstantPayloadByteLength(moduleFacts.TextConstants, characterRow) == 1
+        && MirTextConstantPayloadCodePointLength(moduleFacts.TextConstants, characterRow) == 1
+        && MirTextConstantEncoding(moduleFacts.TextConstants, characterRow) == MirTextConstantStorageEncoding.AsciiBytes
+        && moduleFacts.TextPayloadBytes.Get(1) == 104
+        && moduleFacts.TextPayloadBytes.Get(2) == 105
+        && moduleFacts.TextPayloadBytes.Get(3) == 206
+        && moduleFacts.TextPayloadBytes.Get(4) == 177
+        && moduleFacts.TextPayloadBytes.Get(5) == 122;
+}
+
+[Fact]
+fn bool SourceTextLiteralNodeLoweringEmitsMirDescriptor()
+{
+    stack ascii source = "fn ascii Text()\n{\n    return \"hi\";\n}\n";
+    stack mut TokenStream stream = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildTextLiteralModuleFactsForSource(source, stream, moduleFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] literalToken = moduleFacts.LiteralExpressions.LiteralTokenAt(0);
+    stack u32[0 max] stringNode = MakeStringLit(nodes, literalToken, 0);
+    if (!LinkSourceTextLiteralRowsFromModuleFacts(nodes, moduleFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = LowerExprNodeWithModuleFacts(nodes, stringNode, instrs, moduleFacts);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    if (!BuildMirValueRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts facts = ValueFactsForMirValue(valueFacts, value);
+    return SourceTextLiteralNodeTypedLiteralRowIndexPlusOne(nodes, stringNode) == 1
+        && SourceTypedLiteralRowForToken(moduleFacts, literalToken) == 1
+        && value.Index() == 1
+        && MirOpcodeOf(instrs, value) == MirOp.TextConstantValue
+        && MirValueType(instrs, value.Index()) == MirType.Ptr
+        && MirTextConstantValueRowIndexOf(instrs, value) == 1
+        && MirTextConstantValuePayloadStartOf(instrs, value) == 1
+        && MirTextConstantValuePayloadByteLengthOf(instrs, value) == 2
+        && MirTextConstantValueCodePointLengthOf(instrs, value) == 2
+        && MirTextConstantValueStorageEncodingOf(instrs, value) == MirTextConstantStorageEncoding.AsciiBytes
+        && facts.HasTextConstant()
+        && facts.TextConstantRowIndex() == 1
+        && facts.TextConstantPayloadByteLength() == 2
+        && facts.TextConstantCodePointLength() == 2
+        && facts.TextConstantStorageEncodingCode() == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.AsciiBytes);
+}
+
+[Fact]
+fn bool SourceModuleFloatLiteralConstantFactsPreserveParsePayloads()
+{
+    stack ascii source = "fn f64 Floats()\n{\n    return 1.5f;\n    return 2.25;\n}\n";
+    stack mut TokenStream stream = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildFloatLiteralModuleFactsForSource(source, stream, moduleFacts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] f32Row = SourceFloatConstantRowForTypedLiteralRow(moduleFacts, 1);
+    stack u32[0 max] f64Row = SourceFloatConstantRowForTypedLiteralRow(moduleFacts, 2);
+    return SourceModuleFloatLiteralConstantRowsAreAligned(moduleFacts)
+        && moduleFacts.LiteralExpressions.Count() == 2
+        && moduleFacts.FloatConstants.Count() == 2
+        && moduleFacts.FloatPayloadBytes.Count() == 7
+        && f32Row == 1
+        && f64Row == 2
+        && MirFloatConstantPayloadStart(moduleFacts.FloatConstants, f32Row) == 1
+        && MirFloatConstantPayloadByteLength(moduleFacts.FloatConstants, f32Row) == 3
+        && MirFloatConstantType(moduleFacts.FloatConstants, f32Row) == MirType.F32
+        && MirFloatConstantBitWidthOf(moduleFacts.FloatConstants, f32Row) == 32
+        && MirFloatConstantPayloadStart(moduleFacts.FloatConstants, f64Row) == 4
+        && MirFloatConstantPayloadByteLength(moduleFacts.FloatConstants, f64Row) == 4
+        && MirFloatConstantType(moduleFacts.FloatConstants, f64Row) == MirType.F64
+        && MirFloatConstantBitWidthOf(moduleFacts.FloatConstants, f64Row) == 64
+        && moduleFacts.FloatPayloadBytes.Get(1) == 49
+        && moduleFacts.FloatPayloadBytes.Get(2) == 46
+        && moduleFacts.FloatPayloadBytes.Get(3) == 53
+        && moduleFacts.FloatPayloadBytes.Get(4) == 50
+        && moduleFacts.FloatPayloadBytes.Get(5) == 46
+        && moduleFacts.FloatPayloadBytes.Get(6) == 50
+        && moduleFacts.FloatPayloadBytes.Get(7) == 53;
+}
+
+[Fact]
+fn bool SourceFloatLiteralNodeLoweringEmitsMirDescriptor()
+{
+    stack ascii source = "fn f64 Floats()\n{\n    return 1.5f;\n    return 2.25;\n}\n";
+    stack mut TokenStream stream = new();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildFloatLiteralModuleFactsForSource(source, stream, moduleFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] f32LiteralToken = moduleFacts.LiteralExpressions.LiteralTokenAt(0);
+    stack u32[0 max] f64LiteralToken = moduleFacts.LiteralExpressions.LiteralTokenAt(1);
+    stack u32[0 max] f32Node = MakeFloatLit(nodes, f32LiteralToken, 0);
+    stack u32[0 max] f64Node = MakeFloatLit(nodes, f64LiteralToken, 0);
+    if (!LinkSourceFloatLiteralRowsFromModuleFacts(nodes, moduleFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId f32Value = LowerExprNodeWithModuleFacts(nodes, f32Node, instrs, moduleFacts);
+    stack MirValueId f64Value = LowerExprNodeWithModuleFacts(nodes, f64Node, instrs, moduleFacts);
+    return SourceFloatLiteralNodeTypedLiteralRowIndexPlusOne(nodes, f32Node) == 1
+        && SourceFloatLiteralNodeTypedLiteralRowIndexPlusOne(nodes, f64Node) == 2
+        && SourceTypedLiteralRowForToken(moduleFacts, f32LiteralToken) == 1
+        && SourceTypedLiteralRowForToken(moduleFacts, f64LiteralToken) == 2
+        && f32Value.Index() == 1
+        && f64Value.Index() == 2
+        && MirOpcodeOf(instrs, f32Value) == MirOp.FloatConstantValue
+        && MirOpcodeOf(instrs, f64Value) == MirOp.FloatConstantValue
+        && MirValueType(instrs, f32Value.Index()) == MirType.F32
+        && MirValueType(instrs, f64Value.Index()) == MirType.F64
+        && MirFloatConstantValueRowIndexOf(instrs, f32Value) == 1
+        && MirFloatConstantValuePayloadStartOf(instrs, f32Value) == 1
+        && MirFloatConstantValuePayloadByteLengthOf(instrs, f32Value) == 3
+        && MirFloatConstantValueBitWidthOf(instrs, f32Value) == 32
+        && MirFloatConstantValueTypeOf(instrs, f32Value) == MirType.F32
+        && MirFloatConstantValueRowIndexOf(instrs, f64Value) == 2
+        && MirFloatConstantValuePayloadStartOf(instrs, f64Value) == 4
+        && MirFloatConstantValuePayloadByteLengthOf(instrs, f64Value) == 4
+        && MirFloatConstantValueBitWidthOf(instrs, f64Value) == 64
+        && MirFloatConstantValueTypeOf(instrs, f64Value) == MirType.F64;
+}
+
 [Fact]
 fn bool SourceEnumExpressionNodesPreserveOwnerFacts()
 {
@@ -5745,6 +6832,522 @@ fn bool SourceEnumExpressionNodesPreserveOwnerFacts()
         && TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, inserted, localTypes, insertedOwner)
         && taggedOwner == 3
         && insertedOwner == 3;
+}
+
+[Fact]
+fn bool SourceAggregateLocalTypeCodesDoNotMasqueradeAsScalars()
+{
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] fixedArrayParam = MakeName(nodes, 0);
+    stack u32[0 max] structValueParam = MakeName(nodes, 1);
+    stack u32[0 max] scalarParam = MakeName(nodes, 2);
+    stack u32[0 max] structTypeToken = 44;
+    stack u32[0 max] structLocalTypeCode = SourceLocalTypeCodeForStructValueTypeToken(structTypeToken);
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    stack u32[0 max] fixedArrayTypeSlot = localTypes.Add(SourceLocalTypeCodeFixedArrayParam());
+    stack u32[0 max] structTypeSlot = localTypes.Add(structLocalTypeCode);
+    stack u32[0 max] scalarTypeSlot = localTypes.Add(SourceLocalTypeCodeI32());
+    return fixedArrayTypeSlot == 1
+        && structTypeSlot == 2
+        && scalarTypeSlot == 3
+        && TypeOfNodeWithLocals(nodes, fixedArrayParam, localTypes) == ExprType.AggregateType
+        && TypeOfNodeWithLocals(nodes, structValueParam, localTypes) == ExprType.AggregateType
+        && TypeOfNodeWithLocals(nodes, scalarParam, localTypes) == ExprType.IntType
+        && SourceLocalTypeCodeForNodeWithLocals(nodes, fixedArrayParam, localTypes) == SourceLocalTypeCodeFixedArrayParam()
+        && SourceLocalTypeCodeForNodeWithLocals(nodes, structValueParam, localTypes) == structLocalTypeCode
+        && SourceLocalTypeCodeStructValueTypeToken(structLocalTypeCode) == structTypeToken;
+}
+
+[Fact]
+fn bool SourceSwitchPatternDescriptorsPreserveShapeFacts()
+{
+    stack SourceSwitchAggregatePatternDescriptor plain =
+        MakeSourceSwitchAggregatePatternDescriptor(44, 0, 3, 2);
+    stack SourceSwitchAggregatePatternDescriptor variant =
+        MakeSourceSwitchAggregatePatternDescriptor(45, 6, 7, 4);
+    stack SourceSwitchListPatternDescriptor list =
+        MakeSourceSwitchListPatternDescriptor(SourceResolvedFieldTypeCodeI32(), 3, 11, 2);
+    return plain.OwnerTypeToken == 44
+        && !SourceSwitchAggregatePatternHasEnumVariant(plain)
+        && SourceSwitchAggregatePatternEnumVariantOrdinal(plain) == 0
+        && variant.OwnerTypeToken == 45
+        && SourceSwitchAggregatePatternHasEnumVariant(variant)
+        && SourceSwitchAggregatePatternEnumVariantOrdinal(variant) == 5
+        && variant.FieldPatternStart == 7
+        && variant.FieldPatternCount == 4
+        && list.ElementTypeCode == SourceResolvedFieldTypeCodeI32()
+        && list.FixedLength == 3
+        && list.ElementPatternStart == 11
+        && list.ElementPatternCount == 2;
+}
+
+[Fact]
+fn bool SourceSwitchPatternDescriptorRowsMirrorCasePatternSpans()
+{
+    stack mut IrTable<u32[0 max]> starts = new();
+    stack mut IrTable<u32[0 max]> counts = new();
+    stack u32[0 max] firstStartRow = starts.Add(7);
+    stack u32[0 max] firstCountRow = counts.Add(2);
+    stack u32[0 max] secondStartRow = starts.Add(11);
+    stack u32[0 max] secondCountRow = counts.Add(3);
+    if (firstStartRow != firstCountRow || secondStartRow != secondCountRow)
+    {
+        return false;
+    }
+
+    stack mut ParamAbiFacts fixedArrayFacts = new();
+    fixedArrayFacts.IsFixedArray = true;
+    fixedArrayFacts.FixedArrayLength = 4;
+    fixedArrayFacts.FixedArrayFieldTypeCode = SourceResolvedFieldTypeCodeI32();
+    stack mut IrTable<SourceSwitchListPatternDescriptor> listDescriptors = new();
+    stack mut IrTable<u32[0 max]> listRows = new();
+    if (!TryBuildSourceSwitchListPatternCaseDescriptors(fixedArrayFacts, starts, counts, listDescriptors, listRows)
+        || listRows.Count() != 2
+        || listDescriptors.Count() != 2)
+    {
+        return false;
+    }
+
+    stack SourceSwitchListPatternDescriptor firstList = listDescriptors.Get(listRows.Get(1));
+    stack SourceSwitchListPatternDescriptor secondList = listDescriptors.Get(listRows.Get(2));
+
+    stack mut IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors = new();
+    stack mut IrTable<u32[0 max]> aggregateRows = new();
+    if (!TryBuildSourceSwitchAggregatePatternCaseDescriptors(88, 3, starts, counts, aggregateDescriptors, aggregateRows)
+        || aggregateRows.Count() != 2
+        || aggregateDescriptors.Count() != 2
+        || TryBuildSourceSwitchAggregatePatternCaseDescriptors(0, 0, starts, counts, aggregateDescriptors, aggregateRows))
+    {
+        return false;
+    }
+
+    stack SourceSwitchAggregatePatternDescriptor firstAggregate = aggregateDescriptors.Get(aggregateRows.Get(1));
+    stack SourceSwitchAggregatePatternDescriptor secondAggregate = aggregateDescriptors.Get(aggregateRows.Get(2));
+
+    return firstList.ElementTypeCode == SourceResolvedFieldTypeCodeI32()
+        && firstList.FixedLength == 4
+        && firstList.ElementPatternStart == 7
+        && firstList.ElementPatternCount == 2
+        && secondList.ElementPatternStart == 11
+        && secondList.ElementPatternCount == 3
+        && firstAggregate.OwnerTypeToken == 88
+        && firstAggregate.EnumVariantOrdinalPlusOne == 3
+        && firstAggregate.FieldPatternStart == 7
+        && firstAggregate.FieldPatternCount == 2
+        && secondAggregate.OwnerTypeToken == 88
+        && secondAggregate.EnumVariantOrdinalPlusOne == 3
+        && secondAggregate.FieldPatternStart == 11
+        && secondAggregate.FieldPatternCount == 3;
+}
+
+[Fact]
+fn bool SourceSwitchEnumAggregatePatternDescriptorRowsPreserveVariantFacts()
+{
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    if (!BuildTypedEnumLayoutsForSource("enum Packet { Empty, Other(i64[min max]), Move { X: i32[min max] } }", stream, layouts))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] emptyTag = 0;
+    stack mut u64[0 max] otherTag = 0;
+    if (!layouts.TryGetEnumVariantTag(0, 0, emptyTag)
+        || !layouts.TryGetEnumVariantTag(0, 1, otherTag))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.EnumLayouts = layouts;
+
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<u32[0 max]> starts = new();
+    stack mut IrTable<u32[0 max]> counts = new();
+    stack mut IrTable<u32[0 max]> variantOrdinals = new();
+    if (caseValues.Add((i64[min max])otherTag) == 0
+        || starts.Add(1) == 0
+        || counts.Add(1) == 0
+        || variantOrdinals.Add(1) == 0
+        || caseValues.Add((i64[min max])emptyTag) == 0
+        || starts.Add(2) == 0
+        || counts.Add(0) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSwitchAggregatePatternDescriptor> descriptors = new();
+    stack mut IrTable<u32[0 max]> descriptorRows = new();
+    if (!TryBuildSourceSwitchEnumAggregatePatternCaseDescriptors(
+            moduleFacts,
+            0,
+            caseValues,
+            starts,
+            counts,
+            variantOrdinals,
+            descriptors,
+            descriptorRows)
+        || descriptors.Count() != 2
+        || descriptorRows.Count() != 2)
+    {
+        return false;
+    }
+
+    stack SourceSwitchAggregatePatternDescriptor otherDescriptor = descriptors.Get(descriptorRows.Get(1));
+    stack SourceSwitchAggregatePatternDescriptor emptyDescriptor = descriptors.Get(descriptorRows.Get(2));
+
+    stack mut IrTable<u32[0 max]> mismatchedVariantOrdinals = new();
+    if (mismatchedVariantOrdinals.Add(0) == 0
+        || TryBuildSourceSwitchEnumAggregatePatternCaseDescriptors(
+            moduleFacts,
+            0,
+            caseValues,
+            starts,
+            counts,
+            mismatchedVariantOrdinals,
+            descriptors,
+            descriptorRows))
+    {
+        return false;
+    }
+
+    return otherDescriptor.OwnerTypeToken == 1
+        && SourceSwitchAggregatePatternHasEnumVariant(otherDescriptor)
+        && SourceSwitchAggregatePatternEnumVariantOrdinal(otherDescriptor) == 1
+        && otherDescriptor.FieldPatternStart == 1
+        && otherDescriptor.FieldPatternCount == 1
+        && emptyDescriptor.OwnerTypeToken == 1
+        && SourceSwitchAggregatePatternHasEnumVariant(emptyDescriptor)
+        && SourceSwitchAggregatePatternEnumVariantOrdinal(emptyDescriptor) == 0
+        && emptyDescriptor.FieldPatternStart == 2
+        && emptyDescriptor.FieldPatternCount == 0;
+}
+
+[Fact]
+fn bool SourceSwitchPatternDescriptorDisjointChecksUseShapeIdentity()
+{
+    stack mut IrTable<u32[0 max]> elementPatternIndices = new();
+    stack mut IrTable<u32[0 max]> elementPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> elementPatternKinds = new();
+    stack mut IrTable<i64[min max]> elementPatternMinValues = new();
+    stack mut IrTable<i64[min max]> elementPatternMaxValues = new();
+    stack u32[0 max] leftElementRow = elementPatternIndices.Add(0);
+    stack u32[0 max] leftElementTypeRow = elementPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI32());
+    stack u32[0 max] leftElementKindRow = elementPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] leftElementMinRow = elementPatternMinValues.Add(0);
+    stack u32[0 max] leftElementMaxRow = elementPatternMaxValues.Add(4);
+    stack u32[0 max] rightElementRow = elementPatternIndices.Add(0);
+    stack u32[0 max] rightElementTypeRow = elementPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI32());
+    stack u32[0 max] rightElementKindRow = elementPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] rightElementMinRow = elementPatternMinValues.Add(5);
+    stack u32[0 max] rightElementMaxRow = elementPatternMaxValues.Add(9);
+    if (leftElementRow != leftElementTypeRow
+        || leftElementRow != leftElementKindRow
+        || leftElementRow != leftElementMinRow
+        || leftElementRow != leftElementMaxRow
+        || rightElementRow != rightElementTypeRow
+        || rightElementRow != rightElementKindRow
+        || rightElementRow != rightElementMinRow
+        || rightElementRow != rightElementMaxRow)
+    {
+        return false;
+    }
+
+    stack SourceSwitchListPatternDescriptor leftList =
+        MakeSourceSwitchListPatternDescriptor(SourceResolvedFieldTypeCodeI32(), 3, leftElementRow, 1);
+    stack SourceSwitchListPatternDescriptor rightList =
+        MakeSourceSwitchListPatternDescriptor(SourceResolvedFieldTypeCodeI32(), 3, rightElementRow, 1);
+    stack SourceSwitchListPatternDescriptor differentLengthList =
+        MakeSourceSwitchListPatternDescriptor(SourceResolvedFieldTypeCodeI32(), 4, rightElementRow, 1);
+
+    stack mut IrTable<u32[0 max]> fieldPatternIndices = new();
+    stack mut IrTable<u32[0 max]> fieldPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> fieldPatternKinds = new();
+    stack mut IrTable<i64[min max]> fieldPatternMinValues = new();
+    stack mut IrTable<i64[min max]> fieldPatternMaxValues = new();
+    stack u32[0 max] leftFieldRow = fieldPatternIndices.Add(1);
+    stack u32[0 max] leftFieldTypeRow = fieldPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI32());
+    stack u32[0 max] leftFieldKindRow = fieldPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] leftFieldMinRow = fieldPatternMinValues.Add(0);
+    stack u32[0 max] leftFieldMaxRow = fieldPatternMaxValues.Add(4);
+    stack u32[0 max] rightFieldRow = fieldPatternIndices.Add(1);
+    stack u32[0 max] rightFieldTypeRow = fieldPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI32());
+    stack u32[0 max] rightFieldKindRow = fieldPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] rightFieldMinRow = fieldPatternMinValues.Add(5);
+    stack u32[0 max] rightFieldMaxRow = fieldPatternMaxValues.Add(9);
+    if (leftFieldRow != leftFieldTypeRow
+        || leftFieldRow != leftFieldKindRow
+        || leftFieldRow != leftFieldMinRow
+        || leftFieldRow != leftFieldMaxRow
+        || rightFieldRow != rightFieldTypeRow
+        || rightFieldRow != rightFieldKindRow
+        || rightFieldRow != rightFieldMinRow
+        || rightFieldRow != rightFieldMaxRow)
+    {
+        return false;
+    }
+
+    stack SourceSwitchAggregatePatternDescriptor leftAggregate =
+        MakeSourceSwitchAggregatePatternDescriptor(77, 2, leftFieldRow, 1);
+    stack SourceSwitchAggregatePatternDescriptor rightAggregate =
+        MakeSourceSwitchAggregatePatternDescriptor(77, 2, rightFieldRow, 1);
+    stack SourceSwitchAggregatePatternDescriptor differentOwnerAggregate =
+        MakeSourceSwitchAggregatePatternDescriptor(78, 2, rightFieldRow, 1);
+    stack SourceSwitchAggregatePatternDescriptor differentVariantAggregate =
+        MakeSourceSwitchAggregatePatternDescriptor(77, 3, rightFieldRow, 1);
+
+    return SourceSwitchListPatternDescriptorsAreProvablyDisjoint(
+            leftList,
+            rightList,
+            elementPatternIndices,
+            elementPatternTypeCodes,
+            elementPatternKinds,
+            elementPatternMinValues,
+            elementPatternMaxValues)
+        && !SourceSwitchListPatternDescriptorsAreProvablyDisjoint(
+            leftList,
+            differentLengthList,
+            elementPatternIndices,
+            elementPatternTypeCodes,
+            elementPatternKinds,
+            elementPatternMinValues,
+            elementPatternMaxValues)
+        && SourceSwitchAggregatePatternDescriptorsAreProvablyDisjoint(
+            leftAggregate,
+            rightAggregate,
+            fieldPatternIndices,
+            fieldPatternTypeCodes,
+            fieldPatternKinds,
+            fieldPatternMinValues,
+            fieldPatternMaxValues)
+        && !SourceSwitchAggregatePatternDescriptorsAreProvablyDisjoint(
+            leftAggregate,
+            differentOwnerAggregate,
+            fieldPatternIndices,
+            fieldPatternTypeCodes,
+            fieldPatternKinds,
+            fieldPatternMinValues,
+            fieldPatternMaxValues)
+        && !SourceSwitchAggregatePatternDescriptorsAreProvablyDisjoint(
+            leftAggregate,
+            differentVariantAggregate,
+            fieldPatternIndices,
+            fieldPatternTypeCodes,
+            fieldPatternKinds,
+            fieldPatternMinValues,
+            fieldPatternMaxValues);
+}
+
+[Fact]
+fn bool SourceSwitchPatternDescriptorPreflightRejectsMalformedRows()
+{
+    stack mut IrTable<u32[0 max]> elementPatternIndices = new();
+    stack mut IrTable<u32[0 max]> elementPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> elementPatternKinds = new();
+    stack mut IrTable<i64[min max]> elementPatternMinValues = new();
+    stack mut IrTable<i64[min max]> elementPatternMaxValues = new();
+    stack u32[0 max] elementRow = elementPatternIndices.Add(1);
+    stack u32[0 max] elementTypeRow = elementPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI32());
+    stack u32[0 max] elementKindRow = elementPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] elementMinRow = elementPatternMinValues.Add(0);
+    stack u32[0 max] elementMaxRow = elementPatternMaxValues.Add(7);
+    if (elementRow != elementTypeRow
+        || elementRow != elementKindRow
+        || elementRow != elementMinRow
+        || elementRow != elementMaxRow)
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSwitchListPatternDescriptor> listDescriptors = new();
+    stack mut IrTable<u32[0 max]> validListRows = new();
+    stack mut IrTable<u32[0 max]> invalidListRows = new();
+    stack u32[0 max] validListDescriptor =
+        listDescriptors.Add(MakeSourceSwitchListPatternDescriptor(SourceResolvedFieldTypeCodeI32(), 3, elementRow, 1));
+    stack u32[0 max] invalidListDescriptor =
+        listDescriptors.Add(MakeSourceSwitchListPatternDescriptor(SourceResolvedFieldTypeCodeI32(), 1, elementRow, 1));
+    if (validListRows.Add(validListDescriptor) == 0
+        || invalidListRows.Add(invalidListDescriptor) == 0)
+    {
+        return false;
+    }
+
+    stack bool validList = SourceSwitchListPatternDescriptorRowsAreValid(
+        listDescriptors,
+        validListRows,
+        elementPatternIndices,
+        elementPatternTypeCodes,
+        elementPatternKinds,
+        elementPatternMinValues,
+        elementPatternMaxValues);
+    stack bool invalidList = SourceSwitchListPatternDescriptorRowsAreValid(
+        listDescriptors,
+        invalidListRows,
+        elementPatternIndices,
+        elementPatternTypeCodes,
+        elementPatternKinds,
+        elementPatternMinValues,
+        elementPatternMaxValues);
+
+    stack mut IrTable<u32[0 max]> fieldPatternIndices = new();
+    stack mut IrTable<u32[0 max]> fieldPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> fieldPatternMemberFactRows = new();
+    stack mut IrTable<u32[0 max]> fieldPatternKinds = new();
+    stack mut IrTable<i64[min max]> fieldPatternMinValues = new();
+    stack mut IrTable<i64[min max]> fieldPatternMaxValues = new();
+    stack u32[0 max] fieldRow = fieldPatternIndices.Add(1);
+    stack u32[0 max] fieldTypeRow = fieldPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI32());
+    stack u32[0 max] fieldMemberRow = fieldPatternMemberFactRows.Add(0);
+    stack u32[0 max] fieldKindRow = fieldPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] fieldMinRow = fieldPatternMinValues.Add(0);
+    stack u32[0 max] fieldMaxRow = fieldPatternMaxValues.Add(7);
+    stack u32[0 max] staleFieldRow = fieldPatternIndices.Add(1);
+    stack u32[0 max] staleFieldTypeRow = fieldPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI64());
+    stack u32[0 max] staleFieldMemberRow = fieldPatternMemberFactRows.Add(0);
+    stack u32[0 max] staleFieldKindRow = fieldPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval());
+    stack u32[0 max] staleFieldMinRow = fieldPatternMinValues.Add(0);
+    stack u32[0 max] staleFieldMaxRow = fieldPatternMaxValues.Add(7);
+    if (fieldRow != fieldTypeRow
+        || fieldRow != fieldMemberRow
+        || fieldRow != fieldKindRow
+        || fieldRow != fieldMinRow
+        || fieldRow != fieldMaxRow
+        || staleFieldRow != staleFieldTypeRow
+        || staleFieldRow != staleFieldMemberRow
+        || staleFieldRow != staleFieldKindRow
+        || staleFieldRow != staleFieldMinRow
+        || staleFieldRow != staleFieldMaxRow)
+    {
+        return false;
+    }
+
+    stack mut ParamAbiFacts structValueFacts = new();
+    structValueFacts.IsStructValue = true;
+    structValueFacts.StructValueFieldCount = 2;
+    structValueFacts.StructValueShapeCode =
+        StructValueShapeTypeCode(MirType.I1)
+            + StructValueShapeTypeCode(MirType.I32) * StructValueShapeMultiplierForIndex(1);
+    stack mut IrTable<SourceSwitchAggregatePatternDescriptor> aggregateDescriptors = new();
+    stack mut IrTable<u32[0 max]> validAggregateRows = new();
+    stack mut IrTable<u32[0 max]> invalidAggregateRows = new();
+    stack u32[0 max] validAggregateDescriptor =
+        aggregateDescriptors.Add(MakeSourceSwitchAggregatePatternDescriptor(88, 0, fieldRow, 1));
+    stack u32[0 max] invalidAggregateDescriptor =
+        aggregateDescriptors.Add(MakeSourceSwitchAggregatePatternDescriptor(88, 0, staleFieldRow, 1));
+    if (validAggregateRows.Add(validAggregateDescriptor) == 0
+        || invalidAggregateRows.Add(invalidAggregateDescriptor) == 0)
+    {
+        return false;
+    }
+
+    stack bool validAggregate = SourceSwitchStructValuePatternDescriptorRowsAreValid(
+        88,
+        structValueFacts,
+        aggregateDescriptors,
+        validAggregateRows,
+        fieldPatternIndices,
+        fieldPatternTypeCodes,
+        fieldPatternMemberFactRows,
+        fieldPatternKinds,
+        fieldPatternMinValues,
+        fieldPatternMaxValues);
+    stack bool invalidAggregate = SourceSwitchStructValuePatternDescriptorRowsAreValid(
+        88,
+        structValueFacts,
+        aggregateDescriptors,
+        invalidAggregateRows,
+        fieldPatternIndices,
+        fieldPatternTypeCodes,
+        fieldPatternMemberFactRows,
+        fieldPatternKinds,
+        fieldPatternMinValues,
+        fieldPatternMaxValues);
+
+    stack mut TokenStream stream = new();
+    stack mut TypedEnumLayoutTable layouts = new();
+    if (!BuildTypedEnumLayoutsForSource("enum Packet { Empty, Other(i64[min max]) }", stream, layouts))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] otherTag = 0;
+    if (!layouts.TryGetEnumVariantTag(0, 1, otherTag))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.EnumLayouts = layouts;
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<u32[0 max]> casePatternStarts = new();
+    stack mut IrTable<u32[0 max]> casePatternCounts = new();
+    stack mut IrTable<u32[0 max]> payloadPatternVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> payloadPatternOrdinals = new();
+    stack mut IrTable<u32[0 max]> stalePayloadPatternOrdinals = new();
+    stack mut IrTable<u32[0 max]> payloadPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> payloadPatternKinds = new();
+    stack mut IrTable<i64[min max]> payloadPatternMinValues = new();
+    stack mut IrTable<i64[min max]> payloadPatternMaxValues = new();
+    if (caseValues.Add((i64[min max])otherTag) == 0
+        || casePatternStarts.Add(1) == 0
+        || casePatternCounts.Add(1) == 0
+        || payloadPatternVariantOrdinals.Add(1) == 0
+        || payloadPatternOrdinals.Add(0) == 0
+        || stalePayloadPatternOrdinals.Add(9) == 0
+        || payloadPatternTypeCodes.Add(SourceResolvedFieldTypeCodeI64()) == 0
+        || payloadPatternKinds.Add(SourceSwitchEnumPayloadPatternKindScalarInterval()) == 0
+        || payloadPatternMinValues.Add(0) == 0
+        || payloadPatternMaxValues.Add(7) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSwitchAggregatePatternDescriptor> enumDescriptors = new();
+    stack mut IrTable<u32[0 max]> enumDescriptorRows = new();
+    if (!TryBuildSourceSwitchEnumAggregatePatternCaseDescriptors(
+            moduleFacts,
+            0,
+            caseValues,
+            casePatternStarts,
+            casePatternCounts,
+            payloadPatternVariantOrdinals,
+            enumDescriptors,
+            enumDescriptorRows))
+    {
+        return false;
+    }
+
+    stack bool validEnum = SourceSwitchEnumPayloadPatternDescriptorRowsAreValid(
+        moduleFacts,
+        0,
+        caseValues,
+        enumDescriptors,
+        enumDescriptorRows,
+        payloadPatternVariantOrdinals,
+        payloadPatternOrdinals,
+        payloadPatternTypeCodes,
+        payloadPatternKinds,
+        payloadPatternMinValues,
+        payloadPatternMaxValues);
+    stack bool invalidEnum = SourceSwitchEnumPayloadPatternDescriptorRowsAreValid(
+        moduleFacts,
+        0,
+        caseValues,
+        enumDescriptors,
+        enumDescriptorRows,
+        payloadPatternVariantOrdinals,
+        stalePayloadPatternOrdinals,
+        payloadPatternTypeCodes,
+        payloadPatternKinds,
+        payloadPatternMinValues,
+        payloadPatternMaxValues);
+
+    return validList
+        && !invalidList
+        && validAggregate
+        && !invalidAggregate
+        && validEnum
+        && !invalidEnum;
 }
 
 [Fact]
@@ -8859,6 +10462,23 @@ fn bool SourceModuleLowersTerminalFixedArrayListSwitchToLlvm()
 }
 
 [Fact]
+fn bool SourceModuleLowersTerminalFixedArrayListCaptureSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst(
+        "fn i32[min max] pick(i32[min max][3] values) { switch (values) { case [var first, _, 3]: return first; case [2, var middle, 4]: return middle; default: return 30; } } fn i32 main() { stack i32[min max][3] values = { 1, 9, 3 }; return pick(values) }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i32 @f1([3 x i32] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 1")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i32] %p0, 2")
+        && System.Text.Contains(sink.View(), "ret i32")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool SourceModuleLowersTerminalFixedArrayListGuardedSwitchToLlvm()
 {
     stack mut OwnedAscii sink = new();
@@ -8930,6 +10550,24 @@ fn bool SourceModuleLowersTerminalFixedArrayStorageLocalListSwitchToLlvm()
         && System.Text.Contains(sink.View(), "!range")
         && System.Text.Contains(sink.View(), "icmp eq i32")
         && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
+        && !System.Text.Contains(sink.View(), "unknown")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SourceModuleLowersTerminalFixedArrayStorageLocalListCaptureSwitchToLlvm()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm(
+        "fn i32[min max] main() { stack i32[0 20][3] values = { 1, 9, 3 }; switch (values) { case [var first, _, 3]: return first; case [2, var middle, 4]: return middle; default: return 30; } }",
+        sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [12 x i8], align 4")
+        && System.Text.Contains(sink.View(), "load i32")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i32")
+        && System.Text.Contains(sink.View(), "ret i32")
         && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
         && !System.Text.Contains(sink.View(), "unknown")
         && ClangVerifiesLlvmText(sink);
@@ -10648,6 +12286,21 @@ fn bool CompileFunctionFixedArrayParameterCanFeedSliceAndFixedArrayCalls()
         && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
         && System.Text.Contains(sink.View(), "call i32 @f1({ ptr, i64 } %v")
         && System.Text.Contains(sink.View(), "call i32 @f2([3 x i32] %p0")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionStructValueParameterCanFeedStructValueCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] read(Box box) { switch (box) { case Box(var value, true): return value + 1; default: return 30; } } fn i64[min max] main(Box box) { return read(box) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1({ i64, i1 } %p0)")
+        && System.Text.Contains(sink.View(), "define i64 @main({ i64, i1 } %p0)")
+        && System.Text.Contains(sink.View(), "call i64 @f1({ i64, i1 } %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 0")
+        && !System.Text.Contains(sink.View(), "alloca [16 x i8]")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(i64 %p0)")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -12591,6 +14244,60 @@ fn bool CompileStructAggregateSwitchFieldScalarReturnUsesDirectFieldTests()
 }
 
 [Fact]
+fn bool CompileStructAggregateSwitchLocalCaptureTerminalReturnUsesDirectFieldLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 7, flag = true }; switch (box) { case Box(var value, true): return value + 1; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [16 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchValueParamCaptureAssignmentUsesDirectFieldExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case Box(var value, true): score = value + 1; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "alloca [16 x i8]")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructAggregateSwitchValueParamCaptureGuardReturnUsesDirectFieldExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { switch (box) { case Box(var value, true) when value == 7: return value + 1; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue { i64, i1 } %p0, 1")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "alloca [16 x i8]")
+        && !System.Text.Contains(sink.View(), "load i64")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool CompileStructPropertyPatternSwitchFieldScalarAssignmentUsesDirectFieldTests()
 {
     stack mut OwnedAscii sink = new();
@@ -12612,6 +14319,45 @@ fn bool CompileStructPropertyPatternSwitchFieldScalarAssignmentUsesDirectFieldTe
 }
 
 [Fact]
+fn bool CompileStructAggregateSwitchLocalCaptureGuardAssignmentUsesDirectFieldLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] main() { stack Box box = new Box() { value = 7, flag = true }; var score = 0; switch (box) { case Box(var value, true) when value == 7: score = value + 1; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [16 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructPropertyPatternSwitchFieldCaptureAssignmentUsesDirectFieldLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } struct Holder { bool ready; Box box; } fn i64[min max] main() { stack Holder holder = new Holder(); var score = 0; switch (holder.box) { case Box { value: var value, flag: false }: score = value + 1; default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "i64 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "load i1")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i1")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue")
+        && !System.Text.Contains(sink.View(), "switch %")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
 fn bool CompileFixedArrayListSwitchLocalScalarAssignmentUsesDirectElementTests()
 {
     stack mut OwnedAscii sink = new();
@@ -12624,6 +14370,139 @@ fn bool CompileFixedArrayListSwitchLocalScalarAssignmentUsesDirectElementTests()
         && System.Text.Contains(sink.View(), " phi i64 ")
         && System.Text.Contains(sink.View(), "br i1")
         && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayListSwitchCaptureAssignmentUsesDirectElementExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] classify(i64[min max][3] values) { var score = 0; switch (values) { case [var first, _, 3]: score = first; case [2, var middle, 4]: { score = middle; } default: score = 30; } return score } fn i64[min max] main() { stack i64[min max][3] values = { 1, 9, 3 }; return classify(values) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1([3 x i64] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i64] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i64] %p0, 1")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i64] %p0, 2")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "switch [3 x i64]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayListSwitchCaptureGuardAssignmentUsesDirectElementExtracts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] classify(i64[min max][3] values) { var score = 0; switch (values) { case [var first, _, 3] when first == 1: score = first + 1; default: score = 30; } return score } fn i64[min max] main() { stack i64[min max][3] values = { 1, 9, 3 }; return classify(values) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1([3 x i64] %p0)")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i64] %p0, 0")
+        && System.Text.Contains(sink.View(), "extractvalue [3 x i64] %p0, 2")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && System.Text.Contains(sink.View(), "add i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "switch [3 x i64]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayWholeCaptureValueParamFeedsFixedArrayCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] sum(i64[min max][3] values) { return values[0] + values[2] } fn i64[min max] classify(i64[min max][3] values) { switch (values) { case var captured: return sum(captured); default: return 30; } } fn i64[min max] main(i64[min max][3] values) { return classify(values) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1([3 x i64] %p0)")
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f2([3 x i64] %p0)")
+        && System.Text.Contains(sink.View(), "call i64 @f1([3 x i64] %p0)")
+        && !System.Text.Contains(sink.View(), "alloca [24 x i8]")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(i64 %p0)")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayStorageWholeCaptureValueParamFeedsFixedArrayCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] sum(i64[min max][3] values) { return values[0] + values[2] } fn i64[min max] main() { stack i64[min max][3] values = { 1, 9, 3 }; switch (values) { case var captured: return sum(captured); default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load [3 x i64]")
+        && System.Text.Contains(sink.View(), "call i64 @f1([3 x i64] %v")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(i64")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayStorageWholeCaptureSliceCallFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] take(i64[min max][] values) { return values[1]; } fn i64[min max] main() { stack i64[min max][3] values = { 1, 9, 3 }; switch (values) { case var captured: return take(captured); default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64")
+        && System.Text.Contains(sink.View(), "insertvalue { ptr, i64 } poison, ptr")
+        && System.Text.Contains(sink.View(), "add i64 0, 3")
+        && System.Text.Contains(sink.View(), "call i64 @f1({ ptr, i64 } %v")
+        && !System.Text.Contains(sink.View(), "call i64 @f1([3 x i64]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayStorageWholeCaptureIndexedReadFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] main() { stack i64[min max][3] values = { 1, 9, 3 }; switch (values) { case var captured: return captured[1]; default: return 30; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "store i64")
+        && System.Text.Contains(sink.View(), "getelementptr i8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && !System.Text.Contains(sink.View(), "load [3 x i64]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructWholeCaptureValueParamFeedsStructValueCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] read(Box box) { switch (box) { case Box(var value, true): return value + 1; default: return 30; } } fn i64[min max] classify(Box box) { switch (box) { case var captured: return read(captured); default: return 40; } } fn i64[min max] main(Box box) { return classify(box) }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f1({ i64, i1 } %p0)")
+        && System.Text.Contains(sink.View(), "define internal dso_local i64 @f2({ i64, i1 } %p0)")
+        && System.Text.Contains(sink.View(), "call i64 @f1({ i64, i1 } %p0)")
+        && !System.Text.Contains(sink.View(), "alloca [16 x i8]")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(i64 %p0)")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructStorageWholeCaptureValueParamFeedsStructValueCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] read(Box box) { switch (box) { case Box(var value, true): return value + 1; default: return 30; } } fn i64[min max] main() { stack Box box = new Box() { value = 7, flag = true }; switch (box) { case var captured: return read(captured); default: return 40; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [16 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load { i64, i1 }, ptr")
+        && System.Text.Contains(sink.View(), "call i64 @f1({ i64, i1 } %v")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(i64")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileStructFieldStorageWholeCaptureValueParamFeedsStructValueCall()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } struct Holder { bool ready; Box box; } fn i64[min max] read(Box box) { switch (box) { case Box(var value, true): return value + 1; default: return 30; } } fn i64[min max] main() { stack Holder holder = new Holder() { ready = true, box = new Box() { value = 7, flag = true } }; switch (holder.box) { case var captured: return read(captured); default: return 40; } }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "i64 8")
+        && System.Text.Contains(sink.View(), "load { i64, i1 }, ptr")
+        && System.Text.Contains(sink.View(), "call i64 @f1({ i64, i1 } %v")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(ptr")
+        && !System.Text.Contains(sink.View(), "call i64 @f1(i64")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -12677,6 +14556,63 @@ fn bool CompileFixedArrayFieldListSwitchGuardedScalarAssignmentFallsThroughToUng
 }
 
 [Fact]
+fn bool CompileAggregateAndListDiscardFallbackLabelsAfterGuardedPatterns()
+{
+    stack mut OwnedAscii listSink = new();
+    stack mut OwnedAscii structSink = new();
+    stack bool listOk = CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values, bool gate) { var score = 0; switch (values) { case [1, _, 3] when gate: score = 10; case _: score = 20; default: score = 30; } return score } fn i64[min max] main(bool gate) { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values, gate) }", listSink);
+    stack bool structOk = CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box, bool gate) { var score = 0; switch (box) { case Box(7, true) when gate: score = 10; case _: score = 20; default: score = 30; } return score }", structSink);
+    return listOk
+        && structOk
+        && System.Text.Contains(listSink.View(), "extractvalue [3 x i32]")
+        && System.Text.Contains(listSink.View(), "br i1 %p1")
+        && System.Text.Contains(listSink.View(), " phi i64 ")
+        && !System.Text.Contains(listSink.View(), "switch [3 x i32]")
+        && System.Text.Contains(structSink.View(), "extractvalue { i64, i1 } %p0")
+        && System.Text.Contains(structSink.View(), "br i1 %p1")
+        && System.Text.Contains(structSink.View(), " phi i64 ")
+        && !System.Text.Contains(structSink.View(), "alloca [16 x i8]")
+        && !System.Text.Contains(structSink.View(), "switch %")
+        && ClangVerifiesLlvmText(listSink)
+        && ClangVerifiesLlvmText(structSink);
+}
+
+[Fact]
+fn bool RejectsUnconditionalGuardedAggregateAndListPatternOverlapFromAst()
+{
+    stack mut OwnedAscii listSink = new();
+    stack mut OwnedAscii structSink = new();
+    return !CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values) { switch (values) { case [1, _, 3] when true: return 10; case [1, _, 3]: return 20; default: return 30; } } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", listSink)
+        && !CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case Box(7, true) when true: score = 10; case Box(7, true): score = 20; default: score = 30; } return score }", structSink);
+}
+
+[Fact]
+fn bool RejectsAggregateAndListDiscardPatternOverlapFromAst()
+{
+    stack mut OwnedAscii listDiscardFirstSink = new();
+    stack mut OwnedAscii listDiscardLastSink = new();
+    stack mut OwnedAscii structDiscardTrueSink = new();
+    stack mut OwnedAscii structDynamicGuardSink = new();
+    return !CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values) { switch (values) { case _: return 10; case [1, _, 3]: return 20; default: return 30; } } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", listDiscardFirstSink)
+        && !CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values) { switch (values) { case [1, _, 3]: return 10; case _: return 20; default: return 30; } } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", listDiscardLastSink)
+        && !CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case _ when true: score = 10; case Box(7, true): score = 20; default: score = 30; } return score }", structDiscardTrueSink)
+        && CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box, bool gate) { var score = 0; switch (box) { case _ when gate: score = 10; case Box(7, true): score = 20; default: score = 30; } return score }", structDynamicGuardSink);
+}
+
+[Fact]
+fn bool RejectsAggregateAndListWholeCapturePatternOverlapFromAst()
+{
+    stack mut OwnedAscii listCaptureFirstSink = new();
+    stack mut OwnedAscii listCaptureLastSink = new();
+    stack mut OwnedAscii structCaptureTrueSink = new();
+    stack mut OwnedAscii structCaptureLastSink = new();
+    return !CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values) { switch (values) { case var captured: return 10; case [1, _, 3]: return 20; default: return 30; } } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", listCaptureFirstSink)
+        && !CompileModuleFromAstChecked("fn i64[min max] classify(i32[min max][3] values) { switch (values) { case [1, _, 3]: return 10; case var captured: return 20; default: return 30; } } fn i64[min max] main() { stack i32[min max][3] values = { 1, 9, 3 }; return classify(values) }", listCaptureLastSink)
+        && !CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case var captured when true: score = 10; case Box(7, true): score = 20; default: score = 30; } return score }", structCaptureTrueSink)
+        && !CompileModuleFromAstChecked("struct Box { i64[0 20] value; bool flag; } fn i64[min max] classify(Box box) { var score = 0; switch (box) { case Box(7, true): score = 10; case var captured: score = 20; default: score = 30; } return score }", structCaptureLastSink);
+}
+
+[Fact]
 fn bool CompileFixedArrayStorageLocalListSwitchLocalScalarAssignmentUsesDirectElementLoads()
 {
     stack mut OwnedAscii sink = new();
@@ -12710,6 +14646,40 @@ fn bool CompileFixedArrayFieldListSwitchLocalScalarAssignmentUsesDirectElementLo
         && System.Text.Contains(sink.View(), "br i1")
         && !System.Text.Contains(sink.View(), "extractvalue [3 x i32]")
         && !System.Text.Contains(sink.View(), "switch [3 x i32]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayStorageLocalListSwitchCaptureAssignmentUsesDirectElementLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("fn i64[min max] main() { stack i64[0 20][3] values = { 1, 9, 3 }; var score = 0; switch (values) { case [var first, _, 3]: score = first; case [2, var middle, 4]: { score = middle; } default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i64]")
+        && !System.Text.Contains(sink.View(), "switch [3 x i64]")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFixedArrayFieldListSwitchCaptureAssignmentUsesDirectElementLoads()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("struct Box { i64[0 20][3] values; } fn i64[min max] main() { stack Box box = new Box(); var score = 0; switch (box.values) { case [var first, _, 0]: score = first; case [1, var middle, 2]: { score = middle; } default: score = 30; } return score }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "alloca [24 x i8], align 8")
+        && System.Text.Contains(sink.View(), "load i64")
+        && System.Text.Contains(sink.View(), "!range")
+        && System.Text.Contains(sink.View(), "icmp eq i64")
+        && System.Text.Contains(sink.View(), " phi i64 ")
+        && System.Text.Contains(sink.View(), "br i1")
+        && !System.Text.Contains(sink.View(), "extractvalue [3 x i64]")
+        && !System.Text.Contains(sink.View(), "switch [3 x i64]")
         && ClangVerifiesLlvmText(sink);
 }
 
@@ -15393,6 +17363,29 @@ fn bool CompilesNamedEnumPayloadCaptureAssignmentSwitchFromAst()
         && System.Text.Contains(s.View(), "icmp eq i1")
         && System.Text.Contains(s.View(), "add i64")
         && System.Text.Contains(s.View(), "phi i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesEnumPayloadCaptureTerminalSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Other(i64[0 max]) } fn i64 classify(Packet packet) { switch (packet) { case Packet.Other(var value): return value + 1; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "add i64")
+        && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesNamedEnumPayloadCaptureTerminalSwitchFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("enum Packet { Empty, Move { X: i64[0 max], Flag: bool } } fn i64 classify(Packet packet) { switch (packet) { case Packet.Move { X: var value, Flag: true }: return value + 2; default: return 40; } } fn main() { return 0 }", s);
+    return ok
+        && System.Text.Contains(s.View(), "extractvalue")
+        && System.Text.Contains(s.View(), "icmp eq i1")
+        && System.Text.Contains(s.View(), "add i64")
         && ClangVerifiesLlvmText(s);
 }
 

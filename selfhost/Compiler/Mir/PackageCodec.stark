@@ -289,6 +289,9 @@ internal fn u8[0 max] MirOpToByte(MirOp op)
         case MirOp.EnumTagRead: return 59;
         case MirOp.EnumPayloadExtract: return 60;
         case MirOp.StructParamField: return 61;
+        case MirOp.StructValueLoad: return 62;
+        case MirOp.TextConstantValue: return 63;
+        case MirOp.FloatConstantValue: return 64;
     }
 }
 
@@ -357,6 +360,9 @@ internal fn MirOp MirOpFromByte(u8[0 max] b)
         case 59: return MirOp.EnumTagRead;
         case 60: return MirOp.EnumPayloadExtract;
         case 61: return MirOp.StructParamField;
+        case 62: return MirOp.StructValueLoad;
+        case 63: return MirOp.TextConstantValue;
+        case 64: return MirOp.FloatConstantValue;
         default: return MirOp.ConstInt;
     }
 }
@@ -372,6 +378,8 @@ internal fn u8[0 max] MirTypeToByte(MirType t)
         case MirType.I8: return 4;
         case MirType.I16: return 5;
         case MirType.EnumValue: return 6;
+        case MirType.F32: return 7;
+        case MirType.F64: return 8;
     }
 }
 
@@ -385,6 +393,8 @@ internal fn MirType MirTypeFromByte(u8[0 max] b)
         case 4: return MirType.I8;
         case 5: return MirType.I16;
         case 6: return MirType.EnumValue;
+        case 7: return MirType.F32;
+        case 8: return MirType.F64;
         default: return MirType.I64;
     }
 }
@@ -623,6 +633,265 @@ public fn void DeserializeGlobalsAt(borrow IrTable<u8[0 max]> buf, u32[0 max] st
         stack u32[0 max] v = MirDefineGlobalUnchecked(outGlobals, type, initValue);
         i = i + 1;
     }
+}
+
+// Text constant payload bytes and rows are stored as side tables because
+// `TextConstantValue` instructions carry descriptors, not the backing bytes.
+public fn void SerializeTextPayloadBytes(borrow IrTable<u8[0 max]> payloadBytes, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = payloadBytes.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack u32[0 max] written = buf.Add(payloadBytes.Get(id));
+        id = id + 1;
+    }
+}
+
+public fn bool TryReadTextPayloadByteSectionSize(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    out u64[0 max] byteCount,
+    out u32[0 max] payloadByteCount)
+{
+    byteCount = 0;
+    payloadByteCount = 0;
+    stack mut u32[0 max] localPayloadByteCount = 0;
+    if (!TryReadU32FromImage(buf, startOffset, localPayloadByteCount))
+    {
+        return false;
+    }
+
+    stack u64[0 max] localByteCount = 4 + (u64[0 max])localPayloadByteCount;
+    if (!SectionLastByteFitsU32(startOffset, localByteCount))
+    {
+        return false;
+    }
+
+    if (!CanReadImageBytes(buf, startOffset, localByteCount))
+    {
+        return false;
+    }
+
+    byteCount = localByteCount;
+    payloadByteCount = localPayloadByteCount;
+    return true;
+}
+
+public fn bool DeserializeTextPayloadBytes(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<u8[0 max]> outPayloadBytes)
+{
+    return DeserializeTextPayloadBytesAt(buf, 1, outPayloadBytes);
+}
+
+public fn bool DeserializeTextPayloadBytesAt(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    mut borrow IrTable<u8[0 max]> outPayloadBytes)
+{
+    stack mut u64[0 max] byteCount = 0;
+    stack mut u32[0 max] payloadByteCount = 0;
+    if (!TryReadTextPayloadByteSectionSize(buf, startOffset, byteCount, payloadByteCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < payloadByteCount)
+    {
+        stack u32[0 max] added = outPayloadBytes.Add(buf.Get(startOffset + 4 + index));
+        if (added == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+public inline finite law u32[0 max] MirTextConstantRecordSize()
+{
+    return 16;
+}
+
+internal inline finite law bool MirTextConstantStorageEncodingCodeIsPackageValid(u32[0 max] code)
+{
+    return code == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.AsciiBytes)
+        || code == MirTextConstantStorageEncodingCode(MirTextConstantStorageEncoding.Utf8Bytes);
+}
+
+public fn void SerializeTextConstants(borrow IrTable<MirTextConstant> constants, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = constants.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirTextConstant constant = constants.Get(id);
+        WriteU32(buf, constant.PayloadStartIndex());
+        WriteU32(buf, constant.PayloadByteLength());
+        WriteU32(buf, constant.PayloadCodePointLength());
+        WriteU32(buf, MirTextConstantStorageEncodingCode(constant.StorageEncoding()));
+        id = id + 1;
+    }
+}
+
+public fn bool DeserializeTextConstants(
+    borrow IrTable<u8[0 max]> buf,
+    borrow IrTable<u8[0 max]> payloadBytes,
+    mut borrow IrTable<MirTextConstant> outConstants)
+{
+    return DeserializeTextConstantsAt(buf, 1, payloadBytes, outConstants);
+}
+
+public fn bool DeserializeTextConstantsAt(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    borrow IrTable<u8[0 max]> payloadBytes,
+    mut borrow IrTable<MirTextConstant> outConstants)
+{
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, startOffset, MirTextConstantRecordSize(), rowCount, byteCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < rowCount)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + index * MirTextConstantRecordSize();
+        stack u32[0 max] payloadStart = ReadU32(buf, recordBase);
+        stack u32[0 max] payloadByteLength = ReadU32(buf, recordBase + 4);
+        stack u32[0 max] codePointLength = ReadU32(buf, recordBase + 8);
+        stack u32[0 max] encodingCode = ReadU32(buf, recordBase + 12);
+        if (!MirTextConstantStorageEncodingCodeIsPackageValid(encodingCode))
+        {
+            return false;
+        }
+
+        stack u32[0 max] added = MirAddTextConstantRange(
+            outConstants,
+            payloadBytes,
+            MirTextConstantStorageEncodingFromCode(encodingCode),
+            payloadStart,
+            payloadByteLength,
+            codePointLength);
+        if (added == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+// Float literal payload bytes and rows are stored as side tables because the
+// typed float literal spelling must survive until LLVM canonicalizes it.
+public fn void SerializeFloatLiteralPayloadBytes(borrow IrTable<u8[0 max]> payloadBytes, mut borrow IrTable<u8[0 max]> buf)
+{
+    SerializeTextPayloadBytes(payloadBytes, buf);
+}
+
+public fn bool TryReadFloatLiteralPayloadByteSectionSize(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    out u64[0 max] byteCount,
+    out u32[0 max] payloadByteCount)
+{
+    return TryReadTextPayloadByteSectionSize(buf, startOffset, byteCount, payloadByteCount);
+}
+
+public fn bool DeserializeFloatLiteralPayloadBytes(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<u8[0 max]> outPayloadBytes)
+{
+    return DeserializeFloatLiteralPayloadBytesAt(buf, 1, outPayloadBytes);
+}
+
+public fn bool DeserializeFloatLiteralPayloadBytesAt(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    mut borrow IrTable<u8[0 max]> outPayloadBytes)
+{
+    return DeserializeTextPayloadBytesAt(buf, startOffset, outPayloadBytes);
+}
+
+public inline finite law u32[0 max] MirFloatConstantRecordSize()
+{
+    return 12;
+}
+
+internal inline finite law bool MirFloatConstantTypeCodeIsPackageValid(u32[0 max] code)
+{
+    return MirFloatConstantTypeIsSupported(MirTypeFromStorageCode(code));
+}
+
+public fn void SerializeFloatConstants(borrow IrTable<MirFloatConstant> constants, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = constants.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFloatConstant constant = constants.Get(id);
+        WriteU32(buf, constant.PayloadStartIndex());
+        WriteU32(buf, constant.PayloadByteLength());
+        WriteU32(buf, MirTypeStorageCode(constant.ValueType()));
+        id = id + 1;
+    }
+}
+
+public fn bool DeserializeFloatConstants(
+    borrow IrTable<u8[0 max]> buf,
+    borrow IrTable<u8[0 max]> payloadBytes,
+    mut borrow IrTable<MirFloatConstant> outConstants)
+{
+    return DeserializeFloatConstantsAt(buf, 1, payloadBytes, outConstants);
+}
+
+public fn bool DeserializeFloatConstantsAt(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    borrow IrTable<u8[0 max]> payloadBytes,
+    mut borrow IrTable<MirFloatConstant> outConstants)
+{
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, startOffset, MirFloatConstantRecordSize(), rowCount, byteCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < rowCount)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + index * MirFloatConstantRecordSize();
+        stack u32[0 max] payloadStart = ReadU32(buf, recordBase);
+        stack u32[0 max] payloadByteLength = ReadU32(buf, recordBase + 4);
+        stack u32[0 max] typeCode = ReadU32(buf, recordBase + 8);
+        if (!MirFloatConstantTypeCodeIsPackageValid(typeCode))
+        {
+            return false;
+        }
+
+        stack u32[0 max] added = MirAddFloatConstantRange(
+            outConstants,
+            payloadBytes,
+            MirTypeFromStorageCode(typeCode),
+            payloadStart,
+            payloadByteLength);
+        if (added == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
 }
 
 // Enum layout facts: u32 count + fixed 108-byte records. This is a durable

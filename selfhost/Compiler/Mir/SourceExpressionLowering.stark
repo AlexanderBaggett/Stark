@@ -5,6 +5,7 @@ import Compiler.Mir.LlvmFacts
 import Compiler.Mir.LlvmFunctions
 import Compiler.Mir.Model
 import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceModuleFacts
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
@@ -975,6 +976,7 @@ internal struct SourceSliceArgumentLocal
     MirType ElementType;
     u32[0 max] FieldTypeCode;
     bool IsFixedArrayParam;
+    bool IsFixedArrayValueOverride;
 
     SourceSliceArgumentLocal()
     {
@@ -987,6 +989,7 @@ internal struct SourceSliceArgumentLocal
         self.ElementType = MirType.I64;
         self.FieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
         self.IsFixedArrayParam = false;
+        self.IsFixedArrayValueOverride = false;
     }
 }
 
@@ -1033,6 +1036,15 @@ internal fn bool SourceSliceArgumentMatchesFixedArrayAbi(SourceSliceArgumentLoca
         && local.FieldTypeCode == expected.FixedArrayFieldTypeCode;
 }
 
+internal fn bool SourceLocalTypeCodeMatchesStructValueAbi(u32[0 max] localTypeCode, ParamAbiFacts expected)
+{
+    return expected.IsStructValue
+        && expected.StructValueTypeToken != 0
+        && expected.StructValueFieldCount != 0
+        && SourceLocalTypeCodeIsStructValue(localTypeCode)
+        && SourceLocalTypeCodeStructValueTypeToken(localTypeCode) == expected.StructValueTypeToken;
+}
+
 internal fn MirValueId LowerSliceCallArgumentValue(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] argNode,
@@ -1060,6 +1072,11 @@ internal fn MirValueId LowerSliceCallArgumentValue(
     }
 
     stack mut MirValueId base = MirValueIdOf(0);
+    if (local.IsFixedArrayValueOverride)
+    {
+        return MirValueIdOf(0);
+    }
+
     if (local.IsFixedArrayParam)
     {
         if (local.BaseByteOffset != 0
@@ -1130,15 +1147,51 @@ internal fn MirValueId LowerFixedArrayCallArgumentValue(
     stack mut SourceSliceArgumentLocal local = new();
     if (!TryFindSourceSliceArgumentLocal(sliceArgumentLocals, arg.Left, local)
         || !SourceSliceArgumentMatchesFixedArrayAbi(local, expected)
-        || local.ParamIndex != arg.Left
-        || local.ReceiverParamIndex != arg.Left)
+        || local.ParamIndex != arg.Left)
     {
         return MirValueIdOf(0);
     }
 
+    if (local.IsFixedArrayValueOverride)
+    {
+        if (!localOverrides.Contains(arg.Left + 1))
+        {
+            return MirValueIdOf(0);
+        }
+
+        stack u32[0 max] overrideValue = localOverrides.Get(arg.Left + 1);
+        if (overrideValue == 0)
+        {
+            return MirValueIdOf(0);
+        }
+
+        return MirValueIdOf(overrideValue);
+    }
+
     if (local.IsFixedArrayParam)
     {
+        if (local.ReceiverParamIndex != arg.Left)
+        {
+            if (!localOverrides.Contains(arg.Left + 1))
+            {
+                return MirValueIdOf(0);
+            }
+
+            stack u32[0 max] overrideValue = localOverrides.Get(arg.Left + 1);
+            if (overrideValue == 0)
+            {
+                return MirValueIdOf(0);
+            }
+
+            return MirValueIdOf(overrideValue);
+        }
+
         return MirParamTyped(instrs, expected.FixedArrayElementType, local.ReceiverParamIndex);
+    }
+
+    if (local.ReceiverParamIndex != arg.Left)
+    {
+        return MirValueIdOf(0);
     }
 
     if (!localOverrides.Contains(local.ReceiverParamIndex + 1))
@@ -1158,6 +1211,49 @@ internal fn MirValueId LowerFixedArrayCallArgumentValue(
         expected.FixedArrayLength,
         expected.FixedArrayElementType,
         expected.FixedArrayAlignment);
+}
+
+internal fn MirValueId LowerStructValueCallArgumentValue(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] argNode,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    ParamAbiFacts expected)
+{
+    if (!nodes.Contains(argNode))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack ExprNode arg = nodes.Get(argNode);
+    if (arg.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr)
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack u32[0 max] localIndex = arg.Left + 1;
+    if (!localTypes.Contains(localIndex))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack u32[0 max] localTypeCode = localTypes.Get(localIndex);
+    if (!SourceLocalTypeCodeMatchesStructValueAbi(localTypeCode, expected))
+    {
+        return MirValueIdOf(0);
+    }
+
+    if (localOverrides.Contains(localIndex))
+    {
+        stack u32[0 max] overrideValue = localOverrides.Get(localIndex);
+        if (overrideValue != 0)
+        {
+            return MirValueIdOf(overrideValue);
+        }
+    }
+
+    return MirParamTyped(instrs, StructValueShapeFieldTypeAt(expected, 0), arg.Left);
 }
 
 // Lowers an expression AST node to MIR, recursing over its children — the bridge from
@@ -1312,6 +1408,10 @@ internal fn bool AppendLoweredCallArgumentValueIndexesWithCallContext(
         {
             argValue = LowerFixedArrayCallArgumentValue(nodes, argNode, instrs, localOverrides, sliceArgumentLocals, expected);
         }
+        else if (expected.IsStructValue)
+        {
+            argValue = LowerStructValueCallArgumentValue(nodes, argNode, instrs, localTypes, localOverrides, expected);
+        }
         else
         {
             argValue = LowerExprNodeWithCallContext(nodes, argNode, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
@@ -1422,6 +1522,132 @@ internal fn MirValueId LowerTailCallExprNodeWithLocals(borrow IrTable<ExprNode> 
     return LowerTailCallExprNodeWithTypesAndLocals(nodes, id, instrs, noLocalTypes, localOverrides);
 }
 
+public fn bool LinkSourceTextLiteralRowsFromModuleFacts(mut borrow IrTable<ExprNode> nodes, borrow SourceModuleLoweringFacts moduleFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index <= count; index += 1)
+    {
+        stack u32[0 max] nodeId = (u32[0 max])index;
+        stack ExprNode node = nodes.Get(nodeId);
+        if (node.Kind == Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr
+            || node.Kind == Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr)
+        {
+            stack u32[0 max] literalRow = SourceTypedLiteralRowForToken(moduleFacts, node.Left);
+            if (literalRow == 0)
+            {
+                return false;
+            }
+
+            if (node.Right != 0 && node.Right != literalRow)
+            {
+                return false;
+            }
+
+            if (node.Right == 0 && !TrySetSourceTextLiteralNodeTypedLiteralRow(nodes, nodeId, literalRow))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+public fn bool LinkSourceFloatLiteralRowsFromModuleFacts(mut borrow IrTable<ExprNode> nodes, borrow SourceModuleLoweringFacts moduleFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index <= count; index += 1)
+    {
+        stack u32[0 max] nodeId = (u32[0 max])index;
+        stack ExprNode node = nodes.Get(nodeId);
+        if (node.Kind == Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr)
+        {
+            stack u32[0 max] literalRow = SourceTypedLiteralRowForToken(moduleFacts, node.Left);
+            if (literalRow == 0)
+            {
+                return false;
+            }
+
+            if (node.Right != 0 && node.Right != literalRow)
+            {
+                return false;
+            }
+
+            if (node.Right == 0 && !TrySetSourceFloatLiteralNodeTypedLiteralRow(nodes, nodeId, literalRow))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+public fn MirValueId LowerSourceTextLiteralExprNodeWithModuleFacts(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow SourceModuleLoweringFacts moduleFacts)
+{
+    if (!nodes.Contains(id))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr
+        && node.Kind != Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr)
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack mut u32[0 max] literalRow = node.Right;
+    if (literalRow == 0)
+    {
+        literalRow = SourceTypedLiteralRowForToken(moduleFacts, node.Left);
+    }
+
+    stack u32[0 max] textConstantRow = SourceTextConstantRowForTypedLiteralRow(moduleFacts, literalRow);
+    if (textConstantRow == 0)
+    {
+        return MirValueIdOf(0);
+    }
+
+    return MirTextConstantValue(instrs, moduleFacts.TextConstants, textConstantRow);
+}
+
+public fn MirValueId LowerSourceFloatLiteralExprNodeWithModuleFacts(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow SourceModuleLoweringFacts moduleFacts)
+{
+    if (!nodes.Contains(id))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    if (node.Kind != Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr)
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack mut u32[0 max] literalRow = node.Right;
+    if (literalRow == 0)
+    {
+        literalRow = SourceTypedLiteralRowForToken(moduleFacts, node.Left);
+    }
+
+    stack u32[0 max] floatConstantRow = SourceFloatConstantRowForTypedLiteralRow(moduleFacts, literalRow);
+    if (floatConstantRow == 0)
+    {
+        return MirValueIdOf(0);
+    }
+
+    return MirFloatConstantValue(instrs, moduleFacts.FloatConstants, floatConstantRow);
+}
+
 public fn MirValueId LowerExprNodeWithCallContext(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] id,
@@ -1442,8 +1668,14 @@ public fn MirValueId LowerExprNodeWithCallContext(
     {
         case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
             return MirConstInt(instrs, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return MirValueIdOf(0);
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
             return MirConstIntTyped(instrs, MirType.I1, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return MirValueIdOf(0);
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
+            return MirValueIdOf(0);
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             stack u32[0 max] paramIndex = node.Left;
             if (localOverrides.Contains(paramIndex + 1))
@@ -1534,6 +1766,63 @@ public fn MirValueId LowerExprNodeWithCallContext(
     }
 }
 
+public fn MirValueId LowerExprNodeWithModuleFactsAndCallContext(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(moduleFacts, functionCallContractFacts, sliceArgumentLocals)
+{
+    if (nodes.Contains(id))
+    {
+        stack ExprNode node = nodes.Get(id);
+        if (node.Kind == Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr
+            || node.Kind == Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr)
+        {
+            return LowerSourceTextLiteralExprNodeWithModuleFacts(nodes, id, instrs, moduleFacts);
+        }
+
+        if (node.Kind == Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr)
+        {
+            return LowerSourceFloatLiteralExprNodeWithModuleFacts(nodes, id, instrs, moduleFacts);
+        }
+    }
+
+    return LowerExprNodeWithCallContext(
+        nodes,
+        id,
+        instrs,
+        localTypes,
+        localOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals);
+}
+
+public fn MirValueId LowerExprNodeWithModuleFacts(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow SourceModuleLoweringFacts moduleFacts)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<SourceSliceArgumentLocal> noSliceArgumentLocals = new();
+    return LowerExprNodeWithModuleFactsAndCallContext(
+        nodes,
+        id,
+        instrs,
+        noLocalTypes,
+        noOverrides,
+        moduleFacts,
+        noFunctionCallContractFacts,
+        noSliceArgumentLocals);
+}
+
 public fn MirValueId LowerExprNodeWithTypesAndLocals(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] id,
@@ -1567,8 +1856,14 @@ public fn MirValueId LowerExprNodeAsTypeWithCallContext(
     {
         case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
             return MirConstIntTyped(instrs, targetType, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return MirValueIdOf(0);
         case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
             return MirConstIntTyped(instrs, targetType, node.Imm);
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return MirValueIdOf(0);
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
+            return MirValueIdOf(0);
         case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
             stack u32[0 max] paramIndex = node.Left;
             if (localOverrides.Contains(paramIndex + 1))
@@ -1666,6 +1961,11 @@ internal fn bool MirTypeIsIntegerScalar(MirType type)
     return type == MirType.I64;
 }
 
+internal fn bool MirTypeIsFloatScalar(MirType type)
+{
+    return type == MirType.F32 || type == MirType.F64;
+}
+
 public fn MirValueId LowerScalarReturnExprNodeWithTypesAndLocals(
     borrow IrTable<ExprNode> nodes,
     u32[0 max] id,
@@ -1679,6 +1979,11 @@ public fn MirValueId LowerScalarReturnExprNodeWithTypesAndLocals(
     if (rootType == ExprType.IntType && hasDeclaredReturnType && MirTypeIsIntegerScalar(declaredReturnType))
     {
         return LowerExprNodeAsTypeWithTypesAndLocals(nodes, id, instrs, localTypes, localOverrides, declaredReturnType);
+    }
+
+    if (rootType == ExprType.FloatType)
+    {
+        return MirValueIdOf(0);
     }
 
     stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, id, instrs, localTypes, localOverrides);
@@ -1721,7 +2026,66 @@ public fn MirValueId LowerScalarReturnExprNodeWithCallContext(
             declaredReturnType);
     }
 
+    if (rootType == ExprType.FloatType)
+    {
+        return MirValueIdOf(0);
+    }
+
     stack MirValueId value = LowerExprNodeWithCallContext(nodes, id, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+    if (rootType != ExprType.BoolType)
+    {
+        return value;
+    }
+
+    if (hasDeclaredReturnType && declaredReturnType == MirType.I1)
+    {
+        return value;
+    }
+
+    return MirZExt(instrs, value);
+}
+
+public fn MirValueId LowerScalarReturnExprNodeWithModuleFactsAndCallContext(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    ExprType rootType,
+    bool hasDeclaredReturnType,
+    MirType declaredReturnType)
+    where overlap(moduleFacts, functionCallContractFacts, sliceArgumentLocals)
+{
+    if (rootType == ExprType.IntType && hasDeclaredReturnType && MirTypeIsIntegerScalar(declaredReturnType))
+    {
+        return LowerExprNodeAsTypeWithCallContext(
+            nodes,
+            id,
+            instrs,
+            localTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals,
+            declaredReturnType);
+    }
+
+    if (rootType == ExprType.FloatType && (!hasDeclaredReturnType || !MirTypeIsFloatScalar(declaredReturnType)))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirValueId value = LowerExprNodeWithModuleFactsAndCallContext(
+        nodes,
+        id,
+        instrs,
+        localTypes,
+        localOverrides,
+        moduleFacts,
+        functionCallContractFacts,
+        sliceArgumentLocals);
     if (rootType != ExprType.BoolType)
     {
         return value;

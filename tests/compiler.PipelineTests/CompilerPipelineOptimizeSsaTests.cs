@@ -1407,6 +1407,10 @@ public sealed class CompilerPipelineOptimizeSsaTests
     [Fact]
     public void OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRoots()
     {
+        // Pair carries an empty destructor so it stays MOVE-ONLY: structural
+        // copyability (scalar-only, destructor-free types are copy types)
+        // otherwise turns this assignment into Copy-kind traffic with no
+        // move-invalidation store, which is not what this test exercises.
         const string source = """
             module Demo
 
@@ -1414,6 +1418,10 @@ public sealed class CompilerPipelineOptimizeSsaTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             fn void Run()
@@ -1464,6 +1472,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
     [Fact]
     public void OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRoots()
     {
+        // Empty destructor keeps Pair move-only (see the sibling test above).
         const string source = """
             module Demo
 
@@ -1471,6 +1480,10 @@ public sealed class CompilerPipelineOptimizeSsaTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe ffi fn void Observe(rawptr<Pair> pointer);
