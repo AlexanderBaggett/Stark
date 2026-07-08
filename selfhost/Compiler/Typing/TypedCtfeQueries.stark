@@ -144,6 +144,142 @@ internal fn bool TypedEnumLayoutTryReadQueryU32(
     return true;
 }
 
+internal fn bool TryFoldEnumTagLayoutComptimeQuery(
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u32[0 max] ownerDeclarationIndex,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    stack mut u64[0 max] offsetBytes = 0;
+    stack mut u64[0 max] sizeBytes = 0;
+    stack mut u64[0 max] alignmentBytes = 1;
+    stack mut bool isMisaligned = false;
+    if (!layouts.TryGetEnumTagLayout(ownerDeclarationIndex, offsetBytes, sizeBytes, alignmentBytes, isMisaligned))
+    {
+        return false;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagOffset"))
+    {
+        constant.SetU64(offsetBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagSize"))
+    {
+        constant.SetU64(sizeBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagAlign"))
+    {
+        constant.SetU64(alignmentBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumTagIsMisaligned"))
+    {
+        constant.SetBool(isMisaligned);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryFoldEnumVariantLayoutComptimeQuery(
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantTag"))
+    {
+        stack mut u64[0 max] tagValue = 0;
+        if (!layouts.TryGetEnumVariantTag(ownerDeclarationIndex, variantOrdinal, tagValue))
+        {
+            return false;
+        }
+
+        constant.SetU64(tagValue);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadCount"))
+    {
+        stack mut u64[0 max] payloadCount = 0;
+        if (!layouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount))
+        {
+            return false;
+        }
+
+        constant.SetU64(payloadCount);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryFoldEnumVariantPayloadLayoutComptimeQuery(
+    borrow TypedEnumLayoutTable layouts,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] queryNameToken,
+    u32[0 max] ownerDeclarationIndex,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    out TypedLayoutQueryConstant constant)
+{
+    constant = new();
+    stack mut u64[0 max] offsetBytes = 0;
+    stack mut u64[0 max] sizeBytes = 0;
+    stack mut u64[0 max] alignmentBytes = 1;
+    stack mut bool isMisaligned = false;
+    if (!layouts.TryGetEnumVariantPayloadLayout(
+        ownerDeclarationIndex,
+        variantOrdinal,
+        payloadOrdinal,
+        offsetBytes,
+        sizeBytes,
+        alignmentBytes,
+        isMisaligned))
+    {
+        return false;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadOffset"))
+    {
+        constant.SetU64(offsetBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadSize"))
+    {
+        constant.SetU64(sizeBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadAlign"))
+    {
+        constant.SetU64(alignmentBytes);
+        return true;
+    }
+
+    if (TypedSignatureTokenTextEquals(source, stream, queryNameToken, "EnumVariantPayloadIsMisaligned"))
+    {
+        constant.SetBool(isMisaligned);
+        return true;
+    }
+
+    return false;
+}
+
 public fn bool TryFoldEnumLayoutComptimeQueryCall(
     borrow DeclarationList declarations,
     borrow TypedEnumLayoutTable layouts,
@@ -177,7 +313,7 @@ public fn bool TryFoldEnumLayoutComptimeQueryCall(
         return false;
     }
 
-    if (layouts.TryFoldEnumTagLayoutQuery(source, stream, queryNameToken, ownerDeclarationIndex, constant))
+    if (TryFoldEnumTagLayoutComptimeQuery(layouts, source, stream, queryNameToken, ownerDeclarationIndex, constant))
     {
         return true;
     }
@@ -188,7 +324,7 @@ public fn bool TryFoldEnumLayoutComptimeQueryCall(
         return false;
     }
 
-    if (layouts.TryFoldEnumVariantLayoutQuery(source, stream, queryNameToken, ownerDeclarationIndex, variantOrdinal, constant))
+    if (TryFoldEnumVariantLayoutComptimeQuery(layouts, source, stream, queryNameToken, ownerDeclarationIndex, variantOrdinal, constant))
     {
         return true;
     }
@@ -199,7 +335,8 @@ public fn bool TryFoldEnumLayoutComptimeQueryCall(
         return false;
     }
 
-    return layouts.TryFoldEnumVariantPayloadLayoutQuery(
+    return TryFoldEnumVariantPayloadLayoutComptimeQuery(
+        layouts,
         source,
         stream,
         queryNameToken,

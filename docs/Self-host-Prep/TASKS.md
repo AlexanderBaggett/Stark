@@ -321,7 +321,7 @@ Execution constraints:
     - [x] Share enum-layout generic comptime-value readers between CTFE query folding and enum layout construction.
     - [ ] Move CTFE expression typing hooks into CTFE typing modules.
     - [ ] Move CTFE function typing hooks into CTFE typing modules.
-    - [ ] Move remaining `System.Compiler` structural-fact typing hooks into CTFE typing modules.
+    - [x] Move remaining `System.Compiler` structural-fact typing hooks into CTFE typing modules.
   - [x] Move `BuildTyped*` orchestration into a narrow typing pipeline module.
   - [x] Add dependency-direction checks so typing data modules do not import semantic validation, ownership validation, MIR, or LLVM modules.
   - [~] Run focused selfhost typing and artifact-rendering tests after each module split.
@@ -341,6 +341,7 @@ Execution constraints:
     - [x] Run focused lower-MIR checks for the typed-field, typed-global, and typed-local helper splits.
     - [x] Run focused lower-MIR checks for the typed-call model, signature, and argument splits.
     - [x] Run focused lower-MIR checks for the typed-signature, typed-member-model, and typed-assignment-model splits.
+    - [x] Run focused checks for the CTFE structural query split.
     - [ ] Run focused tests for future typing module splits.
 
 - [x] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.
@@ -451,7 +452,7 @@ Execution constraints:
   - [x] Port lowering symbol maps.
   - [x] Port MIR block creation.
   - [x] Validate return and branch block append helpers before recording builder-owned control-flow blocks.
-  - [~] Lower literals.
+  - [x] Lower literals.
     - [x] Lower integer and boolean literals to typed MIR constants with exact range facts.
     - [x] Validate literal fact rows before emitting MIR constants.
     - [x] Reject unsupported literal families before emitting partial MIR.
@@ -472,12 +473,12 @@ Execution constraints:
       - [x] Add focused IR tests for ASCII strings, Unicode strings, character literals, and package round trips.
         - [x] Add focused IR tests for ASCII string, Unicode string, and character literal MIR text constants.
         - [x] Add focused IR tests for MIR text literal package round trips.
-    - [~] Lower floating-point literals once MIR has typed float constants.
+    - [x] Lower floating-point literals once MIR has typed float constants.
       - [x] Add f32/f64 MIR value-type plumbing across type codes, package codec, text rendering, LLVM type names, and struct ABI shape facts.
       - [x] Add MIR float constant storage rows that preserve f32/f64 literal text or canonical bits without widening instruction rows.
       - [x] Lower parsed f32/f64 literal expression nodes to MIR float constant values.
       - [x] Emit LLVM f32/f64 float constants from MIR float constant rows with canonical hex literal spelling.
-      - [ ] Add focused IR tests for f32 and f64 literal return, call argument, and package round trips.
+      - [x] Add focused IR tests for f32 and f64 literal return, call argument, and package round trips.
     - [x] Lower null pointer literals to typed pointer constants with nullability facts.
   - [~] Lower locals and parameters.
     - [x] Lower dense i64 parameters with translated backend facts.
@@ -513,13 +514,13 @@ Execution constraints:
       - [x] Lower compound assignments with checked, wrapping, and saturating arithmetic semantics.
         - [x] Validate carried operand facts before emitting compound assignment operations.
       - [x] Lower assignment expressions in enclosing value contexts.
-  - [~] Lower arithmetic and comparisons.
+  - [x] Lower arithmetic and comparisons.
     - [x] Lower typed integer add/sub/mul and signed comparisons with recomputed value facts.
       - [x] Validate carried operand facts before interpreting binary operation facts.
       - [x] Preserve compact integer widths through inferred binary-expression and comparison operand lowering.
     - [x] Lower integer division, remainder, bitwise, and shift operators with checked backend facts.
     - [x] Lower wrapping and saturating arithmetic operators with explicit overflow semantics.
-    - [ ] Lower floating-point arithmetic and comparisons after MIR has typed float operations.
+    - [x] Lower floating-point arithmetic and comparisons after MIR has typed float operations.
   - [~] Lower calls.
     - [x] Lower typed direct calls up to MIR's four-argument payload with result facts.
       - [x] Validate carried argument facts before emitting MIR direct-call payloads.
@@ -739,17 +740,25 @@ Execution constraints:
         - [x] Lower terminal enum unit switches to compact tag comparisons.
         - [x] Lower non-terminal enum unit switch assignments to compact tag comparisons.
       - [x] Lower integer range-pattern switch cases through MIR branch tests.
-      - [~] Lower aggregate and list pattern switch cases through MIR branch tests.
-        - [ ] Import typed switch pattern rows into the self-host MIR source-lowering facts.
-          - [ ] Port the self-host typed aggregate-pattern row model from the stage0 aggregate pattern typing records.
-          - [ ] Build typed aggregate-pattern rows during self-host typing for top-level switch labels.
-          - [ ] Build typed nested aggregate-pattern member rows during self-host typing.
-          - [ ] Build typed nested list-pattern element rows during self-host typing.
-          - [ ] Preserve pattern row owner type, enum variant, field ordinal, element ordinal, literal, range, capture, and nested-shape facts.
-          - [ ] Store typed switch pattern row tables in `SourceModuleLoweringFacts`.
-          - [ ] Validate that source switch labels match their typed pattern rows before MIR lowering.
-          - [ ] Replace ad hoc aggregate/list pattern token parsing in source MIR lowering with typed pattern row lookup.
-          - [ ] Add focused typing and MIR tests for imported top-level, nested aggregate, and nested list pattern rows.
+        - [~] Lower aggregate and list pattern switch cases through MIR branch tests.
+        - [x] Import typed switch pattern rows into the self-host MIR source-lowering facts.
+          - [x] Port the self-host typed aggregate-pattern row model from the stage0 aggregate pattern typing records.
+          - [x] Build typed aggregate-pattern rows during self-host typing for top-level switch labels.
+          - [x] Build typed nested aggregate-pattern member rows during self-host typing.
+          - [x] Build typed nested list-pattern element rows during self-host typing.
+          - [x] Preserve pattern row owner type, enum variant, field ordinal, element ordinal, literal, range, capture, and nested-shape facts.
+          - [x] Store typed switch pattern row tables in `SourceModuleLoweringFacts`.
+          - [x] Build dense start-token lookup tables for imported typed aggregate and list pattern rows.
+          - [x] Validate that source switch labels match their typed pattern rows before MIR lowering.
+            - [x] Validate module-fact-backed struct, enum, and fixed-array list switch labels against imported typed rows before MIR lowering.
+            - [x] Thread source-module facts into the local switch-assignment lowering entrypoint so its fixed-array list labels can use typed row validation.
+          - [x] Replace ad hoc aggregate/list pattern token parsing in source MIR lowering with typed pattern row lookup.
+            - [x] Replace fixed-array list label structure parsing with typed row lookup for typed-row-backed labels.
+            - [x] Replace struct aggregate field-member parsing with typed row lookup for typed-row-backed labels.
+            - [x] Replace enum aggregate payload-member parsing with typed row lookup for typed-row-backed labels.
+            - [x] Route nested typed aggregate and list rows into shared decision descriptors without reparsing nested source tokens. (2026-07-07: terminal and assignment struct aggregate preflight now threads typed nested member spans into recursive aggregate/list decision descriptors from `SourceModuleLoweringFacts`; nested codegen remains conservatively rejected until the shared block-construction tasks lower those descriptors.)
+            - [x] Replace the recursive typed nested descriptor importer with a checker-friendly iterative worklist to remove the localized `STK4122` stack-growth warnings without changing descriptor order. (2026-07-08: `SourceSwitchLowering` now drives typed nested aggregate/list descriptor import through an explicit `List`-backed DFS frame stack, preserves postorder descriptor insertion, and checks cleanly without the previous localized recursion warnings.)
+          - [x] Add focused typing and MIR tests for imported top-level, nested aggregate, and nested list pattern rows. (2026-07-08: added a dedicated `selfhost.SwitchPatternImport` test project with two narrow facts covering `SourceModuleLoweringFacts` typed-row import and descriptor construction from imported nested aggregate/list rows; the isolated root checks successfully, while the generated runner was capped after a silent build.)
         - [x] Represent lowerable switch labels for discard and whole-value capture patterns.
           - [x] Represent top-level discard labels for fixed-array list and struct aggregate switch lowering.
           - [x] Represent whole-value capture labels for fixed-array list and struct aggregate switch lowering.
@@ -795,22 +804,49 @@ Execution constraints:
             - [x] Route terminal and assignment struct aggregate switch labels over by-value parameters through direct field extracts.
           - [x] Lower struct aggregate labels over field-backed struct scrutinees.
           - [x] Lower top-level discard struct aggregate labels through the zero-pattern branch path.
-          - [ ] Lower struct aggregate labels with nested aggregate or list field subpatterns through shared pattern-decision block construction.
-            - [ ] Build a shared pattern-decision node model for scalar, discard, capture, aggregate, enum aggregate, and list subpatterns.
-            - [ ] Translate typed struct field-pattern rows into shared pattern-decision nodes.
-            - [ ] Lower nested struct-field aggregate patterns over by-value struct parameters.
-            - [ ] Lower nested struct-field aggregate patterns over storage-backed struct scrutinees.
-            - [ ] Lower nested struct-field list patterns over fixed-array fields.
-            - [ ] Preserve declared scalar range facts while testing nested field and element subpatterns.
-            - [ ] Preserve capture-local facts for values captured inside nested struct aggregate patterns.
-            - [ ] Add focused IR tests for nested struct, nested list-field, and capture-bearing struct aggregate labels.
-          - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
+          - [~] Lower struct aggregate labels with nested aggregate or list field subpatterns through shared pattern-decision block construction.
+            - [x] Build a shared pattern-decision node model for scalar, discard, capture, aggregate, enum aggregate, and list subpatterns. (2026-07-07: added flat row-based decision node and member rows that carry scalar, capture, aggregate, enum aggregate, and list descriptor references.)
+            - [~] Translate typed struct field-pattern rows into shared pattern-decision nodes.
+              - [x] Translate scalar struct field-pattern rows into decision members with preserved field ordinals, type codes, and scalar intervals.
+              - [x] Translate struct field capture rows into decision members with preserved capture names and type codes.
+              - [x] Add descriptor-backed append helpers for nested aggregate, enum aggregate, and list decision nodes.
+              - [x] Translate imported typed nested struct field-pattern rows into decision members after typed pattern row import lands. (2026-07-07: typed nested aggregate/list field rows now append descriptor-backed decision members during struct aggregate preflight; scalar leaves remain on the existing flat tables and nested branch emission remains a follow-up.)
+            - [x] Lower nested struct-field aggregate patterns over by-value struct parameters. (2026-07-08: one-level nested scalar struct aggregate members on by-value struct parameters now flatten through the parameter ABI shape and lower to direct `extractvalue` scalar tests for terminal returns and switch assignments; deeper aggregate/list/capture subpatterns remain follow-ups.)
+            - [x] Lower nested struct-field aggregate patterns over storage-backed struct scrutinees. (2026-07-08: one-level nested struct aggregate members on storage-backed scrutinees lower to direct pointer-offset scalar field tests for terminal returns and switch assignments; deeper aggregate/list/capture subpatterns remain follow-ups.)
+            - [x] Lower nested struct-field list patterns over fixed-array fields. (2026-07-08: storage-backed struct scrutinees now lower one-level fixed-array list field subpatterns to direct constant-offset element loads for terminal returns and switch assignments; nested list captures and deeper element shapes remain follow-ups.)
+            - [x] Preserve declared scalar range facts while testing nested field and element subpatterns.
+              - [x] Preserve declared scalar range facts while testing storage-backed nested struct aggregate scalar leaves.
+              - [x] Preserve declared scalar range facts while testing by-value nested struct aggregate scalar leaves.
+              - [x] Preserve declared scalar range facts while testing nested fixed-array element subpatterns. (2026-07-08: nested fixed-array element loads use declared element range metadata from member-path facts.)
+            - [x] Preserve capture-local facts for values captured inside nested struct aggregate patterns. (2026-07-08: one-level nested struct aggregate capture leaves now append capture-local rows with flat ABI indexes for by-value params and byte offsets for storage-backed scrutinees, so guards and arm bodies reuse the existing capture override path.)
+            - [x] Add focused IR tests for nested struct, nested list-field, and capture-bearing struct aggregate labels.
+	              - [x] Add focused IR tests for storage-backed nested struct aggregate labels over terminal return and assignment switches.
+	              - [x] Add focused IR tests for by-value nested struct aggregate labels over terminal return and assignment switches.
+	              - [x] Add focused IR tests for nested list-field struct aggregate labels over terminal return and assignment switches.
+	              - [x] Add focused IR tests for capture-bearing struct aggregate labels.
+	              - [x] Add focused IR tests for capture-bearing nested fixed-array list field labels over borrow-backed terminal return and assignment switches.
+	              - [x] Add focused IR tests for storage-backed deeper nested aggregate/list field labels over borrow-backed terminal return and assignment switches.
+	              - [x] Add focused IR tests for storage-backed deeper nested aggregate/list captures over borrow-backed terminal return and assignment switches.
+	              - [x] Add focused IR tests for by-value deeper nested aggregate labels over terminal return and assignment switches.
+	              - [x] Add focused IR tests for by-value nested fixed-array list field labels over terminal return and assignment switches.
+	              - [x] Add focused IR tests for by-value nested fixed-array list field captures over terminal return and assignment switches.
+	            - [x] Lower capture-bearing nested fixed-array list field patterns. (2026-07-08: storage-backed fixed-array field element captures now append capture rows with constant element offsets, reuse struct aggregate guard/body capture overrides, and preserve declared element range facts through emitted LLVM loads; deeper nested element shapes remain follow-ups.)
+	            - [x] Lower deeper nested aggregate/list subpatterns beyond one field hop.
+	              - [x] Lower storage-backed deeper nested struct aggregate scalar leaves without aggregate materialization. (2026-07-08: storage-backed struct aggregate condition lowering now walks nested aggregate descriptors with an explicit worklist and emits direct pointer-offset scalar loads with declared range metadata.)
+	              - [x] Lower storage-backed deeper nested fixed-array list field scalar leaves without aggregate materialization. (2026-07-08: nested fixed-array field descriptors reached through deeper struct aggregate fields reuse the direct constant-offset element load path and preserve declared element range metadata.)
+	              - [x] Preserve capture-local facts for storage-backed captures inside deeper nested aggregate/list subpatterns. (2026-07-08: deeper aggregate capture import now walks nested aggregate descriptors with an explicit worklist, appends direct storage offsets for scalar captures, appends constant element offsets for deeper fixed-array element captures, and preserves scalar/element range facts for guard and arm-local loads.)
+	              - [x] Lower by-value deeper nested aggregate/list subpatterns beyond one field hop.
+	                - [x] Lower by-value deeper nested struct aggregate scalar leaves without aggregate materialization. (2026-07-08: by-value struct aggregate condition lowering now walks nested aggregate descriptors with an explicit flat-ABI frame worklist and emits direct struct-parameter scalar extracts for deeper aggregate leaves.)
+	                - [x] Extend by-value struct ABI shape/facts for fixed-array fields and lower no-capture by-value nested fixed-array list field scalar leaves without aggregate materialization. (2026-07-08: struct-value ABI shape walking now expands fixed-array fields into repeated scalar leaves, and by-value aggregate condition lowering emits direct struct-parameter element extracts with declared element range facts.)
+	                - [x] Preserve capture-local facts for by-value captures inside nested fixed-array list field subpatterns. (2026-07-08: fixed-array element capture import now records flat ABI element indexes alongside storage offsets so by-value arm overrides emit direct struct-parameter element extracts with declared element range facts.)
+	          - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
             - [x] Lower terminal-return guarded no-capture struct aggregate labels after successful field tests.
             - [x] Lower non-terminal assignment guarded no-capture struct aggregate labels after successful field tests.
         - [~] Lower no-capture fixed-array list patterns to indexed element branch tests with preserved element range facts.
           - [x] Lower terminal fixed-array parameter list labels to direct constant-index element branch tests.
           - [x] Preserve declared fixed-array element range facts on direct parameter element extracts.
           - [x] Reject overlapping terminal fixed-array list labels before emitting MIR branch blocks.
+          - [x] Reject overlapping non-terminal fixed-array list labels before emitting MIR branch blocks.
           - [x] Lower terminal fixed-array list labels whose arms return enum values.
           - [x] Lower non-terminal fixed-array list switch assignments that continue after the switch.
           - [x] Lower terminal guarded no-capture fixed-array parameter list labels after successful element tests.
@@ -825,32 +861,63 @@ Execution constraints:
               - [x] Lower non-terminal fixed-array field-backed list switch assignments through typed member-path element branch tests.
           - [x] Lower top-level discard fixed-array list labels through the zero-pattern branch path.
         - [ ] Lower nested aggregate and list field patterns through shared pattern-decision block construction.
-          - [ ] Use the shared pattern-decision node model for enum payload subpatterns.
-          - [ ] Use the shared pattern-decision node model for fixed-array element subpatterns.
-          - [ ] Lower nested enum aggregate subpatterns inside enum payload fields.
-          - [ ] Lower nested aggregate subpatterns inside fixed-array list elements.
-          - [ ] Lower nested list subpatterns inside fixed-array list elements.
-          - [ ] Route nested pattern failures to the next sibling label without leaking captures.
-          - [ ] Add overlap validation for nested aggregate and list descriptors before emitting MIR.
-          - [ ] Add focused IR tests for nested enum-payload, list-element aggregate, and list-element list patterns.
+          - [x] Use the shared pattern-decision node model for enum payload subpatterns.
+            - [x] Translate enum payload scalar and capture rows into decision members with preserved payload ordinals, type codes, capture names, and variant identity.
+            - [x] Route enum payload nested-shape rows through shared decision block construction.
+            - [x] Combine enum payload scalar, capture, and nested-shape rows into one contiguous decision-member span.
+          - [x] Use the shared pattern-decision node model for fixed-array element subpatterns.
+            - [x] Translate fixed-array element scalar and capture rows into decision members with preserved element ordinals, type codes, and capture names.
+            - [x] Route fixed-array element nested-shape rows through shared decision block construction.
+            - [x] Combine fixed-array element scalar, capture, and nested-shape rows into one contiguous decision-member span.
+          - [x] Lower nested enum aggregate subpatterns inside enum payload fields. (2026-07-08: enum-payload parse paths now carry nested enum aggregate descriptor spans into terminal and assignment lowering; MIR lowering extracts the outer enum payload, reads the nested enum tag, compares nested scalar payload leaves, and preserves the path to LLVM without stack materializing the enum payload.)
+          - [x] Preserve enum and aggregate fixed-array storage layout facts before list-element nested lowering. (2026-07-08: source-local layout now sizes fixed arrays from enum/aggregate element storage layout facts instead of treating named element arrays as unsupported or one element, preserving byte size and alignment facts through lower-MIR.)
+          - [x] Lower nested aggregate subpatterns inside fixed-array list elements. (2026-07-08: storage-backed fixed-array list element aggregate descriptors now lower through an explicit aggregate-condition frame stack, preserving element aggregate type/layout facts and emitting scalar pointer-offset field tests without recursive helper calls; focused terminal and assignment LLVM probes pass with range metadata on element-field loads.)
+          - [x] Lower nested list subpatterns inside fixed-array list elements. (2026-07-08: focused `emit-llvm` probes over `Box { Matrix: [[1, 2], _] }` pass for terminal and assignment switches, preserving direct scalar `i8` loads with `!range` through LLVM.)
+          - [x] Preserve multi-dimensional scalar fixed-array row strides while lowering nested list-element list patterns. (2026-07-08: fixed-array storage layout now multiplies remaining scalar array suffixes into the outer element stride, nested list-element lowering recursively descends into inner array rows, and `selfhost.Ir` second-row facts assert direct scalar loads at row-two byte offsets without aggregate carrier loads.)
+          - [x] Thread fixed-array suffix depth through recursive nested list-element list lowering. (2026-07-08: recursive storage-backed nested-list lowering now asks layout for the current array suffix depth instead of always reusing depth one, keeping three-dimensional scalar list elements on direct scalar loads at the correct byte offsets.)
+          - [~] Eliminate dead aggregate carrier loads emitted before scalar nested fixed-array element tests in raw O0 LLVM. (2026-07-08: LLVM block/direct-switch emission now counts value uses, terminators, and wide-call operands, then elides unused `FixedArrayLoad`/`StructValueLoad` carrier instructions only; scalar loads and range metadata still emit. Added a focused `selfhost.Ir` fact; touched MIR LLVM modules typecheck and semantic host-inspect reports 0 diagnostics, but executable/fact execution remains pending after a focused probe was capped in `lower-mir`.)
+          - [~] Route nested pattern failures to the next sibling label without leaking captures. (2026-07-08: added focused `selfhost.Ir` terminal-return and assignment LLVM facts for sibling nested struct/list labels that reuse capture names across labels, preserving direct scalar loads/range metadata and rejecting aggregate fallback shapes; `IrTests.stark` semantic host-test passed with 0 diagnostics, focused fact-runner execution remains pending.)
+          - [~] Add overlap validation for nested aggregate and list descriptors before emitting MIR. (2026-07-08: added source-facing `selfhost.Ir` facts for nested aggregate/list, list-element aggregate/list, and nested enum-payload overlap rejection; dynamic nested aggregate guards still allow later overlapping unguarded siblings. `IrTests.stark` semantic host-test passed with 0 diagnostics; filtered fact-runner execution remains pending.)
+            - [x] Add row-model overlap validation for scalar, nested aggregate, nested enum variant, and nested list descriptor decisions.
+            - [x] Hook nested descriptor overlap validation into source switch preflight before MIR branch block emission.
+              - [x] Add a shared-decision unguarded sibling preflight helper over decision-member spans.
+              - [x] Validate decision-member spans before the shared-decision preflight compares sibling cases.
+              - [x] Call the shared-decision preflight helper from terminal fixed-array list branch-block lowering.
+              - [x] Call the shared-decision preflight helper from fixed-array list assignment branch-block lowering.
+              - [x] Call the shared-decision preflight helper from enum-payload terminal and assignment branch-block lowering.
+              - [x] Call the shared-decision preflight helper from struct-aggregate terminal and assignment branch-block lowering.
+              - [x] Allow fixed-array list preflight rows to carry nested element descriptor spans.
+              - [x] Allow struct-aggregate preflight rows to carry nested field descriptor spans.
+              - [x] Call the shared-decision preflight helper from nested branch-block lowering. (2026-07-08: struct aggregate terminal and assignment parse paths now defer nested-bearing labels past the scalar-only flat overlap check so the descriptor-backed shared-decision preflight owns nested sibling validation before the conservative nested-codegen reject.)
+              - [x] Add source-facing rejection facts for nested aggregate/list and enum-payload overlaps after shared-decision lowering. (2026-07-08: `RejectsNestedAggregateAndListPatternOverlapFromAst`, `RejectsListElementNestedPatternOverlapFromAst`, and `RejectsOverlappingNestedEnumPayloadLabelsFromAst` cover source switch preflight paths; semantic host-test passed with 0 diagnostics.)
+          - [x] Add focused IR tests for nested enum-payload, list-element aggregate, and list-element list patterns.
+            - [x] Add focused row-model IR facts for enum-payload nested-shape rows, fixed-array element nested-shape rows, combined decision-member spans, nested descriptor overlap validation, decision-span validation, unguarded sibling preflight validation, fixed-array list preflight row building, nested fixed-array list preflight row building, enum-payload preflight row building, struct-aggregate preflight row building, and nested struct-aggregate preflight row building.
+            - [x] Add focused lowering IR tests for nested enum-payload terminal and assignment patterns.
+            - [x] Add focused lowering IR tests for list-element aggregate and list-element list patterns.
+              - [x] Add focused host-test lowering probes for list-element aggregate terminal and assignment patterns. (2026-07-08: inline `emit-llvm` probes over `Box { Points: [Point { X: 1, Y: 2 }, _] }` pass with no diagnostics and show scalar `i8` element-field loads carrying `!range`.)
+              - [x] Add focused lowering IR tests for list-element aggregate patterns in `tests-stark/selfhost.Ir`. (2026-07-08: added borrow-backed terminal and assignment facts for `Point[2]` element aggregate patterns with direct scalar `i8` field loads, `!range`, and no `extractvalue`/LLVM switch fallback.)
+              - [x] Add focused lowering IR tests for list-element list patterns. (2026-07-08: added borrow-backed terminal and assignment facts for `i8[2][2]` list-element list patterns with direct scalar element loads, `!range`, and no `extractvalue`/LLVM switch fallback.)
         - [~] Lower switch capture bindings into section-local storage without aliasing unrelated locals.
           - [x] Lower tuple enum payload capture bindings for non-terminal assignment switch arms.
           - [x] Lower named enum payload capture bindings for non-terminal assignment switch arms.
           - [x] Keep enum payload capture locals scoped to their matched assignment arm.
           - [x] Extract captured enum payload values in the matched assignment arm block.
           - [x] Lower enum payload capture bindings for terminal return switch arms.
-          - [~] Lower struct aggregate field capture bindings for terminal and assignment switch arms.
+          - [x] Lower struct aggregate field capture bindings for terminal and assignment switch arms.
             - [x] Parse tuple and property struct aggregate field captures into arm-local capture rows.
             - [x] Lower terminal struct field captures through direct field extracts or typed aligned loads.
             - [x] Lower assignment struct field captures through arm-local override values.
             - [x] Preserve declared scalar field range facts on captured struct field values.
             - [x] Add focused IR facts for storage-backed and by-value struct field capture switches.
             - [x] Add a focused self-host probe for struct aggregate field capture lowering.
-            - [ ] Finish focused front-end verification for struct aggregate field capture lowering.
+            - [x] Finish focused front-end verification for struct aggregate field capture lowering. (2026-07-07: added parser coverage for tuple/property struct capture `PatternBinding` rows and binding coverage for guard/body resolution plus default-section non-leakage.)
           - [x] Lower fixed-array list element capture bindings for terminal and assignment switch arms.
             - [x] Lower fixed-array list element capture bindings for terminal return switch arms.
             - [x] Lower fixed-array list element capture bindings for non-terminal assignment switch arms.
-        - [ ] Merge pattern capture facts across sibling labels before lowering section bodies.
+        - [~] Merge pattern capture facts across sibling labels before lowering section bodies.
+          - [~] Merge enum payload capture facts across sibling labels before lowering shared assignment and terminal section bodies. (2026-07-07: implemented assignment and terminal return lowering; filtered IR test build stayed silent and was interrupted before pass/fail.)
+          - [x] Merge struct aggregate field capture facts across sibling labels before lowering shared section bodies. (2026-07-07: implemented assignment and terminal return lowering with per-label field capture rows; direct lowering and IR test file checks passed, filtered IR test runner stayed silent and was interrupted.)
+          - [x] Merge fixed-array list element capture facts across sibling labels before lowering shared section bodies. (2026-07-07: implemented by-value, storage-local, and field-backed assignment plus terminal return paths with per-label element capture rows; direct lowering and IR test file checks passed, filtered IR test runner stayed silent and was interrupted.)
         - [x] Lower guarded aggregate and list switch labels after guard expression lowering can consume capture locals.
           - [x] Lower guarded no-capture struct aggregate labels after successful field tests.
           - [x] Lower guarded no-capture fixed-array parameter list labels after successful element tests.
@@ -864,7 +931,10 @@ Execution constraints:
           - [x] Lower guarded aggregate and list labels that use capture locals.
         - [~] Reject duplicate or overlapping aggregate and list switch labels before emitting partial MIR.
           - [x] Treat `when true` aggregate and list labels as unconditional for overlap validation.
-          - [ ] Reject overlapping nested aggregate and list labels after shared pattern-decision block construction lands.
+          - [x] Reject overlapping nested aggregate and list labels after shared pattern-decision block construction lands. (2026-07-08: source-facing `selfhost.Ir` facts now cover nested aggregate/list, list-element aggregate/list, and nested enum-payload overlap rejection; filtered fact-runner execution remains pending.)
+            - [x] Detect provably disjoint nested descriptor decisions over scalar intervals, nested enum variants, nested aggregate descriptors, and nested list descriptors.
+            - [x] Add shared-decision unguarded sibling overlap preflight over nested descriptors.
+            - [x] Reject overlapping nested aggregate and list labels in source switch preflight once nested lowering emits shared decision blocks. (2026-07-08: added source-facing `selfhost.Ir` rejection facts and passed semantic host-test validation.)
           - [x] Reject overlapping top-level discard labels against unconditional aggregate/list sibling labels.
           - [x] Reject overlapping whole-value capture labels once those label forms are represented (2026-07-07: whole captures now reuse the zero-pattern overlap path, so unconditional fixed-array and struct `case var capture` labels reject both before and after sibling aggregate/list labels, with `when true` treated as unconditional).
     - [x] Add a backend switch terminator or direct LLVM switch emission for dense literal switch lowering.
@@ -1108,10 +1178,21 @@ Execution constraints:
   - [~] Attach linkage facts to LLVM IR.
     - [x] Attach source function linkage facts in deterministic textual LLVM emission.
     - [x] Attach source function non-preemption facts in deterministic textual `dso_local` emission.
-    - [ ] Attach source global linkage facts after source-backed global lowering exists.
+    - [x] Attach MIR global linkage fact tables in deterministic textual LLVM global emission.
+    - [ ] Import source global visibility into MIR global linkage facts after source-backed global lowering exists.
     - [ ] Attach linkage facts through the libLLVM module builder after ABI/SSA object emission lands.
-  - [ ] Attach section facts to LLVM IR.
-  - [ ] Attach visibility facts to LLVM IR.
+  - [~] Attach section facts to LLVM IR.
+    - [x] Attach MIR global section fact tables in deterministic textual LLVM global emission.
+    - [ ] Import source global section attributes into MIR global section facts after source-backed global lowering exists.
+    - [x] Attach function section facts in deterministic textual LLVM emission after function section facts are modeled.
+    - [ ] Import source function section attributes into MIR function section facts after function section attributes are parsed.
+    - [ ] Attach section facts through the libLLVM module builder after ABI/SSA object emission lands.
+  - [~] Attach visibility facts to LLVM IR.
+    - [x] Attach MIR global LLVM visibility fact tables in deterministic textual LLVM global emission.
+    - [ ] Import source global LLVM visibility attributes into MIR global visibility facts after source-backed global lowering exists.
+    - [x] Attach function LLVM visibility facts in deterministic textual LLVM emission after function visibility facts are modeled.
+    - [ ] Import source function LLVM visibility attributes into MIR function visibility facts after function visibility attributes are parsed.
+    - [ ] Attach visibility facts through the libLLVM module builder after ABI/SSA object emission lands.
   - [ ] Emit object files through libLLVM.
   - [ ] Route emitted objects into the project build layout.
   - [ ] Keep textual LLVM as deterministic inspection/debug output from the in-memory LLVM module.
@@ -1138,17 +1219,37 @@ Execution constraints:
     - [x] Inspect the host logical `STRS`/`PINF`/`MANF` section wrapper.
     - [x] Preserve and inspect logical package identity/profile/target facts from `PINF`/`STRS`.
     - [x] Preserve and inspect logical target backend facts from `PINF` without materializing `MANF`.
+    - [x] Expose compact logical package-image facts for compatibility checks without materializing `MANF`.
     - [x] Keep manifest-backed module resolution from falling back to raw `.starkpkg` source reads.
     - [x] Keep library package images scoped to source-owned modules while preserving direct external imports.
     - [x] Compile library dependency objects only from source-backed imports and use package-backed facts as imports.
     - [ ] Decode `MANF` and build the self-host logical package model from binary images.
-    - [ ] Materialize typed interface declarations.
-    - [ ] Materialize typed interface functions and methods.
-    - [ ] Materialize typed interface globals.
-    - [ ] Materialize typed interface traits.
-    - [ ] Materialize typed interface layouts and aliases.
-    - [ ] Materialize effect fact sections.
-    - [ ] Materialize ownership fact sections.
+      - [x] Expose validated `MANF` section range facts and compressed payload copying for the self-host logical load handoff.
+      - [x] Parse already-decoded Stage0 `MANF` JSON into a compact self-host manifest summary while validating identity/profile/target/backend facts against `PINF`/`STRS`.
+      - [x] Parse decoded Stage0 `MANF` module rows into compact module-section summaries for typed-interface loader handoff.
+    - [~] Materialize typed interface declarations.
+      - [x] Parse typed-interface declaration header rows with owned name/qualified-name/visibility/kind text and compact count/flag facts.
+      - [x] Materialize typed-interface declaration type-reference payloads into package-owned fact rows.
+        - [x] Parse top-level declaration type-reference payload summaries for alias targets, function returns/parameters, globals, and type fields.
+        - [x] Intern decoded type-reference text and nested type-reference graph rows into package-owned fact tables.
+          - [x] Materialize root and nested type-reference rows plus scalar text rows for element, type-argument, comptime-value type, return, parameter, and associated-owner children.
+          - [x] Materialize callable memory-contract group rows and full comptime value argument payload rows.
+    - [~] Materialize typed interface functions and methods.
+      - [x] Parse typed function and method callable facts with owned name/qualified-name/visibility/symbol/kind/resolved-name/overload/inline/ABI/backend/link-name text and compact backend flag/count facts.
+      - [x] Parse typed function and method parameter metadata facts with owned parameter names, const/disjoint flags, raw-pointer element-count expressions, and required parameter type-object validation.
+      - [x] Materialize callable return and parameter type-reference row links for methods without overloading top-level function payload ordinals.
+      - [x] Materialize callable generic parameters, comptime generic parameters, type-parameter constraints, thread-safety predicates, and value contracts into package-owned rows.
+      - [x] Materialize callable asm payload facts and link-name/FFI ABI rows for backend import without source reconstruction.
+    - [x] Materialize typed interface globals.
+    - [x] Materialize typed interface traits.
+    - [x] Materialize typed interface layouts and aliases.
+      - [x] Materialize typed type layout metadata, pack/align facts, and associated alias target rows.
+      - [x] Materialize enum variant payload type rows.
+      - [x] Materialize remaining source-level type-alias rows needed by package import.
+    - [x] Materialize effect fact sections.
+      - [x] Materialize compiler-facts function effect profile rows.
+      - [x] Materialize function semantic memory effect rows.
+    - [x] Materialize ownership fact sections.
     - [ ] Materialize range fact sections.
     - [ ] Materialize aliasing fact sections.
     - [ ] Materialize ABI fact sections.
@@ -1157,10 +1258,10 @@ Execution constraints:
     - [ ] Materialize generic-template sections without source reconstruction.
     - [ ] Port the package-image source bridge for Stage0/Stage1 compatibility.
     - [ ] Validate package stage compatibility.
-    - [ ] Validate package profile compatibility.
-    - [ ] Validate package target compatibility.
-    - [ ] Validate package backend fact compatibility.
-    - [ ] Validate package version compatibility.
+    - [x] Validate package profile compatibility. (2026-07-08: added compact-fact profile matching over `PINF`/`STRS` without decoding `MANF`.)
+    - [x] Validate package target compatibility. (2026-07-08: added compact-fact target triple/data-layout matching over `PINF`/`STRS`.)
+    - [x] Validate package backend fact compatibility. (2026-07-08: added compact-fact CPU/relocation/code-model, feature, C data model, and aggregate pointer layout matching.)
+    - [x] Validate package version compatibility. (2026-07-08: added compact header-version read/match helpers and rejection coverage for unsupported logical package versions before `PINF`/`STRS` facts load.)
   - [ ] Port logical package models.
   - [ ] Port logical package builders.
   - [ ] Port shared package codecs.

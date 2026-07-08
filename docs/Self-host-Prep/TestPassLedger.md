@@ -17,6 +17,709 @@ diagnostics that previously only surfaced on executable builds.
 
 ---
 
+## 2026-07-08 Logical Typed Global Fact Graph Slice
+
+- Added a package-owned typed-global fact graph with global rows, constant-initializer rows, scalar initializer text rows, aggregate child spans, and initializer type-reference provenance.
+- Materialized global kind/type/mutability and nested constant initializer payloads from decoded `MANF` JSON without reconstructing source, including integer, bool, text, fixed-array, and enum-aggregate facts.
+- Kept the initializer import iterative rather than recursive, with dense row spans for aggregate children and direct JSON text-view kind validation to avoid unnecessary copying.
+- Added a focused `selfhost.Ir` fact covering nested global initializer rows, text extraction, type-reference source/payload ordinals, empty text literal preservation, and malformed initializer rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-typed-global-fact-graph-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+  - `perl -e 'alarm shift; exec @ARGV' 180 ./../../stark test --filter LogicalPackageImageMaterializesTypedGlobalFactGraphRows --test-progress --test-timeout 90` from `tests-stark/selfhost.Ir`: capped after 180 seconds in the silent build phase without runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Logical Package Manifest JSON Summary Slice
+
+- Added a compact self-host logical manifest summary for decoded Stage0 `MANF` JSON: module count, root-module ordinal, native dependency presence, and profile/target/backend presence bits.
+- Validated decoded manifest identity, build profile, target identity, target backend strings, target features, C data model, and aggregate pointer layout against already-validated `PINF`/`STRS` facts before materializing a logical model.
+- Kept validation allocation-light by parsing JSON once, comparing text views directly against the string table, and storing only scalar summary facts.
+- Added a focused `selfhost.Ir` fact covering the positive decoded-manifest path plus rejection when JSON target-feature order disagrees with compact backend facts.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-manifest-json-semantic-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after about 150 seconds because the direct file check remained silent; the semantic host-test inspect above covered the touched root with 0 diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Logical Package Manifest Payload Handoff Slice
+
+- Preserved logical package-image `MANF` section offset/length in compact `LogicalPackageImageFacts` alongside existing `STRS`/`PINF` compatibility facts.
+- Added a direct compressed manifest payload copy helper that validates the preserved range, reserves destination table capacity once, and copies bytes with a counted loop for the future Brotli/JSON materializer.
+- Added a focused `selfhost.Ir` fact covering manifest offset/length exposure, compressed payload byte copying, and rejection for empty/default facts.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Ir.stark selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-manifest-payload-semantic-host-test.out.json`: passed with 0 diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Fixed-Array Carrier-Load LLVM DCE Slice
+
+- Added a narrow LLVM emission use-count pass that counts value operands, block terminator operands, and linked wide-call arguments before printing block bodies.
+- Elides only unused aggregate carrier producers (`FixedArrayLoad` and `StructValueLoad`), leaving scalar loads, calls, stores, and range/noalias metadata paths intact.
+- Threaded the check through labeled block emission and direct-switch setup emission; whole block-range emitters build the use-count table once and reuse it across sibling blocks.
+- Added a focused `selfhost.Ir` fact that builds MIR with an unused fixed-array carrier load plus a scalar range load, asserting the aggregate load is absent while scalar `load i8` and `!range` remain.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/LlvmInstructions.stark selfhost/Compiler/Mir/LlvmBlocks.stark selfhost/Compiler/Mir/LlvmControlFlow.stark selfhost/Compiler/Mir/LlvmFunctions.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmInstructions.stark --check -I selfhost`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmBlocks.stark --check -I selfhost`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmControlFlow.stark --check -I selfhost`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmFunctions.stark --check -I selfhost`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-carrier-dce-semantic-host-test.out.json`: passed with 0 diagnostics.
+- Focused `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost` is blocked before the fact body by unrelated stdlib symbol resolution for `System.Runtime.Platform.SetPermissions`; a focused executable probe was capped after spending 184.2s in `lower-mir`.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Fixed-Array Suffix-Depth Lowering Slice
+
+- Added an explicit scalar fixed-array suffix-depth layout helper so nested list-element lowering can ask for the stride and scalar metadata at the current array dimension.
+- Threaded `arrayDimensionDepth` through recursive storage-backed nested-list lowering, preserving direct scalar byte offsets for three-dimensional fixed-array list patterns instead of falling back to aggregate carriers.
+- Added `selfhost.Ir` facts for third-dimension nested list-element patterns that assert direct scalar `i8` loads at byte offsets 6 and 7, preserved `!range`, scalar compares/branches, and no aggregate carrier loads.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceLocalLowering.stark selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-nested-list-depth-semantic-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with 0 diagnostics.
+- No broad test sweep was run; filtered `selfhost.Ir` fact-runner execution remains pending because recent filtered runs have capped in the silent build phase.
+
+---
+
+## 2026-07-08 Nested Fixed-Array Row-Stride Lowering Slice
+
+- Fixed scalar fixed-array storage layout so multi-dimensional arrays multiply remaining fixed-array suffixes into the outer element stride.
+- Routed nested fixed-array list element conditions through recursive scalar element lowering, preserving declared element range metadata instead of loading inner array carriers.
+- Added `selfhost.Ir` facts for second-row nested list-element patterns that assert direct scalar `i8` loads, row-two byte offsets, `!range`, scalar compares/branches, and no aggregate carrier loads.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceLocalLowering.stark selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-nested-list-second-row-semantic-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with 0 diagnostics.
+  - `perl -e 'alarm shift; exec @ARGV' 120 ./../../stark test --filter CompileStructPropertyPatternSwitchBorrowListElementListSecondRowReturnUsesDirectElementLoads --test-progress --test-timeout 90` from `tests-stark/selfhost.Ir`: capped after 120 seconds in the silent build phase with no runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Descriptor Overlap Source-Preflight Assertion Slice
+
+- Added source-facing `selfhost.Ir` facts for nested descriptor overlap rejection after shared pattern-decision lowering.
+- `RejectsNestedAggregateAndListPatternOverlapFromAst` covers overlapping nested struct aggregate fields and nested fixed-array list fields, plus a dynamic guard case that must remain legal.
+- `RejectsListElementNestedPatternOverlapFromAst` covers overlapping nested aggregate and nested list descriptors inside fixed-array list elements.
+- `RejectsOverlappingNestedEnumPayloadLabelsFromAst` covers overlapping nested enum-payload descriptors over the same nested variant interval.
+- Narrow verification:
+  - `git diff --check -- tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-nested-overlap-preflight-semantic-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with 0 diagnostics.
+- No broad test sweep was run; filtered fact-runner execution remains pending because prior `selfhost.Ir` filtered runs have stalled in the silent build phase.
+
+---
+
+## 2026-07-08 Nested Pattern Sibling Capture Routing Assertion Slice
+
+- Added two focused `selfhost.Ir` LLVM facts for nested sibling switch labels that reuse the same capture spelling across labels.
+- The terminal-return fact covers nested struct aggregate captures with a guarded first label and a second sibling label; the assignment fact covers nested fixed-array list captures with the same sibling fallback shape.
+- Both facts assert direct scalar `i8` loads, preserved `!range`, scalar compares/branches, and no aggregate fallback artifacts (`extractvalue`, LLVM `switch`, or relevant aggregate carrier loads/allocas).
+- Narrow verification:
+  - `git diff --check -- tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-nested-sibling-capture-routing-semantic-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with 0 diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Fixed-Array Element Carrier-Load Assertion Slice
+
+- Strengthened the four focused `selfhost.Ir` list-element aggregate/list LLVM facts so they now reject dead raw O0 aggregate carrier loads before the scalar nested fixed-array element tests.
+- The aggregate-element facts now reject `load [2 x %Point]` and `load %Point`; the nested-list facts now reject `load [2 x [2 x i8]]` and `load [2 x i8]`, while preserving the existing positive checks for scalar `load i8`, `!range`, scalar compares, and branches.
+- Narrow verification:
+  - `git diff --check -- tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md selfhost/Compiler/Mir/SourceSwitchLowering.stark`: passed.
+  - `./../../stark test --filter CompileStructPropertyPatternSwitchBorrowListElementAggregateReturnUsesDirectFieldLoads --test-progress --test-timeout 90` from `tests-stark/selfhost.Ir`: interrupted after about a silent minute to avoid an unbounded selfhost test build; it did not reach runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Fixed-Array Element Nested List Test Slice
+
+- Confirmed the current storage-backed lowering handles nested fixed-array list subpatterns inside fixed-array list elements for terminal-return and assignment switches.
+- Added focused `selfhost.Ir` facts for list-element aggregate and list-element list patterns, asserting direct scalar `i8` loads, preserved `!range`, scalar compares/branches, and no `extractvalue` or LLVM `switch` fallback.
+- Kept the pre-existing raw O0 dead aggregate carrier loads as a separate performance cleanup; the live scalar tests already preserve the backend range facts through LLVM.
+- Narrow verification:
+  - `./stark --host-test-inspect build/tmp/source-switch-fixed-array-element-list-llvm-host-test.json`: passed terminal-return and assignment inline `emit-llvm` probes for `Box { Matrix: [[1, 2], _] }` with 0 diagnostics; LLVM text shows scalar `i8` element loads carrying `!range`.
+  - `./stark --host-test-inspect build/tmp/source-switch-fixed-array-element-aggregate-llvm-host-test.json`: passed terminal-return and assignment inline `emit-llvm` probes for `Box { Points: [Point { X: 1, Y: 2 }, _] }` with 0 diagnostics.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with 0 diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Fixed-Array Element Aggregate Lowering Slice
+
+- Added a storage fixed-array layout resolver that preserves scalar, enum, and aggregate element size/alignment plus resolved type-code facts for fixed-array fields.
+- Let fixed-array list descriptors carry aggregate element type-code facts when typed list rows name aggregate elements.
+- Lowered aggregate subpatterns inside storage-backed fixed-array list elements by enqueuing aggregate condition frames at `arrayBase + elementOrdinal * elementSize`, so nested aggregate element tests reuse the existing pointer-offset scalar field lowering without stack-recursive helper calls.
+- Refactored storage aggregate/list condition lowering around an explicit aggregate-condition frame drain; `Compiler.Mir.SourceSwitchLowering` now semantic-checks with 0 diagnostics instead of introducing `STK4122` mutual-recursion warnings.
+- Kept nested list subpatterns inside fixed-array list elements and landed `IrTests.stark` facts open.
+- Narrow verification:
+  - `./stark --host-test-inspect build/tmp/source-switch-fixed-array-element-aggregate-semantic-host-test.json`: passed `Compiler.Mir.SourceLocalLowering` semantic validation with 0 errors and the pre-existing 32 recursive-call warnings; passed `Compiler.Mir.SourceSwitchLowering` semantic validation with 0 diagnostics.
+  - `./stark --host-test-inspect build/tmp/source-switch-fixed-array-element-aggregate-llvm-host-test.json`: passed terminal-return and assignment inline `emit-llvm` probes for `Box { Points: [Point { X: 1, Y: 2 }, _] }` with 0 diagnostics. LLVM text shows scalar `i8` element-field loads with `!range`; the borrow-backed O0 artifact still contains pre-existing dead aggregate loads before the scalar tests, so that remains separate cleanup if we want a stricter no-dead-aggregate-load invariant.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Aggregate Fixed-Array Layout Prerequisite Slice
+
+- Extended source-local enum-aware storage layout queries so fixed arrays of named aggregates and enums preserve total byte extent and element alignment instead of failing the named-array path or silently reporting one element.
+- Routed direct fixed-array extent queries through the same enum-aware layout helper so lower-MIR sees the full array size for aggregate/enum carriers before nested list-element pattern lowering uses those facts.
+- Kept nested aggregate/list subpatterns inside fixed-array list elements open; this slice only establishes the storage layout prerequisite for direct-offset lowering.
+- Narrow verification:
+  - `./stark --host-test-inspect build/tmp/source-local-aggregate-fixed-array-layout-host-test.json`: passed `Compiler.Mir.SourceLocalLowering` semantic validation with 0 errors and the pre-existing 32 recursive-call warnings.
+  - The same host-test request passed an inline `lower-mir` probe with `struct Outer { Point[2] Points; i64[min max] Tail; }` and 0 diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Enum-Payload Lowering Slice
+
+- Threaded nested enum aggregate descriptor spans from enum payload pattern parsing into terminal-return and assignment switch lowering.
+- Lowered nested enum aggregate payload tests by extracting the outer enum payload as an enum value, reading the nested enum tag, and comparing nested scalar payload leaves directly; this avoids stack materializing the nested enum payload and keeps tag/range facts available for LLVM.
+- Added focused IR facts for terminal-return and assignment switches with nested enum payload patterns.
+- Kept nested enum captures and fixed-array element nested aggregate/list lowering as follow-up work under the existing shared pattern-decision task.
+- Narrow verification:
+  - `./stark --host-test-inspect build/tmp/source-switch-nested-enum-payload-semantic-host-test.json`: passed with 0 diagnostics for `Compiler.Mir.SourceSwitchLowering`.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json`: passed with 0 diagnostics for `tests-stark/selfhost.Ir/IrTests.stark`.
+  - `./stark --host-test-inspect build/tmp/source-switch-nested-enum-payload-llvm-host-test.json`: passed two inline `emit-llvm` snippets with 0 diagnostics; LLVM text showed direct nested enum tag/payload loads and scalar compares for terminal-return and assignment forms.
+  - `../../stark test --filter CompilesTerminalNestedEnumPayloadSwitchFromAst --filter CompilesNestedEnumPayloadAssignmentSwitchFromAst --test-progress --test-timeout 180` from `tests-stark/selfhost.Ir`: interrupted after about a silent minute to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 By-Value Nested Fixed-Array Capture Lowering Slice
+
+- Replaced sentinel flat indexes for nested fixed-array element captures with exact flattened struct-value ABI element indexes in both one-hop list fields and deeper aggregate/list paths.
+- Reused the existing struct aggregate capture override path so by-value nested fixed-array captures lower to direct `MirStructParamFieldWithDeclaredRange` extracts instead of stack materializing the array or loading from storage.
+- Preserved fixed-array element declared range facts through capture import and arm-local override lowering, keeping backend facts available for MIR and LLVM emission.
+- Added focused IR facts for by-value nested fixed-array list captures in guarded terminal-return and assignment switch forms.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchValueParamNestedListCaptureGuardReturnUsesDirectElementExtracts --filter CompileStructPropertyPatternSwitchValueParamNestedListCaptureAssignmentUsesDirectElementExtracts --test-timeout 180 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after about a silent minute to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 By-Value Nested Fixed-Array List Lowering Slice
+
+- Extended struct-value ABI shape reading so scalar fixed-array fields flatten into repeated scalar leaf facts instead of forcing aggregate materialization.
+- Added by-value nested fixed-array list condition lowering inside struct aggregate patterns; element literal/range tests now emit direct `MirStructParamField` extracts and preserve declared element range facts through MIR/LLVM.
+- Added focused IR facts for by-value nested fixed-array list labels in terminal-return and assignment switch forms.
+- Kept by-value captures inside nested fixed-array list field patterns open; this slice handles no-capture element tests.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceLocalLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 errors and the pre-existing 32 recursion warnings.
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchValueParamNestedListReturnUsesDirectElementExtracts --filter CompileStructPropertyPatternSwitchValueParamNestedListAssignmentUsesDirectElementExtracts --test-timeout 180 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after a silent build phase to keep the run bounded.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceLocalLowering.stark selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Deeper By-Value Nested Aggregate Lowering Slice
+
+- Reworked by-value struct aggregate condition lowering to walk nested aggregate descriptors with an explicit flat-ABI frame worklist instead of rejecting nested shapes after the first field hop.
+- Preserved direct struct-parameter extraction for deeper scalar aggregate leaves, including owner-type shape checks and per-field declared range facts carried on the MIR struct-param field values.
+- Added focused IR facts for by-value deeper nested struct aggregate labels in terminal-return and assignment switch forms.
+- Kept by-value fixed-array list field subpatterns open because the current struct-value ABI shape reader does not flatten fixed-array fields inside structs; lowering those correctly needs ABI facts for fixed-array fields first.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with two minimal by-value source snippets through `emit-llvm`: passed with 0 diagnostics and LLVM checks for direct nested `extractvalue`, `icmp eq i8`, branch lowering, and no stack `alloca`/`load i8`/`switch %` fallback.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchValueParamDeeperNestedStructReturnUsesDirectFieldExtracts --filter CompileStructPropertyPatternSwitchValueParamDeeperNestedStructAssignmentUsesDirectFieldExtracts --test-timeout 180 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after a silent build phase to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Deeper Storage-Backed Nested Capture Lowering Slice
+
+- Generalized storage-backed nested struct aggregate capture import to walk nested aggregate descriptors with an explicit compiler-side worklist, avoiding recursive helper calls while preserving direct offset facts.
+- Appended capture rows for deeper nested scalar aggregate fields with absolute storage offsets, flat ABI indexes for future by-value shape use, source capture names, scalar type codes, alignments, and declared scalar range member facts.
+- Appended capture rows for fixed-array element captures reached through deeper aggregate fields with constant element byte offsets and fixed-array member facts, so arm-local loads preserve declared element range metadata.
+- Added focused IR facts for borrow-backed deeper nested struct captures and deeper nested fixed-array element captures in guarded terminal-return and assignment switch forms.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with four minimal borrow-backed source snippets through `emit-llvm`: passed with 0 diagnostics and LLVM checks for direct `load i8`, `!range`, `icmp eq i8`, `add nsw i64`, branch lowering, and no `extractvalue`/`switch %`/aggregate alloca.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Deeper Storage-Backed Nested Aggregate/List Lowering Slice
+
+- Reworked storage-backed struct aggregate condition lowering to walk nested aggregate descriptors with an explicit compiler-side worklist instead of recursive lowering, avoiding a new STK4122 stack-growth warning.
+- Lowered storage-backed deeper nested struct aggregate scalar leaves through direct pointer-offset scalar loads, preserving declared scalar range metadata on the generated LLVM loads.
+- Lowered storage-backed fixed-array list field subpatterns reached through deeper struct aggregate fields through the existing direct constant-offset element load path, preserving declared element range metadata.
+- Added focused IR facts for borrow-backed deeper nested struct and deeper nested fixed-array field labels in terminal-return and assignment switch forms.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with four minimal borrow-backed source snippets through `emit-llvm`: passed with 0 diagnostics and LLVM checks for direct `load i8`, `!range`, `icmp eq i8`, branch lowering, and no `extractvalue`/`switch %`/aggregate alloca.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Fixed-Array Field Capture Lowering Slice
+
+- Appended capture rows for one-level fixed-array list element captures under struct aggregate field labels, preserving capture names, scalar element type codes, the fixed-array member-path row, constant element byte offsets, and element alignments.
+- Treated nested fixed-array list capture leaves as match-all element tests while literal/range siblings continue to emit direct constant-index element branch tests.
+- Reused the existing struct aggregate capture override path for storage-backed scrutinees and taught it to load fixed-array element captures with declared element range metadata from the array field member-path fact.
+- Added focused IR facts for borrow-backed nested fixed-array field element captures in guarded terminal-return and assignment switch bodies.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with two minimal borrow-backed source snippets through `emit-llvm`: passed with 0 diagnostics and LLVM checks for direct `load i8`, `load i1`, `!range`, `icmp eq i8`, `add nsw i64`, branch lowering, and no `extractvalue`/`switch %`/stack array alloca.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchBorrowNestedListCaptureGuardReturnUsesDirectElementLoads --filter CompileStructPropertyPatternSwitchBorrowNestedListCaptureAssignmentUsesDirectElementLoads --test-progress --test-timeout 120` from `tests-stark/selfhost.Ir`: interrupted after a silent build phase to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Struct Capture Lowering Slice
+
+- Appended capture rows for one-level nested struct aggregate capture leaves during struct aggregate label import, preserving capture names, type codes, member-path rows, storage offsets, and by-value flat ABI indexes.
+- Reused the existing struct aggregate capture override path so guards and arm bodies can consume nested captured scalar values without extra stack materialization.
+- Updated nested aggregate condition lowering to treat capture leaves as match-all members while scalar/range siblings continue to emit branch tests.
+- Kept capture-bearing nested fixed-array list fields and deeper nested aggregate/list shapes as explicit follow-ups.
+- Added focused IR facts for:
+  - by-value nested struct capture guards returning from a captured field through direct `extractvalue`;
+  - storage-backed nested struct capture assignments loading the captured field with preserved range facts.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchValueParamNestedCaptureGuardReturnUsesDirectFieldExtracts --filter CompileStructPropertyPatternSwitchLocalNestedCaptureAssignmentUsesDirectFieldLoads --test-timeout 180 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after a silent build phase to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 By-Value Nested Struct Aggregate Lowering Slice
+
+- Flattened nested scalar struct fields into by-value struct parameter ABI shape facts so direct LLVM aggregate slots preserve the source field layout without stack materialization.
+- Lowered one-level nested struct aggregate field patterns over by-value struct parameters through direct scalar `extractvalue` tests in terminal-return and assignment switch lowering.
+- Preserved declared scalar range facts for nested by-value struct leaves by carrying member-path declared ranges onto the generated struct-parameter field MIR values.
+- Kept nested list fields, nested enum aggregate fields, captures, and deeper nested shapes conservatively rejected for follow-up slices.
+- Added focused IR facts for by-value nested struct aggregate labels over terminal-return and assignment switches, asserting direct `{ i8, i8, i8 }` `extractvalue` use and no stack fallback.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceLocalLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 errors and 32 warnings.
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchValueParamNestedStructReturnUsesDirectFieldExtracts --filter CompileStructPropertyPatternSwitchValueParamNestedStructAssignmentUsesDirectFieldExtracts --test-timeout 180 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after a silent build phase to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Storage-Backed Nested Fixed-Array List Field Lowering Slice
+
+- Lowered one-level fixed-array list field patterns inside storage-backed struct aggregate labels through direct pointer-offset element tests in terminal-return and assignment switch lowering.
+- Preserved declared element range facts for nested fixed-array field elements by loading through `MirLoadPtrAlignedTypedWithDeclaredRange` when the field member path carries an element range fact.
+- Kept nested list captures and deeper nested element shapes conservatively rejected for later focused slices.
+- Added focused IR facts for storage-backed nested list-field struct aggregate labels over terminal-return and assignment switches.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect` with `sourcePath: tests-stark/selfhost.Ir/IrTests.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["tests-stark/selfhost.Ir", "selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `../../stark test --filter CompileStructPropertyPatternSwitchLocalNestedListReturnUsesDirectElementLoads --filter CompileStructPropertyPatternSwitchLocalNestedListAssignmentUsesDirectElementLoads --test-timeout 180 --test-progress` from `tests-stark/selfhost.Ir`: interrupted after a silent build phase to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Storage-Backed Nested Struct Aggregate Lowering Slice
+
+- Lowered one-level nested struct aggregate field patterns for storage-backed struct scrutinees through direct pointer-offset scalar field tests in both terminal-return and assignment switch lowering.
+- Preserved declared scalar range facts for nested struct scalar leaves by loading through `MirLoadPtrAlignedTypedWithDeclaredRange` when the nested member path has a declared range fact.
+- Kept by-value struct nested aggregate labels, nested list fields, nested enum payload fields, deeper nested aggregate/list shapes, and nested captures conservatively rejected for later focused slices.
+- Added focused IR facts for storage-backed nested struct aggregate labels over terminal-return and assignment switches.
+- Narrow verification:
+  - `./stark --host-test-inspect` with `sourcePath: selfhost/Compiler/Mir/SourceSwitchLowering.stark`, `stopAfterPassId: semantic-validate`, `searchDirectories: ["selfhost", "stdlib/src"]`: passed with 0 diagnostics.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check ...`: interrupted after a silent bounded run; the structured semantic host-test above provided the usable scoped validation signal.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Nested Struct Switch Preflight Handoff Slice
+
+- Added a small flat-preflight gate for struct aggregate switch labels so nested-bearing labels bypass the old scalar-only overlap checker.
+- Kept scalar-only labels on the fast flat overlap path, while labels with current or previous nested descriptor rows are deferred to the shared decision preflight that understands nested aggregate/list descriptors.
+- Left nested branch codegen conservatively rejected after successful preflight; this slice only ensures nested sibling validation happens before that reject and before partial MIR emission.
+- Narrow verification:
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed with `Check succeeded.` after a silent direct file check.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Focused Switch Pattern Import Tests
+
+- Added a dedicated `tests-stark/selfhost.SwitchPatternImport` project so typed switch-pattern row import can be checked without compiling the full `selfhost.Ir` test file.
+- Added two narrow facts:
+  - `SourceModuleLoweringFactsCarryTypedNestedSwitchPatternRows` checks that top-level struct aggregate rows, nested aggregate rows, nested list rows, member ordinals, and dense start-token lookups survive into `SourceModuleLoweringFacts`.
+  - `SourceSwitchImportedTypedNestedRowsBuildDecisionDescriptors` checks that imported nested aggregate and list rows build shared decision descriptors without reparsing nested source tokens.
+- Narrow verification:
+  - `./stark tests-stark/selfhost.SwitchPatternImport/SwitchPatternImportTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed with `Check succeeded.`
+  - `../../stark test --filter SourceModuleLoweringFactsCarryTypedNestedSwitchPatternRows --filter SourceSwitchImportedTypedNestedRowsBuildDecisionDescriptors --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.SwitchPatternImport`: stopped after a silent build phase to keep the run bounded.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Typed Nested Switch Descriptor Worklist Slice
+
+- Replaced the recursive typed nested aggregate/list descriptor importer in `SourceSwitchLowering` with an explicit `List`-backed DFS frame stack.
+- Preserved the existing postorder descriptor insertion behavior while moving nested member-span, aggregate descriptor, list descriptor, finish, and append-member work onto compact scalar frames.
+- Removed the localized `STK4122` stack-growth warnings from the typed nested descriptor importer without widening switch lowering behavior.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed with `Check succeeded.` and no `STK4122` diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Typed Switch Pattern Source Facts Import Slice
+
+- Stored the typed switch-pattern table bundle in `SourceModuleLoweringFacts` so source MIR lowering can read aggregate, list, and member pattern rows without reparsing labels.
+- Reused the already-built typed enum layout table when constructing switch-pattern rows for module facts, avoiding an extra enum-layout pass at the source-lowering boundary.
+- Preserved owner type tokens, enum variant rows, field/element ordinals, literal/range/capture tokens, and nested aggregate/list row references by carrying the typed table bundle directly.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatterns.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceModuleFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Typed Switch Nested List Element Builder Slice
+
+- Built typed list-pattern rows for nested fixed-array list patterns discovered under aggregate switch members.
+- Added direct element member rows with element ordinals, element type tokens, scalar literal facts, capture names, fixed list lengths, and nested list row links.
+- Kept nested shape expansion iterative through the shared member-row worklist and added idempotence guards for already-linked nested aggregate/list rows.
+- Added a focused IR fact for aggregate switch labels with nested list element literals and captures.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatternModel.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatterns.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedPipeline.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src -I tests-stark --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after about two minutes because the focused file check produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Typed Switch Nested Aggregate Member Builder Slice
+
+- Added a typed switch-pattern table bundle so aggregate, list, and member rows can be returned together from the typing pipeline.
+- Built direct aggregate member rows for property and positional aggregate switch labels using struct/record field facts.
+- Linked nested aggregate member rows through an iterative member-row worklist so nested pattern import does not grow the compiler stack.
+- Preserved member ordinals, field type tokens, literal tokens, range endpoints, capture names, and nested aggregate row references for aggregate members.
+- Added focused IR facts for top-level aggregate spans and nested aggregate member-row construction.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatternModel.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatterns.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedPipeline.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src -I tests-stark --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter TypedSwitchPatternTablesBuildNestedAggregateMemberRows` in `tests-stark/selfhost.Ir`: stopped after about three minutes because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Typed Switch Pattern Row Model Slice
+
+- Added `TypedSwitchPatternModel.stark` with row-oriented aggregate, list, and member pattern tables for typed switch-pattern import.
+- Preserved owner type tokens, enum variant ordinals, whole-capture tokens, member ordinals, literal/range/capture tokens, fixed-list lengths, and nested aggregate/list row references without recursive owned pattern objects.
+- Added focused IR facts for aggregate/list descriptor rows and scalar/range/capture/nested member rows.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatternModel.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Typing/TypedSwitchPatternModel.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Fixed-Array List Assignment Preflight Slice
+
+- Wired fixed-array list switch-assignment lowering through the shared decision preflight before MIR branch blocks are emitted.
+- Added a focused AST fact that rejects overlapping fixed-array list labels in non-terminal switch assignment lowering.
+- Kept the preflight call allocation-light and non-overlap-safe by passing distinct empty row tables for currently unsupported nested list descriptors.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Nested Struct Aggregate Decision Preflight Slice
+
+- Added nested struct field decision-row translation through the shared pattern-decision member model.
+- Extended `TryBuildSourceSwitchStructAggregatePatternDecisionPreflightRows` so struct cases can include nested field descriptor spans.
+- Kept current scalar-only struct branch lowerers behavior-preserving by passing explicit empty nested-row tables at existing call sites.
+- Added a focused IR row-model fact that seeds nested aggregate child decisions, accepts disjoint nested struct-field descriptors, and rejects an overlapping nested descriptor.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Nested Fixed-Array List Decision Preflight Slice
+
+- Extended `TryBuildSourceSwitchListPatternDecisionPreflightRows` so fixed-array list cases can include nested element descriptor spans.
+- Kept current scalar-only branch lowerers behavior-preserving by passing explicit empty nested-row tables at existing call sites.
+- Added a focused IR row-model fact that seeds nested aggregate child decisions, accepts disjoint nested list-element descriptors, and rejects an overlapping nested descriptor.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Struct Aggregate Decision Preflight Hook Slice
+
+- Added `TryBuildSourceSwitchStructAggregatePatternDecisionPreflightRows` to build struct field decision spans before branch blocks are emitted.
+- Wired terminal struct-aggregate switch lowering and struct-aggregate switch-assignment lowering through the shared unguarded sibling preflight.
+- Kept capture-name validation local to preflight with sentinel capture-name tokens so struct branch lowering does not need extra capture-name tables.
+- Added a focused IR row-model fact that accepts disjoint struct field rows and rejects an overlapping unguarded struct field row.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Enum Payload Decision Preflight Hook Slice
+
+- Added `TryBuildSourceSwitchEnumPayloadPatternDecisionPreflightRows` to build enum-payload decision spans before branch blocks are emitted.
+- Prepended each enum case span with a variant decision member so different unit variants stay provably disjoint.
+- Wired terminal enum-payload switch lowering and enum-payload switch-assignment lowering through the shared unguarded sibling preflight.
+- Kept capture-name validation local to preflight with sentinel capture-name tokens so payload branch lowering does not need extra capture-name tables.
+- Added a focused IR row-model fact that accepts disjoint same-variant payload rows, accepts a different unit variant, and rejects an overlapping same-variant payload row.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed after splitting the test's empty capture tables to satisfy the default non-overlap contract.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Fixed-Array List Decision Preflight Hook Slice
+
+- Added `TryBuildSourceSwitchListPatternDecisionPreflightRows` to build fixed-array list decision spans before branch blocks are emitted.
+- Wired terminal fixed-array list lowering through the shared unguarded sibling preflight after descriptor validation.
+- Kept capture-name validation local to preflight with sentinel capture-name tokens so list branch lowering does not need extra capture-name tables.
+- Added a focused IR row-model fact that accepts disjoint fixed-array list decision rows and rejects overlapping sibling rows.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Span Validation Slice
+
+- Added shared validation for pattern-decision nodes and member spans before overlap preflight reads nested descriptor rows.
+- Validated scalar, capture, aggregate, enum aggregate, and list decision-node contracts so descriptor kind mismatches fail closed.
+- Routed malformed current and previous decision-member spans to overlap in the unguarded sibling preflight helper.
+- Added a focused IR row-model fact for mixed valid spans, invalid node kinds, mismatched aggregate descriptor kinds, bad list descriptor rows, and overflowed member ranges.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Combined Row Span Slice
+
+- Added shared helpers that combine scalar, capture, and nested-shape rows into one contiguous decision-member span for fixed-array element descriptors and enum payload descriptors.
+- Kept the helpers row-based and conditional so scalar-only validation is not applied to nested-only aggregate or list element descriptors.
+- Preserved the existing append order for scalar rows, capture rows, then nested descriptor rows so later branch lowering can scan one span without rebuilding row sets.
+- Added a focused IR row-model fact that verifies combined fixed-array element and enum payload spans preserve ordinals, captures, scalar intervals, and nested descriptor rows.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Nested Preflight Helper Slice
+
+- Added a shared-decision preflight helper that checks current decision-member spans against earlier unconditional sibling cases.
+- Kept the helper row-based and fail-closed for mismatched case-start, case-count, and guard-node tables.
+- Reused the existing unconditional-guard classifier and nested descriptor disjointness helpers instead of introducing a second overlap model.
+- Added a focused IR fact for scalar sibling rejection, nested aggregate sibling rejection, and malformed table rejection.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Nested Overlap Validation Slice
+
+- Added non-recursive shared-decision overlap helpers for scalar interval members, nested aggregate descriptors, nested enum aggregate variant descriptors, and nested list descriptors.
+- Kept validation row-based and fail-closed for malformed member spans, missing node rows, mismatched owner types, mismatched list shapes, and unprovable capture/discard cases.
+- Added focused IR row-model facts for scalar disjointness, nested aggregate disjointness, nested list disjointness, and nested enum variant disjointness.
+- Split the nested-overlap task so source-switch preflight wiring remains tracked separately from the row-model validation.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Nested Shape Row Routing Slice
+
+- Added a nested pattern decision-member append helper that routes aggregate, enum aggregate, and list descriptor rows into shared decision nodes without reparsing source-shaped patterns.
+- Rejected aggregate descriptor shape mismatches so plain aggregate nodes cannot carry enum aggregate descriptor rows, and enum aggregate nodes cannot carry plain aggregate descriptor rows.
+- Added fixed-array element nested-shape row translation into decision members while preserving element ordinals and aggregate/list descriptor row identities.
+- Added enum payload nested-shape row translation into decision members while preserving variant identity, payload ordinals, and aggregate/list descriptor row identities.
+- Added focused row-model IR facts for fixed-array element and enum payload nested-shape decision-member translation.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Payload and Element Row Translation Slice
+
+- Added fixed-array element row translation into shared pattern decision members while preserving element ordinals, type codes, scalar intervals, and capture names.
+- Added enum payload row translation into shared pattern decision members while preserving variant identity, payload ordinals, type codes, scalar intervals, and capture names.
+- Rejected whole-list sentinel captures and non-enum aggregate descriptors in these translation helpers so later nested lowering sees only member-level decisions.
+- Added focused IR facts for fixed-array element and enum payload decision-member translation.
+- Split the enum-payload and fixed-array-element shared-decision tasks so nested-shape routing remains tracked separately.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Row Translation Slice
+
+- Added append helpers for discard, scalar interval, capture, aggregate, enum aggregate, and list pattern decision nodes.
+- Added scalar-pattern row translation into decision members while preserving field or element ordinals, type codes, and interval bounds.
+- Added capture-row translation into decision members while preserving capture name tokens and type codes.
+- Added a struct-field row translation wrapper that combines scalar field tests and field captures without accepting enum aggregate descriptors.
+- Added focused IR facts for append-helper validation, scalar row translation, and struct field row translation.
+- Split the typed struct field-pattern translation task so imported nested typed rows remain tracked separately.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Pattern Decision Node Model Slice
+
+- Added a flat `SourceSwitchPatternDecisionNode` model for discard, scalar interval, capture, aggregate, enum aggregate, and list subpatterns.
+- Added `SourceSwitchPatternDecisionMember` rows so aggregate-field and list-element ordinals can point at shared decision nodes without allocating recursive source-shaped objects.
+- Kept backend-facing facts as row references and scalar payload fields so later lowering can preserve type codes, capture name tokens, and nested descriptor rows through MIR-to-LLVM emission.
+- Added focused IR facts for decision-kind classification and node/member row preservation.
+- Marked the shared pattern-decision node model subtask complete in `TASKS.md`; typed-row translation and nested lowering remain open.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Fixed-Array Sibling Capture Merge Slice
+
+- Added fixed-array list sibling label parsing for assignment and terminal return switches so `case [var x, 1, _] | [_, 2, var x]:` lowers one shared section body with per-label element capture rows.
+- Covered by-value, storage-local, and field-backed fixed-array switch paths, including enum-return terminal variants.
+- Required sibling capture signatures to match by capture name and exact type code before sharing the section body, while preserving per-label element indices and type facts for LLVM emission.
+- Added focused IR facts for sibling fixed-array element captures in assignment and terminal switch lowering.
+- Marked the fixed-array sibling-label capture task complete in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter CompileFixedArrayListSiblingCapture --test-progress --test-timeout 240` in `tests-stark/selfhost.Ir`: interrupted after about three minutes because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Struct Aggregate Sibling Capture Merge Slice
+
+- Added struct-aggregate sibling label parsing for assignment and terminal return switches so `case Box { left: var x } | Box { right: var x }:` lowers one shared section body with per-label field capture rows.
+- Required sibling capture signatures to match by capture name and exact type code before sharing the section body, while preserving per-label field offsets, alignments, and member fact rows for LLVM emission.
+- Added focused IR facts for sibling struct field captures in assignment and terminal switch lowering.
+- Marked the struct sibling-label capture task complete in `TASKS.md`; fixed-array list element sibling captures remain separate.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter CompileStructAggregateSiblingCapture --test-progress --test-timeout 240` in `tests-stark/selfhost.Ir`: interrupted after about three minutes because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Enum Payload Sibling Capture Merge Slice
+
+- Added enum-payload sibling label parsing for assignment and terminal return switches so `case A(var x) | B(var x):` lowers one shared section body with per-label payload capture rows.
+- Required sibling capture signatures to match by capture name and exact type code before sharing the section body, preserving payload extraction facts for LLVM emission instead of merging incompatible backend facts.
+- Added focused IR facts for sibling enum payload captures in assignment and terminal switch lowering.
+- Split the broader sibling-label capture task into enum-payload, struct-aggregate, and fixed-array list subtasks in `TASKS.md`.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/SourceSwitchLowering.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: interrupted after about ninety seconds with no output.
+  - `../../stark test --filter CompilesSiblingEnumPayloadCapture` in `tests-stark/selfhost.Ir`: interrupted after about three minutes because the filtered project build produced no output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 Typed CTFE Structural Query Split
+
+- Moved enum-layout `System.Compiler` query-name folding out of `TypedEnumLayoutModel` and into `TypedCtfeQueries`.
+- Kept `TypedEnumLayoutModel` focused on layout table storage and fast typed accessors; CTFE now owns translating `EnumTag*` and `EnumVariant*` query names into constants.
+- Marked the remaining structural-fact CTFE typing split complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Typing/TypedCtfeQueries.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedEnumLayoutModel.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedPipeline.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Typing/TypingTests.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: failed before the touched path due missing stdlib macOS symbols `System.Runtime.Platform.MacOS.StartProcessCaptureGrouped` and `System.Runtime.Platform.MacOS.KillProcessGroup`.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Float Arithmetic LLVM Slice
+
+- Added float-aware LLVM instruction selection for typed MIR arithmetic in the plain, fact-preserving, and typed-function emission paths.
+- Emitted typed MIR `Add`/`Sub`/`Mul` as `fadd`/`fsub`/`fmul` for f32/f64 values, and emitted typed MIR division/remainder as `fdiv`/`frem` for f32/f64 values.
+- Emitted typed MIR float comparisons as `fcmp` predicates while preserving integer comparisons as `icmp`; `!=` uses `une` so NaN compares not-equal.
+- Added focused self-host IR facts for float/double arithmetic spelling and all f64 comparison predicates.
+- Marked the arithmetic-and-comparison lowering task family complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/LlvmInstructions.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `../../stark test --filter EmitsLlvmTypedFloat --test-timeout 240` from `tests-stark/selfhost.Ir`: stayed silent during project setup and was interrupted with exit code 130.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-07 MIR Float Package Round-Trip Slice
+
+- Added sectioned package-image sections for MIR float literal payload bytes and float constant rows.
+- Extended package-image directory parsing and inspection summaries so optional float side-table sections are validated and reported without breaking ordinary package deserialization.
+- Added focused IR facts for f32/f64 LLVM return values, f32/f64 call arguments, and sectioned package round trips that render LLVM from deserialized float side tables.
+- Marked the self-host literal-lowering task family complete in `TASKS.md`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+- No broad test sweep was run.
+
+---
+
 ## 2026-07-07 MIR Float LLVM Emission Slice
 
 - Threaded MIR float constant payload bytes through the LLVM module, block, and instruction emitters without widening ordinary instruction rows.
@@ -5716,3 +6419,348 @@ comments explaining which platform is required.
   - `./stark selfhost/Compiler/Mir/SourceModuleFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: first run surfaced a retborrow error in `LlvmText.stark`; rerun after the scalar-copy fix was interrupted after repeated type-check progress and no final diagnostics.
   - `./stark selfhost/Compiler/Mir/LlvmText.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated type-check progress and no final diagnostics.
 - No broad test sweep was run.
+
+## 2026-07-07 MIR Global Linkage LLVM Emission Slice
+
+- Added `GlobalLinkageFacts` as a MIR backend fact record for global definitions.
+- Added deterministic textual LLVM global emission that writes `internal dso_local` for internal global linkage facts.
+- Kept the existing `EmitLlvmGlobals` path byte-compatible by routing it through an empty linkage table.
+- Added module-level LLVM emission variants that accept global linkage fact tables before function emission.
+- Added a focused IR fact for exact global linkage spelling on scalar and pointer globals.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/LlvmFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmModules.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Lowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated import/type-check progress and no diagnostics.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated import/type-check progress and no diagnostics.
+  - `./stark tests-stark/selfhost.Lowering/LoweringTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: failed through stale package-image resolution of the compiler package and the known missing macOS stdlib process symbols; the attempted lowering-test addition was removed.
+- No broad test sweep was run.
+
+## 2026-07-07 MIR Global Section and Visibility LLVM Emission Slice
+
+- Added compact MIR backend fact records for global LLVM visibility and global section placement.
+- Added deterministic textual LLVM global emission that writes `hidden` and `protected` visibility facts in the definition prefix.
+- Added deterministic textual LLVM global emission that writes quoted section suffixes and escapes only quote and backslash bytes.
+- Kept the existing `EmitLlvmGlobals` and linkage-only paths byte-compatible by routing them through empty visibility and section fact tables.
+- Added module-level LLVM emission variants that accept global linkage, visibility, and section fact tables together before function emission.
+- Added a focused IR fact for exact global linkage, visibility, section, and section-escaping spelling.
+- Split the section and visibility LLVM tasks into source-import, function-fact, and libLLVM-builder follow-ups.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/LlvmFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmModules.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: interrupted after repeated import/type-check progress and no diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-07 MIR Function Section and Visibility LLVM Emission Slice
+
+- Added compact MIR backend fact records for function LLVM visibility and function section placement.
+- Carried the function visibility and section records on the existing per-function backend fact row that already survives source-module lowering.
+- Added deterministic textual LLVM definition emission that writes `hidden` and `protected` visibility facts after linkage/non-preemption facts.
+- Added deterministic textual LLVM definition emission that writes quoted function `section` attributes after existing function effect attributes.
+- Added a focused IR fact for exact function linkage, visibility, and section spelling through the range-fact definition core.
+- Split source function section and visibility attribute import into explicit follow-up tasks.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/LlvmFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `./stark selfhost/Compiler/Mir/LlvmFunctions.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32'`: passed.
+  - `../../stark test --filter EmitsLlvmDefinitionWithFunctionBackendFacts --test-progress --test-timeout 120` in `tests-stark/selfhost.Ir`: stopped after about two minutes because the filtered project build produced no output.
+  - `git diff --check -- selfhost/Compiler/Mir/LlvmFacts.stark selfhost/Compiler/Mir/LlvmFunctions.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Struct Aggregate Capture Front-End Verification Slice
+
+- Added parser coverage that verifies tuple and property struct aggregate switch captures become section-scoped `PatternBinding` rows.
+- Added binding coverage that verifies struct aggregate field captures resolve in `when` guards and section bodies.
+- Added binding coverage that verifies struct aggregate field captures do not leak into the `default` section.
+- Narrow verification:
+  - `./stark tests-stark/selfhost.Parsing/ParsingTests.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Binding/BindingTests.stark --check -I selfhost --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: reached semantic validation, then failed on pre-existing `Compiler.Ir` finite-effect diagnostics where `IrTable.Get`/`IrTable.Replace` call non-finite `System.Collections.List.Get`/`GetMut`.
+  - `./stark tests-stark/selfhost.Parsing/ParsingTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: failed before this slice on known missing macOS stdlib process symbols `System.Runtime.Platform.MacOS.StartProcessCaptureGrouped` and `System.Runtime.Platform.MacOS.KillProcessGroup`.
+  - `./stark tests-stark/selfhost.Binding/BindingTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: failed before this slice on the same known macOS stdlib process-symbol gap.
+  - `../../stark test --filter StructAggregateSwitchFieldCapturesParseAsPatternBindings --test-progress --test-timeout 120` in `tests-stark/selfhost.Parsing`: stopped after roughly two minutes because the filtered project build produced no output.
+  - `../../stark test --filter StructAggregateFieldCapturesResolveInGuardAndBody --test-progress --test-timeout 120` in `tests-stark/selfhost.Binding`: stopped after roughly ninety seconds because the filtered project build produced no output.
+  - `git diff --check -- tests-stark/selfhost.Parsing/ParsingTests.stark tests-stark/selfhost.Binding/BindingTests.stark`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch Aggregate Pattern Builder Slice
+
+- Added a self-host typing builder that walks parsed function bodies and records top-level aggregate switch-label rows.
+- Preserved the switch subject owner type head, primary token, source type span, and enum variant ordinal when available.
+- Added a focused IR fact that builds rows for struct tuple/property labels and an enum aggregate label.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Typing/TypedSwitchPatterns.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing/TypedPipeline.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark selfhost/Compiler/Typing.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch Pattern Source Fact Index Slice
+
+- Added dense start-token indexes for imported typed aggregate and list pattern rows in `SourceModuleLoweringFacts`.
+- Built the indexes once during source-module fact construction and rejected out-of-range or duplicate typed pattern starts before MIR lowering can consume them.
+- Added O(1) helpers for resolving imported typed aggregate and list pattern rows from source pattern start tokens.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceModuleFacts.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch Pattern Source Label Validation Slice
+
+- Added O(1) validation that module-fact-backed struct aggregate labels match imported typed aggregate rows before MIR lowering.
+- Added O(1) validation that module-fact-backed enum aggregate labels match imported typed aggregate rows before MIR lowering.
+- Added O(1) validation that module-fact-backed fixed-array list labels match imported typed list rows before MIR lowering.
+- Kept discard and whole-value capture labels on their existing parser paths because they do not import typed aggregate/list rows.
+- Left the local switch-assignment entrypoint as an explicit follow-up because it does not currently receive `SourceModuleLoweringFacts`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch Assignment Source Label Validation Slice
+
+- Built `SourceModuleLoweringFacts` for local switch-assignment list patterns before parsing their fixed-array case labels.
+- Threaded source-module facts into parameter-backed and storage-backed fixed-array list switch-assignment case parsers.
+- Enabled typed-list-row validation for real local switch-assignment lowering while keeping the older shape preflight on its no-fact parser mode.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch List Pattern Row Lookup Slice
+
+- Replaced typed-row-backed fixed-array list label structure parsing with a dense start-token row lookup.
+- Imported typed list member rows into the existing flat MIR list-pattern and capture tables without walking the list syntax again.
+- Kept discard and whole-list capture labels on the existing compact parser path because they do not have typed list rows.
+- Kept scalar literal and range value conversion on the existing token parsers while using typed rows for list structure, ordinals, captures, and row bounds.
+- Split the remaining aggregate and nested typed-row lookup work into sentence-sized follow-up tasks.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch Struct Aggregate Pattern Row Lookup Slice
+
+- Replaced typed-row-backed struct aggregate field-member parsing with dense aggregate start-token row lookup.
+- Imported typed struct member rows into the existing flat MIR field-pattern and field-capture tables without walking tuple/property label members again.
+- Preserved tuple field-order validation, property duplicate-field validation, struct layout facts, member-path facts, scalar interval conversion, and capture-name facts.
+- Kept discard and whole-struct capture labels on their existing compact paths because they do not have typed aggregate member rows.
+- Kept nested aggregate/list field rows rejected here pending the shared decision-descriptor follow-up.
+- Removed the now-unused ad hoc struct field pattern parser helper.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Switch Enum Aggregate Pattern Row Lookup Slice
+
+- Replaced typed-row-backed enum aggregate payload-member parsing with dense aggregate start-token row lookup.
+- Imported typed enum payload member rows into the existing flat MIR payload-pattern and payload-capture tables without walking tuple/named payload label members again.
+- Routed discard-only enum aggregate labels, scalar payload-pattern labels, and capture-bearing payload labels through the same typed-row importer with explicit capability flags.
+- Preserved tuple payload-order validation, named-payload duplicate validation, enum layout payload type facts, scalar interval conversion, and capture-name facts.
+- Kept nested aggregate/list payload rows rejected here pending the shared decision-descriptor follow-up.
+- Removed the now-unused named-payload token parser helpers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+- No broad test sweep was run.
+
+## 2026-07-07 Typed Nested Switch Decision Descriptor Routing Slice
+
+- Routed typed nested aggregate and fixed-array list member rows into shared pattern-decision descriptors during struct aggregate switch preflight.
+- Threaded per-case typed nested member spans through terminal and assignment struct aggregate parsers and lowerers so backend owner, enum-variant, fixed-length, and element-type facts survive into descriptor rows.
+- Kept nested descriptor-backed branch emission conservatively rejected before MIR block construction; the next lowering slices can consume the descriptors without reparsing nested source tokens.
+- Added a focused follow-up to replace the localized recursive typed-descriptor importer with a checker-friendly iterative worklist; a direct worklist experiment stalled the single-file checker before diagnostics, so this slice keeps the known-checking recursive importer.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: reached `Summary: 0 errors, 4 warnings, 0 infos.` and was interrupted after the summary because the process handle did not return. The warnings are the localized `STK4122` recursion diagnostics in the typed nested descriptor importer.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Package Image Facts Slice
+
+- Added a compact logical package-image fact view for section/string counts, package identity strings, profile strings, target backend strings, C data model facts, and aggregate pointer layout facts.
+- Added a facts-only target-feature string-index reader and string append helper so compatibility checks can inspect `PINF`/`STRS` facts without decoding or materializing `MANF`.
+- Added a focused self-host IR fact covering package identity, profile, target triple/data layout, target features, C integer widths, and aggregate pointer size/alignment.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed; the checker printed the existing verbose pass timing warnings before returning success.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-package-facts-semantic-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Package Compatibility Facts Slice
+
+- Added allocation-free logical package-image fact string comparisons over validated `STRS` entries.
+- Added compact-fact compatibility helpers for build profile, target triple/data layout, target backend CPU/relocation/code model, target features, C data model widths/signedness, and aggregate pointer layout.
+- Added a focused self-host IR fact that proves matching and mismatch cases against the synthetic profile/target logical package image.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-package-compat-semantic-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Package Version Compatibility Slice
+
+- Exposed the supported package-image version as a compact header fact.
+- Added a header-only version reader and supported-version matcher so consumers can reject incompatible package images before logical `PINF`/`STRS` fact loading.
+- Added a focused self-host IR fact that verifies the current version matches, patches the header to an older version, and proves the version matcher and logical fact loader reject it.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-package-version-semantic-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Manifest Module Summary Slice
+
+- Added a scalar `LogicalPackageManifestModuleSummary` for decoded `MANF` module rows, covering source-surface array counts, effective typed-interface counts, and structured-section presence bits.
+- Added JSON shape helpers for required/optional array counts and optional object sections without retaining parsed JSON node handles beyond the parse call.
+- Mirrored Stage0 `StarkPackageModuleManifest` effective-section precedence by preferring `CompilerSections.TypedInterface` over legacy `TypedInterface`.
+- Added a focused self-host IR fact covering module-row counts, compiler-section precedence, absent optional sections, out-of-range module lookup rejection, and malformed section rejection.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-manifest-module-summary-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Typed Declaration Header Slice
+
+- Added `LogicalPackageTypedDeclarationKind` and `LogicalPackageTypedDeclarationSummary` for typed-interface alias/type/function/global declaration headers.
+- Added a decoded `MANF` typed-interface declaration reader that validates effective typed-interface section precedence, copies `Name`/`QualifiedName`/`Visibility`/manifest `Kind` text into caller-owned buffers, and preserves compact count/flag facts for generic parameters, fields, variants, methods, constructors, associated types, implemented traits, thread-safety predicates/attributes, value contracts, backend optimization markers, layout markers, global mutability, constant initializers, FFI/strictfp/fastcc, and generic-template body presence.
+- Kept type-reference payload decoding as the next explicit task so this slice does not retain JSON node views or reconstruct source.
+- Added a focused self-host IR fact covering alias, type, function, and global declaration headers plus out-of-range, malformed function, and missing typed-interface rejection.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-typed-declaration-summary-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Type Reference Payload Summary Slice
+
+- Added `LogicalPackageTypedTypeReferenceSource` and `LogicalPackageTypeReferenceSummary` so decoded `MANF` typed-interface declaration payloads can expose scalar type-reference facts without retaining JSON node views.
+- Added a typed-interface type-reference payload reader for alias targets, function returns, function parameters, global types, and type fields.
+- Preserved backend-relevant type-reference facts as explicit flags/counts, including integer bit width/range/signedness presence, pointer/borrow/view facts, fixed-length and element-type presence, function ABI/kind/unsafe/tail-call facts, function pointer parameter/return counts, disjoint/overlap/same/dead-on-return group counts, associated owner/type facts, and source alias markers.
+- Added a focused self-host IR fact covering the five supported payload roots plus declaration/source mismatch, out-of-range payload, and missing-kind malformed-payload rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-type-reference-summary-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Type Reference Graph Row Slice
+
+- Added package-owned `LogicalPackageTypeReferenceGraph` storage with append-only type-reference rows, child rows, scalar text rows, and a contiguous text byte slab.
+- Added a non-recursive decoded-`MANF` type-reference graph materializer that walks root payloads through a FIFO worklist, avoiding recursive checker pressure while preserving deterministic row order.
+- Materialized nested type-reference children for element types, type arguments, comptime value argument types, callable return types, callable parameter types, and associated owner types.
+- Interned scalar text facts for type kind/name, integer range bounds, borrow/access/init qualifiers, fixed-length parameter names, callable ABI/kind/storage/capability markers, associated aliases, raw-pointer element count expressions, dead-on-return parameter names, and comptime value argument name/value/symbolic-source text.
+- Kept callable memory-contract group member rows and full comptime value argument payload rows as explicit follow-ups rather than overloading the type-reference row shape.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-type-reference-graph-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Type Reference Relation Row Slice
+
+- Added package-owned comptime value argument rows for typed-interface type-reference payloads, preserving parameter-name, integer-value, symbolic-source text rows, symbolic flags, and the materialized child type-reference row link.
+- Added package-owned callable parameter relation group rows for disjoint, overlap, and same groups, with contiguous name rows and optional disjoint memory-region rows for parameter/start/count expressions.
+- Kept the row model append-only and parent-span indexed so later lowering can consume row ids without re-walking decoded `MANF` JSON or retaining JSON node handles.
+- Extended the focused self-host IR type-reference graph fact to validate comptime argument row ids, callable relation group rows, parameter group names, and disjoint region payload text.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-type-reference-groups-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- Runtime execution note: `../../stark test --filter LogicalPackageImageMaterializesTypedDeclarationTypeReferenceGraphRows --test-timeout 180` was attempted from `tests-stark/selfhost.Ir` and interrupted after producing no output for several minutes, so it is not counted as verification.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Typed Callable Fact Slice
+
+- Added decoded-`MANF` callable fact summaries for typed-interface functions and type-owned methods.
+- Preserved callable backend facts as explicit fields: symbol name, qualified resolved name, published overload key, inline preference, hot/cold, explicit inline marker, static/unsafe/varargs/tail-call, FFI/strictfp/fastcc, FFI ABI, backend optimization mode, body presence, asm presence, link-name presence, and relation/contract section counts.
+- Added decoded callable parameter summaries with owned parameter names, disjoint/const flags, raw-pointer element-count expressions, and required parameter type-object validation.
+- Added a focused self-host IR fact covering top-level function callables, type-owned method callables, parameter metadata, out-of-range method lookup rejection, top-level function method-ordinal rejection, and malformed parameter type rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-typed-callable-summary-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Method Type Reference Row Slice
+
+- Added method-owned type-reference source kinds for typed callable return and parameter payloads.
+- Added an explicit `MethodOrdinal` fact to `LogicalPackageTypeReferenceSummary` so method return/parameter rows identify `Types[typeOrdinal].Methods[methodOrdinal]` without packing the method ordinal into payload ordinals.
+- Added callable type-reference summary and graph materializer entry points that validate top-level function sources separately from method sources while sharing the existing append-only type-reference row model.
+- Extended focused self-host IR coverage for method return/parameter summary reads and graph materialization, including nested child rows that preserve the method ordinal.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-method-type-reference-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Callable Fact Row Graph Slice
+
+- Added `LogicalPackageTypedCallableFactGraph` with append-only text rows for callable generic names, comptime generic names, type-parameter constraint names, thread-safety law names, and value-contract triples.
+- Added compact callable fact rows for ordinary generic parameters, comptime generic parameters, type-parameter constraints, constraint bound traits, thread-safety law predicates, and value contracts.
+- Routed comptime generic parameter types, type-parameter bound trait types, and thread-safety predicate types into the existing durable type-reference graph with explicit callable-fact source kinds, preserving method ordinals and payload ordinals for backend import.
+- Added a focused self-host IR fact that materializes top-level function and type-owned method callable fact graphs, verifies text row readback, verifies attached type-reference sources, and rejects malformed comptime generic parameter payloads.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-callable-fact-graph-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: first run caught direct `retborrow` test-row arguments; after fixing those, the rerun stayed silent for several minutes and was interrupted, so it is not counted as a pass.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Callable Import And Asm Row Slice
+
+- Added package-owned callable import rows for `FfiAbi` and function `LinkName`, including method-owned `FfiAbi` support and malformed method `LinkName` rejection.
+- Added package-owned asm rows for function `Asm` metadata, preserving architecture, template text, dense input/output/clobber row spans, operand register names, operand value names, and output return-binding flags.
+- Kept asm/import materialization source-free after JSON decode: backend consumers can read row ids and contiguous child ranges without reconstructing `unsafe ffi asm(...)` source.
+- Extended the focused self-host IR callable fact graph coverage to verify function import rows, method import rows, asm row counts, child spans, operand text readback, clobber text readback, and return-binding flags.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-callable-import-asm-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Typed Type Fact Graph Slice
+
+- Added package-owned typed type fact rows for type kind/backend/layout metadata, struct pack/align facts, dyn-trait flags, associated alias target rows, implemented trait names/types, and type-level thread-safety law attributes.
+- Routed associated alias targets, implemented trait types, and thread-safety condition types through the durable type-reference graph with explicit source provenance, so backend import can consume row ids without re-walking decoded `MANF` JSON.
+- Added a focused self-host IR fact covering text extraction, numeric pack/align facts, associated alias target rows, implemented trait refs, condition type refs, dyn-trait flags, and malformed trait-reference rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-typed-type-fact-graph-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Typed Enum Variant Row Slice
+
+- Added package-owned typed enum variant rows and payload rows to the typed type fact graph, preserving variant names, optional `ok`/`err` roles, named-payload mode, absorbed-error type refs, and dense payload child spans.
+- Routed enum payload types and absorbed-error types through the durable type-reference graph with explicit variant ordinal and payload ordinal provenance instead of packing both into one ambiguous value.
+- Added a focused self-host IR fact covering enum variant row counts, dense payload child spans, role/name text extraction, payload type refs, absorbed-error type refs, and malformed payload rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-typed-type-enum-variant-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Typed Type Alias Fact Row Slice
+
+- Added a package-owned typed type-alias fact graph with alias rows, string generic parameter rows, comptime generic parameter rows, and dense child spans for source-free package import.
+- Routed alias target types and comptime generic parameter types through the durable type-reference graph with explicit alias declaration provenance and payload ordinals.
+- Added a focused self-host IR fact covering alias row counts, child spans, generic/comptime parameter text extraction, nested target type-argument rows, comptime integer type facts, and malformed comptime generic parameter rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-typed-type-alias-fact-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Function Effect Fact Row Slice
+
+- Added a package-owned compiler-facts function-effect graph with profile rows and packed text rows for resolved names, kinds, inline preferences, FFI ABIs, and backend optimization modes.
+- Preserved LLVM-relevant function-effect booleans as direct row facts, including memory purity, sync/free/unwind/return/progress facts, fastcc, FFI, hot/cold, strict-fp, varargs, tail-callable, and norecurse.
+- Added a focused self-host IR fact covering `CompilerSections.CompilerFacts.FunctionEffects` import, optional FFI/backend-mode text rows, optional bool defaults, text extraction, and malformed required-bool rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-function-effect-fact-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Function Semantic Memory Effect Row Slice
+
+- Added a package-owned function semantic fact graph with semantic header rows, called-function rows, parameter memory-effect rows, initialization byte-range rows, call rows, and call-argument memory-effect rows.
+- Preserved function and call memory effects as compact boolean fact structs, including argument reads/writes/captures, other-memory reads/writes, argument initialization, and pointee-dead-on-return facts.
+- Preserved parameter and call-argument names, type text, capture kinds, optional dereferenceable/alignment bytes, optional caller/callee parameter names, dense child spans, and explicit `HasOpaqueCall` presence.
+- Added a focused self-host IR fact covering `CompilerSections.CompilerFacts.FunctionSemantics` import, optional arrays/nullables, dense spans, text extraction, byte ranges, call argument effects, and malformed memory-effect rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-function-semantic-memory-effect-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep or filtered `stark test` runner was run.
+
+## 2026-07-08 Logical Function Ownership Fact Row Slice
+
+- Added a package-owned function ownership fact graph with ownership rows, implicit-drop rows, move rows, event rows, projection rows, root rows, packed text rows, and embedded structured type-reference rows.
+- Preserved ownership validity, event source locations, index-projection flags, root mutability/address/move/drop/reinitialization facts, final availability text, and dense child spans without reconstructing Stark source.
+- Routed event place types and root types through the durable type-reference graph with explicit function-ownership source labels so backend import can consume row ids and type facts directly.
+- Added a focused self-host IR fact covering `CompilerSections.CompilerFacts.FunctionSemantics[*].Ownership`, skip behavior for functions without ownership, text extraction, structured type-reference source/payload facts, and malformed required ownership arrays.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-function-ownership-fact-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep or filtered `stark test` runner was run.

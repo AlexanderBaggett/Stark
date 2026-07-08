@@ -439,7 +439,9 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
     try EmitLlvmArenaRuntimePreambleForRange(instrs, firstInstr, instrCount, sink);
 
     try sink.AppendConstAscii("define");
-    try EmitLlvmDefinitionLinkage(FunctionLinkageFactsAt(functionLinkageFacts, 1), sink);
+    stack FunctionLinkageFacts functionFacts = FunctionLinkageFactsAt(functionLinkageFacts, 1);
+    try EmitLlvmDefinitionLinkage(functionFacts, sink);
+    try EmitLlvmDefinitionVisibility(functionFacts.VisibilityFacts, sink);
     try EmitLlvmDefinitionCallingConvention(isTailCallable, FunctionCallingConventionFactsAt(functionCallingConventionFacts, 1), sink);
 
     stack MirType returnType = MirBlockScalarReturnType(instrs, blocks, entryBlockIndex);
@@ -450,6 +452,7 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
     try sink.AppendConstAscii(name);
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
+    try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
     stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBase();
     try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorage(
@@ -676,6 +679,8 @@ public fn MemoryStatus EmitLlvmBlocksWithTailCallees(borrow IrTable<MirInstructi
     try sink.AppendConstAscii(name);
     try EmitLlvmTypedParamList(instrs, paramCount, sink);
     try sink.AppendConstAscii(" {\n");
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildBlockRangesValueUseCounts(instrs, blocks, ranges, valueUseCounts);
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -717,7 +722,7 @@ public fn MemoryStatus EmitLlvmBlocksWithTailCallees(borrow IrTable<MirInstructi
         else
         {
             stack BlockEmit range = ranges.Get(i);
-            try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, range.BlockIndex, range.First, range.Count, sink);
+            try EmitLlvmLabeledBlockWithTailCalleesAndUseCounts(instrs, funcTailFlags, valueUseCounts, blocks, range.BlockIndex, range.First, range.Count, sink);
             i = i + 1;
         }
     }
@@ -754,7 +759,9 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
     try EmitLlvmArenaRuntimePreambleForRanges(instrs, ranges, sink);
 
     try sink.AppendConstAscii("define");
-    try EmitLlvmDefinitionLinkage(FunctionLinkageFactsAt(functionLinkageFacts, 1), sink);
+    stack FunctionLinkageFacts functionFacts = FunctionLinkageFactsAt(functionLinkageFacts, 1);
+    try EmitLlvmDefinitionLinkage(functionFacts, sink);
+    try EmitLlvmDefinitionVisibility(functionFacts.VisibilityFacts, sink);
     try EmitLlvmDefinitionCallingConvention(isTailCallable, FunctionCallingConventionFactsAt(functionCallingConventionFacts, 1), sink);
 
     stack MirType returnType = MirBlockRangesScalarReturnType(instrs, blocks, ranges);
@@ -765,8 +772,11 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
     try sink.AppendConstAscii(name);
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
+    try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
     stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBase();
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildBlockRangesValueUseCounts(instrs, blocks, ranges, valueUseCounts);
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -820,9 +830,10 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
         else
         {
             stack BlockEmit range = ranges.Get(i);
-            try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorage(
+            try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorageAndUseCounts(
                 instrs,
                 funcTailFlags,
+                valueUseCounts,
                 functionEffectFacts,
                 functionCallContractFacts,
                 functionCallingConventionFacts,
@@ -1033,6 +1044,8 @@ public fn MemoryStatus EmitLlvmBlocksNumberedWithTailCallees(borrow IrTable<MirI
     try sink.AppendU64((u64[0 max])number);
     try EmitLlvmTypedParamList(instrs, paramCount, sink);
     try sink.AppendConstAscii(" {\n");
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildBlockRangesValueUseCounts(instrs, blocks, ranges, valueUseCounts);
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -1074,7 +1087,7 @@ public fn MemoryStatus EmitLlvmBlocksNumberedWithTailCallees(borrow IrTable<MirI
         else
         {
             stack BlockEmit range = ranges.Get(i);
-            try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, range.BlockIndex, range.First, range.Count, sink);
+            try EmitLlvmLabeledBlockWithTailCalleesAndUseCounts(instrs, funcTailFlags, valueUseCounts, blocks, range.BlockIndex, range.First, range.Count, sink);
             i = i + 1;
         }
     }
@@ -1110,7 +1123,9 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
     where overlap(funcTailFlags, paramAbiFacts), overlap(paramAbiFacts, functionReturnFacts)
 {
     try sink.AppendConstAscii("define");
-    try EmitLlvmDefinitionLinkage(FunctionLinkageFactsAt(functionLinkageFacts, number), sink);
+    stack FunctionLinkageFacts functionFacts = FunctionLinkageFactsAt(functionLinkageFacts, number);
+    try EmitLlvmDefinitionLinkage(functionFacts, sink);
+    try EmitLlvmDefinitionVisibility(functionFacts.VisibilityFacts, sink);
     try EmitLlvmDefinitionCallingConvention(isTailCallable, FunctionCallingConventionFactsAt(functionCallingConventionFacts, number), sink);
 
     stack MirType returnType = MirBlockRangesScalarReturnType(instrs, blocks, ranges);
@@ -1122,8 +1137,11 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
     try sink.AppendU64((u64[0 max])number);
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
+    try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
     stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBaseForFunction(number);
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildBlockRangesValueUseCounts(instrs, blocks, ranges, valueUseCounts);
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -1177,9 +1195,10 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
         else
         {
             stack BlockEmit range = ranges.Get(i);
-            try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorage(
+            try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorageAndUseCounts(
                 instrs,
                 funcTailFlags,
+                valueUseCounts,
                 functionEffectFacts,
                 functionCallContractFacts,
                 functionCallingConventionFacts,
@@ -1490,7 +1509,9 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
     where overlap(funcTailFlags, paramAbiFacts), overlap(paramAbiFacts, functionReturnFacts)
 {
     try sink.AppendConstAscii("define");
-    try EmitLlvmDefinitionLinkage(FunctionLinkageFactsAt(functionLinkageFacts, number), sink);
+    stack FunctionLinkageFacts functionFacts = FunctionLinkageFactsAt(functionLinkageFacts, number);
+    try EmitLlvmDefinitionLinkage(functionFacts, sink);
+    try EmitLlvmDefinitionVisibility(functionFacts.VisibilityFacts, sink);
     try EmitLlvmDefinitionCallingConvention(isTailCallable, FunctionCallingConventionFactsAt(functionCallingConventionFacts, number), sink);
 
     stack MirType returnType = MirBlockScalarReturnType(instrs, blocks, entryBlock);
@@ -1502,6 +1523,7 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
     try sink.AppendU64((u64[0 max])number);
     try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
+    try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
     stack u32[0 max] scopedNoAliasMetadataBase = LlvmScopedNoAliasMetadataBaseForFunction(number);
     try EmitLlvmLabeledBlockWithRangeFactsEnumLayoutsAndSeparateStorage(

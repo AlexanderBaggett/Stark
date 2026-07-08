@@ -5,6 +5,7 @@ import Compiler.Mir.EnumLayout
 import Compiler.Mir.LlvmText
 import Compiler.Mir.LlvmBlocks
 import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.LlvmFacts
 import System.Memory
 import System.Text
 module Compiler.Mir.LlvmModules
@@ -276,8 +277,13 @@ internal fn MemoryStatus EmitLlvmGlobalInitializer(MirType type, i64[min max] va
     return MemoryStatus.Ok;
 }
 
-// Emits one `@gN = global <type> V` line per global in id order (empty table -> nothing).
-public fn MemoryStatus EmitLlvmGlobals(borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
+// Emits one `@gN = <definition facts> global <type> V <suffix facts>` line per global in id order.
+public fn MemoryStatus EmitLlvmGlobalsWithBackendFacts(
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<GlobalLinkageFacts> globalLinkageFacts,
+    borrow IrTable<GlobalVisibilityFacts> globalVisibilityFacts,
+    borrow IrTable<GlobalSectionFacts> globalSectionFacts,
+    mut borrow OwnedAscii sink)
 {
     stack u64[0 2 ** 63 - 1] count = globals.Count();
     stack mut u32[0 max] id = 1;
@@ -286,10 +292,14 @@ public fn MemoryStatus EmitLlvmGlobals(borrow IrTable<MirGlobal> globals, mut bo
         stack MirGlobal g = globals.Get(id);
         try sink.AppendConstAscii("@g");
         try sink.AppendU64((u64[0 max])id);
-        try sink.AppendConstAscii(" = global ");
+        try sink.AppendConstAscii(" =");
+        try EmitLlvmGlobalLinkage(GlobalLinkageFactsAt(globalLinkageFacts, id), sink);
+        try EmitLlvmGlobalVisibility(GlobalVisibilityFactsAt(globalVisibilityFacts, id), sink);
+        try sink.AppendConstAscii(" global ");
         try EmitLlvmTypeName(g.StoredType(), sink);
         try sink.AppendConstAscii(" ");
         try EmitLlvmGlobalInitializer(g.StoredType(), g.InitialValue(), sink);
+        try EmitLlvmGlobalSection(GlobalSectionFactsAt(globalSectionFacts, id), sink);
         try sink.AppendConstAscii("\n");
         id = id + 1;
     }
@@ -297,10 +307,58 @@ public fn MemoryStatus EmitLlvmGlobals(borrow IrTable<MirGlobal> globals, mut bo
     return MemoryStatus.Ok;
 }
 
+// Emits one `@gN = <linkage> global <type> V` line per global in id order.
+public fn MemoryStatus EmitLlvmGlobalsWithLinkageFacts(
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<GlobalLinkageFacts> globalLinkageFacts,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<GlobalVisibilityFacts> noGlobalVisibilityFacts = new();
+    stack mut IrTable<GlobalSectionFacts> noGlobalSectionFacts = new();
+    return EmitLlvmGlobalsWithBackendFacts(globals, globalLinkageFacts, noGlobalVisibilityFacts, noGlobalSectionFacts, sink);
+}
+
+// Emits one `@gN = global <type> V` line per global in id order (empty table -> nothing).
+public fn MemoryStatus EmitLlvmGlobals(borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<GlobalLinkageFacts> noGlobalLinkageFacts = new();
+    stack mut IrTable<GlobalVisibilityFacts> noGlobalVisibilityFacts = new();
+    stack mut IrTable<GlobalSectionFacts> noGlobalSectionFacts = new();
+    return EmitLlvmGlobalsWithBackendFacts(globals, noGlobalLinkageFacts, noGlobalVisibilityFacts, noGlobalSectionFacts, sink);
+}
+
 // Emits a complete module: globals first, then function definitions.
 public fn MemoryStatus EmitLlvmModuleWithGlobals(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
 {
     try EmitLlvmGlobals(globals, sink);
+    try EmitLlvmModule(instrs, blocks, funcs, sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithGlobalsAndLinkageFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<GlobalLinkageFacts> globalLinkageFacts,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobalsWithLinkageFacts(globals, globalLinkageFacts, sink);
+    try EmitLlvmModule(instrs, blocks, funcs, sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithGlobalsAndBackendFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<GlobalLinkageFacts> globalLinkageFacts,
+    borrow IrTable<GlobalVisibilityFacts> globalVisibilityFacts,
+    borrow IrTable<GlobalSectionFacts> globalSectionFacts,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobalsWithBackendFacts(globals, globalLinkageFacts, globalVisibilityFacts, globalSectionFacts, sink);
     try EmitLlvmModule(instrs, blocks, funcs, sink);
     return MemoryStatus.Ok;
 }
@@ -314,6 +372,36 @@ public fn MemoryStatus EmitLlvmModuleWithGlobalsAndEnumLayouts(
     mut borrow OwnedAscii sink)
 {
     try EmitLlvmGlobals(globals, sink);
+    try EmitLlvmModuleWithEnumLayouts(instrs, blocks, funcs, enumLayoutFacts, sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithGlobalsAndBackendFactsAndEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<GlobalLinkageFacts> globalLinkageFacts,
+    borrow IrTable<GlobalVisibilityFacts> globalVisibilityFacts,
+    borrow IrTable<GlobalSectionFacts> globalSectionFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobalsWithBackendFacts(globals, globalLinkageFacts, globalVisibilityFacts, globalSectionFacts, sink);
+    try EmitLlvmModuleWithEnumLayouts(instrs, blocks, funcs, enumLayoutFacts, sink);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmModuleWithGlobalsAndLinkageFactsAndEnumLayouts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<GlobalLinkageFacts> globalLinkageFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobalsWithLinkageFacts(globals, globalLinkageFacts, sink);
     try EmitLlvmModuleWithEnumLayouts(instrs, blocks, funcs, enumLayoutFacts, sink);
     return MemoryStatus.Ok;
 }

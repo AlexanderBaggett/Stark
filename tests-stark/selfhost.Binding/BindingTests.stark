@@ -5614,6 +5614,44 @@ fn bool CaseVarBindingIsNotVisibleInOtherSection()
 }
 
 [Fact]
+fn bool StructAggregateFieldCapturesResolveInGuardAndBody()
+{
+    stack ascii source = "struct Box { i64[0 20] value; bool flag; }\nfn void f(Box box) { switch (box) { case Box(var value, true) when value > 0: value; case Box { value: var other, flag: false }: other; default: return; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool StructAggregateFieldCapturesAreNotVisibleInDefaultSection()
+{
+    stack ascii source = "struct Box { i64[0 20] value; bool flag; }\nfn void f(Box box) { switch (box) { case Box(var value, true): value; default: value; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1;
+    }
+}
+
+[Fact]
 fn bool WhenGuardWithRelationalOperatorResolves()
 {
     // A `when` guard's `<` is a relational operator, not an angle bracket — the

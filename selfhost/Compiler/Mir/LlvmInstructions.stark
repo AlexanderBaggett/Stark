@@ -1454,6 +1454,43 @@ internal fn MemoryStatus EmitLlvmBinary(borrow IrTable<MirInstruction> instrs, m
     return MemoryStatus.Ok;
 }
 
+internal inline finite law bool LlvmMirTypeIsFloatScalar(MirType type)
+{
+    return type == MirType.F32 || type == MirType.F64;
+}
+
+internal fn MemoryStatus EmitLlvmTypedNumericBinary(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] dst,
+    const ascii integerMnemonic,
+    const ascii floatMnemonic,
+    MirType type,
+    u32[0 max] a,
+    u32[0 max] b)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    if (LlvmMirTypeIsFloatScalar(type))
+    {
+        try sink.AppendConstAscii(floatMnemonic);
+    }
+    else
+    {
+        try sink.AppendConstAscii(integerMnemonic);
+    }
+
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmTypeName(type, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
 // Appends the LLVM line for the instruction at 1-based `index` in `instrs`. An
 // out-of-range index emits nothing (rather than reading past the table — `Get`
 // requires `Contains`, and `index - 1` on a 0 index would wrap).
@@ -1513,11 +1550,11 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCalleesAndFloatConstants(
         case MirOp.StructValueLoad:
             try EmitLlvmStructValueLoadInstruction(instrs, sink, index, instr);
         case MirOp.Add:
-            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "add", "fadd", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Sub:
-            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "sub", "fsub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Mul:
-            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "mul", "fmul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.WrappingAdd:
             try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.WrappingSub:
@@ -1531,11 +1568,11 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCalleesAndFloatConstants(
         case MirOp.SaturatingMul:
             try EmitLlvmSaturatingBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.SDiv:
-            try EmitLlvmBinary(instrs, sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "sdiv", "fdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.UDiv:
-            try EmitLlvmBinary(instrs, sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "udiv", "fdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.SRem:
-            try EmitLlvmBinary(instrs, sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "srem", "frem", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.And:
             try EmitLlvmBinary(instrs, sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Or:
@@ -1547,17 +1584,17 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCalleesAndFloatConstants(
         case MirOp.AShr:
             try EmitLlvmBinary(instrs, sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpEq:
-            try EmitLlvmTypedComparison(instrs, sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "eq", "oeq", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpNe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "ne", "une", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpLt:
-            try EmitLlvmTypedComparison(instrs, sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "slt", "olt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpLe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sle", "ole", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGt:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", "ogt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sge", "oge", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.ZExt:
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, index);
@@ -1673,6 +1710,202 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCalleesAndFloatConstants(
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus LlvmInitializeValueUseCounts(borrow IrTable<MirInstruction> instrs, mut borrow IrTable<u32[0 max]> valueUseCounts)
+{
+    stack u64[0 2 ** 63 - 1] total = instrs.Count();
+    stack mut u32[0 max] index = 1;
+    while willexit ((u64[0 2 ** 63 - 1])index <= total)
+    {
+        if (valueUseCounts.Add(0) == 0)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus LlvmMarkValueUse(mut borrow IrTable<u32[0 max]> valueUseCounts, u32[0 max] valueIndex)
+{
+    if (valueIndex == 0 || !valueUseCounts.Contains(valueIndex))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] current = valueUseCounts.Get(valueIndex);
+    if (!valueUseCounts.Replace(valueIndex, current + 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus LlvmMarkCallArgumentValueUses(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    mut borrow IrTable<u32[0 max]> valueUseCounts)
+{
+    if (instr.Opcode() == MirOp.CallWide || instr.Opcode() == MirOp.TailCallWide)
+    {
+        stack mut u32[0 max] argIndex = 0;
+        while willexit (argIndex < instr.OperandBIndex())
+        {
+            try LlvmMarkValueUse(valueUseCounts, MirCallArgValueIndexAt(instrs, instr.OperandAIndex(), argIndex));
+            argIndex = argIndex + 1;
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    try LlvmMarkValueUse(valueUseCounts, instr.OperandAIndex());
+    try LlvmMarkValueUse(valueUseCounts, instr.OperandBIndex());
+    try LlvmMarkValueUse(valueUseCounts, instr.OperandCIndex());
+    try LlvmMarkValueUse(valueUseCounts, instr.OperandDIndex());
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus LlvmMarkInstructionOperandUses(
+    borrow IrTable<MirInstruction> instrs,
+    MirInstruction instr,
+    mut borrow IrTable<u32[0 max]> valueUseCounts)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.SliceValue:
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandAIndex());
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandBIndex());
+        case MirOp.Add:
+        case MirOp.Sub:
+        case MirOp.Mul:
+        case MirOp.WrappingAdd:
+        case MirOp.WrappingSub:
+        case MirOp.WrappingMul:
+        case MirOp.SaturatingAdd:
+        case MirOp.SaturatingSub:
+        case MirOp.SaturatingMul:
+        case MirOp.SDiv:
+        case MirOp.UDiv:
+        case MirOp.SRem:
+        case MirOp.And:
+        case MirOp.Or:
+        case MirOp.Xor:
+        case MirOp.Shl:
+        case MirOp.AShr:
+        case MirOp.CmpEq:
+        case MirOp.CmpNe:
+        case MirOp.CmpLt:
+        case MirOp.CmpLe:
+        case MirOp.CmpGt:
+        case MirOp.CmpGe:
+        case MirOp.Phi:
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandAIndex());
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandBIndex());
+        case MirOp.ZExt:
+        case MirOp.StoreGlobal:
+        case MirOp.PtrOffset:
+        case MirOp.LoadPtr:
+        case MirOp.FixedArrayLoad:
+        case MirOp.StructValueLoad:
+        case MirOp.LoadEnumPtr:
+        case MirOp.EnumTagRead:
+        case MirOp.EnumPayloadExtract:
+        case MirOp.Return:
+        case MirOp.ArenaDynamicStorageReserve:
+        case MirOp.ArenaDynamicStorageTryReserve:
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandAIndex());
+        case MirOp.PtrIndexOffset:
+        case MirOp.PtrIndexOffsetUnbounded:
+        case MirOp.StorePtr:
+        case MirOp.StoreEnumPtr:
+        case MirOp.EnumPayloadInsert:
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandAIndex());
+            try LlvmMarkValueUse(valueUseCounts, instr.OperandBIndex());
+        case MirOp.Call:
+        case MirOp.CallWide:
+            try LlvmMarkCallArgumentValueUses(instrs, instr, valueUseCounts);
+        case MirOp.ConstInt:
+        case MirOp.Param:
+        case MirOp.SliceParamBase:
+        case MirOp.SliceParamLength:
+        case MirOp.TextConstantValue:
+        case MirOp.FloatConstantValue:
+        case MirOp.FixedArrayParamElement:
+        case MirOp.StructParamField:
+        case MirOp.FixedArrayParamSlot:
+        case MirOp.LoadGlobal:
+        case MirOp.StackAlloc:
+        case MirOp.HeapAlloc:
+        case MirOp.ArenaFrameEnter:
+        case MirOp.ArenaAlloc:
+        case MirOp.ArenaDynamicStorageInit:
+        case MirOp.ArenaFrameLeave:
+        case MirOp.CallArg:
+        case MirOp.TailCall:
+        case MirOp.TailCallWide:
+        case MirOp.EnumVariantTag:
+            return MemoryStatus.Ok;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus LlvmMarkInstructionRangeValueUses(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow IrTable<u32[0 max]> valueUseCounts)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            try LlvmMarkInstructionOperandUses(instrs, instr, valueUseCounts);
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal inline finite law bool LlvmInstructionIsPureAggregateCarrier(MirInstruction instr)
+{
+    return instr.Opcode() == MirOp.FixedArrayLoad
+        || instr.Opcode() == MirOp.StructValueLoad;
+}
+
+internal fn bool LlvmInstructionShouldEmitWithUseCounts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> valueUseCounts,
+    u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return false;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    if (!LlvmInstructionIsPureAggregateCarrier(instr))
+    {
+        return true;
+    }
+
+    if (!valueUseCounts.Contains(index))
+    {
+        return true;
+    }
+
+    return valueUseCounts.Get(index) != 0;
+}
+
 internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> funcTailFlags, mut borrow OwnedAscii sink, u32[0 max] index)
 {
     stack mut IrTable<u8[0 max]> noFloatPayloadBytes = new();
@@ -1745,11 +1978,11 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
         case MirOp.StructValueLoad:
             try EmitLlvmStructValueLoadInstruction(instrs, sink, index, instr);
         case MirOp.Add:
-            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "add", "fadd", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Sub:
-            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "sub", "fsub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Mul:
-            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "mul", "fmul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.WrappingAdd:
             try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.WrappingSub:
@@ -1763,11 +1996,11 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
         case MirOp.SaturatingMul:
             try EmitLlvmSaturatingBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.SDiv:
-            try EmitLlvmBinary(instrs, sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "sdiv", "fdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.UDiv:
-            try EmitLlvmBinary(instrs, sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "udiv", "fdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.SRem:
-            try EmitLlvmBinary(instrs, sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "srem", "frem", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.And:
             try EmitLlvmBinary(instrs, sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Or:
@@ -1779,17 +2012,17 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
         case MirOp.AShr:
             try EmitLlvmBinary(instrs, sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpEq:
-            try EmitLlvmTypedComparison(instrs, sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "eq", "oeq", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpNe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "ne", "une", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpLt:
-            try EmitLlvmTypedComparison(instrs, sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "slt", "olt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpLe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sle", "ole", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGt:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", "ogt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sge", "oge", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.ZExt:
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, index);
@@ -2090,14 +2323,31 @@ internal fn MemoryStatus EmitLlvmTypedBinary(borrow IrTable<MirInstruction> inst
     return MemoryStatus.Ok;
 }
 
-internal fn MemoryStatus EmitLlvmTypedComparison(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii predicate, u32[0 max] a, u32[0 max] b)
+internal fn MemoryStatus EmitLlvmTypedComparison(
+    borrow IrTable<MirInstruction> instrs,
+    mut borrow OwnedAscii sink,
+    u32[0 max] dst,
+    const ascii integerPredicate,
+    const ascii floatPredicate,
+    u32[0 max] a,
+    u32[0 max] b)
 {
+    stack MirType operandType = MirValueType(instrs, a);
     try sink.AppendConstAscii("  ");
     try EmitLlvmRegister(sink, dst);
-    try sink.AppendConstAscii(" = icmp ");
-    try sink.AppendConstAscii(predicate);
+    if (LlvmMirTypeIsFloatScalar(operandType))
+    {
+        try sink.AppendConstAscii(" = fcmp ");
+        try sink.AppendConstAscii(floatPredicate);
+    }
+    else
+    {
+        try sink.AppendConstAscii(" = icmp ");
+        try sink.AppendConstAscii(integerPredicate);
+    }
+
     try sink.AppendConstAscii(" ");
-    try EmitLlvmTypeName(MirValueType(instrs, a), sink);
+    try EmitLlvmTypeName(operandType, sink);
     try sink.AppendConstAscii(" ");
     try EmitLlvmOperand(instrs, sink, a);
     try sink.AppendConstAscii(", ");
@@ -2343,11 +2593,11 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
         case MirOp.StructValueLoad:
             try EmitLlvmStructValueLoadInstruction(instrs, sink, index, instr);
         case MirOp.Add:
-            try EmitLlvmTypedBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "add", "fadd", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Sub:
-            try EmitLlvmTypedBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "sub", "fsub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Mul:
-            try EmitLlvmTypedBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "mul", "fmul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.WrappingAdd:
             try EmitLlvmTypedBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.WrappingSub:
@@ -2361,11 +2611,11 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
         case MirOp.SaturatingMul:
             try EmitLlvmSaturatingBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.SDiv:
-            try EmitLlvmTypedBinary(instrs, sink, index, "sdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "sdiv", "fdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.UDiv:
-            try EmitLlvmTypedBinary(instrs, sink, index, "udiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "udiv", "fdiv", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.SRem:
-            try EmitLlvmTypedBinary(instrs, sink, index, "srem", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedNumericBinary(instrs, sink, index, "srem", "frem", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.And:
             try EmitLlvmTypedBinary(instrs, sink, index, "and", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.Or:
@@ -2377,17 +2627,17 @@ internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction>
         case MirOp.AShr:
             try EmitLlvmTypedBinary(instrs, sink, index, "ashr", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpEq:
-            try EmitLlvmTypedComparison(instrs, sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "eq", "oeq", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpNe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "ne", "une", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpLt:
-            try EmitLlvmTypedComparison(instrs, sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "slt", "olt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpLe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sle", "ole", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGt:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sgt", "ogt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGe:
-            try EmitLlvmTypedComparison(instrs, sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmTypedComparison(instrs, sink, index, "sge", "oge", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.LoadGlobal:
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, index);

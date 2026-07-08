@@ -85,5 +85,7 @@ export import Compiler.Typing.TypedAssignments
 export import Compiler.Typing.TypedReturnModel
 export import Compiler.Typing.TypedReturnFacts
 export import Compiler.Typing.TypedReturns
+export import Compiler.Typing.TypedSwitchPatternModel
+export import Compiler.Typing.TypedSwitchPatterns
 export import Compiler.Typing.TypedPipeline
 module Compiler.Typing
