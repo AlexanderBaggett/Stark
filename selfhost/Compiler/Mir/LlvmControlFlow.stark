@@ -229,6 +229,19 @@ internal fn MemoryStatus EmitLlvmDirectSwitchTerminator(
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus LlvmBuildDirectSwitchValueUseCounts(
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] setupFirst,
+    u32[0 max] setupCount,
+    u32[0 max] scrutineeValue,
+    mut borrow IrTable<u32[0 max]> valueUseCounts)
+{
+    try LlvmInitializeValueUseCounts(instrs, valueUseCounts);
+    try LlvmMarkInstructionRangeValueUses(instrs, setupFirst, setupCount, valueUseCounts);
+    try LlvmMarkValueUse(valueUseCounts, scrutineeValue);
+    return MemoryStatus.Ok;
+}
+
 internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<u32[0 max]> funcTailFlags,
@@ -244,11 +257,18 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithTailCallees(
     try sink.AppendConstAscii("b");
     try sink.AppendU64((u64[0 max])blockIndex);
     try sink.AppendConstAscii(":\n");
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildDirectSwitchValueUseCounts(instrs, setupFirst, setupCount, scrutineeValue, valueUseCounts);
+
     stack mut u32[0 max] index = setupFirst;
     stack mut u32[0 max] remaining = setupCount;
     while willexit (remaining > 0)
     {
-        try EmitLlvmInstructionWithTailCallees(instrs, funcTailFlags, sink, index);
+        if (LlvmInstructionShouldEmitWithUseCounts(instrs, valueUseCounts, index))
+        {
+            try EmitLlvmInstructionWithTailCallees(instrs, funcTailFlags, sink, index);
+        }
+
         index = index + 1;
         remaining = remaining - 1;
     }
@@ -272,11 +292,18 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithEnumLayoutsAndTailC
     try sink.AppendConstAscii("b");
     try sink.AppendU64((u64[0 max])blockIndex);
     try sink.AppendConstAscii(":\n");
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildDirectSwitchValueUseCounts(instrs, setupFirst, setupCount, scrutineeValue, valueUseCounts);
+
     stack mut u32[0 max] index = setupFirst;
     stack mut u32[0 max] remaining = setupCount;
     while willexit (remaining > 0)
     {
-        try EmitLlvmInstructionWithEnumLayoutsAndTailCallees(instrs, funcTailFlags, enumLayoutFacts, sink, index);
+        if (LlvmInstructionShouldEmitWithUseCounts(instrs, valueUseCounts, index))
+        {
+            try EmitLlvmInstructionWithEnumLayoutsAndTailCallees(instrs, funcTailFlags, enumLayoutFacts, sink, index);
+        }
+
         index = index + 1;
         remaining = remaining - 1;
     }
@@ -315,26 +342,33 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFacts(
         try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
     }
 
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildDirectSwitchValueUseCounts(instrs, setupFirst, setupCount, scrutineeValue, valueUseCounts);
+
     stack mut u32[0 max] index = setupFirst;
     stack mut u32[0 max] remaining = setupCount;
     while willexit (remaining > 0)
     {
-        try EmitLlvmInstructionWithRangeFacts(
-            instrs,
-            funcTailFlags,
-            functionEffectFacts,
-            functionCallContractFacts,
-            functionCallingConventionFacts,
-            paramFacts,
-            valueFacts,
-            globalFacts,
-            functionReturnFacts,
-            rangeMetadata,
-            separateStorageFacts,
-            scopedNoAliasMetadataBase,
-            0,
-            sink,
-            index);
+        if (LlvmInstructionShouldEmitWithUseCounts(instrs, valueUseCounts, index))
+        {
+            try EmitLlvmInstructionWithRangeFacts(
+                instrs,
+                funcTailFlags,
+                functionEffectFacts,
+                functionCallContractFacts,
+                functionCallingConventionFacts,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                separateStorageFacts,
+                scopedNoAliasMetadataBase,
+                0,
+                sink,
+                index);
+        }
+
         index = index + 1;
         remaining = remaining - 1;
     }
@@ -374,27 +408,34 @@ internal fn MemoryStatus EmitLlvmDirectSwitchLabeledBlockWithRangeFactsAndEnumLa
         try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
     }
 
+    stack mut IrTable<u32[0 max]> valueUseCounts = new();
+    try LlvmBuildDirectSwitchValueUseCounts(instrs, setupFirst, setupCount, scrutineeValue, valueUseCounts);
+
     stack mut u32[0 max] index = setupFirst;
     stack mut u32[0 max] remaining = setupCount;
     while willexit (remaining > 0)
     {
-        try EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
-            instrs,
-            funcTailFlags,
-            functionEffectFacts,
-            functionCallContractFacts,
-            functionCallingConventionFacts,
-            paramFacts,
-            valueFacts,
-            globalFacts,
-            functionReturnFacts,
-            enumLayoutFacts,
-            rangeMetadata,
-            separateStorageFacts,
-            scopedNoAliasMetadataBase,
-            0,
-            sink,
-            index);
+        if (LlvmInstructionShouldEmitWithUseCounts(instrs, valueUseCounts, index))
+        {
+            try EmitLlvmInstructionWithRangeFactsAndEnumLayouts(
+                instrs,
+                funcTailFlags,
+                functionEffectFacts,
+                functionCallContractFacts,
+                functionCallingConventionFacts,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                enumLayoutFacts,
+                rangeMetadata,
+                separateStorageFacts,
+                scopedNoAliasMetadataBase,
+                0,
+                sink,
+                index);
+        }
+
         index = index + 1;
         remaining = remaining - 1;
     }

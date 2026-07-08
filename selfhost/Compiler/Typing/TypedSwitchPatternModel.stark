@@ -1,0 +1,862 @@
+import System.Memory
+module Compiler.Typing.TypedSwitchPatternModel
+
+public enum TypedSwitchPatternKind
+{
+    Discard,
+    Literal,
+    Range,
+    Capture,
+    Aggregate,
+    EnumAggregate,
+    List,
+    Unknown,
+}
+
+public inline finite law bool TypedSwitchPatternKindIsKnown(TypedSwitchPatternKind kind)
+{
+    return kind == TypedSwitchPatternKind.Discard
+        || kind == TypedSwitchPatternKind.Literal
+        || kind == TypedSwitchPatternKind.Range
+        || kind == TypedSwitchPatternKind.Capture
+        || kind == TypedSwitchPatternKind.Aggregate
+        || kind == TypedSwitchPatternKind.EnumAggregate
+        || kind == TypedSwitchPatternKind.List;
+}
+
+public inline finite law bool TypedSwitchPatternKindIsNestedShape(TypedSwitchPatternKind kind)
+{
+    return kind == TypedSwitchPatternKind.Aggregate
+        || kind == TypedSwitchPatternKind.EnumAggregate
+        || kind == TypedSwitchPatternKind.List;
+}
+
+public struct TypedSwitchAggregatePatternTable
+{
+    internal dynamic u32[0 max] PatternStartTokens;
+    internal dynamic u32[0 max] PatternEndTokens;
+    internal dynamic u32[0 max] OwnerTypeHeadTokens;
+    internal dynamic u32[0 max] OwnerTypePrimaryTokens;
+    internal dynamic u32[0 max] OwnerTypeStartTokens;
+    internal dynamic u32[0 max] OwnerTypeEndTokens;
+    internal dynamic u32[0 max] EnumVariantOrdinalsPlusOne;
+    internal dynamic u32[0 max] WholeCaptureNameTokens;
+    internal dynamic u32[0 max] MemberPatternStarts;
+    internal dynamic u32[0 max] MemberPatternCounts;
+
+    TypedSwitchAggregatePatternTable()
+    {
+        self.PatternStartTokens = new();
+        self.PatternEndTokens = new();
+        self.OwnerTypeHeadTokens = new();
+        self.OwnerTypePrimaryTokens = new();
+        self.OwnerTypeStartTokens = new();
+        self.OwnerTypeEndTokens = new();
+        self.EnumVariantOrdinalsPlusOne = new();
+        self.WholeCaptureNameTokens = new();
+        self.MemberPatternStarts = new();
+        self.MemberPatternCounts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedSwitchAggregatePatternTable self)
+    {
+        return self.PatternStartTokens.Length;
+    }
+
+    public inline finite law bool ContainsRow(borrow TypedSwitchAggregatePatternTable self, u32[0 max] row)
+    {
+        return row != 0 && (u64[0 2 ** 63 - 1])row <= self.Count();
+    }
+
+    public law u32[0 max] PatternStartTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PatternStartTokens.Length)
+        {
+            token = self.PatternStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] PatternEndTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PatternEndTokens.Length)
+        {
+            token = self.PatternEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OwnerTypeHeadTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerTypeHeadTokens.Length)
+        {
+            token = self.OwnerTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OwnerTypePrimaryTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerTypePrimaryTokens.Length)
+        {
+            token = self.OwnerTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OwnerTypeStartTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerTypeStartTokens.Length)
+        {
+            token = self.OwnerTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] OwnerTypeEndTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.OwnerTypeEndTokens.Length)
+        {
+            token = self.OwnerTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EnumVariantOrdinalPlusOneAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] value = 0;
+        if (index < self.EnumVariantOrdinalsPlusOne.Length)
+        {
+            value = self.EnumVariantOrdinalsPlusOne[index];
+        }
+
+        return value;
+    }
+
+    public law bool HasEnumVariantAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.EnumVariantOrdinalPlusOneAt(index) != 0;
+    }
+
+    public law u32[0 max] EnumVariantOrdinalAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack u32[0 max] ordinalPlusOne = self.EnumVariantOrdinalPlusOneAt(index);
+        if (ordinalPlusOne == 0)
+        {
+            return 0;
+        }
+
+        return ordinalPlusOne - 1;
+    }
+
+    public law u32[0 max] WholeCaptureNameTokenAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.WholeCaptureNameTokens.Length)
+        {
+            token = self.WholeCaptureNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] MemberPatternStartAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] row = 0;
+        if (index < self.MemberPatternStarts.Length)
+        {
+            row = self.MemberPatternStarts[index];
+        }
+
+        return row;
+    }
+
+    public law u32[0 max] MemberPatternCountAt(borrow TypedSwitchAggregatePatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.MemberPatternCounts.Length)
+        {
+            count = self.MemberPatternCounts[index];
+        }
+
+        return count;
+    }
+
+    public fn System.Memory.MemoryStatus Append(
+        mut borrow TypedSwitchAggregatePatternTable self,
+        u32[0 max] patternStartToken,
+        u32[0 max] patternEndToken,
+        u32[0 max] ownerTypeHeadToken,
+        u32[0 max] ownerTypePrimaryToken,
+        u32[0 max] ownerTypeStartToken,
+        u32[0 max] ownerTypeEndToken,
+        u32[0 max] enumVariantOrdinalPlusOne,
+        u32[0 max] wholeCaptureNameToken,
+        u32[0 max] memberPatternStart,
+        u32[0 max] memberPatternCount,
+        out u32[0 max] row)
+    {
+        row = 0;
+        if (!self.PatternStartTokens.TryReserve(1)
+            || !self.PatternEndTokens.TryReserve(1)
+            || !self.OwnerTypeHeadTokens.TryReserve(1)
+            || !self.OwnerTypePrimaryTokens.TryReserve(1)
+            || !self.OwnerTypeStartTokens.TryReserve(1)
+            || !self.OwnerTypeEndTokens.TryReserve(1)
+            || !self.EnumVariantOrdinalsPlusOne.TryReserve(1)
+            || !self.WholeCaptureNameTokens.TryReserve(1)
+            || !self.MemberPatternStarts.TryReserve(1)
+            || !self.MemberPatternCounts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        row = (u32[0 max])(self.Count() + 1);
+        init self.PatternStartTokens[self.PatternStartTokens.Length] = patternStartToken;
+        init self.PatternEndTokens[self.PatternEndTokens.Length] = patternEndToken;
+        init self.OwnerTypeHeadTokens[self.OwnerTypeHeadTokens.Length] = ownerTypeHeadToken;
+        init self.OwnerTypePrimaryTokens[self.OwnerTypePrimaryTokens.Length] = ownerTypePrimaryToken;
+        init self.OwnerTypeStartTokens[self.OwnerTypeStartTokens.Length] = ownerTypeStartToken;
+        init self.OwnerTypeEndTokens[self.OwnerTypeEndTokens.Length] = ownerTypeEndToken;
+        init self.EnumVariantOrdinalsPlusOne[self.EnumVariantOrdinalsPlusOne.Length] = enumVariantOrdinalPlusOne;
+        init self.WholeCaptureNameTokens[self.WholeCaptureNameTokens.Length] = wholeCaptureNameToken;
+        init self.MemberPatternStarts[self.MemberPatternStarts.Length] = memberPatternStart;
+        init self.MemberPatternCounts[self.MemberPatternCounts.Length] = memberPatternCount;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal finite void SetMemberPatternSpanAt(
+        mut borrow TypedSwitchAggregatePatternTable self,
+        u32[0 max] row,
+        u32[0 max] memberPatternStart,
+        u32[0 max] memberPatternCount)
+    {
+        if (!self.ContainsRow(row))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(row - 1);
+        unsafe
+        {
+            self.MemberPatternStarts[index] = memberPatternStart;
+            self.MemberPatternCounts[index] = memberPatternCount;
+        }
+
+        return;
+    }
+}
+
+public struct TypedSwitchListPatternTable
+{
+    internal dynamic u32[0 max] PatternStartTokens;
+    internal dynamic u32[0 max] PatternEndTokens;
+    internal dynamic u32[0 max] ListTypeHeadTokens;
+    internal dynamic u32[0 max] ListTypePrimaryTokens;
+    internal dynamic u32[0 max] ListTypeStartTokens;
+    internal dynamic u32[0 max] ListTypeEndTokens;
+    internal dynamic u32[0 max] ElementTypeHeadTokens;
+    internal dynamic u32[0 max] ElementTypePrimaryTokens;
+    internal dynamic u32[0 max] ElementTypeStartTokens;
+    internal dynamic u32[0 max] ElementTypeEndTokens;
+    internal dynamic bool HasFixedLengths;
+    internal dynamic u32[0 max] FixedLengths;
+    internal dynamic u32[0 max] ElementPatternStarts;
+    internal dynamic u32[0 max] ElementPatternCounts;
+
+    TypedSwitchListPatternTable()
+    {
+        self.PatternStartTokens = new();
+        self.PatternEndTokens = new();
+        self.ListTypeHeadTokens = new();
+        self.ListTypePrimaryTokens = new();
+        self.ListTypeStartTokens = new();
+        self.ListTypeEndTokens = new();
+        self.ElementTypeHeadTokens = new();
+        self.ElementTypePrimaryTokens = new();
+        self.ElementTypeStartTokens = new();
+        self.ElementTypeEndTokens = new();
+        self.HasFixedLengths = new();
+        self.FixedLengths = new();
+        self.ElementPatternStarts = new();
+        self.ElementPatternCounts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedSwitchListPatternTable self)
+    {
+        return self.PatternStartTokens.Length;
+    }
+
+    public inline finite law bool ContainsRow(borrow TypedSwitchListPatternTable self, u32[0 max] row)
+    {
+        return row != 0 && (u64[0 2 ** 63 - 1])row <= self.Count();
+    }
+
+    public law u32[0 max] PatternStartTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PatternStartTokens.Length)
+        {
+            token = self.PatternStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] PatternEndTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PatternEndTokens.Length)
+        {
+            token = self.PatternEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ListTypeHeadTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ListTypeHeadTokens.Length)
+        {
+            token = self.ListTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ListTypePrimaryTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ListTypePrimaryTokens.Length)
+        {
+            token = self.ListTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ListTypeStartTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ListTypeStartTokens.Length)
+        {
+            token = self.ListTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ListTypeEndTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ListTypeEndTokens.Length)
+        {
+            token = self.ListTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementTypeHeadTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementTypeHeadTokens.Length)
+        {
+            token = self.ElementTypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementTypePrimaryTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementTypePrimaryTokens.Length)
+        {
+            token = self.ElementTypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementTypeStartTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementTypeStartTokens.Length)
+        {
+            token = self.ElementTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ElementTypeEndTokenAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ElementTypeEndTokens.Length)
+        {
+            token = self.ElementTypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law bool HasFixedLengthAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut bool hasLength = false;
+        if (index < self.HasFixedLengths.Length)
+        {
+            hasLength = self.HasFixedLengths[index];
+        }
+
+        return hasLength;
+    }
+
+    public law u32[0 max] FixedLengthAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] length = 0;
+        if (index < self.FixedLengths.Length)
+        {
+            length = self.FixedLengths[index];
+        }
+
+        return length;
+    }
+
+    public law u32[0 max] ElementPatternStartAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] row = 0;
+        if (index < self.ElementPatternStarts.Length)
+        {
+            row = self.ElementPatternStarts[index];
+        }
+
+        return row;
+    }
+
+    public law u32[0 max] ElementPatternCountAt(borrow TypedSwitchListPatternTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ElementPatternCounts.Length)
+        {
+            count = self.ElementPatternCounts[index];
+        }
+
+        return count;
+    }
+
+    public fn System.Memory.MemoryStatus Append(
+        mut borrow TypedSwitchListPatternTable self,
+        u32[0 max] patternStartToken,
+        u32[0 max] patternEndToken,
+        u32[0 max] listTypeHeadToken,
+        u32[0 max] listTypePrimaryToken,
+        u32[0 max] listTypeStartToken,
+        u32[0 max] listTypeEndToken,
+        u32[0 max] elementTypeHeadToken,
+        u32[0 max] elementTypePrimaryToken,
+        u32[0 max] elementTypeStartToken,
+        u32[0 max] elementTypeEndToken,
+        bool hasFixedLength,
+        u32[0 max] fixedLength,
+        u32[0 max] elementPatternStart,
+        u32[0 max] elementPatternCount,
+        out u32[0 max] row)
+    {
+        row = 0;
+        if (!self.PatternStartTokens.TryReserve(1)
+            || !self.PatternEndTokens.TryReserve(1)
+            || !self.ListTypeHeadTokens.TryReserve(1)
+            || !self.ListTypePrimaryTokens.TryReserve(1)
+            || !self.ListTypeStartTokens.TryReserve(1)
+            || !self.ListTypeEndTokens.TryReserve(1)
+            || !self.ElementTypeHeadTokens.TryReserve(1)
+            || !self.ElementTypePrimaryTokens.TryReserve(1)
+            || !self.ElementTypeStartTokens.TryReserve(1)
+            || !self.ElementTypeEndTokens.TryReserve(1)
+            || !self.HasFixedLengths.TryReserve(1)
+            || !self.FixedLengths.TryReserve(1)
+            || !self.ElementPatternStarts.TryReserve(1)
+            || !self.ElementPatternCounts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        row = (u32[0 max])(self.Count() + 1);
+        init self.PatternStartTokens[self.PatternStartTokens.Length] = patternStartToken;
+        init self.PatternEndTokens[self.PatternEndTokens.Length] = patternEndToken;
+        init self.ListTypeHeadTokens[self.ListTypeHeadTokens.Length] = listTypeHeadToken;
+        init self.ListTypePrimaryTokens[self.ListTypePrimaryTokens.Length] = listTypePrimaryToken;
+        init self.ListTypeStartTokens[self.ListTypeStartTokens.Length] = listTypeStartToken;
+        init self.ListTypeEndTokens[self.ListTypeEndTokens.Length] = listTypeEndToken;
+        init self.ElementTypeHeadTokens[self.ElementTypeHeadTokens.Length] = elementTypeHeadToken;
+        init self.ElementTypePrimaryTokens[self.ElementTypePrimaryTokens.Length] = elementTypePrimaryToken;
+        init self.ElementTypeStartTokens[self.ElementTypeStartTokens.Length] = elementTypeStartToken;
+        init self.ElementTypeEndTokens[self.ElementTypeEndTokens.Length] = elementTypeEndToken;
+        init self.HasFixedLengths[self.HasFixedLengths.Length] = hasFixedLength;
+        init self.FixedLengths[self.FixedLengths.Length] = fixedLength;
+        init self.ElementPatternStarts[self.ElementPatternStarts.Length] = elementPatternStart;
+        init self.ElementPatternCounts[self.ElementPatternCounts.Length] = elementPatternCount;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal finite void SetElementPatternSpanAt(
+        mut borrow TypedSwitchListPatternTable self,
+        u32[0 max] row,
+        u32[0 max] elementPatternStart,
+        u32[0 max] elementPatternCount)
+    {
+        if (!self.ContainsRow(row))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(row - 1);
+        unsafe
+        {
+            self.ElementPatternStarts[index] = elementPatternStart;
+            self.ElementPatternCounts[index] = elementPatternCount;
+        }
+
+        return;
+    }
+}
+
+public struct TypedSwitchPatternMemberTable
+{
+    internal dynamic u32[0 max] MemberOrdinals;
+    internal dynamic TypedSwitchPatternKind Kinds;
+    internal dynamic u32[0 max] PatternStartTokens;
+    internal dynamic u32[0 max] PatternEndTokens;
+    internal dynamic u32[0 max] TypeHeadTokens;
+    internal dynamic u32[0 max] TypePrimaryTokens;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
+    internal dynamic u32[0 max] LiteralTokens;
+    internal dynamic u32[0 max] RangeStartTokens;
+    internal dynamic u32[0 max] RangeEndTokens;
+    internal dynamic u32[0 max] CaptureNameTokens;
+    internal dynamic u32[0 max] NestedAggregatePatternRows;
+    internal dynamic u32[0 max] NestedListPatternRows;
+
+    TypedSwitchPatternMemberTable()
+    {
+        self.MemberOrdinals = new();
+        self.Kinds = new();
+        self.PatternStartTokens = new();
+        self.PatternEndTokens = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
+        self.LiteralTokens = new();
+        self.RangeStartTokens = new();
+        self.RangeEndTokens = new();
+        self.CaptureNameTokens = new();
+        self.NestedAggregatePatternRows = new();
+        self.NestedListPatternRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypedSwitchPatternMemberTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public inline finite law bool ContainsRow(borrow TypedSwitchPatternMemberTable self, u32[0 max] row)
+    {
+        return row != 0 && (u64[0 2 ** 63 - 1])row <= self.Count();
+    }
+
+    public law u32[0 max] MemberOrdinalAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] ordinal = 0;
+        if (index < self.MemberOrdinals.Length)
+        {
+            ordinal = self.MemberOrdinals[index];
+        }
+
+        return ordinal;
+    }
+
+    public law TypedSwitchPatternKind KindAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut TypedSwitchPatternKind kind = TypedSwitchPatternKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] PatternStartTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PatternStartTokens.Length)
+        {
+            token = self.PatternStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] PatternEndTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PatternEndTokens.Length)
+        {
+            token = self.PatternEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeHeadTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypePrimaryTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] LiteralTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.LiteralTokens.Length)
+        {
+            token = self.LiteralTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeStartTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeStartTokens.Length)
+        {
+            token = self.RangeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] RangeEndTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.RangeEndTokens.Length)
+        {
+            token = self.RangeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] CaptureNameTokenAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.CaptureNameTokens.Length)
+        {
+            token = self.CaptureNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] NestedAggregatePatternRowAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] row = 0;
+        if (index < self.NestedAggregatePatternRows.Length)
+        {
+            row = self.NestedAggregatePatternRows[index];
+        }
+
+        return row;
+    }
+
+    public law u32[0 max] NestedListPatternRowAt(borrow TypedSwitchPatternMemberTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] row = 0;
+        if (index < self.NestedListPatternRows.Length)
+        {
+            row = self.NestedListPatternRows[index];
+        }
+
+        return row;
+    }
+
+    public fn System.Memory.MemoryStatus Append(
+        mut borrow TypedSwitchPatternMemberTable self,
+        u32[0 max] memberOrdinal,
+        TypedSwitchPatternKind kind,
+        u32[0 max] patternStartToken,
+        u32[0 max] patternEndToken,
+        u32[0 max] typeHeadToken,
+        u32[0 max] typePrimaryToken,
+        u32[0 max] typeStartToken,
+        u32[0 max] typeEndToken,
+        u32[0 max] literalToken,
+        u32[0 max] rangeStartToken,
+        u32[0 max] rangeEndToken,
+        u32[0 max] captureNameToken,
+        u32[0 max] nestedAggregatePatternRow,
+        u32[0 max] nestedListPatternRow,
+        out u32[0 max] row)
+    {
+        row = 0;
+        if (!self.MemberOrdinals.TryReserve(1)
+            || !self.Kinds.TryReserve(1)
+            || !self.PatternStartTokens.TryReserve(1)
+            || !self.PatternEndTokens.TryReserve(1)
+            || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
+            || !self.LiteralTokens.TryReserve(1)
+            || !self.RangeStartTokens.TryReserve(1)
+            || !self.RangeEndTokens.TryReserve(1)
+            || !self.CaptureNameTokens.TryReserve(1)
+            || !self.NestedAggregatePatternRows.TryReserve(1)
+            || !self.NestedListPatternRows.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        row = (u32[0 max])(self.Count() + 1);
+        init self.MemberOrdinals[self.MemberOrdinals.Length] = memberOrdinal;
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.PatternStartTokens[self.PatternStartTokens.Length] = patternStartToken;
+        init self.PatternEndTokens[self.PatternEndTokens.Length] = patternEndToken;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEndToken;
+        init self.LiteralTokens[self.LiteralTokens.Length] = literalToken;
+        init self.RangeStartTokens[self.RangeStartTokens.Length] = rangeStartToken;
+        init self.RangeEndTokens[self.RangeEndTokens.Length] = rangeEndToken;
+        init self.CaptureNameTokens[self.CaptureNameTokens.Length] = captureNameToken;
+        init self.NestedAggregatePatternRows[self.NestedAggregatePatternRows.Length] = nestedAggregatePatternRow;
+        init self.NestedListPatternRows[self.NestedListPatternRows.Length] = nestedListPatternRow;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal finite void SetKindAt(
+        mut borrow TypedSwitchPatternMemberTable self,
+        u32[0 max] row,
+        TypedSwitchPatternKind kind)
+    {
+        if (!self.ContainsRow(row))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(row - 1);
+        unsafe
+        {
+            self.Kinds[index] = kind;
+        }
+
+        return;
+    }
+
+    internal finite void SetNestedAggregatePatternRowAt(
+        mut borrow TypedSwitchPatternMemberTable self,
+        u32[0 max] row,
+        u32[0 max] nestedAggregatePatternRow)
+    {
+        if (!self.ContainsRow(row))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(row - 1);
+        unsafe
+        {
+            self.NestedAggregatePatternRows[index] = nestedAggregatePatternRow;
+        }
+
+        return;
+    }
+
+    internal finite void SetNestedListPatternRowAt(
+        mut borrow TypedSwitchPatternMemberTable self,
+        u32[0 max] row,
+        u32[0 max] nestedListPatternRow)
+    {
+        if (!self.ContainsRow(row))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(row - 1);
+        unsafe
+        {
+            self.NestedListPatternRows[index] = nestedListPatternRow;
+        }
+
+        return;
+    }
+}
+
+public struct TypedSwitchPatternTables
+{
+    public TypedSwitchAggregatePatternTable AggregatePatterns;
+    public TypedSwitchListPatternTable ListPatterns;
+    public TypedSwitchPatternMemberTable Members;
+
+    TypedSwitchPatternTables()
+    {
+        self.AggregatePatterns = new();
+        self.ListPatterns = new();
+        self.Members = new();
+    }
+}

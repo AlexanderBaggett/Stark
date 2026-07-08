@@ -148,13 +148,93 @@ internal fn MemoryStatus EmitLlvmCallSiteEffectAttributes(borrow IrTable<Functio
     return EmitLlvmFunctionEffectAttributes(FunctionEffectFactsAt(functionEffectFacts, calleeId), sink);
 }
 
+internal enum FunctionVisibilityKind
+{
+    Default,
+    Hidden,
+    Protected,
+}
+
+internal struct FunctionVisibilityFacts
+{
+    FunctionVisibilityKind Visibility;
+
+    FunctionVisibilityFacts()
+    {
+        self.Visibility = FunctionVisibilityKind.Default;
+    }
+}
+
+internal inline finite law FunctionVisibilityFacts FunctionVisibilityFactsOf(FunctionVisibilityKind visibility)
+{
+    return new FunctionVisibilityFacts()
+    {
+        Visibility = visibility
+    };
+}
+
+internal inline finite law FunctionVisibilityKind FunctionVisibilityFactsKind(FunctionVisibilityFacts facts)
+{
+    return facts.Visibility;
+}
+
+internal fn MemoryStatus EmitLlvmDefinitionVisibility(FunctionVisibilityFacts facts, mut borrow OwnedAscii sink)
+{
+    switch (facts.Visibility)
+    {
+        case FunctionVisibilityKind.Default:
+            return MemoryStatus.Ok;
+        case FunctionVisibilityKind.Hidden:
+            try sink.AppendConstAscii(" hidden");
+        case FunctionVisibilityKind.Protected:
+            try sink.AppendConstAscii(" protected");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct FunctionSectionFacts
+{
+    bool HasSection;
+    ascii SectionName;
+
+    FunctionSectionFacts()
+    {
+        self.HasSection = false;
+        self.SectionName = "";
+    }
+}
+
+internal inline finite law FunctionSectionFacts FunctionSectionFactsOf(ascii sectionName)
+{
+    return new FunctionSectionFacts()
+    {
+        HasSection = AsciiLength(sectionName) > 0,
+        SectionName = sectionName
+    };
+}
+
+internal inline finite law bool FunctionSectionFactsHasSection(FunctionSectionFacts facts)
+{
+    return facts.HasSection;
+}
+
+internal inline finite law ascii FunctionSectionFactsName(FunctionSectionFacts facts)
+{
+    return facts.SectionName;
+}
+
 internal struct FunctionLinkageFacts
 {
     bool IsInternal;
+    FunctionVisibilityFacts VisibilityFacts;
+    FunctionSectionFacts SectionFacts;
 
     FunctionLinkageFacts()
     {
         self.IsInternal = false;
+        self.VisibilityFacts = new();
+        self.SectionFacts = new();
     }
 }
 
@@ -176,6 +256,233 @@ internal fn MemoryStatus EmitLlvmDefinitionLinkage(FunctionLinkageFacts facts, m
         try sink.AppendConstAscii(" internal dso_local");
     }
 
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmFunctionSection(FunctionSectionFacts facts, mut borrow OwnedAscii sink)
+{
+    if (!facts.HasSection)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(" section ");
+    try EmitLlvmQuotedSectionName(facts.SectionName, sink);
+    return MemoryStatus.Ok;
+}
+
+public struct GlobalLinkageFacts
+{
+    bool IsInternal;
+
+    GlobalLinkageFacts()
+    {
+        self.IsInternal = false;
+    }
+}
+
+public inline finite law GlobalLinkageFacts GlobalLinkageFactsOf(bool isInternal)
+{
+    return new GlobalLinkageFacts()
+    {
+        IsInternal = isInternal
+    };
+}
+
+public inline finite law bool GlobalLinkageFactsIsInternal(GlobalLinkageFacts facts)
+{
+    return facts.IsInternal;
+}
+
+internal fn GlobalLinkageFacts GlobalLinkageFactsAt(borrow IrTable<GlobalLinkageFacts> facts, u32[0 max] globalId)
+{
+    stack mut GlobalLinkageFacts empty = new();
+    if (globalId != 0 && facts.Contains(globalId))
+    {
+        return facts.Get(globalId);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmGlobalLinkage(GlobalLinkageFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.IsInternal)
+    {
+        try sink.AppendConstAscii(" internal dso_local");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public enum GlobalVisibilityKind
+{
+    Default,
+    Hidden,
+    Protected,
+}
+
+public struct GlobalVisibilityFacts
+{
+    GlobalVisibilityKind Visibility;
+
+    GlobalVisibilityFacts()
+    {
+        self.Visibility = GlobalVisibilityKind.Default;
+    }
+}
+
+public inline finite law GlobalVisibilityFacts GlobalVisibilityFactsOf(GlobalVisibilityKind visibility)
+{
+    return new GlobalVisibilityFacts()
+    {
+        Visibility = visibility
+    };
+}
+
+public inline finite law GlobalVisibilityKind GlobalVisibilityFactsKind(GlobalVisibilityFacts facts)
+{
+    return facts.Visibility;
+}
+
+internal fn GlobalVisibilityFacts GlobalVisibilityFactsAt(borrow IrTable<GlobalVisibilityFacts> facts, u32[0 max] globalId)
+{
+    stack mut GlobalVisibilityFacts empty = new();
+    if (globalId != 0 && facts.Contains(globalId))
+    {
+        return facts.Get(globalId);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmGlobalVisibility(GlobalVisibilityFacts facts, mut borrow OwnedAscii sink)
+{
+    switch (facts.Visibility)
+    {
+        case GlobalVisibilityKind.Default:
+            return MemoryStatus.Ok;
+        case GlobalVisibilityKind.Hidden:
+            try sink.AppendConstAscii(" hidden");
+        case GlobalVisibilityKind.Protected:
+            try sink.AppendConstAscii(" protected");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public struct GlobalSectionFacts
+{
+    bool HasSection;
+    ascii SectionName;
+
+    GlobalSectionFacts()
+    {
+        self.HasSection = false;
+        self.SectionName = "";
+    }
+}
+
+public inline finite law GlobalSectionFacts GlobalSectionFactsOf(ascii sectionName)
+{
+    return new GlobalSectionFacts()
+    {
+        HasSection = AsciiLength(sectionName) > 0,
+        SectionName = sectionName
+    };
+}
+
+public inline finite law bool GlobalSectionFactsHasSection(GlobalSectionFacts facts)
+{
+    return facts.HasSection;
+}
+
+public inline finite law ascii GlobalSectionFactsName(GlobalSectionFacts facts)
+{
+    return facts.SectionName;
+}
+
+internal fn GlobalSectionFacts GlobalSectionFactsAt(borrow IrTable<GlobalSectionFacts> facts, u32[0 max] globalId)
+{
+    stack mut GlobalSectionFacts empty = new();
+    if (globalId != 0 && facts.Contains(globalId))
+    {
+        return facts.Get(globalId);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmQuotedSectionName(ascii sectionName, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] signedLength = AsciiLength(sectionName);
+    if (signedLength < 0)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    unsafe
+    {
+        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+        stack rawptr<i8[min max]> data = AsciiData(sectionName);
+        if (length != 0 && data == null)
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] escapeCount = 0;
+        stack mut u64[0 2 ** 63 - 1] scanIndex = 0;
+        while willexit (scanIndex < length)
+        {
+            stack i8[min max] unit = *(&data[scanIndex]);
+            if (unit == 34 || unit == 92)
+            {
+                escapeCount = escapeCount + 1;
+            }
+
+            scanIndex = scanIndex + 1;
+        }
+
+        if (length > (u64[0 2 ** 63 - 1])(2 ** 63 - 3))
+        {
+            return MemoryStatus.Err(MemoryError.TooLarge);
+        }
+
+        stack u64[0 2 ** 63 - 1] required = length + 2;
+        if (escapeCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+        {
+            return MemoryStatus.Err(MemoryError.TooLarge);
+        }
+
+        try sink.Reserve(required + escapeCount);
+        try sink.AppendByte(34);
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        while willexit (index < length)
+        {
+            stack i8[min max] unit = *(&data[index]);
+            if (unit == 34 || unit == 92)
+            {
+                try sink.AppendByte(92);
+            }
+
+            try sink.AppendByte(unit);
+            index = index + 1;
+        }
+    }
+
+    try sink.AppendByte(34);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmGlobalSection(GlobalSectionFacts facts, mut borrow OwnedAscii sink)
+{
+    if (!facts.HasSection)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(", section ");
+    try EmitLlvmQuotedSectionName(facts.SectionName, sink);
     return MemoryStatus.Ok;
 }
 

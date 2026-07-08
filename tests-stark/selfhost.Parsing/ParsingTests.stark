@@ -3076,6 +3076,75 @@ fn bool SwitchSubjectAndCaseVarBindingParse()
 }
 
 [Fact]
+fn bool StructAggregateSwitchFieldCapturesParseAsPatternBindings()
+{
+    stack ascii source = "fn void f(Box box) { switch (box) { case Box(var value, true) when value > 0: value; case Box { value: var other, flag: false }: other; default: return; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    stack mut bool foundFn = false;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    foundFn = true;
+                }
+            }
+    }
+
+    if (!foundFn)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            if (body.Count() < 8 || body.ItemAt(0).Kind != StatementKind.Switch)
+            {
+                return false;
+            }
+
+            stack u32[0 max] switchScope = body.ScopeIdAt(0);
+            stack mut bool foundValue = false;
+            stack mut bool foundOther = false;
+            stack u64[0 2 ** 63 - 1] count = body.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack StatementItem item = body.ItemAt(index);
+                if (item.Kind == StatementKind.PatternBinding)
+                {
+                    stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])item.NameToken);
+                    if (System.Text.Equals(name, "value") && body.ScopeIdAt(index) != switchScope)
+                    {
+                        foundValue = true;
+                    }
+
+                    if (System.Text.Equals(name, "other") && body.ScopeIdAt(index) != switchScope)
+                    {
+                        foundOther = true;
+                    }
+                }
+            }
+
+            return foundValue && foundOther;
+    }
+}
+
+[Fact]
 fn bool SwitchCasePatternValueReferencesParse()
 {
     stack ascii source = "fn void f(i32 v) { switch (v) { case Missing | Box { Field: Other } | [Third]: } }";

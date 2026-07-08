@@ -24,6 +24,8 @@ import Compiler.Typing.TypedMembers
 import Compiler.Typing.TypedReturnModel
 import Compiler.Typing.TypedReturns
 import Compiler.Typing.TypedSignatures
+import Compiler.Typing.TypedSwitchPatternModel
+import Compiler.Typing.TypedSwitchPatterns
 import System.Memory
 module Compiler.Typing.TypedPipeline
 
@@ -360,6 +362,70 @@ public fn ParseResult<TypedIdentifierExpressionTable> BuildTypedIdentifierExpres
     }
 
     return ParseResult<TypedIdentifierExpressionTable>.Ok(table);
+}
+
+public fn ParseResult<TypedSwitchPatternTables> BuildTypedSwitchPatternTables(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedEnumLayoutTable layouts = new();
+    switch (BuildTypedEnumLayouts(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            layouts = builtLayouts;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedSwitchPatternTables>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    return BuildTypedSwitchPatternTablesFromDependencies(source, stream, declarations, identifiers, layouts, fields);
+}
+
+public fn ParseResult<TypedSwitchAggregatePatternTable> BuildTypedSwitchAggregatePatterns(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
+{
+    stack mut TypedIdentifierExpressionTable identifiers = new();
+    switch (BuildTypedIdentifierExpressions(source, stream, declarations))
+    {
+        case ParseResult<TypedIdentifierExpressionTable>.Err(var identifierError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedIdentifierExpressionTable>.Ok(var builtIdentifiers):
+            identifiers = builtIdentifiers;
+    }
+
+    stack mut TypedEnumLayoutTable layouts = new();
+    switch (BuildTypedEnumLayouts(source, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            layouts = builtLayouts;
+    }
+
+    stack mut TypedFieldDeclarationTable fields = new();
+    switch (BuildTypedStructRecordFields(source, stream, declarations))
+    {
+        case ParseResult<TypedFieldDeclarationTable>.Err(var fieldError):
+            return ParseResult<TypedSwitchAggregatePatternTable>.Err(ParseError.OutOfMemory);
+        case ParseResult<TypedFieldDeclarationTable>.Ok(var builtFields):
+            fields = builtFields;
+    }
+
+    return BuildTypedSwitchAggregatePatternsFromDependenciesWithFields(source, stream, declarations, identifiers, layouts, fields);
 }
 
 public fn ParseResult<TypedCallExpressionTable> BuildTypedCallExpressions(ascii source, borrow TokenStream stream, borrow DeclarationList declarations)
