@@ -14,22 +14,22 @@ import Compiler.Mir.SourceSymbols
 import Compiler.Mir.SourceModuleFacts
 module Compiler.Mir.SourceFunctionContext
 
-internal fn bool BuildFunctionCallContractFacts(
+internal fn bool BuildFunctionCallContractFactsFromParamAbiFacts(
     borrow TokenStream stream,
     borrow i8[min max][] source,
     borrow Compiler.Parsing.FunctionSignature signature,
     u32[0 max] fnKeyword,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    bool returnIsEnumValue,
+    u32[0 max] returnEnumOwnerTypeIndex,
     out FunctionCallContractFacts facts)
 {
     facts = new();
     stack mut FunctionCallContractFacts built = new();
-    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
-    {
-        return false;
-    }
 
     built.ParamCount = (u32[0 max])signature.ParamCount();
+    built.ReturnIsEnumValue = returnIsEnumValue;
+    built.ReturnEnumOwnerTypeIndex = returnEnumOwnerTypeIndex;
     built.Param0 = AbiFactAt(paramAbiFacts, 1);
     built.Param1 = AbiFactAt(paramAbiFacts, 2);
     built.Param2 = AbiFactAt(paramAbiFacts, 3);
@@ -75,6 +75,72 @@ internal fn bool BuildFunctionCallContractFacts(
 
     facts = built;
     return true;
+}
+
+internal fn bool BuildFunctionCallContractFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    out FunctionCallContractFacts facts)
+{
+    facts = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    return BuildFunctionCallContractFactsFromParamAbiFacts(
+        stream,
+        source,
+        signature,
+        fnKeyword,
+        paramAbiFacts,
+        false,
+        0,
+        facts);
+}
+
+internal fn bool BuildFunctionCallContractFactsWithDeclarations(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    out FunctionCallContractFacts facts)
+    where overlap(stream, moduleFacts),
+          overlap(source, moduleFacts)
+{
+    facts = new();
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] returnOwnerDeclarationIndex = 0;
+    stack bool returnIsEnum = TryGetSignatureReturnEnumOwnerDeclarationIndex(
+        stream,
+        source,
+        moduleFacts,
+        signature,
+        returnOwnerDeclarationIndex);
+    stack mut u32[0 max] returnOwnerTypeIndex = 0;
+    if (returnIsEnum)
+    {
+        returnOwnerTypeIndex = returnOwnerDeclarationIndex + 1;
+    }
+
+    return BuildFunctionCallContractFactsFromParamAbiFacts(
+        stream,
+        source,
+        signature,
+        fnKeyword,
+        paramAbiFacts,
+        returnIsEnum,
+        returnOwnerTypeIndex,
+        facts);
 }
 
 // Seeds the symbol table with the parameters declared in a `( … )` signature, in
@@ -1690,6 +1756,8 @@ internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
     borrow Compiler.Parsing.FunctionSignature signature,
     u64[0 2 ** 63 - 1] paramIndex,
     out u32[0 max] ownerDeclarationIndex)
+    where overlap(stream, moduleFacts),
+          overlap(source, moduleFacts)
 {
     ownerDeclarationIndex = 0;
     stack u32[0 max] typeToken = signature.ParamTypeTokenAt(paramIndex);
@@ -1715,6 +1783,82 @@ internal fn bool TryGetSignatureParamEnumOwnerDeclarationIndex(
     }
 
     return false;
+}
+
+internal fn bool TryGetSignatureReturnEnumOwnerDeclarationIndex(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    out u32[0 max] ownerDeclarationIndex)
+    where overlap(stream, moduleFacts),
+          overlap(source, moduleFacts)
+{
+    ownerDeclarationIndex = 0;
+    stack u32[0 max] typeToken = signature.ReturnTypeTokenAt();
+    if (typeToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.Declarations.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack DeclItem item = moduleFacts.Declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Enum
+            && item.NameToken != 0
+            && TokenTextEqualsToken(stream, source, typeToken, item.NameToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+internal fn bool BuildParamAbiFactsWithDeclarations(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    mut borrow IrTable<ParamAbiFacts> paramAbiFacts)
+    where overlap(stream, moduleFacts),
+          overlap(source, moduleFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack mut ParamAbiFacts facts = ClassifySignatureParamAbi(stream, source, signature, i);
+        stack mut u32[0 max] ownerDeclarationIndex = 0;
+        if (!facts.IsPointer
+            && !facts.IsSlice
+            && !facts.IsFixedArray
+            && !facts.IsStructValue
+            && TryGetSignatureParamEnumOwnerDeclarationIndex(stream, source, moduleFacts, signature, i, ownerDeclarationIndex))
+        {
+            facts.IsEnumValue = true;
+            facts.EnumOwnerTypeIndex = ownerDeclarationIndex + 1;
+        }
+
+        if (facts.DeadOnReturn && !ParamAbiFactsIsMemoryBacked(facts))
+        {
+            return false;
+        }
+
+        if (paramAbiFacts.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return DeadOnReturnContractsNamePointerParams(stream, source, signature, paramAbiFacts);
 }
 
 internal fn u32[0 max] LocalTypeCodeForSignatureParamWithDeclarations(
@@ -2098,6 +2242,14 @@ internal fn bool ValidateCallArgumentTypeWithSlices(
         return SourceLocalTypeCodeMatchesStructValueParamAbi(localTypeCode, expected);
     }
 
+    if (expected.IsEnumValue)
+    {
+        stack mut u32[0 max] ownerTypeIndex = 0;
+        return expected.EnumOwnerTypeIndex != 0
+            && TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, argNode, localTypes, ownerTypeIndex)
+            && ownerTypeIndex == expected.EnumOwnerTypeIndex;
+    }
+
     return actual == ExprType.IntType;
 }
 
@@ -2351,6 +2503,8 @@ internal fn bool ValidateModuleCallsForRootWithSlices(
         case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
             return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
+            return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
+        case Compiler.Mir.SourceExpressions.ExprKind.ConversionExpr:
             return ValidateModuleCallsForRootWithSlices(nodes, node.Left, funcParamCounts, functionCallContractFacts, localTypes, sliceDescriptorLocals, callerDistinctStorageFacts);
         case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
             return true;

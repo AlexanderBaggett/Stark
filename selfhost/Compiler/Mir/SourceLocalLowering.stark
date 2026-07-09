@@ -881,6 +881,56 @@ internal fn u64[0 2 ** 63 - 1] FindSelfHostedAggregateBodyFieldStart(borrow Toke
     return (u64[0 2 ** 63 - 1])lbrace + 1;
 }
 
+internal fn bool TrySkipSelfHostedAggregateBodyMemberWithBody(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] limit,
+    out u64[0 2 ** 63 - 1] next)
+{
+    next = start;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < limit)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (depth == 0)
+        {
+            if (kind == TokenKind.Semi || kind == TokenKind.RBrace || kind == TokenKind.EndOfFile)
+            {
+                return false;
+            }
+
+            if (kind == TokenKind.LBrace)
+            {
+                stack u32[0 max] bodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])scan);
+                if (bodyClose == (u32[0 max])scan)
+                {
+                    return false;
+                }
+
+                next = (u64[0 2 ** 63 - 1])bodyClose + 1;
+                return true;
+            }
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
 internal fn u32[0 max] StructKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
 {
     stack u64[0 2 ** 63 - 1] count = stream.Count();
@@ -946,6 +996,13 @@ internal fn u32[0 max] StructKnownByteAlignment(borrow TokenStream stream, borro
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack u32[0 max] align = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
@@ -1046,6 +1103,13 @@ internal fn u32[0 max] StructKnownByteExtent(borrow TokenStream stream, borrow i
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])field);
@@ -1326,6 +1390,13 @@ internal fn bool TryAppendStructValueShapeDirectScalarFields(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack mut u32[0 max] appendedFieldCount = 0;
@@ -1492,6 +1563,13 @@ internal fn bool TryReadStructKnownLlvmScalarShape(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack mut u32[0 max] nextFieldCount = 0;
@@ -1786,6 +1864,13 @@ internal fn u32[0 max] StructKnownByteAlignmentWithEnumsAtDepth(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack mut u32[0 max] fieldSize = 0;
@@ -1901,6 +1986,13 @@ internal fn u32[0 max] StructKnownByteExtentWithEnumsAtDepth(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack mut u32[0 max] fieldSize = 0;
@@ -2222,6 +2314,13 @@ internal fn bool TryFindStructFieldLayout(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
@@ -2349,6 +2448,13 @@ internal fn bool TryFindStructStorageFieldLayoutWithEnums(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
@@ -2483,6 +2589,72 @@ internal fn bool TryResolveConstructedObjectMemberChainStorageField(
         alignBytes = fieldAlignment;
         fieldTypeToken = resolvedFieldTypeToken;
         leafMemberFactRow = stepFactRow;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryResolveConstructedObjectMemberChainStorageFieldFromDeclarations(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] rootTypeToken,
+    u64[0 2 ** 63 - 1] firstFieldToken,
+    out u64[0 2 ** 63 - 1] nextToken,
+    out u32[0 max] byteOffset,
+    out u32[0 max] alignBytes,
+    out u32[0 max] fieldTypeToken)
+{
+    nextToken = firstFieldToken;
+    byteOffset = 0;
+    alignBytes = 0;
+    fieldTypeToken = 0;
+
+    stack mut u32[0 max] currentTypeToken = rootTypeToken;
+    stack mut u64[0 2 ** 63 - 1] fieldToken = firstFieldToken;
+    stack mut u32[0 max] accumulatedOffset = 0;
+    while willexit (stream.KindAt(fieldToken) == TokenKind.Identifier)
+    {
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut u32[0 max] resolvedFieldTypeToken = 0;
+        if (!TryFindStructStorageFieldLayoutWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            currentTypeToken,
+            (u32[0 max])fieldToken,
+            fieldOffset,
+            fieldAlignment,
+            resolvedFieldTypeToken))
+        {
+            return false;
+        }
+
+        if (fieldOffset > 4294967295 - accumulatedOffset)
+        {
+            return false;
+        }
+
+        accumulatedOffset = accumulatedOffset + fieldOffset;
+        stack u64[0 2 ** 63 - 1] afterField = fieldToken + 1;
+        if (stream.KindAt(afterField) == TokenKind.Dot)
+        {
+            if (!SourceFieldTypeTokenIsAggregateStorage(stream, source, moduleFacts, resolvedFieldTypeToken))
+            {
+                return false;
+            }
+
+            currentTypeToken = resolvedFieldTypeToken;
+            fieldToken = afterField + 1;
+            continue;
+        }
+
+        nextToken = afterField;
+        byteOffset = accumulatedOffset;
+        alignBytes = fieldAlignment;
+        fieldTypeToken = resolvedFieldTypeToken;
         return true;
     }
 
@@ -2980,6 +3152,13 @@ internal fn bool TryFindStructFixedArrayElementLayout(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
@@ -3113,6 +3292,13 @@ internal fn bool TryFindStructFixedArrayFieldLayout(
             stack mut u64[0 2 ** 63 - 1] field = FindSelfHostedAggregateBodyFieldStart(stream, scan + 1);
             while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
             {
+                stack mut u64[0 2 ** 63 - 1] memberNext = field;
+                if (TrySkipSelfHostedAggregateBodyMemberWithBody(stream, field, count, memberNext))
+                {
+                    field = memberNext;
+                    continue;
+                }
+
                 if (TokenCanStartSelfHostedType(stream.KindAt(field)))
                 {
                     stack u64[0 2 ** 63 - 1] fieldEnd = FindSelfHostedFieldEnd(stream, field, count);
@@ -3851,6 +4037,16 @@ internal fn bool TryBuildSourceValueFactsForNode(
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
             return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.ConversionExpr:
+            stack mut ValueFacts operandFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, node.Left, sourceValueFacts, operandFacts)
+                || !operandFacts.HasIntegerRange())
+            {
+                return false;
+            }
+
+            facts = operandFacts;
+            return true;
         case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
@@ -3930,6 +4126,60 @@ internal fn bool SourceStoredValueSatisfiesDeclaredFieldRange(
     // over full-width operands always is — keeps the pre-existing width-only
     // semantics; only declared ranges narrower than storage impose the proof.
     return SourceMemberPathFactDeclaredRangeIsFullWidth(moduleFacts.MemberPathFacts, factRowPlusOne);
+}
+
+internal fn bool SourceDeclaredIntegerFieldTypeRangeIsFullWidth(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] fieldTypeToken,
+    ValueFacts declaredFacts)
+{
+    if (!declaredFacts.HasIntegerRange())
+    {
+        return true;
+    }
+
+    stack mut i64[min max] fullLower = 0;
+    stack mut i64[min max] fullUpperInclusive = 0;
+    stack mut i64[min max] fullUpperExclusive = 0;
+    if (!IntegerTypeSignedMinValue(stream, source, fieldTypeToken, fullLower)
+        || !IntegerTypeMaxValue(stream, source, fieldTypeToken, fullUpperInclusive)
+        || !UpperInclusiveToExclusive(fullUpperInclusive, fullUpperExclusive))
+    {
+        return false;
+    }
+
+    return declaredFacts.IntegerRangeLower() == fullLower
+        && declaredFacts.IntegerRangeUpperExclusive() == fullUpperExclusive;
+}
+
+internal fn bool SourceStoredValueSatisfiesDeclaredFieldTypeRange(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] exprRoot,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u32[0 max] fieldTypeToken)
+    where overlap(nodes, sourceValueFacts),
+          overlap(stream, sourceValueFacts),
+          overlap(source, sourceValueFacts)
+{
+    stack mut ValueFacts declaredFacts = new();
+    if (!TryReadIntegerRangeFact(stream, source, fieldTypeToken, declaredFacts)
+        || !declaredFacts.HasIntegerRange())
+    {
+        return true;
+    }
+
+    stack mut ValueFacts storedFacts = new();
+    if (TryBuildSourceValueFactsForNode(nodes, exprRoot, sourceValueFacts, storedFacts)
+        && storedFacts.HasIntegerRange()
+        && IntegerRangeFactsSubsetOf(storedFacts, declaredFacts))
+    {
+        return true;
+    }
+
+    return SourceDeclaredIntegerFieldTypeRangeIsFullWidth(stream, source, fieldTypeToken, declaredFacts);
 }
 
 internal fn bool SourceIndexNodeProvesFixedArrayBounds(
@@ -6517,6 +6767,26 @@ internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
             return rawPointerField;
         }
 
+        stack mut u32[0 max] conversionTypeStart = 0;
+        stack mut u32[0 max] conversionClose = 0;
+        if (TryFindSourceExpressionConversionType(stream, (u32[0 max])cursor, conversionTypeStart, conversionClose))
+        {
+            stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                objectLocals,
+                sliceDescriptorLocals,
+                localTypes,
+                sourceValueFacts,
+                moduleFacts,
+                (u64[0 2 ** 63 - 1])(conversionClose + 1));
+            stack u32[0 max] targetTypeCode = SourceExpressionTypeTokenValueTypeCode(stream, source, conversionTypeStart);
+            return MakeParseResult(MakeConversion(nodes, operand.NodeId, conversionTypeStart, targetTypeCode), operand.Next);
+        }
+
         stack ExprParseResult inner = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
         return MakeParseResult(inner.NodeId, inner.Next + 1);
     }
@@ -7230,6 +7500,207 @@ internal fn bool TryParseStackObjectFieldInitializers(
     return true;
 }
 
+internal fn bool TryFindSelfHostedDefaultConstructorBody(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out u32[0 max] constructorBodyOpen,
+    out u32[0 max] constructorBodyClose)
+{
+    constructorBodyOpen = 0;
+    constructorBodyClose = 0;
+    if (typeToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack i64[min max] bodyOpenSigned = FirstTokenOfKindAfter(stream, TokenKind.LBrace, scan + 1);
+            if (bodyOpenSigned < 0)
+            {
+                return false;
+            }
+
+            stack u32[0 max] bodyOpen = (u32[0 max])bodyOpenSigned;
+            stack u32[0 max] bodyClose = MatchingBraceForMirLowering(stream, bodyOpen);
+            if (bodyClose == bodyOpen)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])bodyOpen + 1;
+            stack u64[0 2 ** 63 - 1] close = (u64[0 2 ** 63 - 1])bodyClose;
+            while willexit (cursor < close)
+            {
+                if (stream.KindAt(cursor) == TokenKind.Identifier
+                    && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])cursor, typeToken)
+                    && stream.KindAt(cursor + 1) == TokenKind.LParen)
+                {
+                    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(cursor + 1));
+                    if (closeParen == (u32[0 max])(cursor + 2)
+                        && stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) == TokenKind.LBrace)
+                    {
+                        stack u32[0 max] candidateOpen = closeParen + 1;
+                        stack u32[0 max] candidateClose = MatchingBraceForMirLowering(stream, candidateOpen);
+                        if (candidateClose == candidateOpen)
+                        {
+                            return false;
+                        }
+
+                        constructorBodyOpen = candidateOpen;
+                        constructorBodyClose = candidateClose;
+                        return true;
+                    }
+                }
+
+                if (stream.KindAt(cursor) == TokenKind.LBrace)
+                {
+                    stack u32[0 max] nestedClose = MatchingBraceForMirLowering(stream, (u32[0 max])cursor);
+                    if (nestedClose == (u32[0 max])cursor)
+                    {
+                        return false;
+                    }
+
+                    cursor = (u64[0 2 ** 63 - 1])nestedClose + 1;
+                    continue;
+                }
+
+                cursor = cursor + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseStackObjectDefaultConstructorInitializers(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u32[0 max] localOrdinal,
+    u32[0 max] paramIndex,
+    MirValueId objectPointer,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<StackObjectFieldInitializer> initializers)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut u32[0 max] constructorBodyOpen = 0;
+    stack mut u32[0 max] constructorBodyClose = 0;
+    if (!TryFindSelfHostedDefaultConstructorBody(stream, source, typeToken, constructorBodyOpen, constructorBodyClose))
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])constructorBodyOpen + 1;
+    stack u64[0 2 ** 63 - 1] close = (u64[0 2 ** 63 - 1])constructorBodyClose;
+    while willexit (cursor < close)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Semi)
+        {
+            cursor = cursor + 1;
+            continue;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, close, statementEnd))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(cursor) != TokenKind.Identifier
+            || !SpanEquals(source, stream.StartAt(cursor), stream.LengthAt(cursor), "self")
+            || stream.KindAt(cursor + 1) != TokenKind.Dot)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] nextToken = cursor;
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut u32[0 max] fieldTypeToken = 0;
+        if (!TryResolveConstructedObjectMemberChainStorageFieldFromDeclarations(
+            stream,
+            source,
+            moduleFacts,
+            typeToken,
+            cursor + 2,
+            nextToken,
+            fieldOffset,
+            fieldAlignment,
+            fieldTypeToken)
+            || stream.KindAt(nextToken) != TokenKind.Assign)
+        {
+            return false;
+        }
+
+        stack mut MirType fieldType = MirType.I64;
+        stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, fieldTypeToken, fieldType, fieldTypeCode))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+        stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            constructedObjectLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            nextToken + 1);
+        if (params.Count() != beforeExpr || expr.NodeId == 0 || expr.Next != statementEnd)
+        {
+            return false;
+        }
+
+        if (!SourceStoredValueSatisfiesDeclaredFieldTypeRange(stream, source, nodes, expr.NodeId, sourceValueFacts, fieldTypeToken)
+            || !FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, expr.NodeId, localTypes))
+        {
+            return false;
+        }
+
+        stack mut StackObjectFieldInitializer initializer = new();
+        initializer.LocalOrdinal = localOrdinal;
+        initializer.ParamIndex = paramIndex;
+        initializer.ObjectPointerValue = objectPointer.Index();
+        initializer.FieldOffset = fieldOffset;
+        initializer.FieldAlignment = fieldAlignment;
+        initializer.FieldType = fieldType;
+        initializer.FieldTypeCode = fieldTypeCode;
+        initializer.ExprRoot = expr.NodeId;
+        stack u32[0 max] added = initializers.Add(initializer);
+        if (added == 0)
+        {
+            return false;
+        }
+
+        cursor = statementEnd + 1;
+    }
+
+    return true;
+}
+
 internal fn bool TryParseStackObjectPositionalRecordConstructorInitializers(
     borrow TokenStream stream,
     borrow i8[min max][] source,
@@ -7492,7 +7963,15 @@ internal fn u32[0 max] LowerEnumStorageInitializersForLocalWithCallContext(
             return cursor;
         }
 
-        stack MirValueId value = LowerExprNodeWithCallContext(nodes, initializer.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+        stack MirValueId value = LowerExprNodeAsTypeWithCallContext(
+            nodes,
+            initializer.ExprRoot,
+            instrs,
+            localTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals,
+            MirType.EnumValue);
         stack MirValueId store = MirStoreEnumPtrAligned(instrs, TypeIdOf(initializer.OwnerTypeIndex), MirValueIdOf(storageValue), value, initializer.FieldAlignment);
         cursor = cursor + 1;
     }
@@ -8113,7 +8592,15 @@ internal fn bool LowerEnumStorageAssignmentWithCallContext(
         return false;
     }
 
-    stack MirValueId value = LowerExprNodeWithCallContext(nodes, assignment.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+    stack MirValueId value = LowerExprNodeAsTypeWithCallContext(
+        nodes,
+        assignment.ExprRoot,
+        instrs,
+        localTypes,
+        localOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        MirType.EnumValue);
     stack MirValueId store = MirStoreEnumPtrAligned(instrs, TypeIdOf(assignment.OwnerTypeIndex), MirValueIdOf(storageValue), value, assignment.FieldAlignment);
     return true;
 }

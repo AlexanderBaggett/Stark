@@ -522,6 +522,7 @@ public enum ExprKind
     AddressOfExpr,
     DerefExpr,
     TryExpr,
+    ConversionExpr,
     EnumVariantExpr,
     EnumPayloadExpr,
     BinaryExpr,
@@ -545,6 +546,10 @@ public struct ExprNode
     // For CallExpr this is the first overflow argument link; for CallArgLinkExpr it is
     // the next overflow argument link. It is 0 for all other node kinds.
     u32[0 max] ExtraArgLink;
+    // For CallExpr this preserves the source value type code inferred from the
+    // callee signature. It defaults to integer and is filled by module lowering
+    // after function call contract facts are known.
+    u32[0 max] ResultTypeCode;
     // Indexed field reads carry whether the source proved a fixed compile-time bound.
     bool IndexHasKnownBounds;
     // Resolved field reads carry the field's declared integer range imported
@@ -566,6 +571,7 @@ public struct ExprNode
         self.Arg3 = 0;
         self.Arg4 = 0;
         self.ExtraArgLink = 0;
+        self.ResultTypeCode = SourceLocalTypeCodeInt();
         self.IndexHasKnownBounds = false;
         self.HasDeclaredRange = false;
         self.DeclaredRangeLower = 0;
@@ -752,6 +758,16 @@ public fn u32[0 max] MakeName(mut borrow IrTable<ExprNode> nodes, u32[0 max] par
     stack mut ExprNode node = new();
     node.Kind = ExprKind.NameExpr;
     node.Left = paramIndex;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeConversion(mut borrow IrTable<ExprNode> nodes, u32[0 max] operandNode, u32[0 max] targetTypeToken, u32[0 max] targetTypeCode)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.ConversionExpr;
+    node.Left = operandNode;
+    node.Right = targetTypeToken;
+    node.ResultTypeCode = targetTypeCode;
     return nodes.Add(node);
 }
 
@@ -1040,6 +1056,23 @@ public fn u32[0 max] MakeCallWithExtra(mut borrow IrTable<ExprNode> nodes, u32[0
 public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4)
 {
     return MakeCallWithExtra(nodes, callee, argCount, arg1, arg2, arg3, arg4, 0);
+}
+
+public fn bool TrySetCallResultTypeCode(mut borrow IrTable<ExprNode> nodes, u32[0 max] nodeId, u32[0 max] typeCode)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack mut ExprNode node = nodes.Get(nodeId);
+    if (node.Kind != ExprKind.CallExpr)
+    {
+        return false;
+    }
+
+    node.ResultTypeCode = typeCode;
+    return nodes.Replace(nodeId, node);
 }
 
 public fn u32[0 max] MakeCallArgLink(mut borrow IrTable<ExprNode> nodes, u32[0 max] argNode, u32[0 max] nextLink)
@@ -1363,6 +1396,23 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
             return ExprType.ErrorType;
         case ExprKind.TryExpr:
             return ExprType.ErrorType;
+        case ExprKind.ConversionExpr:
+            if (node.ResultTypeCode == SourceLocalTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (SourceLocalTypeCodeIsIntegerValue(node.ResultTypeCode))
+            {
+                return ExprType.IntType;
+            }
+
+            if (node.ResultTypeCode == SourceLocalTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
+            return ExprType.ErrorType;
         case ExprKind.EnumVariantExpr:
             return ExprType.EnumType;
         case ExprKind.EnumPayloadExpr:
@@ -1374,6 +1424,21 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
 
             return ExprType.ErrorType;
         case ExprKind.CallExpr:
+            if (SourceLocalTypeCodeIsEnum(node.ResultTypeCode))
+            {
+                return ExprType.EnumType;
+            }
+
+            if (node.ResultTypeCode == SourceLocalTypeCodeBool())
+            {
+                return ExprType.BoolType;
+            }
+
+            if (node.ResultTypeCode == SourceLocalTypeCodePointer())
+            {
+                return ExprType.PtrType;
+            }
+
             return ExprType.IntType;
         case ExprKind.CallArgLinkExpr:
             return ExprType.ErrorType;
@@ -1426,6 +1491,16 @@ internal fn u32[0 max] SourceLocalTypeCodeForNodeWithLocals(
         if (node.Kind == ExprKind.EnumPayloadExpr && node.Arg2 > 0)
         {
             return SourceLocalTypeCodeForEnumOwnerDeclarationIndex(node.Arg2 - 1);
+        }
+
+        if (node.Kind == ExprKind.CallExpr)
+        {
+            return node.ResultTypeCode;
+        }
+
+        if (node.Kind == ExprKind.ConversionExpr)
+        {
+            return node.ResultTypeCode;
         }
 
         if (node.Kind == ExprKind.FieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
@@ -1583,6 +1658,12 @@ public fn bool TryGetSourceExpressionEnumOwnerTypeIndexForNode(
     {
         ownerTypeIndex = node.Arg2;
         return ownerTypeIndex > 0;
+    }
+
+    if (node.Kind == ExprKind.CallExpr && SourceLocalTypeCodeIsEnum(node.ResultTypeCode))
+    {
+        ownerTypeIndex = SourceLocalTypeCodeEnumOwnerDeclarationIndex(node.ResultTypeCode) + 1;
+        return true;
     }
 
     if (node.Kind == ExprKind.FieldExpr && SourceResolvedFieldTypeCodeIsEnum(node.Arg3))
@@ -2446,6 +2527,230 @@ internal fn bool ResolveParamWithMergedRawPointerFactsForAssignedNodes(
     return ResolveParam(params, source, start, length) == expectedParamIndex;
 }
 
+public finite law bool SourceExpressionTypeStartToken(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.IntegerType:
+            return true;
+        case TokenKind.FloatType:
+            return true;
+        case TokenKind.Bool:
+            return true;
+        case TokenKind.Void:
+            return true;
+        case TokenKind.AsciiView:
+            return true;
+        case TokenKind.UnicodeView:
+            return true;
+        case TokenKind.AsciiOwned:
+            return true;
+        case TokenKind.UnicodeOwned:
+            return true;
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
+        case TokenKind.Fnptr:
+            return true;
+        case TokenKind.Closure:
+            return true;
+        case TokenKind.Dyn:
+            return true;
+        case TokenKind.Dynamic:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal finite law bool SourceExpressionConversionTypeQualifier(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Borrow:
+            return true;
+        case TokenKind.Retborrow:
+            return true;
+        case TokenKind.Storeborrow:
+            return true;
+        case TokenKind.Frozen:
+            return true;
+        case TokenKind.Shared:
+            return true;
+        case TokenKind.Out:
+            return true;
+        case TokenKind.Init:
+            return true;
+        case TokenKind.Mut:
+            return true;
+        default:
+            return false;
+    }
+}
+
+public finite law bool SourceExpressionConversionOperandStartToken(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.IntegerLiteral:
+            return true;
+        case TokenKind.FloatLiteral:
+            return true;
+        case TokenKind.StringLiteral:
+            return true;
+        case TokenKind.CharacterLiteral:
+            return true;
+        case TokenKind.True:
+            return true;
+        case TokenKind.False:
+            return true;
+        case TokenKind.Null:
+            return true;
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.Minus:
+            return true;
+        case TokenKind.And:
+            return true;
+        case TokenKind.Star:
+            return true;
+        case TokenKind.Try:
+            return true;
+        case TokenKind.LParen:
+            return true;
+        default:
+            return false;
+    }
+}
+
+public fn u32[0 max] SourceExpressionTypeTokenValueTypeCode(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return SourceLocalTypeCodeBool();
+    }
+
+    if (kind == TokenKind.Rawptr || kind == TokenKind.Rawmutptr)
+    {
+        return SourceLocalTypeCodePointer();
+    }
+
+    if (kind != TokenKind.IntegerType)
+    {
+        return SourceLocalTypeCodeNonValue();
+    }
+
+    stack u32[0 max] bits = IntegerTypeBitWidth(stream, source, typeToken);
+    switch (bits)
+    {
+        case 8:
+            return SourceLocalTypeCodeI8();
+        case 16:
+            return SourceLocalTypeCodeI16();
+        case 32:
+            return SourceLocalTypeCodeI32();
+        case 64:
+            return SourceLocalTypeCodeI64();
+        default:
+            return SourceLocalTypeCodeNonValue();
+    }
+}
+
+internal fn u32[0 max] SourceExpressionConversionTypePrimaryToken(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (SourceExpressionTypeStartToken(kind))
+        {
+            return scan;
+        }
+
+        if (!SourceExpressionConversionTypeQualifier(kind))
+        {
+            return 0;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+public fn bool TryFindSourceExpressionConversionType(borrow TokenStream stream, u32[0 max] pos, out u32[0 max] typeStart, out u32[0 max] closeParen)
+{
+    typeStart = 0;
+    closeParen = pos;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])pos) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] targetStart = pos + 1;
+    stack u32[0 max] primary = SourceExpressionConversionTypePrimaryToken(stream, targetStart, (u32[0 max])stream.Count());
+    if (primary == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = targetStart;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = guard - 1;
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return false;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            if (depth == 0)
+            {
+                stack TokenKind operandKind = stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1));
+                stack TokenKind primaryKind = stream.KindAt((u64[0 2 ** 63 - 1])primary);
+                if (primaryKind == TokenKind.Identifier && operandKind == TokenKind.LParen)
+                {
+                    return false;
+                }
+
+                if (!SourceExpressionConversionOperandStartToken(operandKind))
+                {
+                    return false;
+                }
+
+                typeStart = primary;
+                closeParen = scan;
+                return true;
+            }
+
+            depth = depth - 1;
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
 internal fn bool CopyParamNamePrefix(borrow IrTable<ParamName> sourceParams, u64[0 2 ** 63 - 1] count, mut borrow IrTable<ParamName> destination)
 {
     stack mut u64[0 2 ** 63 - 1] i = 0;
@@ -2640,6 +2945,15 @@ internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[
 
     if (k == TokenKind.LParen)
     {
+        stack mut u32[0 max] conversionTypeStart = 0;
+        stack mut u32[0 max] conversionClose = 0;
+        if (TryFindSourceExpressionConversionType(stream, (u32[0 max])cursor, conversionTypeStart, conversionClose))
+        {
+            stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, (u64[0 2 ** 63 - 1])(conversionClose + 1));
+            stack u32[0 max] targetTypeCode = SourceExpressionTypeTokenValueTypeCode(stream, source, conversionTypeStart);
+            return MakeParseResult(MakeConversion(nodes, operand.NodeId, conversionTypeStart, targetTypeCode), operand.Next);
+        }
+
         // Parenthesized sub-expression: parse it, then skip the matching `)`.
         stack ExprParseResult inner = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 1);
         return MakeParseResult(inner.NodeId, inner.Next + 1);

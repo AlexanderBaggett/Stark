@@ -696,6 +696,106 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void StdLibSourceListNestedThroughExportedGenericWrapperEmitsConcreteLayout()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-list-nested-element-");
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(tempDirectory.FullName, "Lib"));
+            File.WriteAllText(
+                Path.Combine(tempDirectory.FullName, "Lib.stark"),
+                """
+                export import Lib.Nested
+                export import Lib.Tables
+                module Lib
+                """);
+
+            var nestedPath = Path.Combine(tempDirectory.FullName, "Lib", "Nested.stark");
+            File.WriteAllText(
+                nestedPath,
+                """
+                module Lib.Nested
+
+                public struct Payload
+                {
+                    u32[0 max] Value;
+                }
+                """);
+
+            File.WriteAllText(
+                Path.Combine(tempDirectory.FullName, "Lib", "Tables.stark"),
+                """
+                import System.Collections
+                module Lib.Tables
+
+                public struct Table<T>
+                {
+                    internal System.Collections.List<T> Rows;
+
+                    Table()
+                    {
+                        self.Rows = new();
+                    }
+
+                    public inline finite law u64[0 2 ** 63 - 1] Count(borrow Table<T> self)
+                    {
+                        return self.Rows.Count();
+                    }
+                }
+                """);
+
+            var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn u64[0 2 ** 63 - 1] CountPayloads()
+                    {
+                        stack mut Table<Payload> values = new();
+                        return values.Count();
+                    }
+                    """,
+                    appPath),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver([tempDirectory.FullName, sourceRoot])));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.Contains("%Lib_Nested_Payload = type { i32 }", llvm.Text, StringComparison.Ordinal);
+            Assert.Contains(
+                "%Lib_Tables_Table_Lib_Nested_Payload_ = type { %System_Collections_List_Lib_Nested_Payload_ }",
+                llvm.Text,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "%System_Collections_List_Lib_Nested_Payload_ = type { { ptr, i64, i64 } }",
+                llvm.Text,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "%System_Collections_List_Lib_Nested_Payload_ = type { }",
+                llvm.Text,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void StdLibSourcePromotedListLowersThroughDynamicStorage()
     {
         var repositoryRoot = FindRepositoryRoot();

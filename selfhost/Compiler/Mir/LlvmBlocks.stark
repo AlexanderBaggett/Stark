@@ -118,11 +118,61 @@ internal fn MemoryStatus EmitLlvmValueTypeNameWithEnumLayouts(
     u32[0 max] valueIndex,
     mut borrow OwnedAscii sink)
 {
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    return EmitLlvmValueTypeNameWithEnumLayoutsAndCallContracts(
+        instrs,
+        noFunctionCallContractFacts,
+        enumLayoutFacts,
+        valueIndex,
+        sink);
+}
+
+internal fn bool TryGetMirEnumValueOwnerTypeWithCallContracts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u32[0 max] valueIndex,
+    out TypeId ownerType)
+{
+    ownerType = TypeIdOf(0);
+    if (TryGetMirEnumValueOwnerType(instrs, valueIndex, ownerType))
+    {
+        return true;
+    }
+
+    if (!instrs.Contains(valueIndex))
+    {
+        return false;
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    if (instr.Opcode() == MirOp.Call
+        || instr.Opcode() == MirOp.CallWide
+        || instr.Opcode() == MirOp.TailCall
+        || instr.Opcode() == MirOp.TailCallWide)
+    {
+        stack FunctionCallContractFacts calleeFacts = FunctionCallContractFactsAt(functionCallContractFacts, (u32[0 max])instr.Immediate());
+        if (calleeFacts.ReturnIsEnumValue && calleeFacts.ReturnEnumOwnerTypeIndex != 0)
+        {
+            ownerType = TypeIdOf(calleeFacts.ReturnEnumOwnerTypeIndex);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmValueTypeNameWithEnumLayoutsAndCallContracts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    u32[0 max] valueIndex,
+    mut borrow OwnedAscii sink)
+{
     stack MirType valueType = MirValueType(instrs, valueIndex);
     if (valueType == MirType.EnumValue)
     {
         stack mut TypeId ownerType = TypeIdOf(0);
-        if (!TryGetMirEnumValueOwnerType(instrs, valueIndex, ownerType))
+        if (!TryGetMirEnumValueOwnerTypeWithCallContracts(instrs, functionCallContractFacts, valueIndex, ownerType))
         {
             return MemoryStatus.Err(MemoryError.InvalidLayout);
         }
@@ -145,12 +195,35 @@ internal fn MemoryStatus EmitLlvmReturnTypeNameWithEnumLayouts(
     u32[0 max] blockIndex,
     mut borrow OwnedAscii sink)
 {
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    return EmitLlvmReturnTypeNameWithEnumLayoutsAndCallContracts(
+        instrs,
+        blocks,
+        noFunctionCallContractFacts,
+        enumLayoutFacts,
+        blockIndex,
+        sink);
+}
+
+internal fn MemoryStatus EmitLlvmReturnTypeNameWithEnumLayoutsAndCallContracts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    u32[0 max] blockIndex,
+    mut borrow OwnedAscii sink)
+{
     if (blocks.Contains(blockIndex))
     {
         stack MirBlock block = blocks.Get(blockIndex);
         if (block.Terminator() == MirTermKind.Return)
         {
-            return EmitLlvmValueTypeNameWithEnumLayouts(instrs, enumLayoutFacts, block.Slot0Index(), sink);
+            return EmitLlvmValueTypeNameWithEnumLayoutsAndCallContracts(instrs, functionCallContractFacts, enumLayoutFacts, block.Slot0Index(), sink);
+        }
+
+        if (block.Terminator() == MirTermKind.TailCall)
+        {
+            return EmitLlvmValueTypeNameWithEnumLayoutsAndCallContracts(instrs, functionCallContractFacts, enumLayoutFacts, block.Slot0Index(), sink);
         }
     }
 
@@ -167,6 +240,24 @@ internal fn MemoryStatus EmitLlvmRangesReturnTypeNameWithEnumLayouts(
     borrow IrTable<BlockEmit> ranges,
     mut borrow OwnedAscii sink)
 {
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    return EmitLlvmRangesReturnTypeNameWithEnumLayoutsAndCallContracts(
+        instrs,
+        blocks,
+        noFunctionCallContractFacts,
+        enumLayoutFacts,
+        ranges,
+        sink);
+}
+
+internal fn MemoryStatus EmitLlvmRangesReturnTypeNameWithEnumLayoutsAndCallContracts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    borrow IrTable<BlockEmit> ranges,
+    mut borrow OwnedAscii sink)
+{
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
@@ -174,7 +265,7 @@ internal fn MemoryStatus EmitLlvmRangesReturnTypeNameWithEnumLayouts(
         stack u32[0 max] blockIndex = ranges.Get(i).BlockIndex;
         if (MirBlockHasScalarReturnType(blocks, blockIndex))
         {
-            return EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, blockIndex, sink);
+            return EmitLlvmReturnTypeNameWithEnumLayoutsAndCallContracts(instrs, blocks, functionCallContractFacts, enumLayoutFacts, blockIndex, sink);
         }
 
         i = i + 1;
@@ -525,7 +616,7 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
     {
         case MirTermKind.Return:
             try sink.AppendConstAscii("  ret ");
-            try EmitLlvmValueTypeNameWithEnumLayouts(instrs, enumLayoutFacts, blk.Slot0Index(), sink);
+            try EmitLlvmValueTypeNameWithEnumLayoutsAndCallContracts(instrs, functionCallContractFacts, enumLayoutFacts, blk.Slot0Index(), sink);
             try sink.AppendConstAscii(" ");
             try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
             try sink.AppendConstAscii("\n");
@@ -569,31 +660,33 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, blk.Slot0Index());
             try sink.AppendConstAscii(" = musttail call tailcc ");
-            try EmitLlvmTypeName(tailCall.ResultType(), sink);
+            try EmitLlvmCallReturnTypeWithEnumLayouts(calleeFacts, tailCall.ResultType(), enumLayoutFacts, sink);
             try sink.AppendConstAscii(" @f");
             try sink.AppendI64(tailCall.Immediate());
             if (tailCall.Opcode() == MirOp.TailCallWide)
             {
-                try EmitLlvmCallArgsWithRangeAndAbiFactsFromLinks(
+                try EmitLlvmCallArgsWithRangeAndAbiFactsFromLinksAndEnumLayouts(
                     instrs,
                     paramFacts,
                     valueFacts,
                     globalFacts,
                     functionReturnFacts,
                     calleeFacts,
+                    enumLayoutFacts,
                     sink,
                     tailCall.OperandAIndex(),
                     tailCall.OperandBIndex());
             }
             else
             {
-                try EmitLlvmCallArgsWithRangeAndAbiFacts(
+                try EmitLlvmCallArgsWithRangeAndAbiFactsAndEnumLayouts(
                     instrs,
                     paramFacts,
                     valueFacts,
                     globalFacts,
                     functionReturnFacts,
                     calleeFacts,
+                    enumLayoutFacts,
                     sink,
                     tailCall.OperandAIndex(),
                     tailCall.OperandBIndex(),
@@ -611,7 +704,7 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
                 blk.Slot0Index(),
                 sink);
             try sink.AppendConstAscii("\n  ret ");
-            try EmitLlvmTypeName(tailCall.ResultType(), sink);
+            try EmitLlvmCallReturnTypeWithEnumLayouts(calleeFacts, tailCall.ResultType(), enumLayoutFacts, sink);
             try sink.AppendConstAscii(" ");
             try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
             try sink.AppendConstAscii("\n");

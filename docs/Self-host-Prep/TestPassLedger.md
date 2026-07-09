@@ -17,6 +17,763 @@ diagnostics that previously only surfaced on executable builds.
 
 ---
 
+## 2026-07-09 Host Expectation Re-Aim Slice
+
+- Re-aimed `ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls` to assert the strengthened imported asm call-site facts: the literal argument keeps its exact `range(i64 2, 3)` and the raw pointer argument keeps `readonly`.
+- Re-aimed `BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributes` to assert the caller's tighter `u8[4 10]` count range survives both direct and function-pointer calls alongside the nonnull/dereferenceable/readonly pointer facts.
+- Re-aimed the two copied `System.Text.stark` runtime conversion integration tests to accept only the expected STK4122 recursive-call warning family and the clean `Summary: 0 errors, 6 warnings, 0 infos.` compiler summary.
+- Narrow verification:
+  - `dotnet test tests/compiler.Tests/compiler.Tests.csproj --filter "FullyQualifiedName~LlvmIrEmissionTests.ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls|FullyQualifiedName~LlvmIrEmissionTests.BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributes" --no-restore`: passed.
+  - `dotnet test tests/compiler.IntegrationTests/compiler.IntegrationTests.csproj --filter "FullyQualifiedName~MultiFileIntegrationTests.SystemTextSourceModuleSupportsRuntimeAsciiUnicodeConversionHelpers|FullyQualifiedName~MultiFileIntegrationTests.SystemTextSourceModuleSupportsRuntimeUtf16ConversionHelpers" --no-restore`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 ABI Dotted Method Symbol Naming Slice
+
+- Fixed ABI symbol naming for dotted local method/doctrine names after the module-prefix regression: local root-module methods keep module-relative symbols such as `@Box_Read` and `@Inspect_Read`.
+- Preserved source-imported method calls by prefixing dotted names only when the resolved function identity's module differs from the module currently being compiled, so consumers still reference defining-module symbols such as `@Lib_Box_Read`.
+- Added focused source-import LLVM coverage for a noinline `Lib.Box.Read` method to assert the `@Lib_Box_Read` declaration/call and preserve receiver `noalias`/`readonly`/`dereferenceable` facts.
+- Narrow verification:
+  - `dotnet test tests/compiler.Tests/compiler.Tests.csproj --filter "FullyQualifiedName~LlvmIrEmissionTests.ValueReceiverMethodsLowerToDirectAggregateCalls|FullyQualifiedName~LlvmIrEmissionTests.BorrowReceiverMethodsLowerToPointerReceiverCalls|FullyQualifiedName~LlvmIrEmissionTests.DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures|FullyQualifiedName~LlvmIrEmissionTests.ImportedSourceMethodsUseDefiningModuleQualifiedSymbols" --no-restore`: passed.
+  - Tiny source-import CLI smoke (`Lib.Box.Read` + `Demo.main`, `./stark Demo.stark --emit-exe -I <tmp> --no-stark-path -o <tmp>/demo`): compile passed and executable returned `7`.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Enum Layout List Lowering Narrowing Slice
+
+- Added a focused C# standard-library regression for a nested exported generic wrapper: `Table<Payload>` owns `System.Collections.List<Payload>`, and emitted LLVM must contain the concrete list layout rather than an empty struct.
+- Added `selfhost/probe/IrTableEnumLayoutFactProbe.stark`, a tiny source-only selfhost probe that instantiates `IrTable<MirEnumLayoutFact>` without importing the whole `Compiler.Mir` facade.
+- Narrow verification:
+  - `dotnet test tests/compiler.StandardLibraryTests/compiler.StandardLibraryTests.csproj --filter FullyQualifiedName~SystemCollectionsStandardLibraryTests.StdLibSourceListNestedThroughExportedGenericWrapperEmitsConcreteLayout --no-restore`: passed.
+  - `./stark selfhost/probe/IrTableEnumLayoutFactProbe.stark --emit-llvm -I selfhost -I stdlib/src --no-stark-path -o /tmp/irtable_enum_layout_probe.ll`: passed; emitted `%System_Collections_List_Compiler_Mir_EnumLayout_MirEnumLayoutFact_ = type { { ptr, i64, i64 } }`.
+  - `rg -n "= type \\{ \\}" /tmp/irtable_enum_layout_probe.ll`: no empty type definitions found.
+  - `rg -n "dereferenceable\\(0\\)|invalid|unknown" /tmp/irtable_enum_layout_probe.ll`: no `dereferenceable(0)` or invalid markers; only benign `"unknown..."` string constants matched.
+  - `./stark selfhost/probe/EnumReturnProbe.stark --emit-llvm -I selfhost -I stdlib/src --no-stark-path -o /tmp/enum_return_probe.ll`: interrupted after `lower-mir` reached 220.3s, so the full-facade repro is not counted as a pass.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Manifest Brotli Payload Slice
+
+- Added a dependency-free Brotli payload encoder for logical manifest JSON writeout. The self-host writer emits valid Brotli streams using non-final uncompressed meta-blocks and a final empty meta-block, matching the binary `MANF` section encoding without introducing a native encoder dependency.
+- Kept JSON construction and section serialization separately testable: `TryEncodeLogicalPackageManifestJson` still returns raw UTF-8 JSON bytes, while `TryEncodeLogicalPackageManifestBrotliJson` wraps those bytes for binary package-image `MANF` payloads.
+- Added focused IR facts for the exact tiny Brotli stream bytes (`abc` -> `20 00 10 61 62 63 03`) and for manifest-Brotli payloads surviving logical image writeout/copyback.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with the existing generic-template recursive-writer warnings.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: blocked by the existing stdlib error at `stdlib/src/System/FileSystem.stark:613` for unresolved `System.Runtime.Platform.SetPermissions`, so it is not counted as a pass.
+  - External decoder sanity probe against .NET `BrotliStream` for uncompressed block length boundaries `1`, `3`, `65536`, `65537`, `1048576`, and `1048577`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Function Semantic Manifest Builder Slice
+
+- Added function semantic rows to the logical manifest JSON builder, including required function header strings, per-module first/last/count links, and O(1) child append links for called functions, parameters, initialization ranges, calls, and call arguments.
+- Emitted `CompilerFacts.FunctionSemantics` with explicit memory-effect booleans, `HasOpaqueCall`, parameter alias/dereferenceable/alignment/read/write facts, initialization byte ranges, call memory effects, and caller/callee argument mapping so backend optimization facts survive manifest JSON lowering.
+- Extended the focused manifest JSON builder coverage with a readback test through `TryMaterializeLogicalPackageFunctionSemanticFactJsonGraph`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: blocked by the existing stdlib error at `stdlib/src/System/FileSystem.stark:613` for unresolved `System.Runtime.Platform.SetPermissions`, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Typed-Interface Global Manifest Builder Slice
+
+- Added typed-interface global rows to the logical manifest JSON builder, including required header strings, named global type references, mutability, and O(1) per-module first/last/count links.
+- Added a scalar constant-initializer builder path for `integer`, `float`, `bool`, `text`, and `null` initializers with required initializer type references. Aggregate initializer child rows remain a future typed-interface type-sized slice rather than emitting fake count-only facts.
+- Emitted populated `TypedInterface.Globals` arrays and preserved initializer payload text/type facts through the existing typed global fact graph materializer.
+- Extended the focused manifest JSON builder fact to read back the generated typed global through declaration and `GlobalType` summary helpers, then materialize the typed global fact graph and assert the initializer row, integer payload text, and `GlobalConstantInitializerType` reference.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: interrupted after about 150 seconds of silent compile output, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Typed-Interface Function Manifest Builder Slice
+
+- Added typed-interface function rows to the logical manifest JSON builder, including required header strings, resolved return type references, and required FFI/strict-FP/fast-call facts.
+- Added linked child rows for typed callable parameters, ordinary generic parameters, comptime generic parameters, and pointee-dead-on-return parameter names. Child appends remain O(1) via first/last/count links and preserve declaration order during `TypedInterface.Functions` emission.
+- Emitted lossless optional callable facts that the builder can represent directly: qualified resolved name, overload key, inline preference, FFI ABI, backend optimization mode, link name, generic-template/body/performance/unsafe/varargs/tail-call flags, parameter raw-count expressions, disjoint/const flags, and named type references. Count-only constraint/predicate/contract arrays were intentionally not added for typed callables because the deep materializer requires real nested facts.
+- Extended the focused manifest JSON builder fact to read back the generated typed function through typed declaration, typed callable, typed callable parameter, and typed type-reference summary helpers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: interrupted after about 60 seconds of silent compile output, so it is not counted as a pass.
+  - `../../stark test --filter LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells --test-progress --test-timeout 120 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: interrupted after about 60 seconds of silent build output before runner progress, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Typed-Interface Type-Alias Manifest Builder Slice
+
+- Added typed-interface type-alias rows to the logical manifest JSON builder, including required alias header strings and compact resolved `TargetType` references that preserve typed kind/name facts for later LLVM-facing lowering.
+- Added per-alias linked child rows for ordinary generic parameters and comptime generic parameters. Child appends remain O(1) via first/last/count links and preserve declaration order during `TypedInterface.TypeAliases` emission.
+- Emitted the required typed-interface `Functions`, `Types`, and `Globals` array shell alongside `TypeAliases`, so existing typed-interface count readers can consume builder-produced manifests without special cases.
+- Extended the focused manifest JSON builder fact to read back the generated typed alias declaration plus `TypeAliasTarget` and `TypeAliasComptimeGenericParameterType` references through the existing typed-interface readers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after about 90 seconds of silent compile output, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Type Manifest Builder Slice
+
+- Added source-surface type rows to the logical manifest JSON builder, including required type header strings (`Name`, `QualifiedName`, `Visibility`, `Kind`), required `Fields` array emission, and optional backend/layout/pack/align/destructor/dyn-trait facts.
+- Added linked child rows for type fields, ordinary generic parameters, comptime generic parameters, primary constructor parameters, enum variants, enum variant payloads, and implemented traits. Child appends remain O(1) via first/last/count links and preserve source order during `SourceSurface.Types` emission.
+- Preserved validated nested row shapes rather than fake count-only records for fields, constructor parameters, and variants, so emitted manifests survive the existing source-surface materializer and readback helpers.
+- Extended the focused manifest JSON builder fact to read back one representative type plus field, constructor parameter, variant, and variant-payload summaries through the existing source-surface type readers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after about 90 seconds of silent compile output, so it is not counted as a pass.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Function Manifest Builder Slice
+
+- Added source-surface function rows to the logical manifest JSON builder, including required function header strings (`Name`, `QualifiedName`, `Visibility`, `SymbolName`, `Kind`, `ReturnType`) and required emission booleans (`IsFfi`, `IsStrictFp`, `UseFastCallingConvention`).
+- Added per-function linked child rows for parameters, ordinary generic parameters, comptime generic parameters, and pointee-dead-on-return parameter names. Parameter rows preserve source name/type text plus optional raw-pointer element-count expressions and const/disjoint flags.
+- Preserved optional backend/source facts with compact row flags and string indexes: inline preference, FFI ABI, backend optimization mode, link name, asm marker, hot/cold, explicit inline preference, unsafe, varargs, tail-callable, and count-only contract/group arrays.
+- Kept appends O(1) with per-module first/last/count function links and per-function first/last/count child links, so builder callers do not need to pre-group artifacts before JSON emission.
+- Extended the focused manifest JSON builder fact to read back function header text, parameter order/text, generic/count facts, ABI/performance flags, contract/group counts, and dead-on-return count through the existing source-surface function readers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells --test-progress --test-timeout 120 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build output before runner progress, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Global Manifest Builder Slice
+
+- Added source-surface global rows to the logical manifest JSON builder, including source global header strings (`Name`, `QualifiedName`, `Visibility`, `Kind`, `Type`), required `IsMutable`, and optional `ConstantInitializer` presence.
+- Kept appends O(1) with per-module first/last/count links and row `NextRow` pointers, so manifest emission preserves source order without scanning unrelated rows.
+- Extended the focused manifest JSON builder fact to read back two globals through the existing source-surface global reader, covering order, mutability, initializer presence, and header text.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells --test-progress --test-timeout 120 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about two minutes of silent build output before runner progress, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Type-Alias Manifest Builder Slice
+
+- Added source-surface type-alias rows to the logical manifest JSON builder, including source alias header strings (`Name`, `QualifiedName`, `Visibility`, `TargetType`).
+- Added linked child rows for ordinary generic parameters and compact comptime generic parameters. The current comptime parameter writer emits the validated object shape with a `Kind` string, which matches today's source-surface alias reader/count requirements while leaving room for full typed type-reference emission later.
+- Kept the builder append path O(1): per-module first/last/count links for aliases, plus per-alias first/last/count links for child parameters, so callers do not need to pre-group artifacts before emission.
+- Extended the focused manifest JSON builder fact to read back alias header text, ordinary generic parameter order, and comptime generic parameter count through the existing source-surface alias readers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells --test-progress --test-timeout 120 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build output before runner progress, so it is not counted as a pass.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Manifest Builder Slice
+
+- Added source-surface import and re-export rows to the logical manifest JSON builder.
+- Kept builder appends O(1) and order-robust with per-module first/last/count tables plus row `NextRow` links, so artifact traversal does not need to pre-group rows by module before emission.
+- Emitted populated import/re-export rows under a module's explicit `SourceSurface` object, preserving the existing `HasSourceSurface()` marker while leaving empty module shells compact.
+- Extended the focused manifest JSON builder fact to read back direct imports, re-export-only rows, and direct+re-export merged rows through the existing source-surface summary reader.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells --test-progress --test-timeout 120 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build output before runner progress, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Manifest JSON Builder Slice
+
+- Added a compact logical manifest JSON builder for package identity, module shell rows, build profile, target feature rows, target/backend facts, C data model facts, and aggregate pointer layout facts.
+- Kept emission fact-preserving and allocation-conscious: package-level strings are read back from the deduplicated logical package string table through a reusable scratch buffer, module names use a separate deduplicated module string table, and the final payload encoder rejects non-empty output buffers before copying fresh JSON bytes.
+- Added root-module validation before JSON emission so the emitted module list can always recover the root ordinal used by package import handoff.
+- Added a focused self-host IR fact that emits manifest JSON, copies it into a `MANF` payload, wraps it with the existing logical package-image writer, and validates the result through the existing manifest summary/module summary readers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src -I tests-stark --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after about 90 seconds of silent compile output, so it is not counted as a pass.
+  - `../../stark test --filter LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells --test-progress --test-timeout 120 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build output before runner progress, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Package Compact Builder Slice
+
+- Added a compact logical package-image builder that writes deduplicated `STRS` bytes, `PINF` package facts, and a three-section `STRS`/`PINF`/`MANF` directory around an already-encoded manifest payload.
+- Kept the write path linear and allocation-light: string data is appended once into a contiguous byte table, fact rows store string indexes, and serialization reserves each output section before emitting.
+- Added a focused self-host IR fact that round-trips the builder output through the existing logical package-image readers, including duplicate root/library strings, duplicate target features, C data model facts, aggregate pointer layout facts, and copied manifest payload bytes.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after about 90 seconds of silent compile output, so it is not counted as a pass.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Bridge Graph Ownership Slice
+
+- Extended the compact logical manifest model's per-module graph rows to own source-surface bridge summary families: imports, type aliases, type-alias generic parameters, types, type fields, primary-constructor parameters, enum variants, enum payloads, globals, functions, and function parameters.
+- Preserved the existing source-surface precedence rule in the model path: explicit `SourceSurface` rows shadow legacy module-level surface arrays, while legacy arrays still materialize when no explicit source-surface object exists.
+- Kept the materialization path single-parse and allocation-light for the model, validating required/optional source-surface text and shape facts without copying source strings into the model graph.
+- Updated the manifest-model fixture with representative source-surface rows for every owned family and asserted module-level graph availability/count accessors.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after silent compile intervals.
+  - `../../stark test --filter LogicalPackageImageBuildsDecodedManifestModelRows --test-progress --test-timeout 120 --stage stage0` from `tests-stark/selfhost.Ir`: stopped after silent build intervals before runner progress output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Typed-Interface Graph Ownership Slice
+
+- Extended the compact logical manifest model's per-module graph rows to own effective typed-interface graph families: typed type aliases, typed callable facts, typed globals, and typed type facts.
+- Kept the load path single-parse and linear over declaration arrays, including nested typed methods under type declarations, so package import handoff can consume graph rows without reparsing `MANF`.
+- Updated the manifest-model fixture to use valid compact typed-interface rows and assert model-level typed graph availability/counts for alias, callable, global, and type families.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after silent compile intervals.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Compiler-Fact Graph Ownership Slice
+
+- Extended the compact logical manifest model's per-module graph rows to own the remaining compiler-fact graph families: ABI facts, layout facts, native metadata facts, function semantic facts, and function ownership facts.
+- Kept the load path single-parse and fact-preserving: each family is discovered with an optional member probe against the effective `CompilerSections.CompilerFacts` node, then materialized through the existing parsed-document materializers without reparsing `MANF`.
+- Updated the manifest-model fixture to cover empty ABI/layout sections, top-level native dependency metadata, one compact semantic row, and one compact ownership row while leaving the larger row-shape coverage in the existing dedicated graph tests.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-compiler-fact-graphs -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageBuildsDecodedManifestModelRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0 --stage stage0` from `tests-stark/selfhost.Ir`: stopped after several silent build intervals to avoid a long project run before runner output.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after silent compile intervals.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Module Graph Ownership Slice
+
+- Added per-module graph ownership to the compact logical manifest model for decoded `MANF` JSON. The model now reserves graph rows beside module summary rows and owns module-level function-effect fact rows plus generic-template function rows through the same effective `CompilerSections` precedence used by the bridge readers.
+- Kept compiler-fact graph ownership incremental: `FunctionEffects` is optional inside `CompilerFacts` for this slice, so packages that only carry other compiler-fact families are not rejected before those families are wired into the top-level model.
+- Added focused self-host IR fixture assertions for graph-row count, borrowed graph access, function-effect row facts, generic-template function row ordinals, and empty-root-module graph defaults.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-module-graphs -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageBuildsDecodedManifestModelRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0 --stage stage0` from `tests-stark/selfhost.Ir`: stopped after several silent build intervals to avoid a long project run before runner output.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after silent compile intervals.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Manifest Model Slice
+
+- Added a compact self-host logical manifest model for decoded `MANF` JSON. The new path parses the manifest once, validates root module/library/profile/target/backend facts against `PINF`/`STRS`, reserves ordered module-row storage up front, and materializes compact module summaries for ordinal-indexed package import handoff.
+- Added a focused self-host IR fact covering manifest summary facts, O(1) module ordinal access, compiler-section typed-interface override rows, source/fact/template presence flags, empty-root-module defaults, and backend feature-order rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-logical-model -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageBuildsDecodedManifestModelRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0 --stage stage0` from `tests-stark/selfhost.Ir`: stopped after several silent build intervals to avoid a long project run before runner output.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: stopped after several silent compile intervals after the test-local borrow/value fix.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Package Stage Compatibility Slice
+
+- Added a self-host logical package-image stage compatibility helper over compact facts. Current Stage0 package images do not encode a stage in `PINF`/`MANF`; the host project driver supports only `stage0`, so the self-host gate now accepts validated package facts for `stage0` and rejects reserved future stages without decoding `MANF` or scanning `STRS`.
+- Added a focused self-host IR fact covering `stage0` acceptance, `stage1`/`stage2`/empty-stage rejection, and rejection of default/unvalidated package facts.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-stage-compat -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageValidatesStageCompatibility --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0 --stage stage0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Type Child Bridge Slice
+
+- Added compact self-host source-surface type primary-constructor parameter summaries for decoded logical package manifests, preserving source-facing parameter names, type spellings, raw-pointer count expressions, and disjoint/const flags without reconstructing source text.
+- Added compact self-host source-surface enum variant and payload summaries, preserving variant names, named-payload mode, optional role/absorbed-error metadata, payload names, positional empty-name payloads, and source payload type spellings.
+- Reused the effective source-surface type selection rule from the type-header slice, so explicit `SourceSurface.Types` rows win, legacy module-level `Types` are the fallback, and an explicit source surface with no type rows suppresses legacy type-child rows.
+- Added focused self-host IR facts covering explicit source-surface constructor parameters, enum variants, and payloads; legacy fallback; explicit-empty source-surface suppression; malformed constructor parameter type/count-expression rejection; malformed variant header rejection; malformed payload type rejection; and positional-vs-named payload names.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-type-children -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceTypePrimaryConstructorParameterRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceTypeEnumVariantRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Type Field Bridge Slice
+
+- Added compact self-host source-surface type field summaries for decoded logical package manifests, preserving source-facing field name, type spelling, optional visibility, explicit offset bytes, and thread-safety attribute counts without reconstructing source text.
+- Reused the effective source-surface type selection rule from the type-header slice, so explicit `SourceSurface.Types` rows win, legacy module-level `Types` are the fallback, and an explicit source surface with no type rows suppresses legacy field rows.
+- Added a focused self-host IR fact covering explicit source-surface field rows, legacy fallback field rows, explicit-empty source-surface suppression, missing optional visibility/offset defaults, empty type rejection, and invalid explicit offset rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-field -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceTypeFieldRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Type Bridge Slice
+
+- Added compact self-host source-surface type summaries for decoded logical package manifests, preserving source-facing type name, qualified name, visibility, kind, backend optimization mode, struct layout spelling, pack/align facts, destructor presence, dyn-trait status, and direct child counts without reconstructing source text.
+- Matched the C# source bridge effective source-surface selection rule for this slice: explicit `SourceSurface.Types` win, legacy module-level `Types` are the fallback, and an explicit source surface with no type rows does not leak legacy rows back in.
+- Added a focused self-host IR fact covering explicit source-surface types, legacy fallback types, explicit-empty source-surface suppression, source layout flags, generic/comptime-generic validation, implemented-trait text validation, and invalid pack-byte rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-type -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceTypeRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Function Bridge Slice
+
+- Added compact self-host source-surface function summaries for decoded logical package manifests, preserving source-facing function names, qualified names, visibility, symbol names, manifest kind, return type spelling, ABI/performance flags, memory-contract group counts, and parameter raw-count expression spelling without reconstructing source text.
+- Matched the C# source bridge effective source-surface selection rule for this slice: explicit `SourceSurface.Functions` win, legacy module-level `Functions` are the fallback, and an explicit source surface with no function rows does not leak legacy rows back in.
+- Added a focused self-host IR fact covering explicit source-surface functions, legacy fallback functions, explicit-empty source-surface suppression, source-spelled parameter rows, optional ABI/performance flags, malformed return type rejection, malformed parameter type rejection, and malformed comptime parameter rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-function -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceFunctionRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Global Bridge Slice
+
+- Added compact self-host source-surface global summaries for decoded logical package manifests, preserving source-facing global name, qualified name, visibility, manifest kind, type spelling, mutability, and constant-initializer presence without reconstructing source text.
+- Matched the C# source bridge effective source-surface selection rule for this slice: explicit `SourceSurface.Globals` win, legacy module-level `Globals` are the fallback, and an explicit source surface with no global rows does not leak legacy rows back in.
+- Added a focused self-host IR fact covering explicit source-surface globals, legacy fallback globals, explicit-empty source-surface suppression, mutable/global initializer flags, empty type rejection, and malformed initializer-shape rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-global -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceGlobalRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Type-Alias Bridge Slice
+
+- Added compact self-host source-surface type-alias summaries for decoded logical package manifests, preserving source-facing alias name, qualified name, visibility, target type spelling, ordinary generic parameter names, and comptime generic parameter counts without reconstructing source text.
+- Matched the C# source bridge effective source-surface selection rule for this slice: explicit `SourceSurface.TypeAliases` win, legacy module-level `TypeAliases` are the fallback, and an explicit source surface with no alias rows does not leak legacy rows back in.
+- Added a focused self-host IR fact covering explicit source-surface aliases, legacy fallback aliases, ordinary generic parameter row reads, explicit-empty source-surface suppression, malformed generic parameter rejection, and malformed comptime parameter rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-alias -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceTypeAliasRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after about 90 seconds of silent build/setup output to avoid a long project run before runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Source-Surface Import Bridge Slice
+
+- Added compact self-host source-surface import summaries for decoded logical package manifests, preserving direct-import, re-export, and effective-export facts without reconstructing source text.
+- Matched the C# source bridge import selection rule for this slice: explicit `SourceSurface` imports/re-exports win, legacy module-level imports/re-exports are the fallback, and duplicate re-exports promote the direct import to exported rather than creating a second row.
+- Added a focused self-host IR fact covering explicit source-surface imports, re-export-only rows, duplicate re-export promotion, legacy fallback rows, and malformed source-surface import rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I /tmp/stark-selfhost-source-root-codex-source-surface -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `../../stark test --filter LogicalPackageImageReadsSourceSurfaceImportRows --test-progress --test-timeout 180 --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after several silent build intervals to avoid a long project run before runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Relocatable Library Package Archives
+
+- Changed `--emit-lib --package-image-output` packaging so the emitted static
+  archive is copied beside the package image and the manifest records only the
+  archive file name. The original `-o` library output remains in place, but the
+  package directory can now be relocated without preserving the old
+  `stage0/pkg` + `stage0/bin` sibling layout.
+- Added regression coverage that routes a package image away from the library
+  output, verifies the adjacent archive copy and manifest value, copies only
+  the package directory to a new location, deletes the original output
+  directories, and resolves the package library path from the relocated
+  package.
+- Updated the package-backed probe recipe to describe the adjacent-archive
+  layout.
+- Narrow verification:
+  - `dotnet test tests/compiler.IntegrationTests/compiler.IntegrationTests.csproj --filter EmitLibraryStagesPackageLibraryBesideRoutedPackageImage --no-restore`: passed 1/1. The build also printed the pre-existing nullable warnings in `TypeChecking.cs`.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Source-First Module Resolution
+
+- Changed `FileSystemModuleResolver` resolution order so source files are
+  checked across all search roots before the recursive package-image index is
+  built. This keeps stale `*.starkpkg` build artifacts from substituting for
+  source modules during raw source checks and avoids the expensive package scan
+  on source-backed imports.
+- Kept package-image resolution available when no source module exists, so
+  package-backed probe and dependency compiles still work.
+- Updated module-provenance coverage and compiler verification docs to reflect
+  the source-first contract and `--explain-modules` provenance output.
+- Narrow verification:
+  - `dotnet test tests/compiler.Tests/compiler.Tests.csproj --filter "ResolverPrefersExplicitSourceOverImplicitPackage|ResolverPrefersSourceOverExplicitPackageCandidate|CliPrefersExplicitSourceOverRootDirectoryPackage|CliKeepsStderrCleanForPackageResolutionsWithoutShadowing|CliExplainModulesListsSourceResolutionsAndStaysQuietByDefault" --no-restore`: passed 5/5. The build also printed pre-existing nullable warnings in `TypeChecking.cs` and an existing xUnit analyzer warning in `PackageImageArchitectureTests.cs`.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Direct CLI Target Data Layout Parity
+
+- Fixed direct CLI target resolution so `--target <local-triple>` derives the
+  detected LLVM data layout when `--target-data-layout` is omitted, matching
+  the project driver path and avoiding manual `inspect-pkg` layout copying for
+  local package consumers.
+- Kept explicit `--target-data-layout` authoritative and left cross-target
+  triples untouched unless the detected toolchain triple matches.
+- Added focused integration coverage that emits LLVM with an explicit local
+  target and asserts the emitted `target datalayout` matches the detected
+  toolchain layout.
+- Narrow verification:
+  - `dotnet test tests/compiler.IntegrationTests/compiler.IntegrationTests.csproj --filter "EmitLlvmIrDerivesDetectedDataLayoutForExplicitLocalTarget|EmitLlvmIrRejectsContradictoryTargetDataLayout" --no-restore`: passed 2/2. The build also printed the pre-existing nullable warnings in `TypeChecking.cs`.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Bound-Operation Payload Slice
+
+- Added package-owned bound-operation payload rows for type, text, numeric,
+  and boolean facts, covering receiver/callable types, access/source/index
+  details, dynamic storage and dyn-trait operation facts, object construction
+  and initializer members, enum variants and members, text interpolation/build
+  facts, layout queries, and switch-dispatch counts.
+- Preserved constructor shape parameter facts as payload rows too: parameter
+  names, parameter types, const/disjoint flags, raw-pointer count expressions,
+  parameter counts, and primary-shape flags now survive package-image
+  materialization without source reconstruction.
+- Allowed function-pointer and closure bound calls to carry call-argument rows
+  without a named `QualifiedResolvedName` call signature, matching the Stage0
+  loader/builder model.
+- Extended the focused `selfhost.Ir` generic-template fixture to exercise the
+  bound-operation payload families in one compact JSON corpus and assert row
+  counts plus representative payload kind/source-tag readback.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `tmp_root=/tmp/stark-selfhost-source-root-codex-boundpayloads && rm -rf "$tmp_root" && mkdir -p "$tmp_root" && ln -s /Users/zadkey/Repos/stark/selfhost/Compiler "$tmp_root/Compiler" && /Users/zadkey/Repos/stark/stark /Users/zadkey/Repos/stark/selfhost/Compiler/Mir/PackageImage.stark --check -I "$tmp_root" -I /Users/zadkey/Repos/stark/stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-bound-payload-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+  - `/Users/zadkey/Repos/stark/stark test --filter LogicalPackageImageMaterializesGenericTemplateFactGraphRows --target arm64-apple-macosx26.0.0` from `tests-stark/selfhost.Ir`: stopped after two silent minutes to avoid a long project rebuild.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Call-Signature Operation Row Slice
+
+- Added package-owned generic-template call-signature rows shared by direct
+  calls, member calls, function addresses, and call-shaped bound operations.
+- Preserved qualified resolved/source/template names, published ordinals,
+  return/target/parameter/type-argument/comptime type references, parameter
+  flags, raw-pointer element count expressions, parameter disjoint/overlap/same
+  groups, dead-on-return parameter names, bound-operation kind/location/result
+  facts, and bound call-argument addressability/mutability/const-provenance
+  facts.
+- Extended the focused `selfhost.Ir` generic-template fact to assert row
+  counts, parent-kind separation, bound-operation call-signature linkage,
+  nested child payload rows, type-reference source tags, payload ordinals, text
+  kinds, and recovered call/bound-operation text.
+- Narrow verification:
+  - `tmp_root=/tmp/stark-selfhost-source-root-codex-callfacts && rm -rf "$tmp_root" && mkdir -p "$tmp_root" && ln -s /Users/zadkey/Repos/stark/selfhost/Compiler "$tmp_root/Compiler" && /Users/zadkey/Repos/stark/stark /Users/zadkey/Repos/stark/selfhost/Compiler/Mir/PackageImage.stark --check -I "$tmp_root" -I /Users/zadkey/Repos/stark/stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-call-signature-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Runtime execution note: this stayed on the existing semantic host-test
+  inspect path used by the recent package-image slices; the filtered fact
+  runner was not widened.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Object/Enum Operation Row Slice
+
+- Added package-owned generic-template object creation, object initializer
+  member, enum constructor/member, enum call, enum value, enum pattern/member,
+  and aggregate pattern/member rows.
+- Preserved object constructor shape facts, storage selector, expression text,
+  enum/pattern published ordinals, variant names, field indices, and payload
+  type references with dedicated source tags.
+- Extended the focused `selfhost.Ir` generic-template fact to assert row
+  counts, function-template linkage, member links, ordinals, source tags,
+  payload ordinals, text kinds, and recovered object/enum/pattern text.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `tmp_root=/tmp/stark-selfhost-source-root-codex && rm -rf "$tmp_root" && mkdir -p "$tmp_root" && ln -s /Users/zadkey/Repos/stark/selfhost/Compiler "$tmp_root/Compiler" && /Users/zadkey/Repos/stark/stark /Users/zadkey/Repos/stark/selfhost/Compiler/Mir/PackageImage.stark --check -I "$tmp_root" -I /Users/zadkey/Repos/stark/stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-object-enum-operation-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Operation Row Slice
+
+- Added package-owned generic-template local declaration, conversion, field
+  access, and try propagation rows.
+- Preserved operation ordinals, published ordinals, local source positions,
+  field indices, `try` role/funnel variant names, and all operation payload
+  type references with dedicated source tags.
+- Extended the focused `selfhost.Ir` generic-template fact to assert row
+  counts, linkage back to the owning function template, row ordinals, optional
+  `try` payload presence, type-reference source tags, payload ordinals, and
+  recovered operation text.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `tmp_root=/tmp/stark-selfhost-source-root-codex && rm -rf "$tmp_root" && mkdir -p "$tmp_root" && ln -s /Users/zadkey/Repos/stark/selfhost/Compiler "$tmp_root/Compiler" && /Users/zadkey/Repos/stark/stark /Users/zadkey/Repos/stark/selfhost/Compiler/Mir/PackageImage.stark --check -I "$tmp_root" -I /Users/zadkey/Repos/stark/stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-operation-child-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Verification note: the clean symlink source root intentionally avoided stale
+  package images under `selfhost/tools` while keeping source imports explicit.
+- Runtime execution note: the filtered `selfhost.Ir` runtime fact runner was
+  not rerun; this slice stayed on `PackageImage.stark --check` plus host-test
+  semantic inspect to avoid the known long project build path.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Deferred Instantiation Slice
+
+- Added package-owned generic-template deferred function instantiation rows,
+  type-argument rows, comptime value argument rows, and deferred type
+  instantiation rows.
+- Preserved deferred callee template names and comptime argument text as
+  generic-template text rows, and routed deferred type/value argument types
+  through the durable type-reference graph with explicit source tags.
+- Extended the focused `selfhost.Ir` generic-template fact to assert row
+  counts, instantiation ordinals, child argument links, symbolic comptime
+  flags, type-reference source tags, payload ordinals, and recovered deferred
+  instantiation text.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `tmp_root=/tmp/stark-selfhost-source-root-codex && rm -rf "$tmp_root" && mkdir -p "$tmp_root" && ln -s /Users/zadkey/Repos/stark/selfhost/Compiler "$tmp_root/Compiler" && /Users/zadkey/Repos/stark/stark /Users/zadkey/Repos/stark/selfhost/Compiler/Mir/PackageImage.stark --check -I "$tmp_root" -I /Users/zadkey/Repos/stark/stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-deferred-instantiation-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Verification note: the clean symlink source root intentionally avoided stale
+  package images under `selfhost/tools` while keeping source imports explicit.
+- Runtime execution note: the filtered `selfhost.Ir` runtime fact runner was
+  not rerun; this slice stayed on `PackageImage.stark --check` plus host-test
+  semantic inspect to avoid the known long project build path.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Switch Pattern Payload Slice
+
+- Added generic-template switch-case rows and nested pattern rows, preserving
+  case kind/name/ordinal, expression/guard/end-expression links, member counts,
+  statement counts, pattern parent kind, optional pattern names/ordinals, and
+  nested member counts.
+- Threaded switch-case child statements through an explicit parent case row so
+  imported typed-body lowering can identify the owning case without relying on
+  row-order reconstruction.
+- Kept pattern materialization stack-constant with an `IrTable` worklist for
+  nested pattern members, matching the existing typed-body statement/expression
+  traversal style.
+- Extended the focused `selfhost.Ir` generic-template fact to assert switch
+  case rows, condition-pattern rows, nested pattern rows, case-owned statement
+  parent links, expression type-reference payloads, and recovered switch/pattern
+  text.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `tmp_root=/tmp/stark-selfhost-source-root-codex && rm -rf "$tmp_root" && mkdir -p "$tmp_root" && ln -s /Users/zadkey/Repos/stark/selfhost/Compiler "$tmp_root/Compiler" && /Users/zadkey/Repos/stark/stark /Users/zadkey/Repos/stark/selfhost/Compiler/Mir/PackageImage.stark --check -I "$tmp_root" -I /Users/zadkey/Repos/stark/stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-switch-pattern-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Verification note: the ordinary `-I selfhost` source check stopped before
+  checking this code because it found a stale
+  `selfhost/tools/DifferentialDriver/build/.../libStarkCompiler.starkpkg`
+  package image with a target-layout mismatch; the clean symlink source root
+  above avoided that package artifact while keeping source imports explicit.
+- Runtime execution note: the filtered `selfhost.Ir` runtime fact runner was
+  not rerun; this path has repeatedly stalled in the build phase, so this slice
+  stayed on `PackageImage.stark --check` plus host-test semantic inspect.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Comptime Argument Payload Slice
+
+- Added expression-owned comptime value argument rows for generic-template
+  typed bodies, preserving parameter-name, integer-value, symbolic-source text,
+  symbolic flags, and the materialized argument type-reference row.
+- Kept the argument type payload in the shared package type-reference graph
+  under `GenericTemplateExpressionComptimeValueArgumentType`, so downstream
+  import/lowering can consume backend facts without source reconstruction.
+- Extended the focused `selfhost.Ir` generic-template fact to assert row counts,
+  parent expression links, source tags, payload ordinals, symbolic flags, and
+  recovered comptime argument text.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-comptime-args-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Runtime execution note: the filtered `selfhost.Ir` runtime fact runner was
+  not rerun; this path has repeatedly stalled in the build phase, so this slice
+  stayed on `PackageImage.stark --check` plus host-test semantic inspect.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Type-Reference Payload Slice
+
+- Added a generic-template-owned type-reference graph and linked statement
+  `Type`, traversal index/element type, expression `Type`, and expression
+  `TypeArguments` payloads to dense type-reference rows.
+- Added expression type-argument child rows so later lowering can scan type
+  arguments by row id without reconstructing source or walking package JSON.
+- Extended the focused `selfhost.Ir` generic-template fact to assert linked
+  row ids, type-reference source tags, payload ordinals, and recovered
+  type-argument name text.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-type-refs-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Runtime execution note: the filtered `selfhost.Ir` runtime fact runner was
+  not rerun; this path has repeatedly stalled in the build phase, so the
+  focused gate for this slice stayed at `PackageImage.stark --check` plus
+  host-test semantic inspect.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Typed-Body Shape Slice
+
+- Added package-owned typed-body statement and expression fact rows for generic
+  templates, including parent links, optional scalar/text flags, expression
+  argument/target counts, statement child-count slots, loop-contract rows,
+  expression member-name rows, and expression operator-name rows.
+- Kept typed-body materialization stack-constant by using `IrTable` worklists
+  for nested statement and expression traversal instead of recursive descent.
+- Extended the focused `selfhost.Ir` fact to cover nested local/expression/if
+  statement rows, expression argument parent links, loop-contract text,
+  operator-name text, malformed typed-body rejection, and literal/name text
+  recovery.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed with 0 diagnostics.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-typed-body-host-test.out.json`: passed semantic validation for `tests-stark/selfhost.Ir/IrTests.stark` with `succeeded: true` and 0 diagnostics.
+- Runtime execution note: `../../stark test --filter LogicalPackageImageMaterializesGenericTemplateFactGraphRows --test-timeout 180 --target arm64-apple-macosx26.0.0 --stage stage0` from `tests-stark/selfhost.Ir` stayed silent for about 195 seconds and was interrupted, so it is not counted as a pass.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Logical Generic Template Header Row Slice
+
+- Added package-owned generic-template fact rows for function template identity
+  text, optional body/backend mode text, optional scalar metadata, typed-body /
+  semantics presence flags, and current child section counts.
+- Materialized `CompilerSections.GenericTemplates` through the selfhost logical
+  package JSON bridge without reconstructing source text, preserving the package
+  graph's backend-facing template facts for later typed-body replay.
+- Added a focused `selfhost.Ir` fact covering compiler-section precedence,
+  optional/null field handling, all current child-count fields, text extraction,
+  and malformed direct-section rejection.
+- Narrow verification:
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-generic-template-header-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- Runtime execution note: `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error` was interrupted after about 90 seconds of silence, so it is not counted as a pass. `../../stark test --filter LogicalPackageImageMaterializesGenericTemplateFactGraphRows --test-timeout 180 --target arm64-apple-macosx26.0.0 --stage stage0` from `tests-stark/selfhost.Ir` was interrupted after about 60 seconds of silence, so it is not counted as a pass.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Whole-Module Struct Default Constructor Slice
+
+- Fixed selfhost MIR local lowering so aggregate body layout walks skip constructor/method bodies instead of treating them as fields.
+- Added declaration-backed storage resolution for default-constructor `self.field = value` writes, keeping typed member-path facts for reads while deriving write-side type/range facts from the field declaration.
+- Added declared-range validation for constructor writes so narrowed integer fields still require a provable stored subset, while full-width fields keep the existing width-only behavior.
+- Moved `struct-fields.stark` from `tests-stark/corpus/pending/` into the active stage-parity corpus.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/SourceLocalLowering.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: reached `Summary: 0 errors, 34 warnings, 0 infos`; warnings are the existing recursive-call warnings in this file.
+  - `STARK_DEP_CACHE_LOG=1 ../../../stark build` from `selfhost/tools/DifferentialDriver`: passed; rebuilt `libStarkCompiler.starkpkg` and `differential-driver` with 204 cache hits and 9 misses.
+  - `selfhost/tools/DifferentialDriver/build/dev/arm64-apple-macosx26.0.0/stage0/bin/differential-driver/differential-driver tests-stark/corpus/struct-fields.stark`: passed and emitted constructor stores for `A` and `B` followed by field reads.
+  - `selfhost/tools/DifferentialDriver/build/dev/arm64-apple-macosx26.0.0/stage0/bin/differential-driver/differential-driver tests-stark/corpus/struct-fields.stark | clang -c -x ir -o build/tmp/struct-fields.o -`: passed with only clang's target-triple override warning.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-09 Whole-Module Enum Payload Capture Cast Slice
+
+- Added a selfhost MIR source-expression conversion node so the whole-module
+  path preserves explicit cast syntax instead of treating `(T)value` as
+  grouping.
+- Lowered widening integer conversions through a typed `MirOp.ZExt`, preserving
+  the operand width, result width, and non-negative range facts through LLVM
+  emission.
+- Generalized MIR `ZExt` rendering, LLVM printing, and fact propagation away
+  from the previous hard-coded `i1 -> i64` shape.
+- Moved `enum-payload-capture.stark` from `tests-stark/corpus/pending/` into
+  the active stage-parity corpus.
+- Narrow verification:
+  - `STARK_DEP_CACHE_LOG=1 ../../../stark build` from
+    `selfhost/tools/DifferentialDriver`: passed; rebuilt
+    `libStarkCompiler.starkpkg` and `differential-driver` with 183 cache hits
+    and 30 misses.
+  - Differential-driver probe for `enum-payload-capture.stark`: passed and
+    emitted `zext i32 ... to i64` for the captured `u32[0 max]` payload cast.
+  - `selfhost/tools/DifferentialDriver/build/dev/arm64-apple-macosx26.0.0/stage0/bin/differential-driver/differential-driver tests-stark/corpus/enum-payload-capture.stark | clang -c -x ir -o build/tmp/enum-payload-capture.o -`:
+    passed with only clang's target-triple override warning.
+  - `dotnet test tests/compiler.IntegrationTests --filter StageParityTests`:
+    passed 6/6 active corpus files.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Whole-Module Enum Call And Return Slice
+
+- Fixed the selfhost MIR effect-prepass fallback so whole-module lowering uses the enum-aware local lowering path instead of rejecting enum-typed call arguments before emission.
+- Fixed terminal enum-switch branch lowering so layout-backed enum tag comparisons use typed tag constants (`i8` here) instead of untyped `i64` constants, preserving enum layout facts into verifier-clean LLVM.
+- Moved `enum-unit-switch.stark` and `enum-return.stark` from `tests-stark/corpus/pending/` into the active stage-parity corpus and added `enum-terminal-return.stark` for `case Tag.Left: return Pick.First;`.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0`: passed with the local selfhost package image temporarily moved aside to avoid source shadowing.
+  - `STARK_DEP_CACHE_LOG=1 ../../../stark build` from `selfhost/tools/DifferentialDriver`: passed; rebuilt `libStarkCompiler.starkpkg` and `differential-driver` with 208 cache hits and 5 misses.
+  - Differential-driver probes for direct enum constructor arguments, stored enum locals as call arguments, `enum-unit-switch.stark`, `enum-return.stark`, and the terminal enum-return shape all lowered successfully and passed `clang -c -x ir`; enum switch tests now emit `icmp eq i8`.
+  - `dotnet test tests/compiler.IntegrationTests --filter StageParityTests`: passed 5/5 active corpus files.
+- No broad test sweep was run.
+
+## 2026-07-08 Logical Native Metadata Fact Section Slice
+
+- Added package-owned native metadata fact rows for decoded `MANF` package metadata and compiler-facts linkage metadata.
+- Materialized top-level `NativeDependencies` rows for native sources, include directories, library directories, libraries, package-owned link arguments, and pkg-config packages without source reconstruction.
+- Materialized per-module `CompilerFacts.Linkage` rows for object file names, defined symbols, and referenced symbols, keeping symbol lists in dense spans for later archive/link lowering.
+- Added a focused `selfhost.Ir` fact covering dependency categories, dependency ordinals, linkage spans, symbol ordinals, text extraction, and missing `DefinedSymbols` rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-native-metadata-facts-host-test.out.json`: passed with 0 diagnostics.
+  - `perl -e 'alarm shift; exec @ARGV' 180 ./../../stark test --filter LogicalPackageImageMaterializesNativeMetadataFactRows --test-progress --test-timeout 90` from `tests-stark/selfhost.Ir`: capped after 180 seconds in the silent build phase with no runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Logical Layout Fact Section Slice
+
+- Added package-owned concrete layout rows, concrete field rows, enum layout rows, enum ordered-field rows, enum variant rows, enum variant-field rows, layout text rows, and layout type-reference provenance for decoded `MANF` compiler facts.
+- Materialized `ConcreteLayouts` and `EnumLayouts` from `CompilerFacts` without source reconstruction, preserving qualified type names, byte size/alignment facts, field offsets/alignment/misalignment facts, enum layout kind, tag field metadata, ordered storage fields, variant tag values, named-field flags, storage indices, and variant payload source/storage names.
+- Kept rows dense and parent-linked so later ABI/LLVM import can walk concrete fields, enum storage fields, variants, and payload fields with counted loops instead of rescanning JSON.
+- Added a focused `selfhost.Ir` fact covering concrete and enum layout row counts, scalar layout facts, text extraction, layout type-reference source tags, variant payload provenance, and malformed enum-layout-kind rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-layout-facts-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+  - `perl -e 'alarm shift; exec @ARGV' 180 ./../../stark test --filter LogicalPackageImageMaterializesLayoutFactRows --test-progress --test-timeout 90` from `tests-stark/selfhost.Ir`: capped after 180 seconds in the silent build phase with no runner output.
+- No broad test sweep was run.
+
+---
+
+## 2026-07-08 Logical ABI Fact Section Slice
+
+- Added package-owned ABI function rows, ABI parameter rows, expanded LLVM carrier type rows, ABI text rows, and ABI type-reference provenance for decoded `MANF` compiler facts.
+- Materialized `AbiFunctions` from `CompilerFacts` without source reconstruction, preserving source/LLVM return types, source/LLVM parameter types, optional expanded LLVM carrier types, FFI ABI/link-name/source-name text, varargs, tail, and fast-call backend flags.
+- Kept rows dense and row-linked so later LLVM import can walk function parameters and carrier types with counted loops instead of rescanning JSON.
+- Added a focused `selfhost.Ir` fact covering ABI row counts, text extraction, parsed parameter kinds, carrier spans, type-reference source tags, and malformed parameter-kind rejection.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-abi-facts-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+  - `perl -e 'alarm shift; exec @ARGV' 180 ./../../stark test --filter LogicalPackageImageMaterializesAbiFunctionRows --test-progress --test-timeout 90` from `tests-stark/selfhost.Ir`: interrupted after about 90 seconds in the silent build phase with no runner output.
+- No broad test sweep was run.
+
+---
+
 ## 2026-07-08 Logical Typed Global Fact Graph Slice
 
 - Added a package-owned typed-global fact graph with global rows, constant-initializer rows, scalar initializer text rows, aggregate child spans, and initializer type-reference provenance.
@@ -6764,3 +7521,191 @@ comments explaining which platform is required.
   - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
   - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-function-ownership-fact-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
 - No broad test sweep or filtered `stark test` runner was run.
+
+## 2026-07-08 Logical Type Reference Range Fact Slice
+
+- Preserved type-reference `BitWidth` and `FixedLength` as compact numeric row facts instead of presence-only flags, so range-typed integer and fixed-array facts survive logical package-image materialization.
+- Kept `RangeMin`/`RangeMax` as packed text rows and added focused row readback checks for range-bearing type references.
+- Updated the logical package-image range fact task as complete; there is no separate Stage0 `RangeFacts` JSON section beyond type-reference range facts and function semantic initialization byte ranges.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-range-facts-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+- No broad test sweep or filtered `stark test` runner was run.
+
+## 2026-07-08 Logical Callable Aliasing Fact Slice
+
+- Added package-owned typed-callable aliasing rows for `DisjointParameterGroups`, `OverlapParameterGroups`, and `SameParameterGroups`, with dense parameter-name and memory-region child spans for both functions and methods.
+- Preserved alias group parameter names, region parameter names, optional start expressions, and optional count expressions as typed callable fact text rows so backend import can consume memory-contract facts without source reconstruction.
+- Added an allocation-free callable alias-group lookup helper keyed by module/callable/declaration/method/group identity.
+- Extended focused self-host IR callable fact graph coverage to verify function and method alias group counts, row identity, dense child spans, region flags, text-kind tags, and text readback.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `./stark --host-test-inspect build/tmp/irtests-nested-enum-payload-semantic-host-test.json > build/tmp/irtests-logical-aliasing-facts-host-test.out.json`: passed with `succeeded: true` and 0 diagnostics.
+  - `../../stark test --filter LogicalPackageImageMaterializesTypedCallableFactGraphRows` from `tests-stark/selfhost.Ir`: stopped after several silent intervals to avoid a long project run.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Typed-Interface Type Manifest Builder Slice
+
+- Added compact typed-interface type manifest builder rows with per-module first/last/count links and dense child links for fields, generic/comptime parameters, associated types, enum variants/payloads, implemented trait names/types, and thread-safety law attributes.
+- Emitted `TypedInterface.Types` rows with required field arrays, concrete associated/trait/thread-safety/variant fact objects, and backend/layout/dyn-trait scalar facts so typed type facts survive JSON readback and package-image materialization.
+- Extended the focused manifest-builder fact to read typed type declaration summaries, direct type-reference summaries for field/associated/trait/thread-safety condition sources, and materialized typed type fact graph rows/text/type references.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src -I tests-stark --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: interrupted after roughly 90 seconds of silence to avoid a long focused test-file run.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Function Effect Manifest Builder Slice
+
+- Added compact compiler-fact function-effect manifest builder rows with per-module first/last/count links and stable row handles for self-host compiler artifact emission.
+- Emitted `CompilerFacts.FunctionEffects` rows with required function-effect booleans plus optional FFI ABI/backend optimization mode text and optional varargs/tail-callable/norecurse flags, preserving backend facts for later LLVM lowering.
+- Added a focused manifest-builder fact that writes two function-effect rows and materializes them back through the existing compiler-fact graph reader, covering backend-mode and FFI ABI optional paths.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I stdlib/src --no-stark-path --target arm64-apple-macosx26.0.0 --target-data-layout 'e-m:o-p:64:64-p270:32:32-p271:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32' --diagnostic-format text --log-level error`: interrupted after roughly 90 seconds of silence to avoid a long focused test-file run.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical ABI Function Manifest Builder Slice
+
+- Added compact compiler-fact ABI manifest builder rows for functions, parameters, and split LLVM carrier types, with per-module first/last/count links and dense parameter/carrier child links.
+- Emitted `CompilerFacts.AbiFunctions` rows with required source/LLVM return and parameter type references, required `IsFfi`, optional source name, FFI ABI, link name, fastcc, varargs, and tail-call metadata.
+- Preserved scalar type-reference facts needed by ABI/LLVM lowering, including integer bit widths, range endpoint text, and signedness presence/value, instead of reducing ABI types to kind/name only.
+- Added a focused manifest-builder fact that writes an FFI ABI function, raw-pointer count expression, named aggregate parameter, integer LLVM carrier split, and materializes the rows through the existing ABI fact graph reader.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Concrete Layout/Native Metadata Manifest Builder Slice
+
+- Added compact compiler-fact concrete layout and field manifest builder rows with per-module first/last/count links and dense field child links.
+- Added root-level native dependency builder rows grouped by dependency kind, plus per-module linkage builder rows with dense defined/referenced symbol child links.
+- Emitted `CompilerFacts.ConcreteLayouts`, root `NativeDependencies`, and `CompilerFacts.Linkage` JSON so layout/native/linkage facts survive manifest builder output and existing graph materialization.
+- Added a focused manifest-builder fact that writes a concrete aggregate layout, native library/source/link/pkg-config facts, and linkage symbols, then materializes the emitted JSON through existing layout and native metadata graph readers.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Function Ownership Manifest Builder Slice
+
+- Added compact compiler-fact function ownership manifest builder rows for implicit drops, moves, ownership events, event projections, and ownership roots, linked from existing function-semantic rows.
+- Emitted `CompilerFacts.FunctionSemantics[*].Ownership` with required ownership validity/name arrays and optional event/root arrays so ownership facts survive manifest builder output and existing graph materialization.
+- Preserved event place type references, source locations, index-projection flags, root type references, root mutability/address/move/drop/reinitialization facts, and final availability text for later backend and LLVM lowering.
+- Added a focused manifest-builder fact that writes a no-ownership semantic row plus an owned `Demo.Work` row, then materializes the emitted ownership graph through the existing ownership fact reader.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Function Header Manifest Builder Slice
+
+- Added compact generic-template function manifest builder rows with per-module first/last/count links and stable row handles for later typed-body/deferred-operation child builders.
+- Emitted `CompilerSections.GenericTemplates.Functions` rows with required `QualifiedResolvedName`, `QualifiedName`, and `OverloadKey` text plus optional body text, backend optimization mode, top-level statement count, estimated body cost, semantics presence, and empty typed-body shell facts.
+- Kept the slice scalar-only and append-only: child operation counts remain owned by future child builders, while the header row preserves backend facts needed by later self-host lowering/import.
+- Added a focused manifest-builder fact that writes one minimal template and one scalar-complete template, then materializes the emitted JSON through the existing generic-template fact reader.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Typed-Body Manifest Builder Slice
+
+- Added compact generic-template typed-body statement and expression manifest builder rows with O(1) per-template top-level statement links and stable expression row handles.
+- Emitted populated `TypedBody.Statements` JSON for top-level statements and root statement expressions, preserving statement/expression text, mutability/storage/capacity/provenance facts, and scalar integer type-reference facts through existing generic-template materialization.
+- Added a focused manifest-builder fact that writes one typed local-variable statement with a literal expression and verifies readback of statement rows, expression rows, and `GenericTemplateStatementType`/`GenericTemplateExpressionType` references.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Expression Child Manifest Builder Slice
+
+- Added compact generic-template expression child-list builder rows with O(1) append links for expression arguments and stable expression row handles for later nested typed-body builders.
+- Added expression payload builders for member names, operator names, type arguments, and comptime value arguments, preserving type-reference kind/name/bit-width/range/signedness facts instead of flattening payloads to strings.
+- Emitted `Arguments`, `MemberNames`, `OperatorNames`, `TypeArguments`, and `ComptimeValueArguments` JSON under typed-template expressions so existing generic-template materialization produces child expression rows plus payload ordinals and backend-visible type-reference sources.
+- Added a focused manifest-builder fact that writes a binary expression with two arguments, one member name, one operator name, one named type argument, and one symbolic comptime value argument, then verifies materialized child ordinals, payload text, and type-reference sources.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with recursive expression-writer stack-growth warnings.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Nested Typed-Body Manifest Builder Slice
+
+- Added compact generic-template nested statement builder rows for initializer, iterator, body, then, else, and switch-case statement lists, using O(1) append links so builder cost stays linear.
+- Added switch-case and pattern builder rows with stable handles for names, ordinals, case/guard/end expressions, condition patterns, member patterns, and nested pattern members.
+- Emitted the materializer's existing nested typed-body JSON shape: `SwitchCases`, `Statements`, `InitializerStatements`, `IteratorStatements`, `BodyStatements`, `ThenStatements`, `ElseStatements`, `ConditionPattern`, and pattern `Members`, preserving parent-kind, ordinal, expression, and type-reference facts for backend consumers.
+- Added a focused generic-template readback fact that writes a switch with case pattern members, an if with condition pattern and then/else blocks, and a loop with initializer/iterator/body blocks, then verifies materialized row counts, parent kinds, ordinals, names, and typed literal expression facts.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive expression-writer warnings plus recursive warnings for the new nested JSON writer helpers.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Deferred Instantiation Manifest Builder Slice
+
+- Added compact deferred function/type instantiation manifest builder rows linked from generic-template function rows, with O(1) append links for deferred functions, deferred types, type arguments, and comptime value arguments.
+- Emitted `DeferredFunctionInstantiations` and `DeferredTypeInstantiations` JSON using the materializer's existing shape, preserving callee names, parameter names, integer values, symbolic source names, and type-reference kind/name/integer facts.
+- Preserved backend-visible type-reference sources for deferred function type arguments, deferred function comptime argument types, and deferred type instantiations instead of flattening instantiated facts to text.
+- Added a focused generic-template readback fact that writes one deferred function instantiation with named type and symbolic comptime arguments plus one deferred type instantiation, then verifies materialized rows, ordinals, text kinds, and integer type facts.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Bound Operation Manifest Builder Slice
+
+- Added compact bound-operation manifest builder rows linked from generic-template function rows, with O(1) append links for operation rows and call-argument/type/text/u32/bool payload children.
+- Added embedded call-signature builders for bound operations, including parameter rows, type-argument rows, and comptime value argument rows with symbolic-source and integer type-fact preservation.
+- Emitted `BoundOperations` JSON using literal-key dispatch for finite payload kinds, preserving result, return, parameter, type-argument, comptime-argument, call-argument, and receiver type-reference sources through existing generic-template materialization.
+- Added a focused generic-template readback fact that writes a direct-call bound operation and a dynamic-storage operation, then verifies materialized operation rows, signature rows, payload rows, text kinds, call argument facts, and backend-visible type-reference sources.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Top-Level Object/Enum/Call Manifest Builder Slice
+
+- Added compact generic-template object creation, enum constructor/call/value/pattern, and direct/member/function-address call builder rows linked from function-template rows with O(1) append links.
+- Emitted `ObjectCreations`, `EnumConstructors`, `EnumCalls`, `EnumValues`, `EnumPatterns`, `DirectCalls`, `MemberCalls`, and `FunctionAddresses` JSON through the existing generic-template materializer shape.
+- Preserved backend-visible type-reference sources for object created types, enum type rows, direct/member/function-address return types, direct-call parameter/type/comptime arguments, and function-address target types.
+- Added a focused generic-template readback fact that writes one object creation, enum constructor/call/value/pattern rows, and direct/member/function-address calls, then verifies materialized row counts, ordinals, text payloads, integer facts, and type-reference sources.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+- No broad test sweep was run.
+
+## 2026-07-09 Logical Generic Template Object/Enum Payload Manifest Builder Slice
+
+- Added compact object constructor metadata plus object initializer member rows linked from object-creation rows with O(1) append links.
+- Added compact enum constructor member and enum pattern member rows linked from enum rows, preserving field names, field indices, and field type descriptors for existing materialization.
+- Emitted object `Constructor`, `InitializerMembers`, enum constructor `Members`, and enum pattern `Members` JSON through the materializer's existing keys, including constructor parameter-count arrays and field-index payloads.
+- Added a focused generic-template readback fact that writes one object constructor/initializer member, one enum constructor member, and one enum pattern member, then verifies row counts, constructor facts, field indices, text kinds, integer facts, and backend-visible type-reference sources.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I tests-stark`: stopped on unrelated stdlib type-check errors for missing `System.Runtime.Platform.SetPermissions` in `stdlib/src/System/FileSystem.stark`.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark tests-stark/selfhost.Ir/IrTests.stark`: passed.
+- No broad test sweep was run.
+
+## 2026-07-09 Package Image Shared Section Codec Slice
+
+- Added shared sectioned package-image constants/helpers for the 24-byte v2 header, 32-byte directory entries, directory length, and data offset.
+- Routed logical and MIR sectioned package-image writers through a single sectioned-header writer so version/count/directory-length emission cannot drift between payload families.
+- Routed logical and MIR sectioned directory readers through the same header and directory-entry length helpers.
+- Pre-reserved final output capacity for MIR sectioned package-image writers using their already-computed final offsets, avoiding repeated byte-buffer growth on the package-image write path.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
+  - `git diff --check -- selfhost/Compiler/Mir/PackageImage.stark docs/Self-host-Prep/TASKS.md docs/Self-host-Prep/TestPassLedger.md`: passed.
+- No broad test sweep was run.
+
+## 2026-07-09 Package Image Shared Codec Module Split Slice
+
+- Moved the STARKPKG magic/version helpers, package section IDs, section flags/encodings, and null string sentinel from `PackageImage.stark` into `PackageCodec.stark`.
+- Moved the shared sectioned-header writer, section-directory entry writer, directory-size/data-offset helpers, and final-capacity reservation helper into the shared codec module so logical and MIR package-image writers/readers share one byte-format boundary.
+- Kept the serialized format and call sites unchanged; this is a module split/refactor only.
+- Narrow verification:
+  - `./stark selfhost/Compiler/Mir/PackageCodec.stark --check -I selfhost`: passed.
+  - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
+- No broad test sweep was run.

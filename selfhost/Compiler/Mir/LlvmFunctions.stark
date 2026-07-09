@@ -317,6 +317,7 @@ internal fn MemoryStatus EmitLlvmParamListWithRangeAndAbiFacts(
     u32[0 max] paramCount,
     borrow IrTable<ValueFacts> paramFacts,
     borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
     mut borrow OwnedAscii sink)
 {
     try sink.AppendConstAscii("(");
@@ -340,6 +341,15 @@ internal fn MemoryStatus EmitLlvmParamListWithRangeAndAbiFacts(
         else if (abi.IsStructValue)
         {
             try EmitLlvmStructValueAbiType(abi, sink);
+        }
+        else if (abi.IsEnumValue)
+        {
+            if (abi.EnumOwnerTypeIndex == 0)
+            {
+                return MemoryStatus.Err(MemoryError.InvalidLayout);
+            }
+
+            try EmitLlvmEnumStorageType(enumLayoutFacts, TypeIdOf(abi.EnumOwnerTypeIndex), sink);
         }
         else if (abi.IsPointer)
         {
@@ -447,10 +457,10 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCoreWithEnumLayouts(
     stack MirType returnType = MirBlockScalarReturnType(instrs, blocks, entryBlockIndex);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, entryBlockIndex, sink);
+    try EmitLlvmReturnTypeNameWithEnumLayoutsAndCallContracts(instrs, blocks, functionCallContractFacts, enumLayoutFacts, entryBlockIndex, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(name);
-    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, enumLayoutFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
@@ -767,10 +777,10 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCoreWithEnumLayouts(
     stack MirType returnType = MirBlockRangesScalarReturnType(instrs, blocks, ranges);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmRangesReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, ranges, sink);
+    try EmitLlvmRangesReturnTypeNameWithEnumLayoutsAndCallContracts(instrs, blocks, functionCallContractFacts, enumLayoutFacts, ranges, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(name);
-    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, enumLayoutFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
@@ -1131,11 +1141,11 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts
     stack MirType returnType = MirBlockRangesScalarReturnType(instrs, blocks, ranges);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmRangesReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, ranges, sink);
+    try EmitLlvmRangesReturnTypeNameWithEnumLayoutsAndCallContracts(instrs, blocks, functionCallContractFacts, enumLayoutFacts, ranges, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);
-    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, enumLayoutFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");
@@ -1517,11 +1527,11 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCoreWithEnumLayou
     stack MirType returnType = MirBlockScalarReturnType(instrs, blocks, entryBlock);
     try EmitLlvmRangeAttribute(returnType, returnFacts, sink);
     try sink.AppendConstAscii(" ");
-    try EmitLlvmReturnTypeNameWithEnumLayouts(instrs, blocks, enumLayoutFacts, entryBlock, sink);
+    try EmitLlvmReturnTypeNameWithEnumLayoutsAndCallContracts(instrs, blocks, functionCallContractFacts, enumLayoutFacts, entryBlock, sink);
     try sink.AppendConstAscii(" @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);
-    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(instrs, paramCount, paramFacts, paramAbiFacts, enumLayoutFacts, sink);
     try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try EmitLlvmFunctionSection(functionFacts.SectionFacts, sink);
     try sink.AppendConstAscii(" {\n");

@@ -88,6 +88,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private bool _arenaFrameSlotQueued;
     private readonly Dictionary<string, bool> _aggregateValueMaterializationRequirements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _indirectAggregateValueSlots = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _deferredAggregateValueNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LocalSlotAlias> _localSlotAliases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _directAggregateAliasCandidateLocalNames;
     private readonly Dictionary<string, SsaAllocateLocalInstruction> _deferredAliasLocalAllocations = new(StringComparer.Ordinal);

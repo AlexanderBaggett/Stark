@@ -1,0 +1,11 @@
+[project]
+name = "differential-driver"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "Driver.stark"
+output = "differential-driver"
+
+[dependencies]
+stark-compiler = { path = "../.." }

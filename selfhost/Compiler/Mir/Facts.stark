@@ -646,6 +646,35 @@ internal fn bool TrySetFullIntegerRangeForMirType(mut borrow ValueFacts facts, M
     return false;
 }
 
+internal fn bool TrySetUnsignedIntegerRangeForMirType(mut borrow ValueFacts facts, MirType type)
+{
+    if (type == MirType.I1)
+    {
+        facts.SetIntegerRange(0, 2);
+        return true;
+    }
+
+    if (type == MirType.I8)
+    {
+        facts.SetIntegerRange(0, 256);
+        return true;
+    }
+
+    if (type == MirType.I16)
+    {
+        facts.SetIntegerRange(0, 65536);
+        return true;
+    }
+
+    if (type == MirType.I32)
+    {
+        facts.SetIntegerRange(0, (i64[min max])(2 ** 32));
+        return true;
+    }
+
+    return false;
+}
+
 internal fn bool TrySetIntegerResultFactsForMirType(mut borrow ValueFacts facts, MirType type)
 {
     return TrySetFullIntegerRangeForMirType(facts, type);
@@ -1214,6 +1243,33 @@ internal fn bool TryReadDeclaredRangeConstantOperands(
     return true;
 }
 
+internal fn MirType MirFactsValueType(borrow IrTable<MirInstruction> instrs, u32[0 max] valueIndex)
+{
+    if (!instrs.Contains(valueIndex))
+    {
+        return MirType.I64;
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    return instr.ResultType();
+}
+
+internal fn bool TryBuildZeroExtendedIntegerFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirInstruction instr,
+    mut borrow ValueFacts built)
+{
+    stack ValueFacts operandFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(instr.OperandAIndex()));
+    if (operandFacts.HasIntegerRange() && operandFacts.IntegerRangeLower() >= 0)
+    {
+        built.SetIntegerRange(operandFacts.IntegerRangeLower(), operandFacts.IntegerRangeUpperExclusive());
+        return true;
+    }
+
+    return TrySetUnsignedIntegerRangeForMirType(built, MirFactsValueType(instrs, instr.OperandAIndex()));
+}
+
 internal fn bool TryBuildGeneratedValueFactsForInstruction(
     borrow IrTable<MirInstruction> instrs,
     borrow IrTable<ValueFacts> paramFacts,
@@ -1582,7 +1638,11 @@ internal fn bool TryBuildGeneratedValueFactsForInstruction(
             facts = built;
             return true;
         case MirOp.ZExt:
-            built.SetIntegerRange(0, 2);
+            if (!TryBuildZeroExtendedIntegerFacts(instrs, valueFacts, instr, built))
+            {
+                return false;
+            }
+
             facts = built;
             return true;
         case MirOp.Phi:

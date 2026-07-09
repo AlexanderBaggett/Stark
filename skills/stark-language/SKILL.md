@@ -1389,6 +1389,58 @@ raylib-src = "/path/to/raylib/src"
 
 Build outputs live under `build/<profile>/<target-triple>/stage0/` today, with executables/libraries in `bin/<project>/`, saved native intermediates in `obj/<project>/`, library package images in `pkg/<project>/`, generated test runners/test executables in `tests/<project>/`, stage-local bundled library lookup under `stdlib/` and `vendor/`, repo development lookup through nearest `stdlib/dist`/`stdlib/src` and `vendor/dist`/`vendor/src`, and installed bundled lookup next to the compiler distribution. Project builds ignore `STARK_PATH`; low-level direct compiler invocations may still use it unless `--no-stark-path` is passed. Compiler-local cache work may use `.stark/cache`.
 
+## Compiler Development Verification Tooling
+
+Mechanisms for working on the compiler itself (host or self-hosted); the full
+recipes live in `docs/Internals/CompilerDevelopmentVerification.md`.
+
+- **Module resolution provenance.** `compiler <file> --explain-modules` prints
+  one line per resolved module: source file, or package path plus content
+  hash. Independently of the flag, the compiler always warns when a package
+  discovered through an implicit search directory (the root file's own
+  directory or `STARK_PATH`) shadows a module that an explicit `-I` source
+  path also provides — that warning names the package, its content hash, and
+  the shadowed source file. Treat it as a stop-the-line signal: a stale
+  package is silently substituting for the source under test.
+- **Emitted-module lint.** Debug-build compiles lint every emitted LLVM
+  module (STK5004 errors from `emit-llvm`): `dereferenceable(0)`,
+  empty/inverted `initializes` ranges, and a call whose `!noalias` list
+  contains its own result's fresh scope. `STARK_LLVM_LINT=0/1` overrides;
+  `STARK_LLVM_VERIFY=1` additionally round-trips each module through the real
+  LLVM verifier (`opt -passes=verify`, override the binary with
+  `STARK_LLVM_OPT`). Deep-bug closure rule: a deep bug is closed only when an
+  invariant check that would have caught it at first emission lands with the
+  fix.
+- **Dependency LLVM cache.** Dependency-module emissions are content-keyed
+  (module + transitive import closure + target/options + inline-clone seeds +
+  compiler binary) and cached under `~/.stark/dep-llvm-cache`, so from-source
+  and package builds stop paying one full pipeline run per dependency module
+  (measured: full selfhost package + driver rebuild 28.5 min cold → 4.8 min
+  warm, 213/213 hits). Rebuilding the compiler rotates every key — the first
+  build after a compiler change is always cold.
+  `STARK_DEP_CACHE=0` disables, `STARK_DEP_CACHE=<dir>` relocates,
+  `STARK_DEP_CACHE_VERIFY=1` recompiles every hit and fails loudly if the
+  cached text differs (byte-identical gate), `STARK_DEP_CACHE_LOG=1` prints
+  hit/miss counts.
+- **Stage0/stage1 differential harness.** Corpus files under
+  `tests-stark/corpus/` are compiled and run by the host compiler and lowered
+  by the self-hosted compiler (`selfhost/tools/DifferentialDriver`, built
+  with `stark build`; one-time selfhost package build). Exit-code parity is
+  the gate; `LlvmTextNormalizer.DiffModules` attaches a per-function skeleton
+  diff on failure. Run as a slice:
+  `dotnet test tests/compiler.IntegrationTests --filter StageParityTests`
+  (set `STARK_STAGE_PARITY=1` to make a missing driver binary a failure
+  instead of a skip). Every new stage1 lowering family should land with
+  corpus files — corpus growth is the cheap, compounding coverage mechanism.
+  Corpus files must sit in the dialect both stages accept today: semicolon
+  terminators, `export` on `main`, `main` as the file's last function (stage1
+  names functions ordinally, so the harness wraps the last zero-parameter
+  define as the entry point), and signed ranges that span negative values
+  (stage0 rejects non-negative signed storage with STK3014). Files stage1
+  rejects (`STAGE1-REJECT`) are stage1 coverage gaps, not harness defects:
+  park them in `tests-stark/corpus/pending/` with the blocking family
+  documented in TASKS.md §1, and move them up when the family lands.
+
 ## Style
 
 Prefer surrounding code style when editing existing files. Defaults for new Stark code:

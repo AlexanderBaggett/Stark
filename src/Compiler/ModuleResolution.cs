@@ -70,12 +70,28 @@ public sealed class InMemoryModuleResolver : IModuleSourceResolver
     }
 }
 
+/// <summary>
+/// Where a module resolution actually came from: exactly one of
+/// <see cref="SourceFilePath"/> or <see cref="ManifestPath"/> is set. Source
+/// files are preferred before package images so stale build artifacts under
+/// broad search roots cannot shadow the source tree being checked.
+/// </summary>
+public sealed record ModuleResolutionNote(
+    string ModuleName,
+    string? SourceFilePath,
+    string? ManifestPath,
+    string? LibraryPath,
+    string? ShadowedSourcePath);
+
 public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private readonly IReadOnlyList<string> _searchDirectories;
     private readonly string? _targetTriple;
     private readonly string? _normalizedTargetTriple;
     private readonly object _manifestIndexLock = new();
+    private readonly object _resolutionNoteLock = new();
+    private readonly List<ModuleResolutionNote> _resolutionNotes = [];
+    private readonly HashSet<string> _notedModules = new(StringComparer.Ordinal);
     private Dictionary<string, ResolvedPackageModule>? _manifestModules;
     private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesBySearchDirectory;
     private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesByPath;
@@ -96,6 +112,14 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
     }
 
     public FileSystemModuleResolver(IEnumerable<string> searchDirectories, LlvmTargetInfo? targetInfo)
+        : this(searchDirectories, targetInfo, implicitSearchDirectories: null)
+    {
+    }
+
+    public FileSystemModuleResolver(
+        IEnumerable<string> searchDirectories,
+        LlvmTargetInfo? targetInfo,
+        IEnumerable<string>? implicitSearchDirectories)
     {
         _searchDirectories = searchDirectories
             .Select(Path.GetFullPath)
@@ -112,24 +136,28 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
     public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
     {
+        if (TryResolveSourceModule(moduleName, out module))
+        {
+            return true;
+        }
+
+        EnsureManifestIndex();
         foreach (var searchDirectory in _searchDirectories)
         {
-            var filePath = ResolvePath(searchDirectory, moduleName);
-            if (File.Exists(filePath))
-            {
-                module = new ResolvedModuleReference(moduleName, filePath, IsExternal: false);
-                return true;
-            }
-
             if (!Directory.Exists(searchDirectory))
             {
                 continue;
             }
 
-            EnsureManifestIndex();
             if (_manifestModulesBySearchDirectory!.TryGetValue(Path.GetFullPath(searchDirectory), out var directoryModules)
                 && directoryModules.TryGetValue(moduleName, out var manifestModule))
             {
+                RecordResolutionNote(new ModuleResolutionNote(
+                    moduleName,
+                    SourceFilePath: null,
+                    ManifestPath: manifestModule.ManifestPath,
+                    LibraryPath: manifestModule.LibraryPath,
+                    ShadowedSourcePath: null));
                 module = new ResolvedModuleReference(
                     moduleName,
                     FilePath: manifestModule.ManifestPath,
@@ -142,6 +170,53 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
         module = default!;
         return false;
+    }
+
+    private bool TryResolveSourceModule(string moduleName, out ResolvedModuleReference module)
+    {
+        foreach (var searchDirectory in _searchDirectories)
+        {
+            var filePath = ResolvePath(searchDirectory, moduleName);
+            if (!File.Exists(filePath))
+            {
+                continue;
+            }
+
+            RecordResolutionNote(new ModuleResolutionNote(
+                moduleName,
+                SourceFilePath: filePath,
+                ManifestPath: null,
+                LibraryPath: null,
+                ShadowedSourcePath: null));
+            module = new ResolvedModuleReference(moduleName, filePath, IsExternal: false);
+            return true;
+        }
+
+        module = default!;
+        return false;
+    }
+
+    /// <summary>
+    /// Snapshot of what each resolved module actually bound to (source file or
+    /// package manifest), in first-resolution order, one note per module.
+    /// </summary>
+    public IReadOnlyList<ModuleResolutionNote> SnapshotResolutionNotes()
+    {
+        lock (_resolutionNoteLock)
+        {
+            return _resolutionNotes.ToArray();
+        }
+    }
+
+    private void RecordResolutionNote(ModuleResolutionNote note)
+    {
+        lock (_resolutionNoteLock)
+        {
+            if (_notedModules.Add(note.ModuleName))
+            {
+                _resolutionNotes.Add(note);
+            }
+        }
     }
 
     public bool TryLoadModuleSource(ResolvedModuleReference module, out string sourceText, out string? filePath)

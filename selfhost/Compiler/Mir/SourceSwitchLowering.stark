@@ -4466,6 +4466,7 @@ internal fn bool FunctionBodyStartsWithTerminalSwitch(borrow TokenStream stream,
 internal fn bool FunctionBodyHasLocalPrefixedTerminalSwitch(
     borrow TokenStream stream,
     borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
     u64[0 2 ** 63 - 1] fnIndex)
 {
     stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
@@ -4550,6 +4551,17 @@ internal fn bool FunctionBodyHasLocalPrefixedTerminalSwitch(
                 && typeToken != 0
                 && (TryParseTargetTypedObjectConstructorShape(stream, source, typeToken, assignToken, statementEnd, bodyOpen, bodyClose)
                     || TryParseTargetTypedPositionalRecordConstructorShape(stream, source, typeToken, assignToken, statementEnd, argsOpen, argsClose)))
+            {
+                cursor = statementEnd + 1;
+                continue;
+            }
+
+            stack mut u32[0 max] enumOwnerDeclarationIndex = 0;
+            stack mut Compiler.Parsing.DeclItem enumItem = new();
+            if (localStorage == TokenKind.Stack
+                && hasAssign
+                && typeToken != 0
+                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, typeToken, enumOwnerDeclarationIndex, enumItem))
             {
                 cursor = statementEnd + 1;
                 continue;
@@ -18255,6 +18267,9 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     ExprParseResult defaultArm,
     borrow IrTable<u32[0 max]> localTypes,
     borrow IrTable<u32[0 max]> localOverrides,
+    bool hasEnumScrutinee,
+    u32[0 max] enumScrutineeOwnerDeclarationIndex,
+    MirType enumScrutineeTagType,
     u32[0 max] paramCount,
     u32[0 max] entryFirst,
     mut borrow IrTable<MirInstruction> instrs,
@@ -18277,6 +18292,21 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
 
     stack ExprType scrutineeType = TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes);
     if (scrutineeType != ExprType.IntType && scrutineeType != ExprType.EnumType)
+    {
+        return false;
+    }
+
+    if (hasEnumScrutinee)
+    {
+        stack mut u32[0 max] actualEnumOwnerDeclarationIndex = 0;
+        if (scrutineeType != ExprType.EnumType
+            || !TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, scrutineeNode, localTypes, actualEnumOwnerDeclarationIndex)
+            || actualEnumOwnerDeclarationIndex != enumScrutineeOwnerDeclarationIndex)
+        {
+            return false;
+        }
+    }
+    else if (scrutineeType == ExprType.EnumType)
     {
         return false;
     }
@@ -18318,7 +18348,23 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
     stack mut IrTable<u32[0 max]> caseCounts = new();
     stack mut IrTable<u32[0 max]> returnValues = new();
 
-    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, localOverrides);
+    stack mut MirValueId scrutineeValue = MirValueIdOf(0);
+    if (hasEnumScrutinee)
+    {
+        stack TypeId enumOwnerType = TypeIdOf(enumScrutineeOwnerDeclarationIndex + 1);
+        stack MirValueId enumValue = LowerExprNodeAsTypeWithTypesAndLocals(
+            nodes,
+            scrutineeNode,
+            instrs,
+            localTypes,
+            localOverrides,
+            MirType.EnumValue);
+        scrutineeValue = MirEnumTagRead(instrs, enumOwnerType, enumValue, enumScrutineeTagType);
+    }
+    else
+    {
+        scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, localOverrides);
+    }
     stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
     while willexit (caseIndex < caseCountWide)
     {
@@ -18330,7 +18376,16 @@ internal fn bool LowerTerminalIntegerSwitchCasesToBlocks(
 
         stack i64[min max] caseMin = caseValues.Get((u32[0 max])(caseIndex + 1));
         stack i64[min max] caseMax = caseMaxValues.Get((u32[0 max])(caseIndex + 1));
-        stack MirValueId condition = LowerIntegerSwitchCaseCondition(instrs, scrutineeValue, caseMin, caseMax);
+        stack mut MirValueId condition = MirValueIdOf(0);
+        if (hasEnumScrutinee)
+        {
+            condition = LowerIntegerSwitchCaseConditionTyped(instrs, scrutineeValue, caseMin, caseMax, enumScrutineeTagType);
+        }
+        else
+        {
+            condition = LowerIntegerSwitchCaseCondition(instrs, scrutineeValue, caseMin, caseMax);
+        }
+
         stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
         if (testFirsts.Add(testFirst) == 0
             || testCounts.Add(testCount) == 0
@@ -26552,7 +26607,7 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }
@@ -26644,6 +26699,9 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
             enumDefaultArm,
             enumLocalTypes,
             enumNoOverrides,
+            false,
+            0,
+            MirType.I64,
             (u32[0 max])signatureParamCount,
             enumEntryFirst,
             instrs,
@@ -26722,6 +26780,9 @@ internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
         defaultArm,
         localTypes,
         noOverrides,
+        false,
+        0,
+        MirType.I64,
         (u32[0 max])signatureParamCount,
         entryFirst,
         instrs,
@@ -26769,7 +26830,7 @@ internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }
@@ -26982,7 +27043,7 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }
@@ -27089,6 +27150,11 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
             enumNestedListDescriptorRows,
             enumDefaultArm,
             enumNextToken))
+        {
+            return false;
+        }
+
+        if (!AnnotateCallExpressionResultTypesFromContracts(enumNodes, functionCallContractFacts))
         {
             return false;
         }
@@ -27229,6 +27295,12 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
                 body);
         }
 
+        stack mut MirType enumScrutineeTagType = MirType.I8;
+        if (!TryGetSourceSwitchEnumTagType(moduleFacts, caseOwnerDeclarationIndex, enumScrutineeTagType))
+        {
+            return false;
+        }
+
         return LowerTerminalIntegerSwitchCasesToBlocks(
             enumNodes,
             enumScrutinee.NodeId,
@@ -27238,6 +27310,9 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
             enumDefaultArm,
             enumLocalTypes,
             enumNoOverrides,
+            true,
+            caseOwnerDeclarationIndex,
+            enumScrutineeTagType,
             (u32[0 max])signatureParamCount,
             enumEntryFirst,
             instrs,
@@ -27273,6 +27348,11 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
         caseArms,
         defaultArm,
         nextToken))
+    {
+        return false;
+    }
+
+    if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
     {
         return false;
     }
@@ -27320,6 +27400,12 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
     stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
     stack mut MirType declaredReturnType = MirType.I64;
     stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
+    stack mut MirType enumScrutineeTagType = MirType.I8;
+    if (!TryGetSourceSwitchEnumTagType(moduleFacts, caseOwnerDeclarationIndex, enumScrutineeTagType))
+    {
+        return false;
+    }
+
     return LowerTerminalIntegerSwitchCasesToBlocks(
         nodes,
         scrutinee.NodeId,
@@ -27329,6 +27415,9 @@ internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
         defaultArm,
         localTypes,
         noOverrides,
+        true,
+        caseOwnerDeclarationIndex,
+        enumScrutineeTagType,
         (u32[0 max])signatureParamCount,
         entryFirst,
         instrs,
@@ -27376,7 +27465,7 @@ internal fn bool LowerModuleTerminalFixedArrayListSwitchFunctionToBlocks(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }
@@ -29493,7 +29582,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     out LoweredBody body)
 {
     body = new();
-    if (!FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, fnIndex))
+    if (!FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, moduleFacts, fnIndex))
     {
         return false;
     }
@@ -29533,6 +29622,8 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     stack mut IrTable<ConstructedObjectLocal> constructedObjectLocals = new();
     stack mut IrTable<FixedArrayStorageLocal> fixedArrayStorageLocals = new();
     stack mut IrTable<FixedArrayStorageInitializer> fixedArrayStorageInitializers = new();
+    stack mut IrTable<EnumStorageLocal> enumStorageLocals = new();
+    stack mut IrTable<EnumStorageInitializer> enumStorageInitializers = new();
     stack mut IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals = new();
     stack mut IrTable<u32[0 max]> localOverrideValues = new();
     stack mut IrTable<StackObjectFieldInitializer> stackObjectFieldInitializers = new();
@@ -29713,6 +29804,92 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
 
                         elementIndex = elementIndex + 1;
                     }
+                }
+
+                cursor = statementEnd + 1;
+                continue;
+            }
+
+            stack mut u32[0 max] enumOwnerDeclarationIndex = 0;
+            stack mut Compiler.Parsing.DeclItem enumItem = new();
+            if (localStorage == TokenKind.Stack
+                && hasAssign
+                && scalarTypeToken != 0
+                && TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
+            {
+                stack mut u32[0 max] enumAllocationSize = 0;
+                stack mut u32[0 max] enumAllocationAlign = 1;
+                if (!TryGetSourceEnumStorageLayout(moduleFacts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+                stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+                    stream,
+                    source,
+                    nodes,
+                    params,
+                    funcNames,
+                    constructedObjectLocals,
+                    sliceDescriptorLocals,
+                    localTypes,
+                    sourceValueFacts,
+                    moduleFacts,
+                    assignToken + 1);
+                if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
+                {
+                    return false;
+                }
+
+                if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
+                {
+                    return false;
+                }
+
+                stack mut u32[0 max] enumExprOwnerTypeIndex = 0;
+                stack u32[0 max] enumOwnerTypeIndex = enumOwnerDeclarationIndex + 1;
+                if (TypeOfNodeWithLocals(nodes, enumExpr.NodeId, localTypes) != ExprType.EnumType
+                    || !TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, enumExpr.NodeId, localTypes, enumExprOwnerTypeIndex)
+                    || enumExprOwnerTypeIndex != enumOwnerTypeIndex)
+                {
+                    return false;
+                }
+
+                stack MirValueId enumStorage = MirStackAlloc(instrs, enumAllocationSize, enumAllocationAlign);
+                stack bool enumMutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+                stack u32[0 max] enumLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+                stack u32[0 max] enumLocalOrdinal = localRoots.Add(0);
+                if (enumLocalOrdinal == 0
+                    || localTypes.Add(SourceLocalTypeCodeForStoredEnumOwnerDeclarationIndex(enumOwnerDeclarationIndex)) == 0
+                    || localOverrideValues.Add(enumStorage.Index()) == 0
+                    || sourceValueFacts.Add(new ValueFacts()) == 0)
+                {
+                    return false;
+                }
+
+                stack mut EnumStorageLocal enumLocal = new();
+                enumLocal.Start = nameStart;
+                enumLocal.Length = nameLength;
+                enumLocal.ParamIndex = enumLocalIndex;
+                enumLocal.StorageValue = enumStorage.Index();
+                enumLocal.FieldAlignment = enumAllocationAlign;
+                enumLocal.OwnerTypeIndex = enumOwnerTypeIndex;
+                enumLocal.Mutable = enumMutable;
+                if (enumStorageLocals.Add(enumLocal) == 0)
+                {
+                    return false;
+                }
+
+                stack mut EnumStorageInitializer enumInitializer = new();
+                enumInitializer.LocalOrdinal = enumLocalOrdinal;
+                enumInitializer.ParamIndex = enumLocalIndex;
+                enumInitializer.FieldAlignment = enumAllocationAlign;
+                enumInitializer.OwnerTypeIndex = enumOwnerTypeIndex;
+                enumInitializer.ExprRoot = enumExpr.NodeId;
+                if (enumStorageInitializers.Add(enumInitializer) == 0)
+                {
+                    return false;
                 }
 
                 cursor = statementEnd + 1;
@@ -30787,6 +30964,7 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     stack mut u64[0 2 ** 63 - 1] v = 0;
     stack mut u32[0 max] nextStackObjectInitializer = 1;
     stack mut u32[0 max] nextFixedArrayStorageInitializer = 1;
+    stack mut u32[0 max] nextEnumStorageInitializer = 1;
     while willexit (v < localCount)
     {
         stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(v + 1));
@@ -30823,6 +31001,17 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
             functionCallContractFacts,
             sliceArgumentLocals);
 
+        nextEnumStorageInitializer = LowerEnumStorageInitializersForLocalWithCallContext(
+            enumStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextEnumStorageInitializer,
+            nodes,
+            instrs,
+            localTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+
         nextStackObjectInitializer = LowerStackObjectFieldInitializersForLocalWithCallContext(
             stackObjectFieldInitializers,
             (u32[0 max])(v + 1),
@@ -30838,6 +31027,11 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
     }
 
     if ((u64[0 2 ** 63 - 1])(nextStackObjectInitializer - 1) != stackObjectFieldInitializers.Count())
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextEnumStorageInitializer - 1) != enumStorageInitializers.Count())
     {
         return false;
     }
@@ -31012,6 +31206,20 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
             body);
     }
 
+    stack mut bool finalHasEnumScrutinee = false;
+    stack mut u32[0 max] finalEnumScrutineeOwnerDeclarationIndex = 0;
+    stack mut MirType finalEnumScrutineeTagType = MirType.I64;
+    if (switchCasesAreEnum)
+    {
+        if (!TryGetSourceSwitchEnumTagType(moduleFacts, caseOwnerDeclarationIndex, finalEnumScrutineeTagType))
+        {
+            return false;
+        }
+
+        finalHasEnumScrutinee = true;
+        finalEnumScrutineeOwnerDeclarationIndex = caseOwnerDeclarationIndex;
+    }
+
     return LowerTerminalIntegerSwitchCasesToBlocks(
         nodes,
         scrutinee.NodeId,
@@ -31021,6 +31229,9 @@ internal fn bool LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
         defaultArm,
         localTypes,
         localOverrides,
+        finalHasEnumScrutinee,
+        finalEnumScrutineeOwnerDeclarationIndex,
+        finalEnumScrutineeTagType,
         (u32[0 max])signatureParamCount,
         entryFirst,
         instrs,
@@ -31090,7 +31301,7 @@ internal fn bool EmitModuleTerminalIntegerSwitchFunction(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }
@@ -31116,7 +31327,7 @@ internal fn bool EmitModuleTerminalIntegerSwitchFunction(
 
     stack FunctionEffectFacts functionEffects = FunctionEffectFactsAt(functionEffectFacts, functionNumber);
 
-    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCoreWithEnumLayouts(
         instrs,
         funcTailFlags,
         functionEffectFacts,
@@ -31134,6 +31345,7 @@ internal fn bool EmitModuleTerminalIntegerSwitchFunction(
         valueFacts,
         globalFacts,
         functionReturnFacts,
+        moduleFacts.EnumLayoutFacts,
         rangeMetadata,
         functionEffects,
         body.ParamCount,
@@ -31419,7 +31631,7 @@ internal fn bool EmitModuleLocalTerminalIntegerSwitchFunction(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }

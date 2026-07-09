@@ -102,6 +102,190 @@ public fn u64[0 max] ReadU64(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
     return acc;
 }
 
+// === Shared sectioned package-image format ===
+internal inline finite law u32[0 max] FourCc(u8[0 max] a, u8[0 max] b, u8[0 max] c, u8[0 max] d)
+{
+    return (u32[0 max])a
+        + (u32[0 max])b * 256
+        + (u32[0 max])c * 65536
+        + (u32[0 max])d * 16777216;
+}
+
+internal inline finite law u32[0 max] SectionedPackageImageVersion()
+{
+    return 2;
+}
+
+internal inline finite law u64[0 max] SectionedPackageImageHeaderLength()
+{
+    return (u64[0 max])24;
+}
+
+internal inline finite law u64[0 max] PackageSectionDirectoryEntryLength()
+{
+    return (u64[0 max])32;
+}
+
+internal inline finite law u64[0 max] PackageSectionDirectoryLength(u32[0 max] sectionCount)
+{
+    return (u64[0 max])sectionCount * PackageSectionDirectoryEntryLength();
+}
+
+internal inline finite law u64[0 max] PackageImageDataOffset(u32[0 max] sectionCount)
+{
+    return SectionedPackageImageHeaderLength() + PackageSectionDirectoryLength(sectionCount);
+}
+
+internal fn u32[0 max] SectionFlagsRequired()
+{
+    return 1;
+}
+
+internal fn u32[0 max] SectionEncodingRaw()
+{
+    return 0;
+}
+
+internal fn u32[0 max] SectionEncodingBrotliUtf8Json()
+{
+    return 1;
+}
+
+internal fn u32[0 max] PackageImageNullStringIndex()
+{
+    return 4294967295;
+}
+
+internal fn u32[0 max] PackageSectionStringTable()
+{
+    return FourCc(83, 84, 82, 83); // STRS
+}
+
+internal fn u32[0 max] PackageSectionPackageFacts()
+{
+    return FourCc(80, 73, 78, 70); // PINF
+}
+
+internal fn u32[0 max] PackageSectionManifest()
+{
+    return FourCc(77, 65, 78, 70); // MANF
+}
+
+internal fn u32[0 max] PackageSectionInstructions()
+{
+    return FourCc(77, 73, 78, 83); // MINS
+}
+
+internal fn u32[0 max] PackageSectionBlocks()
+{
+    return FourCc(77, 66, 76, 75); // MBLK
+}
+
+internal fn u32[0 max] PackageSectionFunctions()
+{
+    return FourCc(77, 70, 85, 78); // MFUN
+}
+
+internal fn u32[0 max] PackageSectionGlobals()
+{
+    return FourCc(77, 71, 76, 66); // MGLB
+}
+
+internal fn u32[0 max] PackageSectionAsmMetadata()
+{
+    return FourCc(77, 65, 83, 77); // MASM
+}
+
+internal fn u32[0 max] PackageSectionEnumLayoutFacts()
+{
+    return FourCc(77, 69, 76, 70); // MELF
+}
+
+internal fn u32[0 max] PackageSectionTextPayloadBytes()
+{
+    return FourCc(77, 84, 80, 66); // MTPB
+}
+
+internal fn u32[0 max] PackageSectionTextConstants()
+{
+    return FourCc(77, 84, 88, 67); // MTXC
+}
+
+internal fn u32[0 max] PackageSectionFloatPayloadBytes()
+{
+    return FourCc(77, 70, 80, 66); // MFPB
+}
+
+internal fn u32[0 max] PackageSectionFloatConstants()
+{
+    return FourCc(77, 70, 88, 67); // MFXC
+}
+
+internal fn void WriteStarkPackageImageMagic(mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u32[0 max] wroteS = buf.Add(83);
+    stack u32[0 max] wroteT = buf.Add(84);
+    stack u32[0 max] wroteA = buf.Add(65);
+    stack u32[0 max] wroteR = buf.Add(82);
+    stack u32[0 max] wroteK = buf.Add(75);
+    stack u32[0 max] wroteP = buf.Add(80);
+    stack u32[0 max] wroteSecondK = buf.Add(75);
+    stack u32[0 max] wroteG = buf.Add(71);
+}
+
+internal fn bool HasStarkPackageImageMagic(borrow IrTable<u8[0 max]> buf)
+{
+    return CanReadImageBytes(buf, 1, 8)
+        && buf.Get(1) == 83
+        && buf.Get(2) == 84
+        && buf.Get(3) == 65
+        && buf.Get(4) == 82
+        && buf.Get(5) == 75
+        && buf.Get(6) == 80
+        && buf.Get(7) == 75
+        && buf.Get(8) == 71;
+}
+
+internal fn void WritePackageSectionDirectoryEntry(
+    mut borrow IrTable<u8[0 max]> buf,
+    u32[0 max] sectionId,
+    u32[0 max] flags,
+    u64[0 max] offset,
+    u64[0 max] length,
+    u32[0 max] encoding)
+{
+    WriteU32(buf, sectionId);
+    WriteU32(buf, flags);
+    WriteU64(buf, offset);
+    WriteU64(buf, length);
+    WriteU32(buf, encoding);
+    WriteU32(buf, 0);
+}
+
+internal fn void WriteSectionedPackageImageHeader(mut borrow IrTable<u8[0 max]> buf, u32[0 max] sectionCount)
+{
+    WriteStarkPackageImageMagic(buf);
+    WriteU32(buf, SectionedPackageImageVersion());
+    WriteU32(buf, sectionCount);
+    WriteU64(buf, PackageSectionDirectoryLength(sectionCount));
+}
+
+internal fn bool TryReservePackageImageCapacity(mut borrow IrTable<u8[0 max]> buf, u64[0 max] byteCount)
+{
+    if (byteCount > (u64[0 max])(2 ** 63 - 1))
+    {
+        return false;
+    }
+
+    switch (buf.Reserve((u64[0 2 ** 63 - 1])byteCount))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+}
+
 // True when the 1-based byte range `[start, start + byteCount)` is present.
 // This is the guard all package-image readers use before touching raw bytes.
 internal inline finite law bool CanReadImageBytes(borrow IrTable<u8[0 max]> buf, u32[0 max] start, u64[0 max] byteCount)

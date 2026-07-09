@@ -1084,10 +1084,15 @@ public fn MirValueId MirCmpGe(mut borrow IrTable<MirInstruction> instrs, MirValu
     return MirEmitTyped(instrs, MirOp.CmpGe, MirType.I1, a.Index(), b.Index(), 0);
 }
 
-// Zero-extends `value` (an i1) to i64.
+// Zero-extends `value` to i64.
 public fn MirValueId MirZExt(mut borrow IrTable<MirInstruction> instrs, MirValueId value)
 {
     return MirEmit(instrs, MirOp.ZExt, value.Index(), 0, 0);
+}
+
+public fn MirValueId MirZExtTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId value)
+{
+    return MirEmitTyped(instrs, MirOp.ZExt, type, value.Index(), 0, 0);
 }
 
 public fn MirValueId MirReturn(mut borrow IrTable<MirInstruction> instrs, MirValueId value)

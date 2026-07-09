@@ -568,6 +568,7 @@ internal struct ParamAbiFacts
     bool IsSlice;
     bool IsFixedArray;
     bool IsStructValue;
+    bool IsEnumValue;
     // 0 = none, 1 = captures(none), 2 = ret read-provenance,
     // 3 = ret provenance, 4 = address read-provenance, 5 = address provenance.
     u32[0 max] CaptureKind;
@@ -595,6 +596,7 @@ internal struct ParamAbiFacts
     u32[0 max] StructValueAlignment;
     u32[0 max] StructValueFieldCount;
     u32[0 max] StructValueShapeCode;
+    u32[0 max] EnumOwnerTypeIndex;
 
     ParamAbiFacts()
     {
@@ -602,6 +604,7 @@ internal struct ParamAbiFacts
         self.IsSlice = false;
         self.IsFixedArray = false;
         self.IsStructValue = false;
+        self.IsEnumValue = false;
         self.CaptureKind = 0;
         self.ReadOnly = false;
         self.WriteOnly = false;
@@ -627,6 +630,7 @@ internal struct ParamAbiFacts
         self.StructValueAlignment = 0;
         self.StructValueFieldCount = 0;
         self.StructValueShapeCode = 0;
+        self.EnumOwnerTypeIndex = 0;
     }
 }
 
@@ -1159,6 +1163,8 @@ internal fn MemoryStatus EmitLlvmScopedNoAliasAttachmentForPointer(
 internal struct FunctionCallContractFacts
 {
     u32[0 max] ParamCount;
+    bool ReturnIsEnumValue;
+    u32[0 max] ReturnEnumOwnerTypeIndex;
     ParamAbiFacts Param0;
     ParamAbiFacts Param1;
     ParamAbiFacts Param2;
@@ -1174,6 +1180,8 @@ internal struct FunctionCallContractFacts
     FunctionCallContractFacts()
     {
         self.ParamCount = 0;
+        self.ReturnIsEnumValue = false;
+        self.ReturnEnumOwnerTypeIndex = 0;
         self.Param0 = new();
         self.Param1 = new();
         self.Param2 = new();

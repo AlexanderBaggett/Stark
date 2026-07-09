@@ -577,7 +577,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            AssertSystemTextRecursiveWarningsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -706,7 +706,7 @@ public sealed class MultiFileIntegrationTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
-            AssertCompilerLogsEmitted(stderr.ToString());
+            AssertSystemTextRecursiveWarningsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -748,6 +748,14 @@ public sealed class MultiFileIntegrationTests
     private static void AssertCompilerLogsEmitted(string text)
     {
         Assert.Equal(string.Empty, text);
+    }
+
+    private static void AssertSystemTextRecursiveWarningsEmitted(string text)
+    {
+        Assert.Contains("warning STK4122 [semantic-validate]: Recursive call from 'OwnedAscii.AppendSlice'", text, StringComparison.Ordinal);
+        Assert.Contains("warning STK4122 [semantic-validate]: Recursive call from 'OwnedUnicode.AppendSlice'", text, StringComparison.Ordinal);
+        Assert.Contains("Summary: 0 errors, 6 warnings, 0 infos.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("error ", text, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FindRepositoryRoot()
