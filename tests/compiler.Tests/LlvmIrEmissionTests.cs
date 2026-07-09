@@ -12951,7 +12951,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare i64 @Syscall2", llvm);
-        Assert.Contains("call i64 @Syscall2(i64 2, ptr", llvm);
+        Assert.Contains("call i64 @Syscall2(i64 range(i64 2, 3) 2, ptr readonly", llvm);
         Assert.DoesNotContain("; imported asm definition: Syscall.Syscall2", llvm);
         Assert.DoesNotContain("define i64 @Syscall2", llvm);
     }
@@ -15267,6 +15267,75 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ImportedSourceMethodsUseDefiningModuleQualifiedSymbols()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-method-symbol-llvm-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                public struct Box
+                {
+                    i32[min max] Value;
+
+                    public unsafe noinline fn i32[min max] Read(borrow Box self)
+                    {
+                        return self.Value;
+                    }
+                }
+                """);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    unsafe fn i32[min max] Run()
+                    {
+                        stack Lib.Box box = new Lib.Box()
+                        {
+                            Value = 7
+                        };
+
+                        return box.Read();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+
+            Assert.Matches(
+                @"declare fastcc .*@Lib_Box_Read\(ptr .*nonnull .*noalias .*readonly .*dereferenceable\(4\) align 4\)",
+                llvm);
+            Assert.Matches(
+                @"call fastcc i32 @Lib_Box_Read\(ptr .*nonnull .*noalias .*readonly .*dereferenceable\(4\) align 4",
+                llvm);
+            Assert.DoesNotContain("@Box_Read(", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures()
     {
         var result = Compile(
@@ -15980,10 +16049,10 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("ptr noundef readonly captures(none) %arg_input", touchHeader, StringComparison.Ordinal);
         Assert.DoesNotContain("nonnull", touchHeader, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc i32 @Touch\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(none\) %arg_input, i8 range\(i8 0, 11\) %arg_count\)",
+            @"call fastcc i32 @Touch\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(none\) %arg_input, i8 range\(i8 4, 11\) %arg_count\)",
             directBody);
         Assert.Matches(
-            @"call fastcc i32 %arg_op\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(address, read_provenance\) %arg_input, i8 range\(i8 0, 11\) %arg_count\)",
+            @"call fastcc i32 %arg_op\(ptr nonnull dereferenceable\(16\) align 4 readonly captures\(address, read_provenance\) %arg_input, i8 range\(i8 4, 11\) %arg_count\)",
             indirectBody);
     }
 

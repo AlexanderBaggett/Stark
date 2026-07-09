@@ -65,6 +65,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         if (CanDeferAddressForwardedAggregateValueInstruction(instruction))
         {
+            _deferredAggregateValueNames.Add(instruction.ResultName);
             return;
         }
 

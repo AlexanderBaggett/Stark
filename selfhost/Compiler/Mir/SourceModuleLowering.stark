@@ -793,7 +793,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
                     return false;
                 }
             }
-            else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, f))
+            else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, moduleFacts, f))
             {
                 stack mut IrTable<BlockEmit> noRanges = new();
                 if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(
@@ -1006,7 +1006,7 @@ internal fn bool BuildModuleFunctionTablesForEffectPrepass(
             }
             else
             {
-                body = LowerFunctionWithLocals(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, f, instrs, blocks);
+                body = LowerFunctionWithLocalsWithEnums(stream, source, funcNames, funcParamCounts, functionCallContractFacts, funcTailFlags, isTailCallable, moduleFacts, f, instrs, blocks);
                 if (!body.Ok)
                 {
                     return false;
@@ -2412,6 +2412,11 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                         return result;
                     }
 
+                    if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
+                    {
+                        return result;
+                    }
+
                     stack mut u32[0 max] enumExprOwnerTypeIndex = 0;
                     stack u32[0 max] enumOwnerTypeIndex = enumOwnerDeclarationIndex + 1;
                     if (TypeOfNodeWithLocals(nodes, enumExpr.NodeId, localTypes) != ExprType.EnumType
@@ -2564,6 +2569,25 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
                         }
                         else
                         {
+                            if (!TryParseStackObjectDefaultConstructorInitializers(
+                                stream,
+                                source,
+                                moduleFacts,
+                                objectTypeToken,
+                                objectNonValueRoot,
+                                objectLocalIndex,
+                                objectAllocation,
+                                nodes,
+                                params,
+                                funcNames,
+                                constructedObjectLocals,
+                                localTypes,
+                                sourceValueFacts,
+                                stackObjectFieldInitializers))
+                            {
+                                return result;
+                            }
+
                             if (!TryParseStackObjectFieldInitializers(
                                 stream,
                                 source,
@@ -2774,6 +2798,11 @@ internal fn LoweredBody LowerFunctionWithLocalsWithEnums(
     }
 
     stack ExprParseResult returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, (u64[0 2 ** 63 - 1])terminalIndex + 1);
+    if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
+    {
+        return result;
+    }
+
     if (!LinkSourceTextLiteralRowsFromModuleFacts(nodes, moduleFacts))
     {
         return result;
@@ -4210,6 +4239,25 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                         }
                         else
                         {
+                            if (!TryParseStackObjectDefaultConstructorInitializers(
+                                stream,
+                                source,
+                                moduleFacts,
+                                localTypeToken,
+                                objectLocalOrdinal,
+                                objectLocalIndex,
+                                MirValueIdOf(0),
+                                nodes,
+                                params,
+                                funcNames,
+                                constructedObjectLocals,
+                                localTypes,
+                                sourceValueFacts,
+                                stackObjectFieldInitializers))
+                            {
+                                return false;
+                            }
+
                             if (!TryParseStackObjectFieldInitializers(
                                 stream,
                                 source,
@@ -4469,6 +4517,11 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
                             if (enumExpr.NodeId == 0
                                 || enumExpr.Next != successorEnd
                                 || params.Count() != beforeInit)
+                            {
+                                return false;
+                            }
+
+                            if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
                             {
                                 return false;
                             }
@@ -4736,6 +4789,11 @@ internal fn bool LowerModuleLocalTryBindingFunctionToBlocks(
         moduleFacts,
         (u64[0 2 ** 63 - 1])returnIndex + 1);
     if (returnRoot.NodeId == 0 || params.Count() != beforeReturnParse)
+    {
+        return false;
+    }
+
+    if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
     {
         return false;
     }
@@ -6912,6 +6970,25 @@ internal fn bool LowerModuleConstructedObjectFieldTryAssignmentFunctionToBlocks(
     }
     else
     {
+        if (!TryParseStackObjectDefaultConstructorInitializers(
+            stream,
+            source,
+            moduleFacts,
+            objectTypeToken,
+            objectLocalOrdinal,
+            objectLocalIndex,
+            objectAllocation,
+            nodes,
+            params,
+            funcNames,
+            constructedObjectLocals,
+            localTypes,
+            sourceValueFacts,
+            stackObjectFieldInitializers))
+        {
+            return false;
+        }
+
         if (!TryParseStackObjectFieldInitializers(
             stream,
             source,
@@ -7727,7 +7804,7 @@ internal fn bool EmitModuleFunctionAst(
             sink);
     }
 
-    if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, fnIndex))
+    if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, moduleFacts, fnIndex))
     {
         return EmitModuleLocalTerminalIntegerSwitchFunction(
             stream,
@@ -7953,7 +8030,7 @@ internal fn bool EmitModuleFunctionAst(
         }
 
         stack mut IrTable<ParamAbiFacts> tryParamAbiFacts = new();
-        if (!BuildParamAbiFacts(stream, source, trySignature, tryParamAbiFacts))
+        if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, trySignature, tryParamAbiFacts))
         {
             return false;
         }
@@ -8032,7 +8109,7 @@ internal fn bool EmitModuleFunctionAst(
     }
 
     stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
-    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
     {
         return false;
     }
@@ -8158,6 +8235,11 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
     where overlap(sourceText, source)
 {
     stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildSourceModuleLoweringFacts(sourceText, stream, source, moduleFacts))
+    {
+        return false;
+    }
 
     // Function-name table and parallel parameter-count table (definition order = 1-based id
     // order, built in lockstep so a callee id indexes both). The name follows `fn`; the
@@ -8195,7 +8277,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
 
             stack u32[0 max] addedTailFlag = funcTailFlags.Add(tailFlag);
             stack mut FunctionCallContractFacts callFacts = new();
-            if (!BuildFunctionCallContractFacts(stream, source, signature, (u32[0 max])i, callFacts))
+            if (!BuildFunctionCallContractFactsWithDeclarations(stream, source, moduleFacts, signature, (u32[0 max])i, callFacts))
             {
                 return false;
             }
@@ -8229,12 +8311,6 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, ascii sou
     }
 
     if (funcNames.Count() == 0)
-    {
-        return false;
-    }
-
-    stack mut SourceModuleLoweringFacts moduleFacts = new();
-    if (!BuildSourceModuleLoweringFacts(sourceText, stream, source, moduleFacts))
     {
         return false;
     }
@@ -8348,6 +8424,12 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
     where overlap(sourceText, source)
 {
     stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    if (!BuildSourceModuleLoweringFacts(sourceText, stream, source, moduleFacts))
+    {
+        return false;
+    }
+
     stack mut IrTable<ParamName> funcNames = new();
     stack mut IrTable<u32[0 max]> funcParamCounts = new();
     stack mut IrTable<FunctionCallContractFacts> functionCallContractFacts = new();
@@ -8389,7 +8471,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
             }
 
             stack mut FunctionCallContractFacts callFacts = new();
-            if (!BuildFunctionCallContractFacts(stream, source, signature, (u32[0 max])i, callFacts)
+            if (!BuildFunctionCallContractFactsWithDeclarations(stream, source, moduleFacts, signature, (u32[0 max])i, callFacts)
                 || functionCallContractFacts.Add(callFacts) == 0)
             {
                 return false;
@@ -8400,12 +8482,6 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
     }
 
     if (funcNames.Count() == 0)
-    {
-        return false;
-    }
-
-    stack mut SourceModuleLoweringFacts moduleFacts = new();
-    if (!BuildSourceModuleLoweringFacts(sourceText, stream, source, moduleFacts))
     {
         return false;
     }
@@ -8676,7 +8752,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                         return false;
                     }
                 }
-                else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, f))
+                else if (FunctionBodyHasLocalPrefixedTerminalSwitch(stream, source, moduleFacts, f))
                 {
                     stack mut IrTable<BlockEmit> noRanges = new();
                     if (!LowerModuleLocalTerminalIntegerSwitchFunctionToBlocks(

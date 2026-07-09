@@ -549,6 +549,41 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitLlvmIrDerivesDetectedDataLayoutForExplicitLocalTarget()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || string.IsNullOrWhiteSpace(targetInfo.DataLayout))
+        {
+            return;
+        }
+
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                "--emit-llvm",
+                "--target",
+                targetInfo.Triple
+            ],
+            new StringReader(
+                """
+                module Demo
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+        Assert.Contains($"target datalayout = \"{targetInfo.DataLayout}\"", stdout.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DefaultExecutableOutputPathMatchesInputNameAndAddsExeForWindowsTargets()
     {
         var appPath = Path.Combine(Path.GetTempPath(), "hello.stark");
@@ -705,7 +740,7 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task EmitLibraryCanRoutePackageImageAwayFromStaticLibrary()
+    public async Task EmitLibraryStagesPackageLibraryBesideRoutedPackageImage()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
         {
@@ -728,6 +763,10 @@ public sealed class CompilerCliTests
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
         var outputPath = Path.Combine(binDirectory, $"libFacade{extension}");
         var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg");
+        var packagedLibraryPath = Path.Combine(packageDirectory, $"libFacade{extension}");
+        var relocatedDirectory = Path.Combine(tempDirectory.FullName, "relocated-pkg");
+        var relocatedManifestPath = Path.Combine(relocatedDirectory, "libFacade.starkpkg");
+        var relocatedLibraryPath = Path.Combine(relocatedDirectory, $"libFacade{extension}");
 
         try
         {
@@ -757,10 +796,23 @@ public sealed class CompilerCliTests
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(manifestPath));
+            Assert.True(File.Exists(packagedLibraryPath));
             Assert.False(File.Exists(Path.Combine(binDirectory, "libFacade.starkpkg")));
 
             Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
-            Assert.Equal(Path.Combine("..", "bin", $"libFacade{extension}"), manifest.LibraryFileName);
+            Assert.Equal($"libFacade{extension}", manifest.LibraryFileName);
+
+            Directory.CreateDirectory(relocatedDirectory);
+            File.Copy(manifestPath, relocatedManifestPath);
+            File.Copy(packagedLibraryPath, relocatedLibraryPath);
+            Directory.Delete(packageDirectory, recursive: true);
+            Directory.Delete(binDirectory, recursive: true);
+
+            var resolver = new FileSystemModuleResolver(relocatedDirectory);
+            Assert.True(resolver.TryResolveModule("Facade", out var resolvedModule));
+            Assert.Equal(
+                Path.GetFullPath(relocatedLibraryPath),
+                Path.GetFullPath(resolvedModule.LibraryPath!));
         }
         finally
         {

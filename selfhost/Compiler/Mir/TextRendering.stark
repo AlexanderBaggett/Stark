@@ -32,6 +32,33 @@ internal fn MemoryStatus EmitMirBinaryLine(mut borrow OwnedAscii sink, u32[0 max
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitMirTypeName(MirType type, mut borrow OwnedAscii sink)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            try sink.AppendConstAscii("i1");
+        case MirType.I8:
+            try sink.AppendConstAscii("i8");
+        case MirType.I16:
+            try sink.AppendConstAscii("i16");
+        case MirType.I32:
+            try sink.AppendConstAscii("i32");
+        case MirType.I64:
+            try sink.AppendConstAscii("i64");
+        case MirType.Ptr:
+            try sink.AppendConstAscii("ptr");
+        case MirType.EnumValue:
+            try sink.AppendConstAscii("enum");
+        case MirType.F32:
+            try sink.AppendConstAscii("f32");
+        case MirType.F64:
+            try sink.AppendConstAscii("f64");
+    }
+
+    return MemoryStatus.Ok;
+}
+
 // Appends the MIR text line for the instruction at 1-based `index`.
 internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
 {
@@ -207,6 +234,8 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try EmitMirValue(sink, index);
             try sink.AppendConstAscii(" = zext ");
             try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(" to ");
+            try EmitMirTypeName(instr.ResultType(), sink);
             try sink.AppendConstAscii("\n");
         case MirOp.LoadGlobal:
             try EmitMirValue(sink, index);

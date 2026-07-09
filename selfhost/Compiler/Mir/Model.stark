@@ -88,7 +88,8 @@ public enum MirOp
     CmpLe,
     CmpGt,
     CmpGe,
-    // Zero-extends operand A (an i1, e.g. a comparison result) to i64.
+    // Zero-extends operand A to ResType. Existing boolean returns use the default i64
+    // result type; explicit integer conversions can preserve their target width.
     ZExt,
     // Loads the i64 value of module global `@gN` (N = the global id in the immediate);
     // its result is the value naming this instruction.

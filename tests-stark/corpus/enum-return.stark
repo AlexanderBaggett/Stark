@@ -1,0 +1,16 @@
+enum Pick { First, Second }
+
+fn Pick choose()
+{
+    return Pick.Second;
+}
+
+export fn i64[min max] main()
+{
+    stack Pick pick = choose();
+    switch (pick)
+    {
+        case Pick.Second: return 8;
+        default: return 1;
+    }
+}

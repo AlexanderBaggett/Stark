@@ -1075,6 +1075,8 @@ internal fn bool ExprNodeCanBeDiscardedIfOverwritten(borrow IrTable<ExprNode> no
             return false;
         case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
             return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.ConversionExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left);
         case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
             return true;
         case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:

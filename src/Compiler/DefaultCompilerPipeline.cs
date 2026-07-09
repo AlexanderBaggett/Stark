@@ -4553,6 +4553,28 @@ public static class DefaultCompilerPipeline
                 emitFallbackDeclarationsForSourceBodies: false).Emit();
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
             EmitFallbackLogDiagnostics(context, "STK5001", BackendFallbackEventIds);
+
+            if (LlvmModuleLint.ShouldRun)
+            {
+                foreach (var violation in LlvmModuleLint.Check(llvmModule.Text))
+                {
+                    context.Diagnostics.Error(
+                        "STK5004",
+                        $"LLVM module lint: {violation}",
+                        "emit-llvm",
+                        SourceLocation.Synthetic(context.Input.FilePath));
+                }
+            }
+
+            if (LlvmModuleLint.ShouldExternalVerify
+                && LlvmModuleLint.ExternalVerify(llvmModule.Text) is { Status: LlvmExternalVerifyStatus.Failed } verifyResult)
+            {
+                context.Diagnostics.Error(
+                    "STK5004",
+                    $"LLVM verifier rejected the emitted module: {verifyResult.Detail}",
+                    "emit-llvm",
+                    SourceLocation.Synthetic(context.Input.FilePath));
+            }
         }
     }
 

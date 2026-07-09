@@ -438,6 +438,7 @@ internal sealed class AbiLowerer
             // declares/calls reference a symbol the archive never exported
             // (`@Counter_Reset` vs `@Facade_Counter_Reset`).
             return !string.IsNullOrEmpty(moduleName)
+                   && !string.Equals(moduleName, _syntaxModel.ModuleName, StringComparison.Ordinal)
                    && !qualifiedName.StartsWith($"{moduleName}.", StringComparison.Ordinal)
                 ? $"{moduleName}.{qualifiedName}"
                 : qualifiedName;

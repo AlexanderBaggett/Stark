@@ -187,7 +187,136 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
+        if (value is SsaValueReference deferredReference
+            && _deferredAggregateValueNames.Contains(deferredReference.Name))
+        {
+            // The register was skipped on the promise that every consumer can
+            // rebuild the value through an address path. When that promise
+            // breaks (for example the chain's base local was overwritten
+            // between the load and this store, so address forwarding would
+            // read the wrong bytes), rebuild the register form on demand at
+            // this consumer — the chain's operands are materialized SSA
+            // values, so re-emitting the inserts here is always dominated.
+            if (TryMaterializeDeferredAggregateValue(value, new HashSet<string>(StringComparer.Ordinal), out var materializedRegister))
+            {
+                AppendLine($"  store {MapType(valueType)} {materializedRegister}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes, includeByteAlignment)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
+                return;
+            }
+
+            // Emitting the raw reference would produce invalid LLVM ('use of
+            // undefined value') or silently wrong code; fail the compile.
+            throw new UnsupportedBodyEmissionException(
+                $"Aggregate value '{deferredReference.Name}' was deferred as address-forwarded but a consumer required its register form.");
+        }
+
         AppendLine($"  store {MapType(valueType)} {FormatValue(value)}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes, includeByteAlignment)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
+    }
+
+    /// <summary>
+    /// Emits the register form of a deferred aggregate insert chain at the
+    /// current position using fresh temp names: recursively materializes
+    /// deferred targets/values, then re-emits each skipped insert. Operand
+    /// registers were emitted at their SSA definition points, which dominate
+    /// every consumer of the chain, so emission at the consumer is safe.
+    /// </summary>
+    private bool TryMaterializeDeferredAggregateValue(SsaValue value, ISet<string> visitedValueNames, out string register)
+    {
+        if (value is not SsaValueReference reference
+            || !_deferredAggregateValueNames.Contains(reference.Name))
+        {
+            register = FormatValue(value);
+            return true;
+        }
+
+        if (!visitedValueNames.Add(reference.Name)
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            register = string.Empty;
+            return false;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryMaterializeDeferredAggregateValue(use.Value, visitedValueNames, out register);
+            case SsaInsertFieldRValue insertField:
+            {
+                if (!TryMaterializeDeferredAggregateValue(insertField.Target, visitedValueNames, out var targetRegister)
+                    || !TryMaterializeDeferredAggregateValue(insertField.Value, visitedValueNames, out var fieldRegister))
+                {
+                    register = string.Empty;
+                    return false;
+                }
+
+                register = EmitInsertIntoRegister(
+                    insertField.Target.Type,
+                    targetRegister,
+                    insertField.Value.Type,
+                    fieldRegister,
+                    insertField.FieldIndex,
+                    isFieldInsert: true);
+                return true;
+            }
+            case SsaInsertIndexRValue insertIndex:
+            {
+                if (!TryMaterializeDeferredAggregateValue(insertIndex.Target, visitedValueNames, out var targetRegister)
+                    || !TryMaterializeDeferredAggregateValue(insertIndex.Value, visitedValueNames, out var elementRegister))
+                {
+                    register = string.Empty;
+                    return false;
+                }
+
+                register = EmitInsertIntoRegister(
+                    insertIndex.Target.Type,
+                    targetRegister,
+                    insertIndex.Value.Type,
+                    elementRegister,
+                    insertIndex.ElementIndex,
+                    isFieldInsert: false);
+                return true;
+            }
+            default:
+                register = string.Empty;
+                return false;
+        }
+    }
+
+    private string EmitInsertIntoRegister(
+        StarkTypeSymbol aggregateType,
+        string targetRegister,
+        StarkTypeSymbol insertedType,
+        string insertedRegister,
+        int memberIndex,
+        bool isFieldInsert)
+    {
+        var result = $"%{EscapeIdentifier(CreateAbiTempName("deferred_insert"))}";
+        if (isFieldInsert
+            && TryResolveLayoutControlledField(aggregateType, memberIndex, out var namedType, out var layout, out _, out var fieldLayout))
+        {
+            if (LlvmLayoutControlledAggregateFacts.TryGetStorageElementIndex(namedType, layout, memberIndex, out var storageElementIndex))
+            {
+                AppendLine($"  {result} = insertvalue {MapType(aggregateType)} {targetRegister}, {MapType(insertedType)} {insertedRegister}, {storageElementIndex}");
+                return result;
+            }
+
+            // Layout-controlled field without a storage element: round-trip
+            // through a slot at the field's byte offset, mirroring
+            // TryEmitLayoutControlledInsertField.
+            var slotName = $"%{EscapeIdentifier(CreateAbiTempName("deferred_insert_slot"))}";
+            QueueStaticAlloca(slotName, aggregateType);
+            AppendLine($"  store {MapType(aggregateType)} {targetRegister}, ptr {slotName}{GetStackObjectAlignmentSuffix(aggregateType)}");
+            var fieldAddress = $"%{EscapeIdentifier(CreateAbiTempName("deferred_insert_field"))}";
+            AppendLine($"  {fieldAddress} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {slotName}, i64 {fieldLayout.OffsetBytes}");
+            var fieldAlignmentBytes = Math.Min(
+                fieldLayout.NaturalAlignmentBytes,
+                GetAlignmentAtOffset(layout.AlignmentBytes, fieldLayout.OffsetBytes));
+            AppendLine($"  store {MapType(insertedType)} {insertedRegister}, ptr {fieldAddress}{GetAlignmentSuffix(fieldAlignmentBytes)}");
+            AppendLine($"  {result} = load {MapType(aggregateType)}, ptr {slotName}{GetStackObjectAlignmentSuffix(aggregateType)}");
+            return result;
+        }
+
+        AppendLine($"  {result} = insertvalue {MapType(aggregateType)} {targetRegister}, {MapType(insertedType)} {insertedRegister}, {memberIndex}");
+        return result;
     }
 
     private bool TryEmitPointerBackedBorrowStore(
@@ -966,10 +1095,56 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaUseRValue => true,
             SsaExtractFieldRValue extractField => IsFreshIndirectAggregateValueReference(extractField.Target),
             SsaExtractIndexRValue extractIndex => IsFreshIndirectAggregateValueReference(extractIndex.Target),
-            SsaInsertFieldRValue => true,
-            SsaInsertIndexRValue => true,
+            // Deferral skips the insertvalue emission entirely, so every
+            // consumer must be able to rebuild the chain through
+            // TryEmitStructuredAggregateStore — which needs the chain's base
+            // to bottom out at something with an address or a materialized
+            // register. A chain over an unreconstructible base must
+            // materialize normally or its consumers reference a register
+            // that was never emitted.
+            SsaInsertFieldRValue insertField => InsertChainBaseIsReconstructible(insertField.Target, new HashSet<string>(StringComparer.Ordinal)),
+            SsaInsertIndexRValue insertIndex => InsertChainBaseIsReconstructible(insertIndex.Target, new HashSet<string>(StringComparer.Ordinal)),
             _ => false
         };
+    }
+
+    private bool InsertChainBaseIsReconstructible(SsaValue value, ISet<string> visitedValueNames)
+    {
+        if (visitedValueNames.Count > 256)
+        {
+            return false;
+        }
+
+        switch (value)
+        {
+            case SsaZeroInitializerValue:
+                return true;
+            case SsaValueReference reference:
+                if (_phisByResultName.ContainsKey(reference.Name)
+                    || _indirectAggregateValueSlots.ContainsKey(reference.Name))
+                {
+                    return true;
+                }
+
+                if (!visitedValueNames.Add(reference.Name)
+                    || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return false;
+                }
+
+                return definition switch
+                {
+                    SsaUseRValue use => InsertChainBaseIsReconstructible(use.Value, visitedValueNames),
+                    SsaLoadLocalRValue => true,
+                    SsaLoadIndirectRValue => true,
+                    SsaLoadGlobalRValue => true,
+                    SsaInsertFieldRValue insertField => InsertChainBaseIsReconstructible(insertField.Target, visitedValueNames),
+                    SsaInsertIndexRValue insertIndex => InsertChainBaseIsReconstructible(insertIndex.Target, visitedValueNames),
+                    _ => false
+                };
+            default:
+                return false;
+        }
     }
 
     private string FormatAggregateValueUse(SsaValue value, StarkTypeSymbol valueType, string purpose)
@@ -982,6 +1157,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         if (!TryResolveAggregateSourceAddress(value, valueType, out var sourceAddress, out var sourceAlignmentBytes))
         {
+            if (value is SsaValueReference deferredReference
+                && _deferredAggregateValueNames.Contains(deferredReference.Name)
+                && TryMaterializeDeferredAggregateValue(value, new HashSet<string>(StringComparer.Ordinal), out var materializedRegister))
+            {
+                return materializedRegister;
+            }
+
             return FormatValue(value);
         }
 
@@ -1326,6 +1508,30 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 return true;
             case SsaValueReference reference:
+                if (_phisByResultName.ContainsKey(reference.Name)
+                    && NormalizeAggregateType(reference.Type) == NormalizeAggregateType(valueType))
+                {
+                    // A phi'd aggregate is a materialized register: write the
+                    // merged base value directly, letting an enclosing insert
+                    // chain overwrite the updated fields afterwards. Without
+                    // this base case an insert chain over a branch join has no
+                    // reconstructible source and the generic fallback
+                    // references the deferred (never-emitted) insert register.
+                    AppendLine($"  store {MapType(valueType)} %{EscapeIdentifier(reference.Name)}, ptr {destinationAddress}{GetAlignmentSuffix(destinationAlignmentBytes)}");
+                    return true;
+                }
+
+                if (_indirectAggregateValueSlots.TryGetValue(reference.Name, out var indirectSlotAddress))
+                {
+                    return TryEmitStructuredAggregateBaseStore(
+                        destinationAddress,
+                        valueType,
+                        indirectSlotAddress,
+                        destinationAlignmentBytes,
+                        GetTypeAlignmentBytes(valueType),
+                        string.Empty);
+                }
+
                 if (!visitedValueNames.Add(reference.Name)
                     || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
                 {

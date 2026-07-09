@@ -1,0 +1,62 @@
+import Compiler.Mir
+import System.Console
+import System.IO.File
+import System.Process
+import System.Text
+module Compiler.Tools.DifferentialDriver
+
+// Stage1 side of the stage0/stage1 differential harness: read one Stark
+// source file, lower it through the self-hosted whole-module pipeline, and
+// print the emitted LLVM module text to stdout. The stage0 side compiles the
+// same file with the host compiler and diffs the normalized results
+// (LlvmTextNormalizer) and the executable behavior. Exit codes: 0 emitted,
+// 2 usage/IO failure, 3 stage1 rejected the module.
+
+fn i32[min max] LowerFile(ascii path)
+{
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var readError):
+            WriteLine("STAGE1-READ-ERROR");
+            return 2;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var text):
+            stack System.Text.OwnedAscii source = text;
+            stack mut OwnedAscii sink = new();
+            if (CompileModuleFromAst(source.View(), sink))
+            {
+                WriteLine(sink.View());
+                return 0;
+            }
+
+            WriteLine("STAGE1-REJECT");
+            if (sink.Length() > 0)
+            {
+                WriteLine(sink.View());
+            }
+
+            return 3;
+    }
+}
+
+export fn i32[min max] main()
+{
+    unsafe
+    {
+        switch (System.Process.Arguments())
+        {
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Err(var argumentError):
+                WriteLine("STAGE1-ARGS-ERROR");
+                return 2;
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Ok(var value):
+                stack System.Process.ProcessArguments arguments = value;
+                if (arguments.Count() < 2)
+                {
+                    WriteLine("usage: differential-driver <source.stark>");
+                    return 2;
+                }
+
+                stack System.Text.OwnedAscii[] argumentSlice = arguments.AsSlice();
+                return LowerFile(argumentSlice[1].View());
+        }
+    }
+}

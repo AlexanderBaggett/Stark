@@ -1,0 +1,11 @@
+enum Packet { Empty, Other(u32[0 max]) }
+
+export fn i64[min max] main()
+{
+    stack Packet packet = Packet.Other(9);
+    switch (packet)
+    {
+        case Packet.Other(var value): return (i64[min max])value;
+        default: return 0;
+    }
+}

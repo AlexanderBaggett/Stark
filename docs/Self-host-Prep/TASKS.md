@@ -34,6 +34,23 @@ Execution constraints:
 
 ## 1. Compiler Port To Stark
 
+Differential-harness findings (2026-07-08, `tests-stark/corpus/pending/`, each
+is a stage0-validated program that joins the StageParityTests gate when its
+family lands):
+
+- [x] Whole-module path: enum-typed call arguments (`choose(pick)` /
+  `choose(Pick.Second)`) reject; enum-typed parameters in the callee
+  signature already accept.
+- [x] Whole-module path: enum-valued call results into locals
+  (`stack Pick pick = choose();`) and enum-valued terminal returns from
+  switch cases (`case Tag.Left: return Pick.First;`) reject — the open
+  remainder of the enum-return slice.
+- [x] Whole-module path: payload capture with a cast in a case terminal
+  return (`case Packet.Other(var value): return (i64[min max])value;`)
+  rejects.
+- [x] Whole-module path: struct declaration + `new()` constructor + field
+  reads reject (the single-function bundle path supports these).
+
 - [~] Implement the front-end parser, syntax model, binding, and type resolver.
   - [x] Implement the handwritten lexer with exact spans and grammar-faithful tokenization.
   - [~] Implement the handwritten parser against `Stark.g4`.
@@ -1223,10 +1240,11 @@ Execution constraints:
     - [x] Keep manifest-backed module resolution from falling back to raw `.starkpkg` source reads.
     - [x] Keep library package images scoped to source-owned modules while preserving direct external imports.
     - [x] Compile library dependency objects only from source-backed imports and use package-backed facts as imports.
-    - [ ] Decode `MANF` and build the self-host logical package model from binary images.
+    - [~] Decode `MANF` and build the self-host logical package model from binary images.
       - [x] Expose validated `MANF` section range facts and compressed payload copying for the self-host logical load handoff.
       - [x] Parse already-decoded Stage0 `MANF` JSON into a compact self-host manifest summary while validating identity/profile/target/backend facts against `PINF`/`STRS`.
       - [x] Parse decoded Stage0 `MANF` module rows into compact module-section summaries for typed-interface loader handoff.
+      - [x] Build a compact single-parse self-host logical manifest model with manifest summary facts and ordered module rows.
     - [~] Materialize typed interface declarations.
       - [x] Parse typed-interface declaration header rows with owned name/qualified-name/visibility/kind text and compact count/flag facts.
       - [x] Materialize typed-interface declaration type-reference payloads into package-owned fact rows.
@@ -1250,22 +1268,89 @@ Execution constraints:
       - [x] Materialize compiler-facts function effect profile rows.
       - [x] Materialize function semantic memory effect rows.
     - [x] Materialize ownership fact sections.
-    - [ ] Materialize range fact sections.
-    - [ ] Materialize aliasing fact sections.
-    - [ ] Materialize ABI fact sections.
-    - [ ] Materialize layout fact sections.
-    - [ ] Materialize native metadata fact sections.
-    - [ ] Materialize generic-template sections without source reconstruction.
-    - [ ] Port the package-image source bridge for Stage0/Stage1 compatibility.
-    - [ ] Validate package stage compatibility.
+    - [x] Materialize range fact sections.
+    - [x] Materialize aliasing fact sections.
+    - [x] Materialize ABI fact sections.
+    - [x] Materialize layout fact sections.
+    - [x] Materialize native metadata fact sections.
+    - [x] Materialize generic-template sections without source reconstruction.
+      - [x] Materialize generic-template function header rows and section child counts.
+      - [x] Materialize generic-template typed-body statement/expression rows.
+        - [x] Materialize typed-body statement/expression shape rows, parent links, and text-list rows with stack-constant worklists.
+        - [x] Materialize typed-body type-reference payload rows and switch pattern/case rows.
+          - [x] Materialize typed-body statement/expression type-reference links and expression type-argument rows.
+          - [x] Materialize typed-body comptime value argument payload rows.
+          - [x] Materialize typed-body switch case and pattern rows.
+      - [x] Materialize generic-template deferred instantiation and operation child rows.
+        - [x] Materialize generic-template deferred function/type instantiation rows and argument payload rows.
+        - [x] Materialize generic-template operation child rows.
+          - [x] Materialize local declaration, conversion, field access, and try propagation operation rows.
+          - [x] Materialize object and enum construction/value/pattern rows with field/member payload rows.
+          - [x] Materialize direct/member/function-address/bound-operation call-signature rows and nested operation payload rows.
+            - [x] Materialize direct/member/function-address and bound-operation common call-signature rows with parameter, type-argument, comptime, parameter-group, dead-on-return, and bound call-argument payload rows.
+            - [x] Materialize bound-operation non-call payload rows for receiver/function-pointer/closure/access/source/index/name/text/object/enum/interpolation/query/switch payloads.
+    - [~] Port the package-image source bridge for Stage0/Stage1 compatibility.
+      - [x] Materialize effective source-surface import and re-export rows for bridge-compatible module import rendering. (2026-07-09: added compact source-surface import summaries that prefer explicit `SourceSurface`, fall back to legacy module imports/re-exports, and fold duplicate re-exports into exported direct-import rows.)
+      - [x] Materialize effective source-surface type-alias header and generic-parameter rows for bridge-compatible alias rendering. (2026-07-09: added compact source-surface alias summaries that prefer explicit `SourceSurface`, fall back to legacy module aliases, preserve source target spelling, count/validate comptime parameter rows, and expose ordinary generic parameter names.)
+      - [x] Materialize effective source-surface type header and direct child-count rows for bridge-compatible source-only type rendering. (2026-07-09: added compact source-surface type summaries that prefer explicit `SourceSurface`, fall back to legacy module types, preserve source kind/layout spelling, validate generic/comptime generic rows, and expose fields, constructors, variants, methods, associated types, traits, thread-safety attributes, destructor, dyn-trait, and pack/align counts/flags.)
+      - [x] Materialize effective source-surface type field rows for bridge-compatible source-only field rendering. (2026-07-09: added compact source-surface field summaries that preserve source field type spelling, optional visibility, explicit offset bytes, and thread-safety attribute counts while honoring explicit `SourceSurface` suppression of legacy fields.)
+      - [x] Materialize effective source-surface type primary-constructor parameter rows for bridge-compatible record constructor rendering. (2026-07-09: added compact source-surface type constructor-parameter summaries that preserve source parameter name/type spelling, raw-pointer count expressions, and disjoint/const flags while honoring explicit `SourceSurface` suppression of legacy constructor parameters.)
+      - [x] Materialize effective source-surface enum variant and payload rows for bridge-compatible enum rendering. (2026-07-09: added compact source-surface enum variant and payload summaries that preserve variant names, named-payload mode, role/absorbed-error metadata, payload names, positional empty-name payloads, and source payload type spelling.)
+      - [x] Materialize effective source-surface global rows for bridge-compatible source-only global rendering. (2026-07-09: added compact source-surface global summaries that prefer explicit `SourceSurface`, fall back to legacy module globals, preserve source type spelling, validate mutability and initializer shape, and expose constant-initializer presence.)
+      - [x] Materialize effective source-surface function header and parameter rows for bridge-compatible source-only function rendering. (2026-07-09: added compact source-surface function summaries that prefer explicit `SourceSurface`, fall back to legacy module functions, preserve source return/parameter type spelling, count memory-contract child groups, and expose ABI/performance flags plus parameter raw-count expressions.)
+    - [x] Validate package stage compatibility. (2026-07-09: added an O(1) compact-fact stage compatibility helper that accepts validated logical package images only for the currently supported `stage0` build stage and rejects reserved future stages.)
     - [x] Validate package profile compatibility. (2026-07-08: added compact-fact profile matching over `PINF`/`STRS` without decoding `MANF`.)
     - [x] Validate package target compatibility. (2026-07-08: added compact-fact target triple/data-layout matching over `PINF`/`STRS`.)
     - [x] Validate package backend fact compatibility. (2026-07-08: added compact-fact CPU/relocation/code-model, feature, C data model, and aggregate pointer layout matching.)
     - [x] Validate package version compatibility. (2026-07-08: added compact header-version read/match helpers and rejection coverage for unsupported logical package versions before `PINF`/`STRS` facts load.)
-  - [ ] Port logical package models.
-  - [ ] Port logical package builders.
-  - [ ] Port shared package codecs.
-  - [ ] Port deterministic package inspection rendering.
+  - [x] Port logical package models.
+    - [x] Add compact self-host logical manifest model rows for decoded `MANF` manifest/module summaries. (2026-07-09: added a single-parse model builder that validates root/library/profile/target/backend facts once, reserves ordered module-row storage up front, and exposes O(1) ordinal access for package import handoff.)
+    - [x] Add typed-interface, source-surface, compiler-fact, and generic-template graph ownership into the top-level logical package model.
+      - [x] Own module-level function-effect fact rows and generic-template function rows from effective compiler sections in the logical manifest model. (2026-07-09: added per-module graph rows beside manifest module summaries, preserving effective `CompilerSections` precedence and exposing borrowed graph/count access without reparsing `MANF`.)
+      - [x] Own remaining compiler-fact graph families in the logical manifest model. (2026-07-09: added model-owned ABI, layout, native metadata, function semantic, and function ownership graphs with optional section probes, single-parse materialization, and module-level count/availability accessors.)
+      - [x] Own typed-interface declaration/callable/global/type graph families in the logical manifest model. (2026-07-09: added model-owned typed alias, callable, global, and type graphs from effective `TypedInterface` sections, including nested method callable facts, single-parse materialization, and module-level count/availability accessors.)
+      - [x] Own source-surface bridge graph families in the logical manifest model. (2026-07-09: added a model-owned source-surface bridge graph for import, type-alias, type, field, constructor-parameter, enum-variant, payload, global, function, and function-parameter summaries, preserving explicit `SourceSurface` shadowing over legacy module arrays with single-parse materialization and module-level availability/count accessors.)
+  - [x] Port logical package builders.
+    - [x] Add a compact logical STRS/PINF/MANF writer for already-encoded manifest payloads. (2026-07-09: added a deduplicating string-table builder, package-fact writer, section-directory wrapper, and focused round-trip fact for profile/target/C-data/aggregate facts.)
+    - [x] Port source-surface, typed-interface, compiler-fact, and generic-template manifest builders from self-host compiler artifacts.
+      - [x] Add source-surface import/re-export manifest JSON builder rows. (2026-07-09: added compact append-only import/re-export builder rows with per-module first/last/count links, JSON emission under `SourceSurface`, and readback coverage for direct, re-export, and merged effective imports.)
+      - [x] Add source-surface type-alias/type/global/function manifest builders.
+        - [x] Add source-surface type-alias manifest JSON builder rows. (2026-07-09: added compact alias rows with per-module first/last/count links, per-alias generic/comptime parameter child links, JSON emission under `SourceSurface.TypeAliases`, and readback coverage for alias header text and generic parameter order/counts.)
+        - [x] Add source-surface type manifest builders. (2026-07-09: added compact type rows with per-module first/last/count links, child links for fields, generic/comptime parameters, primary constructor parameters, enum variants/payloads, and implemented traits, plus layout/backend/destructor/dyn-trait scalar facts emitted under `SourceSurface.Types` with focused readback coverage.)
+        - [x] Add source-surface global manifest builders. (2026-07-09: added compact global rows with per-module first/last/count links, JSON emission under `SourceSurface.Globals`, required mutability facts, optional constant-initializer presence, and readback coverage for global header text/order.)
+        - [x] Add source-surface function manifest builders. (2026-07-09: added compact function rows with per-module first/last/count links, per-function parameter/generic/comptime/dead-parameter child links, optional ABI/performance/inline/link/asm flags, count-preserving contract/group arrays, JSON emission under `SourceSurface.Functions`, and readback coverage for function header, parameter, and backend fact text/order.)
+      - [x] Add typed-interface manifest builders.
+        - [x] Add typed-interface type-alias manifest JSON builder rows. (2026-07-09: added compact resolved alias rows with per-module first/last/count links, per-alias generic/comptime parameter child links, required typed-interface array shell emission, and readback coverage for alias headers plus target/comptime typed type-reference facts.)
+        - [x] Add typed-interface function manifest builders. (2026-07-09: added compact resolved function rows with per-module first/last/count links, child links for typed parameters, generic/comptime parameters, and dead-on-return names, plus lossless ABI/performance/body/header flags emitted under `TypedInterface.Functions` with focused declaration/callable/type-reference readback coverage.)
+        - [x] Add typed-interface global manifest builders. (2026-07-09: added compact resolved global rows with per-module first/last/count links, required typed global type references, scalar constant-initializer payload/type facts, `TypedInterface.Globals` emission, and focused declaration/type-reference/fact-graph readback coverage.)
+        - [x] Add typed-interface type manifest builders. (2026-07-09: added compact resolved type rows with per-module first/last/count links, child links for fields, generic/comptime parameters, associated types, enum variants/payloads, implemented trait names/types, and thread-safety law attributes, plus backend/layout/dyn-trait scalar facts emitted under `TypedInterface.Types` with focused declaration/type-reference/fact-graph readback coverage.)
+      - [x] Add compiler-fact manifest builders.
+        - [x] Add function-effect fact manifest builders. (2026-07-09: added compact function-effect builder rows with per-module first/last/count links, JSON emission under `CompilerFacts.FunctionEffects`, optional FFI ABI/backend-mode facts, and focused readback coverage through the existing compiler-fact materializer.)
+        - [x] Add ABI function fact manifest builders. (2026-07-09: added compact ABI function/parameter/carrier rows with per-module and dense child links, JSON emission under `CompilerFacts.AbiFunctions`, optional FFI/calling/link metadata, scalar type-reference bit-width/range facts, and focused readback coverage through the existing ABI fact materializer.)
+        - [x] Add concrete layout/native metadata fact manifest builders. (2026-07-09: added compact concrete-layout/field builder rows, root-level native dependency rows grouped by dependency kind, per-module linkage rows with dense defined/referenced symbol child links, JSON emission for `CompilerFacts.ConcreteLayouts`, root `NativeDependencies`, and `CompilerFacts.Linkage`, plus focused readback coverage through existing layout/native materializers.)
+        - [x] Add function semantic/ownership fact manifest builders.
+          - [x] Add function semantic fact manifest builders. (2026-07-09: added compact function-semantic rows with per-module first/last/count links, dense child rows for called functions, parameters, initialization ranges, calls, and call arguments, JSON emission under `CompilerFacts.FunctionSemantics`, explicit memory-effect/alias/dereferenceable/alignment facts, and focused readback coverage through the existing function semantic materializer.)
+          - [x] Add function ownership fact manifest builders. (2026-07-09: added compact ownership name/event/projection/root builder rows under function-semantic rows, JSON emission under `CompilerFacts.FunctionSemantics[*].Ownership`, preserved location/index-projection/root availability/type-reference facts, and focused readback coverage through the existing ownership fact materializer.)
+      - [x] Add generic-template manifest builders.
+        - [x] Add generic-template function header manifest builders. (2026-07-09: added compact per-module function-template rows with required resolved/name/overload keys, optional body/backend/cost/scalar section facts, `CompilerSections.GenericTemplates.Functions` JSON emission, and focused readback coverage through the existing generic-template fact materializer.)
+        - [x] Add generic-template typed-body statement/expression manifest builders.
+          - [x] Add generic-template top-level typed-body statement and root expression manifest builders. (2026-07-09: added compact append-only typed-body statement/expression rows, per-template top-level statement links, scalar statement/expression setters, JSON emission under `TypedBody.Statements`, integer type-reference facts, and focused generic-template readback coverage.)
+          - [x] Add generic-template nested statement blocks, switch cases, patterns, expression child lists, and expression argument payload builders.
+            - [x] Add generic-template expression child-list and expression argument payload builders. (2026-07-09: added compact linked expression argument rows plus member/operator/type/comptime payload builders, JSON emission for `Arguments`, `MemberNames`, `OperatorNames`, `TypeArguments`, and `ComptimeValueArguments`, and focused generic-template readback coverage for child ordinals and payload type-reference sources.)
+            - [x] Add generic-template nested statement blocks, switch cases, and patterns. (2026-07-09: added compact nested statement, switch-case, and pattern builder rows with O(1) append links, JSON emission for `SwitchCases`, statement block arrays, and pattern members/condition patterns, plus focused generic-template readback coverage for parent kinds, ordinals, and backend-visible expression/type facts.)
+        - [x] Add generic-template deferred-instantiation and operation manifest builders.
+          - [x] Add generic-template deferred function/type instantiation manifest builders. (2026-07-09: added compact deferred function/type instantiation rows under generic-template function rows, dense type/comptime child argument links, JSON emission for `DeferredFunctionInstantiations` and `DeferredTypeInstantiations`, and focused readback coverage for preserved type-reference/text facts.)
+          - [x] Add generic-template object, enum, call, and bound-operation manifest builders.
+            - [x] Add generic-template bound-operation call/signature/payload manifest builders. (2026-07-09: added compact bound-operation rows under function-template rows, embedded call-signature/parameter/type-argument/comptime-argument rows, call-argument rows, type/text/u32/bool payload rows, and JSON emission through the existing generic-template materializer.)
+            - [x] Add generic-template top-level object, enum, and call manifest builders. (2026-07-09: added compact object creation, enum constructor/call/value/pattern, and direct/member/function-address call rows linked from generic-template function rows, JSON emission through the existing materializer shape, and focused readback coverage for preserved type/text facts.)
+            - [x] Add generic-template object/enum-specific constructor, initializer, member, and field-index payload builders. (2026-07-09: added compact object constructor metadata plus object initializer, enum constructor member, and enum pattern member rows with field-index/type facts, JSON emission through existing materializer keys, and focused readback coverage.)
+    - [x] Add logical manifest JSON encoding and compression before binary package-image writeout.
+      - [x] Add uncompressed logical manifest JSON payload encoding for package identity, build profile, target/backend facts, and module shell rows. (2026-07-09: added a JsonWriter-backed manifest shell builder, root-module validation against module rows, and a payload encoder that copies fresh JSON bytes into MANF input buffers.)
+      - [x] Add Brotli compression for logical manifest JSON payloads before MANF writeout. (2026-07-09: added a dependency-free Brotli stream writer that wraps manifest JSON bytes in standards-compliant uncompressed meta-blocks plus a final empty block, and added focused payload/image writeout facts.)
+  - [x] Port shared package codecs.
+    - [x] Share sectioned package-image header and directory-length helpers across logical and MIR sectioned writers. (2026-07-09: added shared v2 header/directory constants, a common sectioned-header writer, and final-capacity reservation for MIR sectioned package-image writers so repeated byte appends do not drive avoidable reallocations.)
+    - [x] Move reusable section-directory reader/writer helpers into the shared package codec module after package-section IDs are split away from `PackageImage.stark`. (2026-07-09: moved the STARKPKG magic/version, section IDs, flags/encodings, directory length/data-offset helpers, sectioned-header writer, directory-entry writer, and package-image capacity reservation into `Compiler.Mir.PackageCodec`.)
+  - [x] Port deterministic package inspection rendering. (2026-07-09: verified the self-host package-image renderer covers legacy MIR, sectioned MIR, and logical `STRS`/`PINF`/`MANF` images through deterministic text and JSON entry points.)
   - [x] Diagnose malformed package-image headers.
   - [x] Diagnose unknown required package-image sections.
   - [x] Diagnose bad package-image offsets.
@@ -1325,6 +1410,7 @@ Execution constraints:
 
 ## 3. Tooling And Packaging
 
+- [ ] Root-module pipeline incrementality: the dependency LLVM cache (docs/Self-host-Prep/DevVelocity.md §1.4, `DependencyLlvmCache`) removes per-dependency pipeline re-runs, but a package build's root module (the entire selfhost library) still runs the full pipeline on every build; per-function or per-module caching inside the root pipeline is the remaining lever for the ~20-minute selfhost package rebuild.
 - [~] Complete libLLVM-primary backend integration through the LLVM C API.
   - [x] Finish `System.C` C string and owned foreign-message helper coverage needed by LLVM.
   - [x] Implement LLVM C API bindings.
@@ -1371,10 +1457,10 @@ Execution constraints:
   - [x] Update package-image docs and tests after public spelling lands.
   - [x] Add per-fact test progress streaming to `stark test` (2026-07-03): the driver streams runner output line-by-line (never buffers until exit); `--test-progress` passes `--progress` to the generated runner, which prints `run <name>` markers and `ok|FAILED <name> (k/N)` counters via the new `System.Testing.BeginFact`/`RunFactCounted`, and the driver stamps `[elapsed]` prefixes; `--test-timeout <seconds>` kills the process tree and reports the in-flight fact. Default output stays byte-identical.
   - [x] Preserve the test-runner progress protocol in the stage1 `stark test` port (2026-07-03): the protocol components are ported and golden-parity verified — `Compiler.TestRunner` emits the generated runner byte-identically to stage0, and `Compiler.TestDriver` reproduces the streaming/prefix/timeout contract against the normative `tests/fixtures/test-progress` goldens (pinned by `tests-stark/selfhost.TestRunner`, 4/4). The eventual stage1 CLI port wires these components into project discovery/build orchestration (tracked with the CLI port items; see docs/Self-host-Prep/30-test-progress-streaming.md).
-  - [ ] Smooth the package-consumer edges found by the probe-recipe work (2026-07-01):
-    - [ ] Raw `--target` invocations derive a different LLVM data layout than project builds embed, so consuming a project-built package requires copying `--target-data-layout` from `--inspect-pkg` by hand; derive the same layout by default for a bare `--target` triple.
-    - [ ] Search-dir resolution enumerates `*.starkpkg` recursively, so a package image left under a source search root (e.g. `selfhost/build/` under `-I selfhost`) poisons source-only compiles with STK7312; scope package discovery away from source roots or prefer fresh source over images outside the project driver. Worse, the root file's own directory joins the search, so a stale test-project package (e.g. `tests-stark/selfhost.Ir/build/.../libSystem.starkpkg`) silently SHADOWS fresh stdlib source in raw `--check` runs — observed 2026-07-01 as phantom STK4107 kind errors against pre-fix `List.Get`; the raw CLI has no freshness stamps, only the project driver does. Delete the stale image (build output) to unblock.
-    - [ ] A library package records its static library by relative path (`../../bin/...`), so relocated packages must replicate the `stage0/pkg` + `stage0/bin` layout; consider embedding a layout-independent reference.
+  - [x] Smooth the package-consumer edges found by the probe-recipe work (2026-07-01):
+    - [x] Raw `--target` invocations derive a different LLVM data layout than project builds embed, so consuming a project-built package requires copying `--target-data-layout` from `--inspect-pkg` by hand; derive the same layout by default for a bare `--target` triple. (2026-07-09: direct CLI target resolution now enriches an explicit local target with the detected toolchain data layout when no override is supplied.)
+    - [x] Search-dir resolution enumerates `*.starkpkg` recursively, so a package image left under a source search root (e.g. `selfhost/build/` under `-I selfhost`) poisons source-only compiles with STK7312; scope package discovery away from source roots or prefer fresh source over images outside the project driver. Worse, the root file's own directory joins the search, so a stale test-project package (e.g. `tests-stark/selfhost.Ir/build/.../libSystem.starkpkg`) silently SHADOWS fresh stdlib source in raw `--check` runs — observed 2026-07-01 as phantom STK4107 kind errors against pre-fix `List.Get`; the raw CLI has no freshness stamps, only the project driver does. Delete the stale image (build output) to unblock. (2026-07-09: direct resolver selection is now source-first across all search roots before building the recursive package-image index, so package images are used only when no source module exists.)
+    - [x] A library package records its static library by relative path (`../../bin/...`), so relocated packages must replicate the `stage0/pkg` + `stage0/bin` layout; consider embedding a layout-independent reference. (2026-07-09: `--emit-lib` now stages a copy of the static archive beside the package image and records only that archive file name, so a package directory relocates as a self-contained pair.)
 
 - [~] Complete native toolchain discovery and target facts.
   - [x] Resolve the LLVM version policy.
@@ -1645,6 +1731,90 @@ historical triage.
 ---
 
 ## 6. Known Compiler Bugs Blocking Self-Host
+
+- [x] Fixed (2026-07-09): the AbiLowering dotted-name module-prefix change
+  (bbfd7858, `ComputeSymbolName`'s dotted fallthrough) fixed
+  manifest-imported method symbols (`@Facade_Counter_Reset`) but regressed
+  LOCAL root-module methods: `Box.Read` in module Demo emitted
+  `@Demo_Box_Read` instead of `@Box_Read`, breaking 3 emission tests
+  (`ValueReceiverMethodsLowerToDirectAggregateCalls`,
+  `DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures`,
+  `BorrowReceiverMethodsLowerToPointerReceiverCalls`) and the source-import
+  link scenario. The ABI symbol gate now prefixes dotted method/doctrine names
+  only when the resolved function identity's module differs from the module
+  currently being compiled; local root-module methods stay module-relative,
+  while source-imported methods still call the defining module's qualified
+  symbol (covered by `ImportedSourceMethodsUseDefiningModuleQualifiedSymbols`
+  plus a focused source-import `--emit-exe` smoke).
+
+- [x] Fixed (2026-07-09): three C# host test expectations were stale, all
+  verified pre-existing on an unmodified tree at 7cb7be18:
+  `ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls` and
+  `BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributes`
+  expect call lines without the `noundef` call-site attributes the emitter
+  now produces, and the two
+  `MultiFileIntegrationTests.SystemTextSourceModuleSupports...` tests
+  assert empty stderr while a warning diagnostic is now emitted for their
+  fixtures. Classified as intent-preserving assertion re-aims: the LLVM tests
+  now assert the stronger range/readonly/count facts at the call sites, and
+  the copied `System.Text.stark` executable tests assert the specific STK4122
+  recursive-call warning family plus the clean `0 errors, 6 warnings` summary
+  instead of requiring empty compiler stderr.
+
+- [ ] Open (2026-07-08): `List<Compiler.Mir.EnumLayout.MirEnumLayoutFact>`
+  lowers to an EMPTY LLVM struct in from-source compiles of the selfhost
+  graph (`%System_Collections_List_..._MirEnumLayoutFact_ = type { }`)
+  while sibling `List<T>` instantiations are correct
+  (`type { { ptr, i64, i64 } }`). Zero fields → size 0, which is the single
+  root cause behind BOTH the ~460 `dereferenceable(0)` receiver sites on
+  `IrTable<MirEnumLayoutFact>.Add` (the emitter guard landed 2026-07-07
+  suppresses the invalid attribute) AND `error: invalid getelementptr
+  indices` on `getelementptr %List<...>, ptr, i32 0, i32 0` in
+  borrow-extract paths, which currently blocks `EnumReturnProbe` (and any
+  root module that inlines these accessors) from compiling from source.
+  Suspect: generic-instantiation field materialization fails when the type
+  argument lives in a nested submodule (`Compiler.Mir.EnumLayout`), same
+  family as the O3-refactor's nested-module qualified-name splits. Repro:
+  `compiler selfhost/probe/EnumReturnProbe.stark --emit-llvm -I selfhost
+  -I stdlib/src --no-stark-path` from a package-free cwd, then grep the
+  emitted module for `MirEnumLayoutFact_ = type`.
+  Narrowing note (2026-07-09): isolated source repros for
+  `System.Collections.List<Lib.Nested.Payload>` through an exported generic
+  wrapper and for `IrTable<MirEnumLayoutFact>` both emit non-empty list
+  layouts (`type { { ptr, i64, i64 } }`); the selfhost probe also emits no
+  `dereferenceable(0)`. The full `Compiler.Mir` facade repro remains the only
+  unconfirmed failing shape; a focused `EnumReturnProbe` run was stopped after
+  `lower-mir` reached 220.3s to avoid a broad/stalling verification pass.
+
+- [x] Fixed (2026-07-08): deferred aggregate insert over a branch join emitted
+  invalid LLVM (`use of undefined value '%vN'`), breaking every selfhost
+  package/from-source build once PackageImage grew the shape (repro:
+  `LogicalPackageAbiFactGraphAddParameterRow` — a large by-value row copied
+  from a table, field-updated differently in two branches, updated again
+  after the join, then passed by value to `Replace`). Root cause: the
+  emitter defers large `SsaInsertFieldRValue` materializations on the
+  promise that consumers rebuild the value through
+  `TryEmitStructuredAggregateStore`, but that walk had no case for a phi
+  base (phis live in `_phisByResultName`, not `_valueDefinitions`), so the
+  structured store failed and the generic fallback referenced the
+  never-emitted insert register. The first fix's defensive backstop then
+  surfaced four more latent instances in committed SourceSwitchLowering
+  functions (e.g. `TryParseFixedArrayFieldListSwitchAssignmentCases`,
+  `TryParseStructAggregateSwitchAssignmentCases`) with a second failure
+  mode: chains whose `LoadLocal` base fails the emit-time
+  forwarding/lifetime check at the consumer — there the slot no longer
+  holds the loaded bytes, so address reconstruction would be WRONG and the
+  register chain is required. Fix (LlvmFunctionBodyEmitter.Aggregates):
+  structured stores write phi'd aggregate bases directly from their
+  registers and slot-backed bases via address copy; the deferral decision
+  only fires when the insert chain's base is verifiably reconstructible;
+  and when a consumer still needs the register form, the skipped insert
+  chain is re-emitted on demand into fresh temps at that consumer
+  (`TryMaterializeDeferredAggregateValue` — operands sit at their SSA
+  definition points, so dominance holds), with a hard
+  `UnsupportedBodyEmissionException` instead of a dangling reference if
+  even that fails. Regression: `PhiAggregateInsertEmissionTests`
+  (undefined-register scan + LLVM verifier round-trip).
 
 - [x] Fixed (2026-07-03): package-imported struct holding a `List<T>` field
   broke consumer drop lowering (found by the stage1 test-runner port; repro:

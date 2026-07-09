@@ -1,0 +1,9 @@
+fn i64[min max] id(i64[min max] x)
+{
+    return x;
+}
+
+export fn i64[min max] main()
+{
+    return id(2 + 3);
+}
