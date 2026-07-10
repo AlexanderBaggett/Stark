@@ -1,0 +1,3327 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.CompilerFactsManifestBuilder
+import Compiler.Mir.PackageImage.Builder.GenericTemplateManifestBuilder
+import Compiler.Mir.PackageImage.Builder.ManifestTypeReferenceBuilder
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Builder.SourceSurfaceManifestBuilder
+import Compiler.Mir.PackageImage.Builder.TypedInterfaceManifestBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+module Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+
+// Public compatibility aggregate for logical-manifest construction. Focused
+// family builders own all row storage and mutation; this type preserves the
+// established member-call surface while coordinating the shared string table.
+
+
+public struct LogicalPackageManifestJsonBuilder
+{
+    internal LogicalPackageImageStringTableBuilder Strings;
+    internal IrTable<u32[0 max]> ModuleNameStringIndexes;
+    internal LogicalPackageManifestJsonSourceSurfaceBuilder SourceSurface;
+    internal LogicalPackageManifestJsonTypedInterfaceBuilder TypedInterface;
+    internal LogicalPackageManifestJsonCompilerFactsBuilder CompilerFacts;
+    internal LogicalPackageManifestJsonGenericTemplateBuilder GenericTemplates;
+
+    LogicalPackageManifestJsonBuilder()
+    {
+        self.Strings = new();
+        self.ModuleNameStringIndexes = new();
+        self.SourceSurface = new();
+        self.TypedInterface = new();
+        self.CompilerFacts = new();
+        self.GenericTemplates = new();
+    }
+
+    public inline finite law u32[0 max] ModuleCount(borrow LogicalPackageManifestJsonBuilder self)
+    {
+        return (u32[0 max])self.ModuleNameStringIndexes.Count();
+    }
+
+    public fn bool AddModule(mut borrow LogicalPackageManifestJsonBuilder self, ascii moduleName)
+    {
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, moduleName, stringIndex))
+        {
+            return false;
+        }
+
+        if (self.ModuleNameStringIndexes.Add(stringIndex) == 0
+            || !self.SourceSurface.AddModule()
+            || !self.TypedInterface.AddModule()
+            || !self.GenericTemplates.AddModule()
+            || !self.CompilerFacts.AddModule())
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    public fn bool AddSourceSurfaceImport(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii moduleName,
+        bool isExported)
+    {
+        return self.SourceSurface.AddSourceSurfaceImport(
+            self.Strings,
+            moduleOrdinal,
+            moduleName,
+            isExported);
+    }
+
+    public fn bool AddSourceSurfaceReExport(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii moduleName)
+    {
+        return self.SourceSurface.AddSourceSurfaceReExport(
+            self.Strings,
+            moduleOrdinal,
+            moduleName);
+    }
+
+    public fn bool AddSourceSurfaceTypeAlias(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii targetType,
+        out u32[0 max] typeAliasRow)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeAlias(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            targetType,
+            typeAliasRow);
+    }
+
+    public fn bool AddSourceSurfaceTypeAliasGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeAliasRow,
+        ascii name)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeAliasGenericParameter(
+            self.Strings,
+            typeAliasRow,
+            name);
+    }
+
+    public fn bool AddSourceSurfaceTypeAliasComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeAliasRow,
+        ascii name,
+        ascii typeKind)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeAliasComptimeGenericParameter(
+            self.Strings,
+            typeAliasRow,
+            name,
+            typeKind);
+    }
+
+    public fn bool AddTypedInterfaceTypeAlias(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii targetTypeKind,
+        ascii targetTypeName,
+        out u32[0 max] typeAliasRow)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeAlias(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            targetTypeKind,
+            targetTypeName,
+            typeAliasRow);
+    }
+
+    public fn bool AddTypedInterfaceTypeAliasGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeAliasRow,
+        ascii name)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeAliasGenericParameter(
+            self.Strings,
+            typeAliasRow,
+            name);
+    }
+
+    public fn bool AddTypedInterfaceTypeAliasComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeAliasRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeAliasComptimeGenericParameter(
+            self.Strings,
+            typeAliasRow,
+            name,
+            typeKind,
+            typeName);
+    }
+
+    public fn bool AddTypedInterfaceFunction(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii symbolName,
+        ascii manifestKind,
+        ascii returnTypeKind,
+        ascii returnTypeName,
+        bool isFfi,
+        bool isStrictFp,
+        bool usesFastCallingConvention,
+        out u32[0 max] functionRow)
+    {
+        return self.TypedInterface.AddTypedInterfaceFunction(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            symbolName,
+            manifestKind,
+            returnTypeKind,
+            returnTypeName,
+            isFfi,
+            isStrictFp,
+            usesFastCallingConvention,
+            functionRow);
+    }
+
+    public fn bool SetTypedInterfaceFunctionFlags(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        bool hasGenericTemplateBody,
+        bool isHot,
+        bool isCold,
+        bool hasExplicitInlinePreference,
+        bool isUnsafe,
+        bool isVarargs,
+        bool isTailCallable,
+        bool hasBody)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionFlags(
+            self.Strings,
+            functionRow,
+            hasGenericTemplateBody,
+            isHot,
+            isCold,
+            hasExplicitInlinePreference,
+            isUnsafe,
+            isVarargs,
+            isTailCallable,
+            hasBody);
+    }
+
+    public fn bool SetTypedInterfaceFunctionQualifiedResolvedName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii qualifiedResolvedName)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionQualifiedResolvedName(
+            self.Strings,
+            functionRow,
+            qualifiedResolvedName);
+    }
+
+    public fn bool SetTypedInterfaceFunctionPublishedOverloadKey(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii publishedOverloadKey)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionPublishedOverloadKey(
+            self.Strings,
+            functionRow,
+            publishedOverloadKey);
+    }
+
+    public fn bool SetTypedInterfaceFunctionInlinePreference(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii inlinePreference)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionInlinePreference(
+            self.Strings,
+            functionRow,
+            inlinePreference);
+    }
+
+    public fn bool SetTypedInterfaceFunctionFfiAbi(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii ffiAbi)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionFfiAbi(
+            self.Strings,
+            functionRow,
+            ffiAbi);
+    }
+
+    public fn bool SetTypedInterfaceFunctionBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii backendOptimizationMode)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionBackendOptimizationMode(
+            self.Strings,
+            functionRow,
+            backendOptimizationMode);
+    }
+
+    public fn bool SetTypedInterfaceFunctionLinkName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii linkName)
+    {
+        return self.TypedInterface.SetTypedInterfaceFunctionLinkName(
+            self.Strings,
+            functionRow,
+            linkName);
+    }
+
+    public fn bool AddTypedInterfaceFunctionParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName,
+        ascii rawPointerElementCountExpression,
+        bool hasRawPointerElementCountExpression,
+        bool isDisjoint,
+        bool isConst)
+    {
+        return self.TypedInterface.AddTypedInterfaceFunctionParameter(
+            self.Strings,
+            functionRow,
+            name,
+            typeKind,
+            typeName,
+            rawPointerElementCountExpression,
+            hasRawPointerElementCountExpression,
+            isDisjoint,
+            isConst);
+    }
+
+    public fn bool AddTypedInterfaceFunctionGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        return self.TypedInterface.AddTypedInterfaceFunctionGenericParameter(
+            self.Strings,
+            functionRow,
+            name);
+    }
+
+    public fn bool AddTypedInterfaceFunctionComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        return self.TypedInterface.AddTypedInterfaceFunctionComptimeGenericParameter(
+            self.Strings,
+            functionRow,
+            name,
+            typeKind,
+            typeName);
+    }
+
+    public fn bool AddTypedInterfaceFunctionPointeeDeadOnReturnParameterName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        return self.TypedInterface.AddTypedInterfaceFunctionPointeeDeadOnReturnParameterName(
+            self.Strings,
+            functionRow,
+            name);
+    }
+
+    public fn bool AddTypedInterfaceGlobal(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        ascii typeKind,
+        ascii typeName,
+        bool isMutable,
+        out u32[0 max] globalRow)
+    {
+        return self.TypedInterface.AddTypedInterfaceGlobal(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            manifestKind,
+            typeKind,
+            typeName,
+            isMutable,
+            globalRow);
+    }
+
+    public fn bool SetTypedInterfaceGlobalScalarConstantInitializer(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] globalRow,
+        ascii initializerKind,
+        ascii initializerTypeKind,
+        ascii initializerTypeName,
+        ascii integerValue,
+        bool hasIntegerValue,
+        ascii floatLiteralText,
+        bool hasFloatLiteralText,
+        bool boolValue,
+        bool hasBoolValue,
+        ascii textLiteralText,
+        bool hasTextLiteralText)
+    {
+        return self.TypedInterface.SetTypedInterfaceGlobalScalarConstantInitializer(
+            self.Strings,
+            globalRow,
+            initializerKind,
+            initializerTypeKind,
+            initializerTypeName,
+            integerValue,
+            hasIntegerValue,
+            floatLiteralText,
+            hasFloatLiteralText,
+            boolValue,
+            hasBoolValue,
+            textLiteralText,
+            hasTextLiteralText);
+    }
+
+    public fn bool AddTypedInterfaceType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        out u32[0 max] typeRow)
+    {
+        return self.TypedInterface.AddTypedInterfaceType(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            manifestKind,
+            typeRow);
+    }
+
+    public fn bool AddTypedInterfaceTypeField(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeField(
+            self.Strings,
+            typeRow,
+            name,
+            typeKind,
+            typeName);
+    }
+
+    public fn bool AddTypedInterfaceTypeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeGenericParameter(
+            self.Strings,
+            typeRow,
+            name);
+    }
+
+    public fn bool AddTypedInterfaceTypeComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeComptimeGenericParameter(
+            self.Strings,
+            typeRow,
+            name,
+            typeKind,
+            typeName);
+    }
+
+    public fn bool AddTypedInterfaceTypeAssociatedType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii targetTypeKind,
+        ascii targetTypeName,
+        bool hasTargetType)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeAssociatedType(
+            self.Strings,
+            typeRow,
+            name,
+            targetTypeKind,
+            targetTypeName,
+            hasTargetType);
+    }
+
+    public fn bool AddTypedInterfaceTypeEnumVariant(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        bool usesNamedFields,
+        ascii role,
+        bool hasRole,
+        ascii absorbsErrorTypeKind,
+        ascii absorbsErrorTypeName,
+        bool hasAbsorbsErrorType,
+        out u32[0 max] variantRow)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeEnumVariant(
+            self.Strings,
+            typeRow,
+            name,
+            usesNamedFields,
+            role,
+            hasRole,
+            absorbsErrorTypeKind,
+            absorbsErrorTypeName,
+            hasAbsorbsErrorType,
+            variantRow);
+    }
+
+    public fn bool AddTypedInterfaceTypeEnumVariantPayload(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] variantRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeEnumVariantPayload(
+            self.Strings,
+            variantRow,
+            name,
+            typeKind,
+            typeName);
+    }
+
+    public fn bool AddTypedInterfaceTypeImplementedTrait(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii traitText)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeImplementedTrait(
+            self.Strings,
+            typeRow,
+            traitText);
+    }
+
+    public fn bool AddTypedInterfaceTypeImplementedTraitType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii typeKind,
+        ascii typeName)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeImplementedTraitType(
+            self.Strings,
+            typeRow,
+            typeKind,
+            typeName);
+    }
+
+    public fn bool AddTypedInterfaceTypeThreadSafetyLawAttribute(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii kind,
+        ascii lawName,
+        ascii conditionLawName,
+        ascii conditionTypeKind,
+        ascii conditionTypeName,
+        bool hasCondition)
+    {
+        return self.TypedInterface.AddTypedInterfaceTypeThreadSafetyLawAttribute(
+            self.Strings,
+            typeRow,
+            kind,
+            lawName,
+            conditionLawName,
+            conditionTypeKind,
+            conditionTypeName,
+            hasCondition);
+    }
+
+    public fn bool SetTypedInterfaceTypeCountFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        u32[0 max] methodCount,
+        u32[0 max] constructorCount)
+    {
+        return self.TypedInterface.SetTypedInterfaceTypeCountFacts(
+            self.Strings,
+            typeRow,
+            methodCount,
+            constructorCount);
+    }
+
+    public fn bool SetTypedInterfaceTypeBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii backendOptimizationMode)
+    {
+        return self.TypedInterface.SetTypedInterfaceTypeBackendOptimizationMode(
+            self.Strings,
+            typeRow,
+            backendOptimizationMode);
+    }
+
+    public fn bool SetTypedInterfaceTypeStructLayout(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii structLayout)
+    {
+        return self.TypedInterface.SetTypedInterfaceTypeStructLayout(
+            self.Strings,
+            typeRow,
+            structLayout);
+    }
+
+    public fn bool SetTypedInterfaceTypePackBytes(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        u32[0 max] packBytes)
+    {
+        return self.TypedInterface.SetTypedInterfaceTypePackBytes(
+            self.Strings,
+            typeRow,
+            packBytes);
+    }
+
+    public fn bool SetTypedInterfaceTypeAlignBytes(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        u32[0 max] alignBytes)
+    {
+        return self.TypedInterface.SetTypedInterfaceTypeAlignBytes(
+            self.Strings,
+            typeRow,
+            alignBytes);
+    }
+
+    public fn bool SetTypedInterfaceTypeFlags(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        bool isDynTrait)
+    {
+        return self.TypedInterface.SetTypedInterfaceTypeFlags(
+            self.Strings,
+            typeRow,
+            isDynTrait);
+    }
+
+    public fn bool AddSourceSurfaceType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        out u32[0 max] typeRow)
+    {
+        return self.SourceSurface.AddSourceSurfaceType(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            manifestKind,
+            typeRow);
+    }
+
+    public fn bool AddSourceSurfaceTypeField(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeText,
+        ascii visibility,
+        bool hasVisibility,
+        u32[0 max] explicitOffsetBytes,
+        bool hasExplicitOffsetBytes,
+        u32[0 max] threadSafetyLawAttributeCount)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeField(
+            self.Strings,
+            typeRow,
+            name,
+            typeText,
+            visibility,
+            hasVisibility,
+            explicitOffsetBytes,
+            hasExplicitOffsetBytes,
+            threadSafetyLawAttributeCount);
+    }
+
+    public fn bool AddSourceSurfaceTypeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeGenericParameter(
+            self.Strings,
+            typeRow,
+            name);
+    }
+
+    public fn bool AddSourceSurfaceTypeComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeKind)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeComptimeGenericParameter(
+            self.Strings,
+            typeRow,
+            name,
+            typeKind);
+    }
+
+    public fn bool AddSourceSurfaceTypePrimaryConstructorParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeText,
+        ascii rawPointerElementCountExpression,
+        bool hasRawPointerElementCountExpression,
+        bool isDisjoint,
+        bool isConst)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypePrimaryConstructorParameter(
+            self.Strings,
+            typeRow,
+            name,
+            typeText,
+            rawPointerElementCountExpression,
+            hasRawPointerElementCountExpression,
+            isDisjoint,
+            isConst);
+    }
+
+    public fn bool AddSourceSurfaceTypeEnumVariant(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii name,
+        bool usesNamedFields,
+        ascii role,
+        bool hasRole,
+        ascii absorbsErrorType,
+        bool hasAbsorbsErrorType,
+        out u32[0 max] variantRow)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeEnumVariant(
+            self.Strings,
+            typeRow,
+            name,
+            usesNamedFields,
+            role,
+            hasRole,
+            absorbsErrorType,
+            hasAbsorbsErrorType,
+            variantRow);
+    }
+
+    public fn bool AddSourceSurfaceTypeEnumVariantPayload(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] variantRow,
+        ascii name,
+        bool hasName,
+        ascii typeText)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeEnumVariantPayload(
+            self.Strings,
+            variantRow,
+            name,
+            hasName,
+            typeText);
+    }
+
+    public fn bool AddSourceSurfaceTypeImplementedTrait(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii traitText)
+    {
+        return self.SourceSurface.AddSourceSurfaceTypeImplementedTrait(
+            self.Strings,
+            typeRow,
+            traitText);
+    }
+
+    public fn bool SetSourceSurfaceTypeCountFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        u32[0 max] methodCount,
+        u32[0 max] constructorCount,
+        u32[0 max] associatedTypeCount,
+        u32[0 max] threadSafetyLawAttributeCount)
+    {
+        return self.SourceSurface.SetSourceSurfaceTypeCountFacts(
+            self.Strings,
+            typeRow,
+            methodCount,
+            constructorCount,
+            associatedTypeCount,
+            threadSafetyLawAttributeCount);
+    }
+
+    public fn bool SetSourceSurfaceTypeBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii backendOptimizationMode)
+    {
+        return self.SourceSurface.SetSourceSurfaceTypeBackendOptimizationMode(
+            self.Strings,
+            typeRow,
+            backendOptimizationMode);
+    }
+
+    public fn bool SetSourceSurfaceTypeStructLayout(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        ascii structLayout)
+    {
+        return self.SourceSurface.SetSourceSurfaceTypeStructLayout(
+            self.Strings,
+            typeRow,
+            structLayout);
+    }
+
+    public fn bool SetSourceSurfaceTypePackBytes(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        u32[0 max] packBytes)
+    {
+        return self.SourceSurface.SetSourceSurfaceTypePackBytes(
+            self.Strings,
+            typeRow,
+            packBytes);
+    }
+
+    public fn bool SetSourceSurfaceTypeAlignBytes(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        u32[0 max] alignBytes)
+    {
+        return self.SourceSurface.SetSourceSurfaceTypeAlignBytes(
+            self.Strings,
+            typeRow,
+            alignBytes);
+    }
+
+    public fn bool SetSourceSurfaceTypeFlags(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeRow,
+        bool hasDestructor,
+        bool isDynTrait)
+    {
+        return self.SourceSurface.SetSourceSurfaceTypeFlags(
+            self.Strings,
+            typeRow,
+            hasDestructor,
+            isDynTrait);
+    }
+
+    public fn bool AddSourceSurfaceGlobal(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        ascii typeText,
+        bool isMutable,
+        bool hasConstantInitializer)
+    {
+        return self.SourceSurface.AddSourceSurfaceGlobal(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            manifestKind,
+            typeText,
+            isMutable,
+            hasConstantInitializer);
+    }
+
+    public fn bool AddSourceSurfaceFunction(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii symbolName,
+        ascii manifestKind,
+        ascii returnType,
+        bool isFfi,
+        bool isStrictFp,
+        bool usesFastCallingConvention,
+        out u32[0 max] functionRow)
+    {
+        return self.SourceSurface.AddSourceSurfaceFunction(
+            self.Strings,
+            moduleOrdinal,
+            name,
+            qualifiedName,
+            visibility,
+            symbolName,
+            manifestKind,
+            returnType,
+            isFfi,
+            isStrictFp,
+            usesFastCallingConvention,
+            functionRow);
+    }
+
+    public fn bool SetSourceSurfaceFunctionFlags(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        bool hasAsm,
+        bool isHot,
+        bool isCold,
+        bool hasExplicitInlinePreference,
+        bool isUnsafe,
+        bool isVarargs,
+        bool isTailCallable)
+    {
+        return self.SourceSurface.SetSourceSurfaceFunctionFlags(
+            self.Strings,
+            functionRow,
+            hasAsm,
+            isHot,
+            isCold,
+            hasExplicitInlinePreference,
+            isUnsafe,
+            isVarargs,
+            isTailCallable);
+    }
+
+    public fn bool SetSourceSurfaceFunctionInlinePreference(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii inlinePreference)
+    {
+        return self.SourceSurface.SetSourceSurfaceFunctionInlinePreference(
+            self.Strings,
+            functionRow,
+            inlinePreference);
+    }
+
+    public fn bool SetSourceSurfaceFunctionFfiAbi(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii ffiAbi)
+    {
+        return self.SourceSurface.SetSourceSurfaceFunctionFfiAbi(
+            self.Strings,
+            functionRow,
+            ffiAbi);
+    }
+
+    public fn bool SetSourceSurfaceFunctionBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii backendOptimizationMode)
+    {
+        return self.SourceSurface.SetSourceSurfaceFunctionBackendOptimizationMode(
+            self.Strings,
+            functionRow,
+            backendOptimizationMode);
+    }
+
+    public fn bool SetSourceSurfaceFunctionLinkName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii linkName)
+    {
+        return self.SourceSurface.SetSourceSurfaceFunctionLinkName(
+            self.Strings,
+            functionRow,
+            linkName);
+    }
+
+    public fn bool SetSourceSurfaceFunctionCountFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        u32[0 max] typeParameterConstraintCount,
+        u32[0 max] threadSafetyLawPredicateCount,
+        u32[0 max] valueContractCount,
+        u32[0 max] disjointParameterGroupCount,
+        u32[0 max] overlapParameterGroupCount,
+        u32[0 max] sameParameterGroupCount)
+    {
+        return self.SourceSurface.SetSourceSurfaceFunctionCountFacts(
+            self.Strings,
+            functionRow,
+            typeParameterConstraintCount,
+            threadSafetyLawPredicateCount,
+            valueContractCount,
+            disjointParameterGroupCount,
+            overlapParameterGroupCount,
+            sameParameterGroupCount);
+    }
+
+    public fn bool AddSourceSurfaceFunctionParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeText,
+        ascii rawPointerElementCountExpression,
+        bool hasRawPointerElementCountExpression,
+        bool isDisjoint,
+        bool isConst)
+    {
+        return self.SourceSurface.AddSourceSurfaceFunctionParameter(
+            self.Strings,
+            functionRow,
+            name,
+            typeText,
+            rawPointerElementCountExpression,
+            hasRawPointerElementCountExpression,
+            isDisjoint,
+            isConst);
+    }
+
+    public fn bool AddSourceSurfaceFunctionGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        return self.SourceSurface.AddSourceSurfaceFunctionGenericParameter(
+            self.Strings,
+            functionRow,
+            name);
+    }
+
+    public fn bool AddSourceSurfaceFunctionComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeKind)
+    {
+        return self.SourceSurface.AddSourceSurfaceFunctionComptimeGenericParameter(
+            self.Strings,
+            functionRow,
+            name,
+            typeKind);
+    }
+
+    public fn bool AddSourceSurfaceFunctionPointeeDeadOnReturnParameterName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        return self.SourceSurface.AddSourceSurfaceFunctionPointeeDeadOnReturnParameterName(
+            self.Strings,
+            functionRow,
+            name);
+    }
+
+    public fn bool AddCompilerFactFunctionEffect(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii kind,
+        ascii inlinePreference,
+        out u32[0 max] functionEffectRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionEffect(
+            self.Strings,
+            moduleOrdinal,
+            qualifiedResolvedName,
+            kind,
+            inlinePreference,
+            functionEffectRow);
+    }
+
+    public fn bool SetCompilerFactFunctionEffectFlags(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionEffectRow,
+        bool readsArgumentMemory,
+        bool isPure,
+        bool noSync,
+        bool noFree,
+        bool noUnwind,
+        bool willReturn,
+        bool mustProgress,
+        bool usesFastCallingConvention,
+        bool isFfi,
+        bool isHot,
+        bool isCold,
+        bool isStrictFp,
+        bool isVarargs,
+        bool isTailCallable,
+        bool noRecurse)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionEffectFlags(
+            self.Strings,
+            functionEffectRow,
+            readsArgumentMemory,
+            isPure,
+            noSync,
+            noFree,
+            noUnwind,
+            willReturn,
+            mustProgress,
+            usesFastCallingConvention,
+            isFfi,
+            isHot,
+            isCold,
+            isStrictFp,
+            isVarargs,
+            isTailCallable,
+            noRecurse);
+    }
+
+    public fn bool SetCompilerFactFunctionEffectFfiAbi(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionEffectRow,
+        ascii ffiAbi)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionEffectFfiAbi(
+            self.Strings,
+            functionEffectRow,
+            ffiAbi);
+    }
+
+    public fn bool SetCompilerFactFunctionEffectBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionEffectRow,
+        ascii backendOptimizationMode)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionEffectBackendOptimizationMode(
+            self.Strings,
+            functionEffectRow,
+            backendOptimizationMode);
+    }
+
+    public fn bool AddCompilerFactFunctionSemantic(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii declaredKind,
+        ascii effectiveKind,
+        out u32[0 max] functionSemanticRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionSemantic(
+            self.Strings,
+            moduleOrdinal,
+            qualifiedResolvedName,
+            declaredKind,
+            effectiveKind,
+            functionSemanticRow);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticMemoryEffects(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        bool readsArgumentMemory,
+        bool writesArgumentMemory,
+        bool capturesArgumentMemory,
+        bool readsOtherMemory,
+        bool writesOtherMemory,
+        bool initializesArgumentMemory,
+        bool hasPointeeDeadOnReturnArgument)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticMemoryEffects(
+            self.Strings,
+            functionSemanticRow,
+            readsArgumentMemory,
+            writesArgumentMemory,
+            capturesArgumentMemory,
+            readsOtherMemory,
+            writesOtherMemory,
+            initializesArgumentMemory,
+            hasPointeeDeadOnReturnArgument);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticHasOpaqueCall(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        bool hasOpaqueCall)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticHasOpaqueCall(
+            self.Strings,
+            functionSemanticRow,
+            hasOpaqueCall);
+    }
+
+    public fn bool AddCompilerFactFunctionSemanticCalledFunction(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        out u32[0 max] calledFunctionRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionSemanticCalledFunction(
+            self.Strings,
+            functionSemanticRow,
+            name,
+            calledFunctionRow);
+    }
+
+    public fn bool AddCompilerFactFunctionSemanticParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        ascii typeName,
+        ascii captureKind,
+        bool isMemoryBacked,
+        bool guaranteedNonNull,
+        bool guaranteedReadOnly,
+        bool guaranteedWriteOnly,
+        bool guaranteedNoAlias,
+        bool reads,
+        bool writes,
+        out u32[0 max] parameterRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionSemanticParameter(
+            self.Strings,
+            functionSemanticRow,
+            name,
+            typeName,
+            captureKind,
+            isMemoryBacked,
+            guaranteedNonNull,
+            guaranteedReadOnly,
+            guaranteedWriteOnly,
+            guaranteedNoAlias,
+            reads,
+            writes,
+            parameterRow);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticParameterDereferenceableBytes(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parameterRow,
+        u32[0 max] dereferenceableBytes)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticParameterDereferenceableBytes(
+            self.Strings,
+            parameterRow,
+            dereferenceableBytes);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticParameterAlignmentBytes(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parameterRow,
+        u32[0 max] alignmentBytes)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticParameterAlignmentBytes(
+            self.Strings,
+            parameterRow,
+            alignmentBytes);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticParameterPointeeDeadOnReturn(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parameterRow,
+        bool pointeeDeadOnReturn)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticParameterPointeeDeadOnReturn(
+            self.Strings,
+            parameterRow,
+            pointeeDeadOnReturn);
+    }
+
+    public fn bool AddCompilerFactFunctionSemanticInitializationRange(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parameterRow,
+        i64[min max] startByte,
+        i64[min max] endByte,
+        out u32[0 max] initializationRangeRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionSemanticInitializationRange(
+            self.Strings,
+            parameterRow,
+            startByte,
+            endByte,
+            initializationRangeRow);
+    }
+
+    public fn bool AddCompilerFactFunctionSemanticCall(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii calleeName,
+        bool readsArgumentMemory,
+        bool writesArgumentMemory,
+        bool capturesArgumentMemory,
+        bool readsOtherMemory,
+        bool writesOtherMemory,
+        bool initializesArgumentMemory,
+        bool hasPointeeDeadOnReturnArgument,
+        out u32[0 max] callRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionSemanticCall(
+            self.Strings,
+            functionSemanticRow,
+            calleeName,
+            readsArgumentMemory,
+            writesArgumentMemory,
+            capturesArgumentMemory,
+            readsOtherMemory,
+            writesOtherMemory,
+            initializesArgumentMemory,
+            hasPointeeDeadOnReturnArgument,
+            callRow);
+    }
+
+    public fn bool AddCompilerFactFunctionSemanticCallArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callRow,
+        u32[0 max] argumentIndex,
+        ascii captureKind,
+        bool reads,
+        bool writes,
+        out u32[0 max] callArgumentRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionSemanticCallArgument(
+            self.Strings,
+            callRow,
+            argumentIndex,
+            captureKind,
+            reads,
+            writes,
+            callArgumentRow);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticCallArgumentCallerParameterName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callArgumentRow,
+        ascii callerParameterName)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticCallArgumentCallerParameterName(
+            self.Strings,
+            callArgumentRow,
+            callerParameterName);
+    }
+
+    public fn bool SetCompilerFactFunctionSemanticCallArgumentCalleeParameterName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callArgumentRow,
+        ascii calleeParameterName)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionSemanticCallArgumentCalleeParameterName(
+            self.Strings,
+            callArgumentRow,
+            calleeParameterName);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnership(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        bool ownershipValid)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnership(
+            self.Strings,
+            functionSemanticRow,
+            ownershipValid);
+    }
+
+    public fn bool AddCompilerFactFunctionOwnershipImplicitDrop(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        out u32[0 max] implicitDropRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionOwnershipImplicitDrop(
+            self.Strings,
+            functionSemanticRow,
+            name,
+            implicitDropRow);
+    }
+
+    public fn bool AddCompilerFactFunctionOwnershipMove(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        out u32[0 max] moveRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionOwnershipMove(
+            self.Strings,
+            functionSemanticRow,
+            name,
+            moveRow);
+    }
+
+    public fn bool AddCompilerFactFunctionOwnershipEvent(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii kind,
+        ascii rootName,
+        ascii placeTypeKind,
+        bool hasIndexProjection,
+        out u32[0 max] ownershipEventRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionOwnershipEvent(
+            self.Strings,
+            functionSemanticRow,
+            kind,
+            rootName,
+            placeTypeKind,
+            hasIndexProjection,
+            ownershipEventRow);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnershipEventPlaceTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipEventRow,
+        ascii name)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnershipEventPlaceTypeName(
+            self.Strings,
+            ownershipEventRow,
+            name);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnershipEventPlaceTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipEventRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnershipEventPlaceTypeIntegerFacts(
+            self.Strings,
+            ownershipEventRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnershipEventLocation(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipEventRow,
+        i64[min max] line,
+        i64[min max] column)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnershipEventLocation(
+            self.Strings,
+            ownershipEventRow,
+            line,
+            column);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnershipEventLocationFilePath(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipEventRow,
+        ascii filePath)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnershipEventLocationFilePath(
+            self.Strings,
+            ownershipEventRow,
+            filePath);
+    }
+
+    public fn bool AddCompilerFactFunctionOwnershipEventProjection(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipEventRow,
+        ascii projection,
+        out u32[0 max] ownershipProjectionRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionOwnershipEventProjection(
+            self.Strings,
+            ownershipEventRow,
+            projection,
+            ownershipProjectionRow);
+    }
+
+    public fn bool AddCompilerFactFunctionOwnershipRoot(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        ascii typeKind,
+        ascii rootKind,
+        ascii finalAvailability,
+        bool isMutable,
+        bool isConstant,
+        bool isAddressTaken,
+        bool hasRawPointerEscape,
+        bool hasMove,
+        bool hasPartialMove,
+        bool hasImplicitDrop,
+        bool hasAssignmentDrop,
+        bool hasReinitialization,
+        bool requiresDrop,
+        out u32[0 max] ownershipRootRow)
+    {
+        return self.CompilerFacts.AddCompilerFactFunctionOwnershipRoot(
+            self.Strings,
+            functionSemanticRow,
+            name,
+            typeKind,
+            rootKind,
+            finalAvailability,
+            isMutable,
+            isConstant,
+            isAddressTaken,
+            hasRawPointerEscape,
+            hasMove,
+            hasPartialMove,
+            hasImplicitDrop,
+            hasAssignmentDrop,
+            hasReinitialization,
+            requiresDrop,
+            ownershipRootRow);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnershipRootTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipRootRow,
+        ascii name)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnershipRootTypeName(
+            self.Strings,
+            ownershipRootRow,
+            name);
+    }
+
+    public fn bool SetCompilerFactFunctionOwnershipRootTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] ownershipRootRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.CompilerFacts.SetCompilerFactFunctionOwnershipRootTypeIntegerFacts(
+            self.Strings,
+            ownershipRootRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateFunction(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii qualifiedName,
+        ascii overloadKey,
+        out u32[0 max] functionTemplateRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateFunction(
+            self.Strings,
+            moduleOrdinal,
+            qualifiedResolvedName,
+            qualifiedName,
+            overloadKey,
+            functionTemplateRow);
+    }
+
+    public fn bool SetGenericTemplateFunctionBodyText(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii bodyText)
+    {
+        return self.GenericTemplates.SetGenericTemplateFunctionBodyText(
+            self.Strings,
+            functionTemplateRow,
+            bodyText);
+    }
+
+    public fn bool SetGenericTemplateFunctionBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii backendOptimizationMode)
+    {
+        return self.GenericTemplates.SetGenericTemplateFunctionBackendOptimizationMode(
+            self.Strings,
+            functionTemplateRow,
+            backendOptimizationMode);
+    }
+
+    public fn bool SetGenericTemplateFunctionTopLevelStatementCount(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] topLevelStatementCount)
+    {
+        return self.GenericTemplates.SetGenericTemplateFunctionTopLevelStatementCount(
+            self.Strings,
+            functionTemplateRow,
+            topLevelStatementCount);
+    }
+
+    public fn bool SetGenericTemplateFunctionEstimatedBodyCost(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] estimatedBodyCost)
+    {
+        return self.GenericTemplates.SetGenericTemplateFunctionEstimatedBodyCost(
+            self.Strings,
+            functionTemplateRow,
+            estimatedBodyCost);
+    }
+
+    public fn bool SetGenericTemplateFunctionSectionPresence(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        bool hasSemantics,
+        bool hasTypedBody)
+    {
+        return self.GenericTemplates.SetGenericTemplateFunctionSectionPresence(
+            self.Strings,
+            functionTemplateRow,
+            hasSemantics,
+            hasTypedBody);
+    }
+
+    public fn bool AddGenericTemplateDeferredFunctionInstantiation(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii calleeTemplateName,
+        out u32[0 max] instantiationRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateDeferredFunctionInstantiation(
+            self.Strings,
+            functionTemplateRow,
+            calleeTemplateName,
+            instantiationRow);
+    }
+
+    public fn bool AddGenericTemplateDeferredFunctionInstantiationTypeArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] instantiationRow,
+        ascii typeKind,
+        out u32[0 max] typeArgumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateDeferredFunctionInstantiationTypeArgument(
+            self.Strings,
+            instantiationRow,
+            typeKind,
+            typeArgumentRow);
+    }
+
+    public fn bool SetGenericTemplateDeferredFunctionInstantiationTypeArgumentName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeArgumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredFunctionInstantiationTypeArgumentName(
+            self.Strings,
+            typeArgumentRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateDeferredFunctionInstantiationTypeArgumentIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeArgumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredFunctionInstantiationTypeArgumentIntegerFacts(
+            self.Strings,
+            typeArgumentRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateDeferredFunctionInstantiationComptimeValueArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] instantiationRow,
+        ascii parameterName,
+        ascii integerValue,
+        ascii typeKind,
+        bool isSymbolic,
+        out u32[0 max] argumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateDeferredFunctionInstantiationComptimeValueArgument(
+            self.Strings,
+            instantiationRow,
+            parameterName,
+            integerValue,
+            typeKind,
+            isSymbolic,
+            argumentRow);
+    }
+
+    public fn bool SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentTypeName(
+            self.Strings,
+            argumentRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentTypeIntegerFacts(
+            self.Strings,
+            argumentRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentSymbolicSourceName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        ascii symbolicSourceName)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentSymbolicSourceName(
+            self.Strings,
+            argumentRow,
+            symbolicSourceName);
+    }
+
+    public fn bool AddGenericTemplateDeferredTypeInstantiation(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii typeKind,
+        out u32[0 max] instantiationRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateDeferredTypeInstantiation(
+            self.Strings,
+            functionTemplateRow,
+            typeKind,
+            instantiationRow);
+    }
+
+    public fn bool SetGenericTemplateDeferredTypeInstantiationTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] instantiationRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredTypeInstantiationTypeName(
+            self.Strings,
+            instantiationRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateDeferredTypeInstantiationTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] instantiationRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateDeferredTypeInstantiationTypeIntegerFacts(
+            self.Strings,
+            instantiationRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateObjectCreation(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii createdTypeKind,
+        out u32[0 max] objectCreationRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateObjectCreation(
+            self.Strings,
+            functionTemplateRow,
+            createdTypeKind,
+            objectCreationRow);
+    }
+
+    public fn bool SetGenericTemplateObjectCreationCreatedTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] objectCreationRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectCreationCreatedTypeName(
+            self.Strings,
+            objectCreationRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateObjectCreationCreatedTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] objectCreationRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectCreationCreatedTypeIntegerFacts(
+            self.Strings,
+            objectCreationRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetGenericTemplateObjectCreationStorageSelector(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] objectCreationRow,
+        u32[0 max] storageSelector)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectCreationStorageSelector(
+            self.Strings,
+            objectCreationRow,
+            storageSelector);
+    }
+
+    public fn bool SetGenericTemplateObjectCreationExpressionText(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] objectCreationRow,
+        ascii expressionText)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectCreationExpressionText(
+            self.Strings,
+            objectCreationRow,
+            expressionText);
+    }
+
+    public fn bool SetGenericTemplateObjectCreationConstructor(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] objectCreationRow,
+        ascii constructorTypeName,
+        u32[0 max] parameterCount,
+        bool isPrimaryShape)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectCreationConstructor(
+            self.Strings,
+            objectCreationRow,
+            constructorTypeName,
+            parameterCount,
+            isPrimaryShape);
+    }
+
+    public fn bool AddGenericTemplateObjectInitializerMember(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] objectCreationRow,
+        ascii fieldName,
+        u32[0 max] fieldIndex,
+        ascii fieldTypeKind,
+        out u32[0 max] memberRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateObjectInitializerMember(
+            self.Strings,
+            objectCreationRow,
+            fieldName,
+            fieldIndex,
+            fieldTypeKind,
+            memberRow);
+    }
+
+    public fn bool SetGenericTemplateObjectInitializerMemberFieldTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] memberRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectInitializerMemberFieldTypeName(
+            self.Strings,
+            memberRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateObjectInitializerMemberFieldTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] memberRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateObjectInitializerMemberFieldTypeIntegerFacts(
+            self.Strings,
+            memberRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateEnumConstructor(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] constructorRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateEnumConstructor(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            enumTypeKind,
+            variantName,
+            constructorRow);
+    }
+
+    public fn bool SetGenericTemplateEnumConstructorTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] constructorRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumConstructorTypeName(
+            self.Strings,
+            constructorRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateEnumConstructorMember(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] constructorRow,
+        ascii fieldName,
+        u32[0 max] fieldIndex,
+        ascii fieldTypeKind,
+        out u32[0 max] memberRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateEnumConstructorMember(
+            self.Strings,
+            constructorRow,
+            fieldName,
+            fieldIndex,
+            fieldTypeKind,
+            memberRow);
+    }
+
+    public fn bool SetGenericTemplateEnumConstructorMemberFieldTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] memberRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumConstructorMemberFieldTypeName(
+            self.Strings,
+            memberRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateEnumConstructorMemberFieldTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] memberRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumConstructorMemberFieldTypeIntegerFacts(
+            self.Strings,
+            memberRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateEnumCall(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] callRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateEnumCall(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            enumTypeKind,
+            variantName,
+            callRow);
+    }
+
+    public fn bool SetGenericTemplateEnumCallTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumCallTypeName(
+            self.Strings,
+            callRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateEnumValue(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] valueRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateEnumValue(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            enumTypeKind,
+            variantName,
+            valueRow);
+    }
+
+    public fn bool SetGenericTemplateEnumValueTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] valueRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumValueTypeName(
+            self.Strings,
+            valueRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateEnumPattern(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] patternRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateEnumPattern(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            enumTypeKind,
+            variantName,
+            patternRow);
+    }
+
+    public fn bool SetGenericTemplateEnumPatternTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] patternRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumPatternTypeName(
+            self.Strings,
+            patternRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateEnumPatternMember(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] patternRow,
+        ascii fieldName,
+        u32[0 max] fieldIndex,
+        ascii fieldTypeKind,
+        out u32[0 max] memberRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateEnumPatternMember(
+            self.Strings,
+            patternRow,
+            fieldName,
+            fieldIndex,
+            fieldTypeKind,
+            memberRow);
+    }
+
+    public fn bool SetGenericTemplateEnumPatternMemberFieldTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] memberRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumPatternMemberFieldTypeName(
+            self.Strings,
+            memberRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateEnumPatternMemberFieldTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] memberRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateEnumPatternMemberFieldTypeIntegerFacts(
+            self.Strings,
+            memberRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+
+    public fn bool AddGenericTemplateDirectCall(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateDirectCall(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            qualifiedResolvedName,
+            returnTypeKind,
+            callSignatureRow);
+    }
+
+    public fn bool AddGenericTemplateMemberCall(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateMemberCall(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            qualifiedResolvedName,
+            returnTypeKind,
+            callSignatureRow);
+    }
+
+    public fn bool AddGenericTemplateFunctionAddress(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii targetTypeKind,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateFunctionAddress(
+            self.Strings,
+            functionTemplateRow,
+            publishedOrdinal,
+            qualifiedResolvedName,
+            targetTypeKind,
+            returnTypeKind,
+            callSignatureRow);
+    }
+
+    public fn bool SetGenericTemplateCallSignatureTargetTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallSignatureTargetTypeName(
+            self.Strings,
+            callSignatureRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateBoundOperation(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii kind,
+        u32[0 max] line,
+        u32[0 max] column,
+        ascii resultTypeKind,
+        out u32[0 max] boundOperationRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperation(
+            self.Strings,
+            functionTemplateRow,
+            kind,
+            line,
+            column,
+            resultTypeKind,
+            boundOperationRow);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationResultTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationResultTypeName(
+            self.Strings,
+            boundOperationRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationResultTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationResultTypeIntegerFacts(
+            self.Strings,
+            boundOperationRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationPublishedOrdinal(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        u32[0 max] publishedOrdinal)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationPublishedOrdinal(
+            self.Strings,
+            boundOperationRow,
+            publishedOrdinal);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationEnclosingFunctionName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        ascii enclosingFunctionName)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationEnclosingFunctionName(
+            self.Strings,
+            boundOperationRow,
+            enclosingFunctionName);
+    }
+
+    public fn bool AddGenericTemplateBoundOperationCallSignature(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperationCallSignature(
+            self.Strings,
+            boundOperationRow,
+            qualifiedResolvedName,
+            returnTypeKind,
+            callSignatureRow);
+    }
+
+    public fn bool SetGenericTemplateCallSignatureQualifiedSourceName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii qualifiedSourceName)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallSignatureQualifiedSourceName(
+            self.Strings,
+            callSignatureRow,
+            qualifiedSourceName);
+    }
+
+    public fn bool SetGenericTemplateCallSignatureQualifiedTemplateName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii qualifiedTemplateName)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallSignatureQualifiedTemplateName(
+            self.Strings,
+            callSignatureRow,
+            qualifiedTemplateName);
+    }
+
+    public fn bool SetGenericTemplateCallSignatureReturnTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallSignatureReturnTypeName(
+            self.Strings,
+            callSignatureRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateCallParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii name,
+        ascii typeKind,
+        bool isDisjoint,
+        bool isConst,
+        out u32[0 max] parameterRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateCallParameter(
+            self.Strings,
+            callSignatureRow,
+            name,
+            typeKind,
+            isDisjoint,
+            isConst,
+            parameterRow);
+    }
+
+    public fn bool SetGenericTemplateCallParameterTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parameterRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallParameterTypeName(
+            self.Strings,
+            parameterRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateCallParameterRawPointerElementCountExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parameterRow,
+        ascii expression)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallParameterRawPointerElementCountExpression(
+            self.Strings,
+            parameterRow,
+            expression);
+    }
+
+    public fn bool AddGenericTemplateCallTypeArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii typeKind,
+        out u32[0 max] typeArgumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateCallTypeArgument(
+            self.Strings,
+            callSignatureRow,
+            typeKind,
+            typeArgumentRow);
+    }
+
+    public fn bool SetGenericTemplateCallTypeArgumentName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeArgumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallTypeArgumentName(
+            self.Strings,
+            typeArgumentRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateCallComptimeValueArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] callSignatureRow,
+        ascii parameterName,
+        ascii integerValue,
+        ascii typeKind,
+        bool isSymbolic,
+        out u32[0 max] argumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateCallComptimeValueArgument(
+            self.Strings,
+            callSignatureRow,
+            parameterName,
+            integerValue,
+            typeKind,
+            isSymbolic,
+            argumentRow);
+    }
+
+    public fn bool SetGenericTemplateCallComptimeValueArgumentTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallComptimeValueArgumentTypeIntegerFacts(
+            self.Strings,
+            argumentRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetGenericTemplateCallComptimeValueArgumentSymbolicSourceName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        ascii symbolicSourceName)
+    {
+        return self.GenericTemplates.SetGenericTemplateCallComptimeValueArgumentSymbolicSourceName(
+            self.Strings,
+            argumentRow,
+            symbolicSourceName);
+    }
+
+    public fn bool AddGenericTemplateBoundOperationCallArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        u32[0 max] parameterIndex,
+        u32[0 max] sourceArgumentIndex,
+        ascii parameterTypeKind,
+        ascii argumentTypeKind,
+        bool isReceiver,
+        bool requiresAddressable,
+        bool requiresMutable,
+        bool requiresConstProvenance,
+        bool argumentIsAddressable,
+        bool argumentIsMutable,
+        bool argumentHasConstProvenance,
+        out u32[0 max] argumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperationCallArgument(
+            self.Strings,
+            boundOperationRow,
+            parameterIndex,
+            sourceArgumentIndex,
+            parameterTypeKind,
+            argumentTypeKind,
+            isReceiver,
+            requiresAddressable,
+            requiresMutable,
+            requiresConstProvenance,
+            argumentIsAddressable,
+            argumentIsMutable,
+            argumentHasConstProvenance,
+            argumentRow);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationCallArgumentParameterTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationCallArgumentParameterTypeName(
+            self.Strings,
+            argumentRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationCallArgumentArgumentTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] argumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationCallArgumentArgumentTypeName(
+            self.Strings,
+            argumentRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateBoundOperationTypePayload(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        LogicalPackageTemplateBoundOperationTypePayloadKind payloadKind,
+        ascii typeKind,
+        out u32[0 max] payloadRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperationTypePayload(
+            self.Strings,
+            boundOperationRow,
+            payloadKind,
+            typeKind,
+            payloadRow);
+    }
+
+    public fn bool SetGenericTemplateBoundOperationTypePayloadName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] payloadRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateBoundOperationTypePayloadName(
+            self.Strings,
+            payloadRow,
+            name);
+    }
+
+    public fn bool AddGenericTemplateBoundOperationTextPayload(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        ascii memberName,
+        LogicalPackageGenericTemplateFactTextKind textKind,
+        ascii value,
+        out u32[0 max] payloadRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperationTextPayload(
+            self.Strings,
+            boundOperationRow,
+            memberName,
+            textKind,
+            value,
+            payloadRow);
+    }
+
+    public fn bool AddGenericTemplateBoundOperationU32Payload(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        LogicalPackageTemplateBoundOperationU32PayloadKind payloadKind,
+        u32[0 max] value,
+        out u32[0 max] payloadRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperationU32Payload(
+            self.Strings,
+            boundOperationRow,
+            payloadKind,
+            value,
+            payloadRow);
+    }
+
+    public fn bool AddGenericTemplateBoundOperationBoolPayload(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] boundOperationRow,
+        LogicalPackageTemplateBoundOperationBoolPayloadKind payloadKind,
+        bool value,
+        out u32[0 max] payloadRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateBoundOperationBoolPayload(
+            self.Strings,
+            boundOperationRow,
+            payloadKind,
+            value,
+            payloadRow);
+    }
+
+    public fn bool AddGenericTemplateExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii kind,
+        out u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateExpression(
+            self.Strings,
+            functionTemplateRow,
+            kind,
+            expressionRow);
+    }
+
+    public fn bool SetGenericTemplateExpressionName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionName(
+            self.Strings,
+            expressionRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateExpressionLiteralText(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii literalText)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionLiteralText(
+            self.Strings,
+            expressionRow,
+            literalText);
+    }
+
+    public fn bool SetGenericTemplateExpressionType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii typeKind)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionType(
+            self.Strings,
+            expressionRow,
+            typeKind);
+    }
+
+    public fn bool SetGenericTemplateExpressionTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionTypeName(
+            self.Strings,
+            expressionRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateExpressionTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionTypeIntegerFacts(
+            self.Strings,
+            expressionRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateExpressionArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parentExpressionRow,
+        ascii kind,
+        out u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateExpressionArgument(
+            self.Strings,
+            parentExpressionRow,
+            kind,
+            expressionRow);
+    }
+
+    public fn bool AddGenericTemplateExpressionMemberName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii name,
+        out u32[0 max] memberNameRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateExpressionMemberName(
+            self.Strings,
+            expressionRow,
+            name,
+            memberNameRow);
+    }
+
+    public fn bool AddGenericTemplateExpressionOperatorName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii name,
+        out u32[0 max] operatorNameRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateExpressionOperatorName(
+            self.Strings,
+            expressionRow,
+            name,
+            operatorNameRow);
+    }
+
+    public fn bool AddGenericTemplateExpressionTypeArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii typeKind,
+        out u32[0 max] typeArgumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateExpressionTypeArgument(
+            self.Strings,
+            expressionRow,
+            typeKind,
+            typeArgumentRow);
+    }
+
+    public fn bool SetGenericTemplateExpressionTypeArgumentName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeArgumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionTypeArgumentName(
+            self.Strings,
+            typeArgumentRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateExpressionTypeArgumentIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] typeArgumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionTypeArgumentIntegerFacts(
+            self.Strings,
+            typeArgumentRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool AddGenericTemplateExpressionComptimeValueArgument(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] expressionRow,
+        ascii parameterName,
+        ascii integerValue,
+        ascii typeKind,
+        bool isSymbolic,
+        out u32[0 max] comptimeValueArgumentRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateExpressionComptimeValueArgument(
+            self.Strings,
+            expressionRow,
+            parameterName,
+            integerValue,
+            typeKind,
+            isSymbolic,
+            comptimeValueArgumentRow);
+    }
+
+    public fn bool SetGenericTemplateExpressionComptimeValueArgumentTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] comptimeValueArgumentRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionComptimeValueArgumentTypeName(
+            self.Strings,
+            comptimeValueArgumentRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateExpressionComptimeValueArgumentTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] comptimeValueArgumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionComptimeValueArgumentTypeIntegerFacts(
+            self.Strings,
+            comptimeValueArgumentRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetGenericTemplateExpressionComptimeValueArgumentSymbolicSourceName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] comptimeValueArgumentRow,
+        ascii symbolicSourceName)
+    {
+        return self.GenericTemplates.SetGenericTemplateExpressionComptimeValueArgumentSymbolicSourceName(
+            self.Strings,
+            comptimeValueArgumentRow,
+            symbolicSourceName);
+    }
+
+    public fn bool AddGenericTemplateTopLevelStatement(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] functionTemplateRow,
+        ascii kind,
+        out u32[0 max] statementRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateTopLevelStatement(
+            self.Strings,
+            functionTemplateRow,
+            kind,
+            statementRow);
+    }
+
+    public fn bool AddGenericTemplateNestedStatement(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parentStatementRow,
+        LogicalPackageTypedTemplateStatementParentKind parentKind,
+        ascii kind,
+        out u32[0 max] statementRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateNestedStatement(
+            self.Strings,
+            parentStatementRow,
+            parentKind,
+            kind,
+            statementRow);
+    }
+
+    public fn bool AddGenericTemplateSwitchCase(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii kind,
+        out u32[0 max] switchCaseRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateSwitchCase(
+            self.Strings,
+            statementRow,
+            kind,
+            switchCaseRow);
+    }
+
+    public fn bool AddGenericTemplateSwitchCaseStatement(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        ascii kind,
+        out u32[0 max] statementRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateSwitchCaseStatement(
+            self.Strings,
+            switchCaseRow,
+            kind,
+            statementRow);
+    }
+
+    public fn bool AddGenericTemplateStatementConditionPattern(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii kind,
+        out u32[0 max] patternRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateStatementConditionPattern(
+            self.Strings,
+            statementRow,
+            kind,
+            patternRow);
+    }
+
+    public fn bool AddGenericTemplateSwitchCaseMemberPattern(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        ascii kind,
+        out u32[0 max] patternRow)
+    {
+        return self.GenericTemplates.AddGenericTemplateSwitchCaseMemberPattern(
+            self.Strings,
+            switchCaseRow,
+            kind,
+            patternRow);
+    }
+
+    public fn bool AddGenericTemplatePatternMemberPattern(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] parentPatternRow,
+        ascii kind,
+        out u32[0 max] patternRow)
+    {
+        return self.GenericTemplates.AddGenericTemplatePatternMemberPattern(
+            self.Strings,
+            parentPatternRow,
+            kind,
+            patternRow);
+    }
+
+    public fn bool SetGenericTemplateStatementExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementExpression(
+            self.Strings,
+            statementRow,
+            expressionRow);
+    }
+
+    public fn bool SetGenericTemplateStatementName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementName(
+            self.Strings,
+            statementRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateStatementStorageClass(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii storageClass)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementStorageClass(
+            self.Strings,
+            statementRow,
+            storageClass);
+    }
+
+    public fn bool SetGenericTemplateStatementMutability(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        bool isMutable,
+        bool isConstant)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementMutability(
+            self.Strings,
+            statementRow,
+            isMutable,
+            isConstant);
+    }
+
+    public fn bool SetGenericTemplateStatementConstProvenance(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii constProvenance)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementConstProvenance(
+            self.Strings,
+            statementRow,
+            constProvenance);
+    }
+
+    public fn bool SetGenericTemplateStatementStorageCapacity(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        u32[0 max] storageCapacity)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementStorageCapacity(
+            self.Strings,
+            statementRow,
+            storageCapacity);
+    }
+
+    public fn bool SetGenericTemplateStatementType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii typeKind)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementType(
+            self.Strings,
+            statementRow,
+            typeKind);
+    }
+
+    public fn bool SetGenericTemplateStatementTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementTypeName(
+            self.Strings,
+            statementRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateStatementTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] statementRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.GenericTemplates.SetGenericTemplateStatementTypeIntegerFacts(
+            self.Strings,
+            statementRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetGenericTemplateSwitchCaseName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplateSwitchCaseName(
+            self.Strings,
+            switchCaseRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplateSwitchCaseOrdinal(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        u32[0 max] ordinal)
+    {
+        return self.GenericTemplates.SetGenericTemplateSwitchCaseOrdinal(
+            self.Strings,
+            switchCaseRow,
+            ordinal);
+    }
+
+    public fn bool SetGenericTemplateSwitchCaseExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.SetGenericTemplateSwitchCaseExpression(
+            self.Strings,
+            switchCaseRow,
+            expressionRow);
+    }
+
+    public fn bool SetGenericTemplateSwitchCaseGuardExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.SetGenericTemplateSwitchCaseGuardExpression(
+            self.Strings,
+            switchCaseRow,
+            expressionRow);
+    }
+
+    public fn bool SetGenericTemplateSwitchCaseEndExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] switchCaseRow,
+        u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.SetGenericTemplateSwitchCaseEndExpression(
+            self.Strings,
+            switchCaseRow,
+            expressionRow);
+    }
+
+    public fn bool SetGenericTemplatePatternName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] patternRow,
+        ascii name)
+    {
+        return self.GenericTemplates.SetGenericTemplatePatternName(
+            self.Strings,
+            patternRow,
+            name);
+    }
+
+    public fn bool SetGenericTemplatePatternOrdinal(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] patternRow,
+        u32[0 max] ordinal)
+    {
+        return self.GenericTemplates.SetGenericTemplatePatternOrdinal(
+            self.Strings,
+            patternRow,
+            ordinal);
+    }
+
+    public fn bool SetGenericTemplatePatternExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] patternRow,
+        u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.SetGenericTemplatePatternExpression(
+            self.Strings,
+            patternRow,
+            expressionRow);
+    }
+
+    public fn bool SetGenericTemplatePatternEndExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] patternRow,
+        u32[0 max] expressionRow)
+    {
+        return self.GenericTemplates.SetGenericTemplatePatternEndExpression(
+            self.Strings,
+            patternRow,
+            expressionRow);
+    }
+
+    public fn bool AddCompilerFactAbiFunction(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii symbolName,
+        ascii sourceReturnTypeKind,
+        ascii llvmReturnTypeKind,
+        bool isFfi,
+        out u32[0 max] abiFunctionRow)
+    {
+        return self.CompilerFacts.AddCompilerFactAbiFunction(
+            self.Strings,
+            moduleOrdinal,
+            qualifiedResolvedName,
+            symbolName,
+            sourceReturnTypeKind,
+            llvmReturnTypeKind,
+            isFfi,
+            abiFunctionRow);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionFlags(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        bool usesFastCallingConvention,
+        bool isVarargs,
+        bool usesTailCallingConvention)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionFlags(
+            self.Strings,
+            abiFunctionRow,
+            usesFastCallingConvention,
+            isVarargs,
+            usesTailCallingConvention);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionSourceName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        ascii sourceName)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionSourceName(
+            self.Strings,
+            abiFunctionRow,
+            sourceName);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionFfiAbi(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        ascii ffiAbi)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionFfiAbi(
+            self.Strings,
+            abiFunctionRow,
+            ffiAbi);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionLinkName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        ascii linkName)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionLinkName(
+            self.Strings,
+            abiFunctionRow,
+            linkName);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionSourceReturnTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        ascii name)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionSourceReturnTypeName(
+            self.Strings,
+            abiFunctionRow,
+            name);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionLlvmReturnTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        ascii name)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionLlvmReturnTypeName(
+            self.Strings,
+            abiFunctionRow,
+            name);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionSourceReturnIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionSourceReturnIntegerFacts(
+            self.Strings,
+            abiFunctionRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetCompilerFactAbiFunctionLlvmReturnBitWidth(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        u32[0 max] bitWidth)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiFunctionLlvmReturnBitWidth(
+            self.Strings,
+            abiFunctionRow,
+            bitWidth);
+    }
+
+    public fn bool AddCompilerFactAbiParameter(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiFunctionRow,
+        ascii sourceName,
+        ascii llvmName,
+        ascii sourceTypeKind,
+        ascii llvmTypeKind,
+        ascii kind,
+        out u32[0 max] abiParameterRow)
+    {
+        return self.CompilerFacts.AddCompilerFactAbiParameter(
+            self.Strings,
+            abiFunctionRow,
+            sourceName,
+            llvmName,
+            sourceTypeKind,
+            llvmTypeKind,
+            kind,
+            abiParameterRow);
+    }
+
+    public fn bool SetCompilerFactAbiParameterRawPointerElementCountExpression(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiParameterRow,
+        ascii rawPointerElementCountExpression)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiParameterRawPointerElementCountExpression(
+            self.Strings,
+            abiParameterRow,
+            rawPointerElementCountExpression);
+    }
+
+    public fn bool SetCompilerFactAbiParameterSourceTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiParameterRow,
+        ascii name)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiParameterSourceTypeName(
+            self.Strings,
+            abiParameterRow,
+            name);
+    }
+
+    public fn bool SetCompilerFactAbiParameterLlvmTypeName(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiParameterRow,
+        ascii name)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiParameterLlvmTypeName(
+            self.Strings,
+            abiParameterRow,
+            name);
+    }
+
+    public fn bool SetCompilerFactAbiParameterSourceTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiParameterRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiParameterSourceTypeIntegerFacts(
+            self.Strings,
+            abiParameterRow,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned);
+    }
+
+    public fn bool SetCompilerFactAbiParameterLlvmTypeBitWidth(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiParameterRow,
+        u32[0 max] bitWidth)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiParameterLlvmTypeBitWidth(
+            self.Strings,
+            abiParameterRow,
+            bitWidth);
+    }
+
+    public fn bool AddCompilerFactAbiParameterLlvmType(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] abiParameterRow,
+        ascii typeKind,
+        out u32[0 max] llvmTypeRow)
+    {
+        return self.CompilerFacts.AddCompilerFactAbiParameterLlvmType(
+            self.Strings,
+            abiParameterRow,
+            typeKind,
+            llvmTypeRow);
+    }
+
+    public fn bool SetCompilerFactAbiParameterLlvmCarrierTypeBitWidth(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] llvmTypeRow,
+        u32[0 max] bitWidth)
+    {
+        return self.CompilerFacts.SetCompilerFactAbiParameterLlvmCarrierTypeBitWidth(
+            self.Strings,
+            llvmTypeRow,
+            bitWidth);
+    }
+
+    public fn bool AddCompilerFactConcreteLayout(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedTypeName,
+        u32[0 max] sizeBytes,
+        u32[0 max] alignmentBytes,
+        out u32[0 max] concreteLayoutRow)
+    {
+        return self.CompilerFacts.AddCompilerFactConcreteLayout(
+            self.Strings,
+            moduleOrdinal,
+            qualifiedTypeName,
+            sizeBytes,
+            alignmentBytes,
+            concreteLayoutRow);
+    }
+
+    public fn bool AddCompilerFactConcreteField(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] concreteLayoutRow,
+        ascii name,
+        u32[0 max] offsetBytes,
+        u32[0 max] sizeBytes,
+        u32[0 max] naturalAlignmentBytes,
+        u32[0 max] effectiveAlignmentBytes,
+        bool isMisaligned,
+        out u32[0 max] concreteFieldRow)
+    {
+        return self.CompilerFacts.AddCompilerFactConcreteField(
+            self.Strings,
+            concreteLayoutRow,
+            name,
+            offsetBytes,
+            sizeBytes,
+            naturalAlignmentBytes,
+            effectiveAlignmentBytes,
+            isMisaligned,
+            concreteFieldRow);
+    }
+
+    public fn bool AddNativeDependency(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        LogicalPackageNativeDependencyKind kind,
+        ascii value,
+        out u32[0 max] nativeDependencyRow)
+    {
+        return self.CompilerFacts.AddNativeDependency(
+            self.Strings,
+            kind,
+            value,
+            nativeDependencyRow);
+    }
+
+    public fn bool AddCompilerFactLinkage(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] moduleOrdinal,
+        ascii objectFileName,
+        out u32[0 max] linkageRow)
+    {
+        return self.CompilerFacts.AddCompilerFactLinkage(
+            self.Strings,
+            moduleOrdinal,
+            objectFileName,
+            linkageRow);
+    }
+
+    public fn bool AddCompilerFactLinkageDefinedSymbol(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] linkageRow,
+        ascii symbol,
+        out u32[0 max] symbolRow)
+    {
+        return self.CompilerFacts.AddCompilerFactLinkageDefinedSymbol(
+            self.Strings,
+            linkageRow,
+            symbol,
+            symbolRow);
+    }
+
+    public fn bool AddCompilerFactLinkageReferencedSymbol(
+        mut borrow LogicalPackageManifestJsonBuilder self,
+        u32[0 max] linkageRow,
+        ascii symbol,
+        out u32[0 max] symbolRow)
+    {
+        return self.CompilerFacts.AddCompilerFactLinkageReferencedSymbol(
+            self.Strings,
+            linkageRow,
+            symbol,
+            symbolRow);
+    }
+}

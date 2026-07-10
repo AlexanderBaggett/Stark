@@ -1,0 +1,20 @@
+import System.Text
+module Compiler.Mir.PackageImage.Shared.GenericTemplatePublicationPolicy
+
+// Package-format publication policy expressed over the manifest visibility
+// spelling so the Shared layer does not depend on binding or typing models.
+
+internal finite law bool GenericTemplateHasPublishedApiVisibility(ascii visibility)
+{
+    return Equals(visibility, "public") || Equals(visibility, "export");
+}
+
+internal finite law bool GenericTemplateShouldPublishTypedBody(
+    ascii visibility,
+    bool hasBody,
+    bool isGeneric)
+{
+    return GenericTemplateHasPublishedApiVisibility(visibility)
+        && hasBody
+        && isGeneric;
+}

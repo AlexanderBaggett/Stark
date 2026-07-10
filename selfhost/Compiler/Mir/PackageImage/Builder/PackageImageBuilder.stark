@@ -1,0 +1,1518 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+import Compiler.Mir.PackageImage.Builder.ManifestJsonWriter
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Builder.CompilerFactsSectionBuilder
+import Compiler.Mir.PackageImage.Builder.GenericTemplateSectionBuilder
+import Compiler.Mir.PackageImage.Builder.SourceSurfaceSectionBuilder
+import Compiler.Mir.PackageImage.Builder.TypedInterfaceSectionBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Builder.PackageImageBuilder
+
+public struct LogicalPackageImageBuilder
+{
+    internal LogicalPackageImageStringTableBuilder Strings;
+    internal IrTable<u32[0 max]> TargetFeatureStringIndexes;
+    u32[0 max] RootModuleStringIndexValue;
+    u32[0 max] LibraryFileNameStringIndexValue;
+    u32[0 max] BuildProfileStringIndexValue;
+    u32[0 max] TargetTripleStringIndexValue;
+    u32[0 max] TargetDataLayoutStringIndexValue;
+    u32[0 max] TargetCpuStringIndexValue;
+    u32[0 max] RelocationModelStringIndexValue;
+    u32[0 max] CodeModelStringIndexValue;
+    u32[0 max] CDataModelKindStringIndexValue;
+    bool HasTargetValue;
+    bool HasCDataModelValue;
+    bool CCharIsSignedValue;
+    u32[0 max] CPointerBitWidthValue;
+    u32[0 max] CLongBitWidthValue;
+    u32[0 max] CSizeTBitWidthValue;
+    u32[0 max] CPtrDiffTBitWidthValue;
+    bool HasAggregateLayoutValue;
+    u32[0 max] AggregatePointerSizeBytesValue;
+    u32[0 max] AggregatePointerAlignmentBytesValue;
+
+    LogicalPackageImageBuilder()
+    {
+        self.Strings = new();
+        self.TargetFeatureStringIndexes = new();
+        self.RootModuleStringIndexValue = PackageImageNullStringIndex();
+        self.LibraryFileNameStringIndexValue = PackageImageNullStringIndex();
+        self.BuildProfileStringIndexValue = PackageImageNullStringIndex();
+        self.TargetTripleStringIndexValue = PackageImageNullStringIndex();
+        self.TargetDataLayoutStringIndexValue = PackageImageNullStringIndex();
+        self.TargetCpuStringIndexValue = PackageImageNullStringIndex();
+        self.RelocationModelStringIndexValue = PackageImageNullStringIndex();
+        self.CodeModelStringIndexValue = PackageImageNullStringIndex();
+        self.CDataModelKindStringIndexValue = PackageImageNullStringIndex();
+        self.HasTargetValue = false;
+        self.HasCDataModelValue = false;
+        self.CCharIsSignedValue = false;
+        self.CPointerBitWidthValue = 0;
+        self.CLongBitWidthValue = 0;
+        self.CSizeTBitWidthValue = 0;
+        self.CPtrDiffTBitWidthValue = 0;
+        self.HasAggregateLayoutValue = false;
+        self.AggregatePointerSizeBytesValue = 0;
+        self.AggregatePointerAlignmentBytesValue = 0;
+    }
+
+    public inline finite law u32[0 max] StringCount(borrow LogicalPackageImageBuilder self)
+    {
+        return self.Strings.StringCount();
+    }
+
+    public inline finite law u32[0 max] TargetFeatureCount(borrow LogicalPackageImageBuilder self)
+    {
+        return (u32[0 max])self.TargetFeatureStringIndexes.Count();
+    }
+
+    public fn bool SetRootModule(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        return LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.RootModuleStringIndexValue);
+    }
+
+    public fn bool SetLibraryFileName(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        return LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.LibraryFileNameStringIndexValue);
+    }
+
+    public fn bool SetBuildProfile(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        return LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.BuildProfileStringIndexValue);
+    }
+
+    public fn bool SetTargetTriple(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.TargetTripleStringIndexValue))
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        return true;
+    }
+
+    public fn bool SetTargetDataLayout(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.TargetDataLayoutStringIndexValue))
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        return true;
+    }
+
+    public fn bool SetTargetCpu(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.TargetCpuStringIndexValue))
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        return true;
+    }
+
+    public fn bool SetRelocationModel(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.RelocationModelStringIndexValue))
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        return true;
+    }
+
+    public fn bool SetCodeModel(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, self.CodeModelStringIndexValue))
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        return true;
+    }
+
+    public fn bool AddTargetFeature(mut borrow LogicalPackageImageBuilder self, ascii value)
+    {
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, value, stringIndex))
+        {
+            return false;
+        }
+
+        if (self.TargetFeatureStringIndexes.Add(stringIndex) == 0)
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        return true;
+    }
+
+    public fn bool SetCDataModel(
+        mut borrow LogicalPackageImageBuilder self,
+        ascii kind,
+        bool charIsSigned,
+        u32[0 max] pointerBitWidth,
+        u32[0 max] longBitWidth,
+        u32[0 max] sizeTBitWidth,
+        u32[0 max] ptrDiffTBitWidth)
+    {
+        if (pointerBitWidth == 0 || longBitWidth == 0 || sizeTBitWidth == 0 || ptrDiffTBitWidth == 0)
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageStringTableBuilderTryAdd(self.Strings, kind, self.CDataModelKindStringIndexValue))
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        self.HasCDataModelValue = true;
+        self.CCharIsSignedValue = charIsSigned;
+        self.CPointerBitWidthValue = pointerBitWidth;
+        self.CLongBitWidthValue = longBitWidth;
+        self.CSizeTBitWidthValue = sizeTBitWidth;
+        self.CPtrDiffTBitWidthValue = ptrDiffTBitWidth;
+        return true;
+    }
+
+    public finite bool SetAggregatePointerLayout(
+        mut borrow LogicalPackageImageBuilder self,
+        u32[0 max] pointerSizeBytes,
+        u32[0 max] pointerAlignmentBytes)
+    {
+        if (pointerSizeBytes == 0 || pointerAlignmentBytes == 0)
+        {
+            return false;
+        }
+
+        self.HasTargetValue = true;
+        self.HasAggregateLayoutValue = true;
+        self.AggregatePointerSizeBytesValue = pointerSizeBytes;
+        self.AggregatePointerAlignmentBytesValue = pointerAlignmentBytes;
+        return true;
+    }
+}
+
+internal inline finite law bool LogicalPackageImageBuilderHasString(u32[0 max] stringIndex)
+{
+    return LogicalStringIndexIsPresent(stringIndex);
+}
+
+internal inline finite law u32[0 max] BrotliUncompressedMetaBlockMaxLength()
+{
+    return 16777216;
+}
+
+internal struct BrotliUncompressedBitWriter
+{
+    u32[0 max] CurrentByte;
+    u32[0 max] NextBitValue;
+    u32[0 max] BitCount;
+
+    BrotliUncompressedBitWriter()
+    {
+        self.CurrentByte = 0;
+        self.NextBitValue = 1;
+        self.BitCount = 0;
+    }
+}
+
+internal fn bool BrotliUncompressedBitWriterAppendBit(
+    mut borrow BrotliUncompressedBitWriter writer,
+    mut borrow IrTable<u8[0 max]> output,
+    bool bit)
+{
+    if (bit)
+    {
+        writer.CurrentByte = writer.CurrentByte + writer.NextBitValue;
+    }
+
+    writer.BitCount = writer.BitCount + 1;
+    if (writer.BitCount == 8)
+    {
+        if (output.Add((u8[0 max])writer.CurrentByte) == 0)
+        {
+            return false;
+        }
+
+        writer.CurrentByte = 0;
+        writer.NextBitValue = 1;
+        writer.BitCount = 0;
+        return true;
+    }
+
+    writer.NextBitValue = writer.NextBitValue * 2;
+    return true;
+}
+
+internal fn bool BrotliUncompressedBitWriterAppendBits(
+    mut borrow BrotliUncompressedBitWriter writer,
+    mut borrow IrTable<u8[0 max]> output,
+    u32[0 max] value,
+    u32[0 max] bitCount)
+{
+    stack mut u32[0 max] remaining = value;
+    stack mut u32[0 max] index = 0;
+    while willexit (index < bitCount)
+    {
+        if (!BrotliUncompressedBitWriterAppendBit(writer, output, remaining % 2 != 0))
+        {
+            return false;
+        }
+
+        remaining = remaining / 2;
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BrotliUncompressedBitWriterFlushZeroesToByte(
+    mut borrow BrotliUncompressedBitWriter writer,
+    mut borrow IrTable<u8[0 max]> output)
+{
+    while willexit (writer.BitCount != 0)
+    {
+        if (!BrotliUncompressedBitWriterAppendBit(writer, output, false))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal inline finite law u32[0 max] BrotliLengthNibbleCount(u32[0 max] length)
+{
+    if (length <= 65536)
+    {
+        return 4;
+    }
+
+    if (length <= 1048576)
+    {
+        return 5;
+    }
+
+    return 6;
+}
+
+internal inline finite law u32[0 max] BrotliLengthNibblePattern(u32[0 max] nibbleCount)
+{
+    if (nibbleCount == 5)
+    {
+        return 1;
+    }
+
+    if (nibbleCount == 6)
+    {
+        return 2;
+    }
+
+    return 0;
+}
+
+internal fn bool BrotliWriteUncompressedMetaBlockHeader(
+    mut borrow BrotliUncompressedBitWriter writer,
+    mut borrow IrTable<u8[0 max]> output,
+    u32[0 max] byteLength)
+{
+    if (byteLength == 0 || byteLength > BrotliUncompressedMetaBlockMaxLength())
+    {
+        return false;
+    }
+
+    stack u32[0 max] nibbleCount = BrotliLengthNibbleCount(byteLength);
+    stack u32[0 max] nibblePattern = BrotliLengthNibblePattern(nibbleCount);
+    if (!BrotliUncompressedBitWriterAppendBit(writer, output, false))
+    {
+        return false;
+    }
+
+    if (!BrotliUncompressedBitWriterAppendBits(writer, output, nibblePattern, 2))
+    {
+        return false;
+    }
+
+    if (!BrotliUncompressedBitWriterAppendBits(writer, output, byteLength - 1, nibbleCount * 4))
+    {
+        return false;
+    }
+
+    if (!BrotliUncompressedBitWriterAppendBit(writer, output, true))
+    {
+        return false;
+    }
+
+    return BrotliUncompressedBitWriterFlushZeroesToByte(writer, output);
+}
+
+internal fn bool BrotliWriteFinalEmptyMetaBlock(
+    mut borrow BrotliUncompressedBitWriter writer,
+    mut borrow IrTable<u8[0 max]> output)
+{
+    if (!BrotliUncompressedBitWriterAppendBit(writer, output, true))
+    {
+        return false;
+    }
+
+    if (!BrotliUncompressedBitWriterAppendBit(writer, output, true))
+    {
+        return false;
+    }
+
+    return BrotliUncompressedBitWriterFlushZeroesToByte(writer, output);
+}
+
+public fn bool TryEncodeBrotliUtf8JsonPayload(
+    borrow IrTable<u8[0 max]> utf8Json,
+    mut borrow IrTable<u8[0 max]> payload)
+{
+    stack u64[0 max] sourceLength = (u64[0 max])utf8Json.Count();
+    if (!payload.IsEmpty() || sourceLength == 0 || sourceLength > (u64[0 max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    stack u64[0 max] maxBlockLength = (u64[0 max])BrotliUncompressedMetaBlockMaxLength();
+    stack u64[0 max] blockCount = (sourceLength + maxBlockLength - 1) / maxBlockLength;
+    stack u64[0 max] reserveLength = sourceLength + blockCount * 4 + 1;
+    if (reserveLength > (u64[0 max])(2 ** 63 - 1))
+    {
+        return false;
+    }
+
+    switch (payload.Reserve((u64[0 2 ** 63 - 1])reserveLength))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut BrotliUncompressedBitWriter writer = new();
+    if (!BrotliUncompressedBitWriterAppendBit(writer, payload, false))
+    {
+        return false;
+    }
+
+    stack mut u64[0 max] sourceIndex = 1;
+    stack mut u32[0 max] remaining = (u32[0 max])sourceLength;
+    while willexit (remaining != 0)
+    {
+        stack mut u32[0 max] chunkLength = remaining;
+        if (chunkLength > BrotliUncompressedMetaBlockMaxLength())
+        {
+            chunkLength = BrotliUncompressedMetaBlockMaxLength();
+        }
+
+        if (!BrotliWriteUncompressedMetaBlockHeader(writer, payload, chunkLength))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] chunkIndex = 0;
+        while willexit (chunkIndex < chunkLength)
+        {
+            if (payload.Add(utf8Json.Get((u32[0 max])sourceIndex)) == 0)
+            {
+                return false;
+            }
+
+            sourceIndex = sourceIndex + 1;
+            chunkIndex = chunkIndex + 1;
+        }
+
+        remaining = remaining - chunkLength;
+    }
+
+    return BrotliWriteFinalEmptyMetaBlock(writer, payload);
+}
+
+internal fn bool SerializeLogicalPackageStringTable(
+    borrow LogicalPackageImageStringTableBuilder builder,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] rowCount = builder.Starts.Count();
+    stack u64[0 2 ** 63 - 1] byteCount = builder.Bytes.Count();
+    if (rowCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || byteCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || rowCount > ((u64[0 2 ** 63 - 1])(2 ** 63 - 1) - 4) / 4
+        || byteCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - 4 - rowCount * 4)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] totalByteCount = 4 + rowCount * 4 + byteCount;
+    switch (buf.Reserve(totalByteCount))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    WriteU32(buf, (u32[0 max])rowCount);
+    stack mut u32[0 max] row = 1;
+    while willexit ((u64[0 2 ** 63 - 1])row <= rowCount)
+    {
+        stack u32[0 max] start = builder.Starts.Get(row);
+        stack u32[0 max] byteLength = builder.Lengths.Get(row);
+        WriteU32(buf, byteLength);
+
+        stack mut u32[0 max] index = 0;
+        while willexit (index < byteLength)
+        {
+            if (buf.Add(builder.Bytes.Get(start + index)) == 0)
+            {
+                return false;
+            }
+
+            index = index + 1;
+        }
+
+        row = row + 1;
+    }
+
+    return true;
+}
+
+internal inline finite law bool LogicalPackageImageBuilderTargetFactsAreValid(
+    borrow LogicalPackageImageBuilder builder)
+{
+    if (!builder.HasTargetValue)
+    {
+        return !LogicalPackageImageBuilderHasString(builder.TargetTripleStringIndexValue)
+            && !LogicalPackageImageBuilderHasString(builder.TargetDataLayoutStringIndexValue)
+            && !LogicalPackageImageBuilderHasString(builder.TargetCpuStringIndexValue)
+            && !LogicalPackageImageBuilderHasString(builder.RelocationModelStringIndexValue)
+            && !LogicalPackageImageBuilderHasString(builder.CodeModelStringIndexValue)
+            && builder.TargetFeatureStringIndexes.Count() == 0
+            && !builder.HasCDataModelValue
+            && !builder.HasAggregateLayoutValue;
+    }
+
+    if (!LogicalPackageImageBuilderHasString(builder.TargetTripleStringIndexValue)
+        || !LogicalPackageImageBuilderHasString(builder.RelocationModelStringIndexValue))
+    {
+        return false;
+    }
+
+    if (builder.HasCDataModelValue
+        && (!LogicalPackageImageBuilderHasString(builder.CDataModelKindStringIndexValue)
+            || builder.CPointerBitWidthValue == 0
+            || builder.CLongBitWidthValue == 0
+            || builder.CSizeTBitWidthValue == 0
+            || builder.CPtrDiffTBitWidthValue == 0))
+    {
+        return false;
+    }
+
+    return !builder.HasAggregateLayoutValue
+        || (builder.AggregatePointerSizeBytesValue != 0
+            && builder.AggregatePointerAlignmentBytesValue != 0);
+}
+
+internal inline finite law bool LogicalPackageImageBuilderCanSerialize(
+    borrow LogicalPackageImageBuilder builder,
+    borrow IrTable<u8[0 max]> manifestPayload,
+    borrow IrTable<u8[0 max]> output)
+{
+    return output.IsEmpty()
+        && !manifestPayload.IsEmpty()
+        && LogicalPackageImageBuilderHasString(builder.RootModuleStringIndexValue)
+        && LogicalPackageImageBuilderHasString(builder.LibraryFileNameStringIndexValue)
+        && LogicalPackageImageBuilderTargetFactsAreValid(builder);
+}
+
+internal fn bool SerializeLogicalPackageFacts(
+    borrow LogicalPackageImageBuilder builder,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] featureCount = builder.TargetFeatureStringIndexes.Count();
+    if (featureCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    WriteU32(buf, builder.RootModuleStringIndexValue);
+    WriteU32(buf, builder.LibraryFileNameStringIndexValue);
+    WriteU32(buf, builder.BuildProfileStringIndexValue);
+
+    if (builder.HasTargetValue)
+    {
+        WriteU32(buf, builder.TargetTripleStringIndexValue);
+        WriteU32(buf, builder.TargetDataLayoutStringIndexValue);
+        WriteU32(buf, builder.TargetCpuStringIndexValue);
+        WriteU32(buf, builder.RelocationModelStringIndexValue);
+        WriteU32(buf, builder.CodeModelStringIndexValue);
+        WriteU32(buf, (u32[0 max])featureCount);
+
+        stack mut u32[0 max] featureRow = 1;
+        while willexit ((u64[0 2 ** 63 - 1])featureRow <= featureCount)
+        {
+            stack u32[0 max] featureStringIndex = builder.TargetFeatureStringIndexes.Get(featureRow);
+            WriteU32(buf, featureStringIndex);
+            featureRow = featureRow + 1;
+        }
+
+        if (builder.HasCDataModelValue)
+        {
+            WriteU32(buf, 1);
+            WriteU32(buf, builder.CDataModelKindStringIndexValue);
+            if (builder.CCharIsSignedValue)
+            {
+                WriteU32(buf, 1);
+            }
+            else
+            {
+                WriteU32(buf, 0);
+            }
+
+            WriteU32(buf, builder.CPointerBitWidthValue);
+            WriteU32(buf, builder.CLongBitWidthValue);
+            WriteU32(buf, builder.CSizeTBitWidthValue);
+            WriteU32(buf, builder.CPtrDiffTBitWidthValue);
+        }
+        else
+        {
+            WriteU32(buf, 0);
+        }
+
+        if (builder.HasAggregateLayoutValue)
+        {
+            WriteU32(buf, 1);
+            WriteU32(buf, builder.AggregatePointerSizeBytesValue);
+            WriteU32(buf, builder.AggregatePointerAlignmentBytesValue);
+        }
+        else
+        {
+            WriteU32(buf, 0);
+        }
+    }
+    else
+    {
+        WriteU32(buf, PackageImageNullStringIndex());
+        WriteU32(buf, PackageImageNullStringIndex());
+        WriteU32(buf, PackageImageNullStringIndex());
+        WriteU32(buf, PackageImageNullStringIndex());
+        WriteU32(buf, PackageImageNullStringIndex());
+        WriteU32(buf, 0);
+        WriteU32(buf, 0);
+        WriteU32(buf, 0);
+    }
+
+    return true;
+}
+
+// Wraps an already-encoded MANF payload with the logical STRS/PINF/MANF
+// sections. Compression/JSON construction is deliberately outside this helper.
+public fn bool TrySerializeLogicalPackageImage(
+    borrow LogicalPackageImageBuilder builder,
+    borrow IrTable<u8[0 max]> manifestPayload,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    if (!LogicalPackageImageBuilderCanSerialize(builder, manifestPayload, buf))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> stringBuf = new();
+    if (!SerializeLogicalPackageStringTable(builder.Strings, stringBuf))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> factsBuf = new();
+    if (!SerializeLogicalPackageFacts(builder, factsBuf))
+    {
+        return false;
+    }
+
+    stack u32[0 max] sectionCount = 3;
+    stack u64[0 max] stringOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] factsOffset = stringOffset + (u64[0 max])stringBuf.Count();
+    stack u64[0 max] manifestOffset = factsOffset + (u64[0 max])factsBuf.Count();
+    stack u64[0 max] manifestLength = (u64[0 max])manifestPayload.Count();
+    stack u64[0 max] totalLength = manifestOffset + manifestLength;
+    if (totalLength > (u64[0 max])(2 ** 32 - 1)
+        || totalLength > (u64[0 max])(2 ** 63 - 1))
+    {
+        return false;
+    }
+
+    switch (buf.Reserve((u64[0 2 ** 63 - 1])totalLength))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(
+        buf,
+        PackageSectionStringTable(),
+        SectionFlagsRequired(),
+        stringOffset,
+        (u64[0 max])stringBuf.Count(),
+        SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(
+        buf,
+        PackageSectionPackageFacts(),
+        SectionFlagsRequired(),
+        factsOffset,
+        (u64[0 max])factsBuf.Count(),
+        SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(
+        buf,
+        PackageSectionManifest(),
+        SectionFlagsRequired(),
+        manifestOffset,
+        manifestLength,
+        SectionEncodingBrotliUtf8Json());
+    AppendBytes(buf, stringBuf);
+    AppendBytes(buf, factsBuf);
+    AppendBytes(buf, manifestPayload);
+    return true;
+}
+internal fn bool LogicalPackageManifestJsonBuilderContainsPackageString(
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    borrow LogicalPackageImageStringTableBuilder packageStrings,
+    u32[0 max] packageStringIndex)
+{
+    stack u64[0 2 ** 63 - 1] moduleCount = manifestBuilder.ModuleNameStringIndexes.Count();
+    stack mut u32[0 max] row = 1;
+    while willexit ((u64[0 2 ** 63 - 1])row <= moduleCount)
+    {
+        stack u32[0 max] moduleNameStringIndex = manifestBuilder.ModuleNameStringIndexes.Get(row);
+        if (LogicalPackageImageStringTableBuilderEntryEquals(
+            packageStrings,
+            packageStringIndex,
+            manifestBuilder.Strings,
+            moduleNameStringIndex))
+        {
+            return true;
+        }
+
+        row = row + 1;
+    }
+
+    return false;
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteModuleShell(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack u32[0 max] moduleNameStringIndex = manifestBuilder.ModuleNameStringIndexes.Get(row);
+    stack JsonStatus moduleNameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "ModuleName",
+        manifestBuilder.Strings,
+        moduleNameStringIndex,
+        scratch);
+    switch (moduleNameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus reExportsStatus = LogicalPackageManifestJsonWriteEmptyArrayMember(writer, "ReExports");
+    switch (reExportsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus functionsStatus = LogicalPackageManifestJsonWriteEmptyArrayMember(writer, "Functions");
+    switch (functionsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus typesStatus = LogicalPackageManifestJsonWriteEmptyArrayMember(writer, "Types");
+    switch (typesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus globalsStatus = LogicalPackageManifestJsonWriteEmptyArrayMember(writer, "Globals");
+    switch (globalsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sourceSurfaceStatus = LogicalPackageManifestJsonWriteSourceSurfaceMember(
+        writer,
+        manifestBuilder,
+        row,
+        scratch);
+    switch (sourceSurfaceStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus typedInterfaceStatus = LogicalPackageManifestJsonWriteTypedInterfaceMember(
+        writer,
+        manifestBuilder,
+        row,
+        scratch);
+    switch (typedInterfaceStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus compilerFactsStatus = LogicalPackageManifestJsonWriteCompilerFactsMember(
+        writer,
+        manifestBuilder,
+        row,
+        scratch);
+    switch (compilerFactsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus compilerSectionsStatus = LogicalPackageManifestJsonWriteCompilerSectionsMember(
+        writer,
+        manifestBuilder,
+        row,
+        scratch);
+    switch (compilerSectionsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteTargetMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageImageBuilder packageBuilder,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Target");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus tripleStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Triple",
+        packageBuilder.Strings,
+        packageBuilder.TargetTripleStringIndexValue,
+        scratch);
+    switch (tripleStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (LogicalStringIndexIsPresent(packageBuilder.TargetDataLayoutStringIndexValue))
+    {
+        stack JsonStatus dataLayoutStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "DataLayout",
+            packageBuilder.Strings,
+            packageBuilder.TargetDataLayoutStringIndexValue,
+            scratch);
+        switch (dataLayoutStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (LogicalStringIndexIsPresent(packageBuilder.TargetCpuStringIndexValue))
+    {
+        stack JsonStatus cpuStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "Cpu",
+            packageBuilder.Strings,
+            packageBuilder.TargetCpuStringIndexValue,
+            scratch);
+        switch (cpuStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    stack JsonStatus featuresKeyStatus = writer.Key("Features");
+    switch (featuresKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginFeaturesStatus = writer.BeginArray();
+    switch (beginFeaturesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] featureCount = packageBuilder.TargetFeatureStringIndexes.Count();
+    stack mut u32[0 max] featureRow = 1;
+    while willexit ((u64[0 2 ** 63 - 1])featureRow <= featureCount)
+    {
+        stack u32[0 max] featureStringIndex = packageBuilder.TargetFeatureStringIndexes.Get(featureRow);
+        stack JsonStatus featureStatus = LogicalPackageImageStringTableBuilderWriteTextValue(
+            packageBuilder.Strings,
+            featureStringIndex,
+            writer,
+            scratch);
+        switch (featureStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        featureRow = featureRow + 1;
+    }
+
+    stack JsonStatus endFeaturesStatus = writer.EndArray();
+    switch (endFeaturesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus relocationStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "RelocationModel",
+        packageBuilder.Strings,
+        packageBuilder.RelocationModelStringIndexValue,
+        scratch);
+    switch (relocationStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (LogicalStringIndexIsPresent(packageBuilder.CodeModelStringIndexValue))
+    {
+        stack JsonStatus codeModelStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "CodeModel",
+            packageBuilder.Strings,
+            packageBuilder.CodeModelStringIndexValue,
+            scratch);
+        switch (codeModelStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (packageBuilder.HasCDataModelValue)
+    {
+        stack JsonStatus cDataModelKeyStatus = writer.Key("CDataModel");
+        switch (cDataModelKeyStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus beginCDataModelStatus = writer.BeginObject();
+        switch (beginCDataModelStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus kindStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "Kind",
+            packageBuilder.Strings,
+            packageBuilder.CDataModelKindStringIndexValue,
+            scratch);
+        switch (kindStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus charStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "CharIsSigned",
+            packageBuilder.CCharIsSignedValue);
+        switch (charStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus pointerStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "PointerBitWidth",
+            packageBuilder.CPointerBitWidthValue);
+        switch (pointerStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus longStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "LongBitWidth",
+            packageBuilder.CLongBitWidthValue);
+        switch (longStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus sizeTStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "SizeTBitWidth",
+            packageBuilder.CSizeTBitWidthValue);
+        switch (sizeTStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus ptrDiffStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "PtrDiffTBitWidth",
+            packageBuilder.CPtrDiffTBitWidthValue);
+        switch (ptrDiffStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus endCDataModelStatus = writer.EndObject();
+        switch (endCDataModelStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (packageBuilder.HasAggregateLayoutValue)
+    {
+        stack JsonStatus aggregateKeyStatus = writer.Key("AggregateLayout");
+        switch (aggregateKeyStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus beginAggregateStatus = writer.BeginObject();
+        switch (beginAggregateStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus pointerSizeStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "PointerSizeBytes",
+            packageBuilder.AggregatePointerSizeBytesValue);
+        switch (pointerSizeStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus pointerAlignmentStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "PointerAlignmentBytes",
+            packageBuilder.AggregatePointerAlignmentBytesValue);
+        switch (pointerAlignmentStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus endAggregateStatus = writer.EndObject();
+        switch (endAggregateStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteNativeDependencyArray(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    ascii memberName,
+    u32[0 max] firstRow,
+    u32[0 max] dependencyCount,
+    mut borrow OwnedAscii scratch)
+{
+    if (dependencyCount == 0)
+    {
+        return JsonStatus.Ok;
+    }
+
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] dependencyRow = firstRow;
+    stack mut u32[0 max] remainingDependencies = dependencyCount;
+    while willexit (remainingDependencies != 0)
+    {
+        if (dependencyRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack LogicalPackageManifestJsonNativeDependencyRow rowFacts =
+            manifestBuilder.CompilerFacts.NativeDependencyRows.Get(dependencyRow);
+        stack JsonStatus valueStatus = LogicalPackageImageStringTableBuilderWriteTextValue(
+            manifestBuilder.Strings,
+            rowFacts.TextStringIndex,
+            writer,
+            scratch);
+        switch (valueStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        dependencyRow = rowFacts.NextRow;
+        remainingDependencies = remainingDependencies - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteNativeDependenciesMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    mut borrow OwnedAscii scratch)
+{
+    if (manifestBuilder.CompilerFacts.NativeSourceDependencyCount == 0
+        && manifestBuilder.CompilerFacts.NativeIncludeDirectoryDependencyCount == 0
+        && manifestBuilder.CompilerFacts.NativeLibraryDirectoryDependencyCount == 0
+        && manifestBuilder.CompilerFacts.NativeLibraryDependencyCount == 0
+        && manifestBuilder.CompilerFacts.NativeLinkArgumentDependencyCount == 0
+        && manifestBuilder.CompilerFacts.NativePkgConfigPackageDependencyCount == 0)
+    {
+        return JsonStatus.Ok;
+    }
+
+    stack JsonStatus keyStatus = writer.Key("NativeDependencies");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sourcesStatus = LogicalPackageManifestJsonWriteNativeDependencyArray(
+        writer,
+        manifestBuilder,
+        "Sources",
+        manifestBuilder.CompilerFacts.NativeSourceDependencyFirstRow,
+        manifestBuilder.CompilerFacts.NativeSourceDependencyCount,
+        scratch);
+    switch (sourcesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus includeStatus = LogicalPackageManifestJsonWriteNativeDependencyArray(
+        writer,
+        manifestBuilder,
+        "IncludeDirectories",
+        manifestBuilder.CompilerFacts.NativeIncludeDirectoryDependencyFirstRow,
+        manifestBuilder.CompilerFacts.NativeIncludeDirectoryDependencyCount,
+        scratch);
+    switch (includeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus libraryDirectoryStatus = LogicalPackageManifestJsonWriteNativeDependencyArray(
+        writer,
+        manifestBuilder,
+        "LibraryDirectories",
+        manifestBuilder.CompilerFacts.NativeLibraryDirectoryDependencyFirstRow,
+        manifestBuilder.CompilerFacts.NativeLibraryDirectoryDependencyCount,
+        scratch);
+    switch (libraryDirectoryStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus librariesStatus = LogicalPackageManifestJsonWriteNativeDependencyArray(
+        writer,
+        manifestBuilder,
+        "Libraries",
+        manifestBuilder.CompilerFacts.NativeLibraryDependencyFirstRow,
+        manifestBuilder.CompilerFacts.NativeLibraryDependencyCount,
+        scratch);
+    switch (librariesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus linkArgumentsStatus = LogicalPackageManifestJsonWriteNativeDependencyArray(
+        writer,
+        manifestBuilder,
+        "LinkArguments",
+        manifestBuilder.CompilerFacts.NativeLinkArgumentDependencyFirstRow,
+        manifestBuilder.CompilerFacts.NativeLinkArgumentDependencyCount,
+        scratch);
+    switch (linkArgumentsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus pkgConfigStatus = LogicalPackageManifestJsonWriteNativeDependencyArray(
+        writer,
+        manifestBuilder,
+        "PkgConfigPackages",
+        manifestBuilder.CompilerFacts.NativePkgConfigPackageDependencyFirstRow,
+        manifestBuilder.CompilerFacts.NativePkgConfigPackageDependencyCount,
+        scratch);
+    switch (pkgConfigStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+public unsafe fn JsonStatus WriteLogicalPackageManifestJson(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageImageBuilder packageBuilder,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder)
+{
+    if (!LogicalPackageImageBuilderHasString(packageBuilder.RootModuleStringIndexValue)
+        || !LogicalPackageImageBuilderHasString(packageBuilder.LibraryFileNameStringIndexValue)
+        || !LogicalPackageImageBuilderTargetFactsAreValid(packageBuilder)
+        || manifestBuilder.ModuleCount() == 0
+        || !LogicalPackageManifestJsonBuilderContainsPackageString(
+            manifestBuilder,
+            packageBuilder.Strings,
+            packageBuilder.RootModuleStringIndexValue))
+    {
+        return JsonStatus.Err(JsonError.InvalidValue);
+    }
+
+    stack mut OwnedAscii scratch = new();
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus rootStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "RootModule",
+        packageBuilder.Strings,
+        packageBuilder.RootModuleStringIndexValue,
+        scratch);
+    switch (rootStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus libraryStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "LibraryFileName",
+        packageBuilder.Strings,
+        packageBuilder.LibraryFileNameStringIndexValue,
+        scratch);
+    switch (libraryStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nativeDependenciesStatus = LogicalPackageManifestJsonWriteNativeDependenciesMember(
+        writer,
+        manifestBuilder,
+        scratch);
+    switch (nativeDependenciesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus modulesKeyStatus = writer.Key("Modules");
+    switch (modulesKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginModulesStatus = writer.BeginArray();
+    switch (beginModulesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] moduleCount = manifestBuilder.ModuleNameStringIndexes.Count();
+    stack mut u32[0 max] moduleRow = 1;
+    while willexit ((u64[0 2 ** 63 - 1])moduleRow <= moduleCount)
+    {
+        stack JsonStatus moduleStatus = LogicalPackageManifestJsonWriteModuleShell(
+            writer,
+            manifestBuilder,
+            moduleRow,
+            scratch);
+        switch (moduleStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        moduleRow = moduleRow + 1;
+    }
+
+    stack JsonStatus endModulesStatus = writer.EndArray();
+    switch (endModulesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (packageBuilder.HasTargetValue)
+    {
+        stack JsonStatus targetStatus = LogicalPackageManifestJsonWriteTargetMember(writer, packageBuilder, scratch);
+        switch (targetStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (LogicalStringIndexIsPresent(packageBuilder.BuildProfileStringIndexValue))
+    {
+        stack JsonStatus buildProfileKeyStatus = writer.Key("BuildProfile");
+        switch (buildProfileKeyStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus beginBuildProfileStatus = writer.BeginObject();
+        switch (beginBuildProfileStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus profileNameStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "Name",
+            packageBuilder.Strings,
+            packageBuilder.BuildProfileStringIndexValue,
+            scratch);
+        switch (profileNameStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus endBuildProfileStatus = writer.EndObject();
+        switch (endBuildProfileStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+public unsafe fn bool TryEncodeLogicalPackageManifestJson(
+    borrow LogicalPackageImageBuilder packageBuilder,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    mut borrow IrTable<u8[0 max]> payload)
+{
+    if (!payload.IsEmpty())
+    {
+        return false;
+    }
+
+    stack mut JsonWriter writer = new();
+    switch (WriteLogicalPackageManifestJson(writer, packageBuilder, manifestBuilder))
+    {
+        case JsonStatus.Err(var error):
+            return false;
+        case JsonStatus.Ok:
+    }
+
+    stack ascii manifestJson = writer.View();
+    stack i64[min max] signedLength = System.Text.AsciiLength(manifestJson);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    switch (payload.Reserve((u64[0 2 ** 63 - 1])signedLength))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack rawptr<i8[min max]> data = System.Text.AsciiData(manifestJson);
+    if (data == null)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < signedLength)
+    {
+        if (payload.Add(ImageByteFromI8(*(&data[index]))) == 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+
+public unsafe fn bool TryEncodeLogicalPackageManifestBrotliJson(
+    borrow LogicalPackageImageBuilder packageBuilder,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    mut borrow IrTable<u8[0 max]> payload)
+{
+    if (!payload.IsEmpty())
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> manifestJson = new();
+    if (!TryEncodeLogicalPackageManifestJson(packageBuilder, manifestBuilder, manifestJson))
+    {
+        return false;
+    }
+
+    return TryEncodeBrotliUtf8JsonPayload(manifestJson, payload);
+}

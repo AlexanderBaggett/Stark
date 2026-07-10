@@ -1,0 +1,2638 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.ManifestTypeReferenceBuilder
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+module Compiler.Mir.PackageImage.Builder.CompilerFactsManifestBuilder
+
+// Compiler-fact and native-dependency row ownership for the temporary
+// logical-manifest accumulator.
+internal struct LogicalPackageManifestJsonCompilerFactsBuilder
+{
+    internal IrTable<bool> ModuleRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionEffectRow>
+        CompilerFactFunctionEffectRows;
+    internal IrTable<u32[0 max]> CompilerFactFunctionEffectFirstRows;
+    internal IrTable<u32[0 max]> CompilerFactFunctionEffectLastRows;
+    internal IrTable<u32[0 max]> CompilerFactFunctionEffectCounts;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionSemanticRow>
+        CompilerFactFunctionSemanticRows;
+    internal IrTable<u32[0 max]> CompilerFactFunctionSemanticFirstRows;
+    internal IrTable<u32[0 max]> CompilerFactFunctionSemanticLastRows;
+    internal IrTable<u32[0 max]> CompilerFactFunctionSemanticCounts;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow>
+        CompilerFactFunctionSemanticCalledFunctionRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow>
+        CompilerFactFunctionSemanticParameterRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow>
+        CompilerFactFunctionSemanticInitializationRangeRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow>
+        CompilerFactFunctionSemanticCallRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow>
+        CompilerFactFunctionSemanticCallArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow>
+        CompilerFactFunctionOwnershipImplicitDropRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow>
+        CompilerFactFunctionOwnershipMoveRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow>
+        CompilerFactFunctionOwnershipEventRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow>
+        CompilerFactFunctionOwnershipProjectionRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow>
+        CompilerFactFunctionOwnershipRootRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactAbiFunctionRow>
+        CompilerFactAbiFunctionRows;
+    internal IrTable<u32[0 max]> CompilerFactAbiFunctionFirstRows;
+    internal IrTable<u32[0 max]> CompilerFactAbiFunctionLastRows;
+    internal IrTable<u32[0 max]> CompilerFactAbiFunctionCounts;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactAbiParameterRow>
+        CompilerFactAbiParameterRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow>
+        CompilerFactAbiParameterLlvmTypeRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactConcreteLayoutRow>
+        CompilerFactConcreteLayoutRows;
+    internal IrTable<u32[0 max]> CompilerFactConcreteLayoutFirstRows;
+    internal IrTable<u32[0 max]> CompilerFactConcreteLayoutLastRows;
+    internal IrTable<u32[0 max]> CompilerFactConcreteLayoutCounts;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactConcreteFieldRow>
+        CompilerFactConcreteFieldRows;
+    internal IrTable<LogicalPackageManifestJsonNativeDependencyRow> NativeDependencyRows;
+    internal u32[0 max] NativeSourceDependencyFirstRow;
+    internal u32[0 max] NativeSourceDependencyLastRow;
+    internal u32[0 max] NativeSourceDependencyCount;
+    internal u32[0 max] NativeIncludeDirectoryDependencyFirstRow;
+    internal u32[0 max] NativeIncludeDirectoryDependencyLastRow;
+    internal u32[0 max] NativeIncludeDirectoryDependencyCount;
+    internal u32[0 max] NativeLibraryDirectoryDependencyFirstRow;
+    internal u32[0 max] NativeLibraryDirectoryDependencyLastRow;
+    internal u32[0 max] NativeLibraryDirectoryDependencyCount;
+    internal u32[0 max] NativeLibraryDependencyFirstRow;
+    internal u32[0 max] NativeLibraryDependencyLastRow;
+    internal u32[0 max] NativeLibraryDependencyCount;
+    internal u32[0 max] NativeLinkArgumentDependencyFirstRow;
+    internal u32[0 max] NativeLinkArgumentDependencyLastRow;
+    internal u32[0 max] NativeLinkArgumentDependencyCount;
+    internal u32[0 max] NativePkgConfigPackageDependencyFirstRow;
+    internal u32[0 max] NativePkgConfigPackageDependencyLastRow;
+    internal u32[0 max] NativePkgConfigPackageDependencyCount;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactLinkageRow>
+        CompilerFactLinkageRows;
+    internal IrTable<u32[0 max]> CompilerFactLinkageRowsByModule;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactLinkageSymbolRow>
+        CompilerFactLinkageDefinedSymbolRows;
+    internal IrTable<LogicalPackageManifestJsonCompilerFactLinkageSymbolRow>
+        CompilerFactLinkageReferencedSymbolRows;
+
+    LogicalPackageManifestJsonCompilerFactsBuilder()
+    {
+        self.ModuleRows = new();
+        self.CompilerFactFunctionEffectRows = new();
+        self.CompilerFactFunctionEffectFirstRows = new();
+        self.CompilerFactFunctionEffectLastRows = new();
+        self.CompilerFactFunctionEffectCounts = new();
+        self.CompilerFactFunctionSemanticRows = new();
+        self.CompilerFactFunctionSemanticFirstRows = new();
+        self.CompilerFactFunctionSemanticLastRows = new();
+        self.CompilerFactFunctionSemanticCounts = new();
+        self.CompilerFactFunctionSemanticCalledFunctionRows = new();
+        self.CompilerFactFunctionSemanticParameterRows = new();
+        self.CompilerFactFunctionSemanticInitializationRangeRows = new();
+        self.CompilerFactFunctionSemanticCallRows = new();
+        self.CompilerFactFunctionSemanticCallArgumentRows = new();
+        self.CompilerFactFunctionOwnershipImplicitDropRows = new();
+        self.CompilerFactFunctionOwnershipMoveRows = new();
+        self.CompilerFactFunctionOwnershipEventRows = new();
+        self.CompilerFactFunctionOwnershipProjectionRows = new();
+        self.CompilerFactFunctionOwnershipRootRows = new();
+        self.CompilerFactAbiFunctionRows = new();
+        self.CompilerFactAbiFunctionFirstRows = new();
+        self.CompilerFactAbiFunctionLastRows = new();
+        self.CompilerFactAbiFunctionCounts = new();
+        self.CompilerFactAbiParameterRows = new();
+        self.CompilerFactAbiParameterLlvmTypeRows = new();
+        self.CompilerFactConcreteLayoutRows = new();
+        self.CompilerFactConcreteLayoutFirstRows = new();
+        self.CompilerFactConcreteLayoutLastRows = new();
+        self.CompilerFactConcreteLayoutCounts = new();
+        self.CompilerFactConcreteFieldRows = new();
+        self.NativeDependencyRows = new();
+        self.NativeSourceDependencyFirstRow = 0;
+        self.NativeSourceDependencyLastRow = 0;
+        self.NativeSourceDependencyCount = 0;
+        self.NativeIncludeDirectoryDependencyFirstRow = 0;
+        self.NativeIncludeDirectoryDependencyLastRow = 0;
+        self.NativeIncludeDirectoryDependencyCount = 0;
+        self.NativeLibraryDirectoryDependencyFirstRow = 0;
+        self.NativeLibraryDirectoryDependencyLastRow = 0;
+        self.NativeLibraryDirectoryDependencyCount = 0;
+        self.NativeLibraryDependencyFirstRow = 0;
+        self.NativeLibraryDependencyLastRow = 0;
+        self.NativeLibraryDependencyCount = 0;
+        self.NativeLinkArgumentDependencyFirstRow = 0;
+        self.NativeLinkArgumentDependencyLastRow = 0;
+        self.NativeLinkArgumentDependencyCount = 0;
+        self.NativePkgConfigPackageDependencyFirstRow = 0;
+        self.NativePkgConfigPackageDependencyLastRow = 0;
+        self.NativePkgConfigPackageDependencyCount = 0;
+        self.CompilerFactLinkageRows = new();
+        self.CompilerFactLinkageRowsByModule = new();
+        self.CompilerFactLinkageDefinedSymbolRows = new();
+        self.CompilerFactLinkageReferencedSymbolRows = new();
+    }
+
+    internal fn bool AddModule(mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self)
+    {
+        return self.ModuleRows.Add(false) != 0
+            && self.CompilerFactFunctionEffectFirstRows.Add(0) != 0
+            && self.CompilerFactFunctionEffectLastRows.Add(0) != 0
+            && self.CompilerFactFunctionEffectCounts.Add(0) != 0
+            && self.CompilerFactFunctionSemanticFirstRows.Add(0) != 0
+            && self.CompilerFactFunctionSemanticLastRows.Add(0) != 0
+            && self.CompilerFactFunctionSemanticCounts.Add(0) != 0
+            && self.CompilerFactAbiFunctionFirstRows.Add(0) != 0
+            && self.CompilerFactAbiFunctionLastRows.Add(0) != 0
+            && self.CompilerFactAbiFunctionCounts.Add(0) != 0
+            && self.CompilerFactConcreteLayoutFirstRows.Add(0) != 0
+            && self.CompilerFactConcreteLayoutLastRows.Add(0) != 0
+            && self.CompilerFactConcreteLayoutCounts.Add(0) != 0
+            && self.CompilerFactLinkageRowsByModule.Add(0) != 0;
+    }
+
+    internal fn bool AddCompilerFactFunctionEffect(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii kind,
+        ascii inlinePreference,
+        out u32[0 max] functionEffectRow)
+    {
+        functionEffectRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.CompilerFactFunctionEffectCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedResolvedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] inlinePreferenceStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedResolvedName,
+                qualifiedResolvedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                inlinePreference,
+                inlinePreferenceStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionEffectRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionEffectRow()
+            {
+                QualifiedResolvedNameStringIndex = qualifiedResolvedNameStringIndex,
+                KindStringIndex = kindStringIndex,
+                InlinePreferenceStringIndex = inlinePreferenceStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionEffectRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            if (!self.CompilerFactFunctionEffectFirstRows.Replace(moduleRow, rowIndex))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = self.CompilerFactFunctionEffectLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionEffectRow lastRow =
+                self.CompilerFactFunctionEffectRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionEffectRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.CompilerFactFunctionEffectLastRows.Replace(moduleRow, rowIndex)
+            || !self.CompilerFactFunctionEffectCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        functionEffectRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactFunctionEffectFlags(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionEffectRow,
+        bool readsArgumentMemory,
+        bool isPure,
+        bool noSync,
+        bool noFree,
+        bool noUnwind,
+        bool willReturn,
+        bool mustProgress,
+        bool usesFastCallingConvention,
+        bool isFfi,
+        bool isHot,
+        bool isCold,
+        bool isStrictFp,
+        bool isVarargs,
+        bool isTailCallable,
+        bool noRecurse)
+    {
+        if (!self.CompilerFactFunctionEffectRows.Contains(functionEffectRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionEffectRow row =
+            self.CompilerFactFunctionEffectRows.Get(functionEffectRow);
+        row.ReadsArgumentMemory = readsArgumentMemory;
+        row.IsPure = isPure;
+        row.NoSync = noSync;
+        row.NoFree = noFree;
+        row.NoUnwind = noUnwind;
+        row.WillReturn = willReturn;
+        row.MustProgress = mustProgress;
+        row.UsesFastCallingConvention = usesFastCallingConvention;
+        row.IsFfi = isFfi;
+        row.IsHot = isHot;
+        row.IsCold = isCold;
+        row.IsStrictFp = isStrictFp;
+        row.IsVarargs = isVarargs;
+        row.IsTailCallable = isTailCallable;
+        row.NoRecurse = noRecurse;
+        return self.CompilerFactFunctionEffectRows.Replace(functionEffectRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionEffectFfiAbi(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionEffectRow,
+        ascii ffiAbi)
+    {
+        if (!self.CompilerFactFunctionEffectRows.Contains(functionEffectRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] ffiAbiStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, ffiAbi, ffiAbiStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionEffectRow row =
+            self.CompilerFactFunctionEffectRows.Get(functionEffectRow);
+        row.FfiAbiStringIndex = ffiAbiStringIndex;
+        row.HasFfiAbi = true;
+        return self.CompilerFactFunctionEffectRows.Replace(functionEffectRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionEffectBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionEffectRow,
+        ascii backendOptimizationMode)
+    {
+        if (!self.CompilerFactFunctionEffectRows.Contains(functionEffectRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] backendOptimizationModeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            backendOptimizationMode,
+            backendOptimizationModeStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionEffectRow row =
+            self.CompilerFactFunctionEffectRows.Get(functionEffectRow);
+        row.BackendOptimizationModeStringIndex = backendOptimizationModeStringIndex;
+        row.HasBackendOptimizationMode = true;
+        return self.CompilerFactFunctionEffectRows.Replace(functionEffectRow, row);
+    }
+
+    internal fn bool AddCompilerFactFunctionSemantic(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii declaredKind,
+        ascii effectiveKind,
+        out u32[0 max] functionSemanticRow)
+    {
+        functionSemanticRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.CompilerFactFunctionSemanticCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedResolvedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] declaredKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] effectiveKindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedResolvedName,
+                qualifiedResolvedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                declaredKind,
+                declaredKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                effectiveKind,
+                effectiveKindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionSemanticRow()
+            {
+                QualifiedResolvedNameStringIndex = qualifiedResolvedNameStringIndex,
+                DeclaredKindStringIndex = declaredKindStringIndex,
+                EffectiveKindStringIndex = effectiveKindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionSemanticRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            if (!self.CompilerFactFunctionSemanticFirstRows.Replace(moduleRow, rowIndex))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex =
+                self.CompilerFactFunctionSemanticLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow lastRow =
+                self.CompilerFactFunctionSemanticRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionSemanticRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.CompilerFactFunctionSemanticLastRows.Replace(moduleRow, rowIndex)
+            || !self.CompilerFactFunctionSemanticCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        functionSemanticRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticMemoryEffects(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        bool readsArgumentMemory,
+        bool writesArgumentMemory,
+        bool capturesArgumentMemory,
+        bool readsOtherMemory,
+        bool writesOtherMemory,
+        bool initializesArgumentMemory,
+        bool hasPointeeDeadOnReturnArgument)
+    {
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow row =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        row.MemoryEffects = new LogicalPackageManifestJsonFunctionMemoryEffectFacts()
+        {
+            ReadsArgumentMemory = readsArgumentMemory,
+            WritesArgumentMemory = writesArgumentMemory,
+            CapturesArgumentMemory = capturesArgumentMemory,
+            ReadsOtherMemory = readsOtherMemory,
+            WritesOtherMemory = writesOtherMemory,
+            InitializesArgumentMemory = initializesArgumentMemory,
+            HasPointeeDeadOnReturnArgument = hasPointeeDeadOnReturnArgument
+        };
+        row.HasMemoryEffects = true;
+        return self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticHasOpaqueCall(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        bool hasOpaqueCall)
+    {
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow row =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        row.HasExplicitHasOpaqueCall = true;
+        row.HasOpaqueCall = hasOpaqueCall;
+        return self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, row);
+    }
+
+    internal fn bool AddCompilerFactFunctionSemanticCalledFunction(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        out u32[0 max] calledFunctionRow)
+    {
+        calledFunctionRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (semanticRow.CalledFunctionCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionSemanticCalledFunctionRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.CalledFunctionCount == 0)
+        {
+            semanticRow.FirstCalledFunctionRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastCalledFunctionRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow
+                lastRow = self.CompilerFactFunctionSemanticCalledFunctionRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionSemanticCalledFunctionRows.Replace(
+                lastRowIndex,
+                lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastCalledFunctionRow = rowIndex;
+        semanticRow.CalledFunctionCount = semanticRow.CalledFunctionCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        calledFunctionRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactFunctionSemanticParameter(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        ascii typeName,
+        ascii captureKind,
+        bool isMemoryBacked,
+        bool guaranteedNonNull,
+        bool guaranteedReadOnly,
+        bool guaranteedWriteOnly,
+        bool guaranteedNoAlias,
+        bool reads,
+        bool writes,
+        out u32[0 max] parameterRow)
+    {
+        parameterRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (semanticRow.ParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] captureKindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                captureKind,
+                captureKindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                NameStringIndex = nameStringIndex,
+                TypeStringIndex = typeStringIndex,
+                CaptureKindStringIndex = captureKindStringIndex,
+                IsMemoryBacked = isMemoryBacked,
+                GuaranteedNonNull = guaranteedNonNull,
+                GuaranteedReadOnly = guaranteedReadOnly,
+                GuaranteedWriteOnly = guaranteedWriteOnly,
+                GuaranteedNoAlias = guaranteedNoAlias,
+                Reads = reads,
+                Writes = writes
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionSemanticParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.ParameterCount == 0)
+        {
+            semanticRow.FirstParameterRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastParameterRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow
+                lastRow = self.CompilerFactFunctionSemanticParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionSemanticParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastParameterRow = rowIndex;
+        semanticRow.ParameterCount = semanticRow.ParameterCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        parameterRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticParameterDereferenceableBytes(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parameterRow,
+        u32[0 max] dereferenceableBytes)
+    {
+        if (!self.CompilerFactFunctionSemanticParameterRows.Contains(parameterRow)
+            || dereferenceableBytes == 0)
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow row =
+            self.CompilerFactFunctionSemanticParameterRows.Get(parameterRow);
+        row.DereferenceableBytes = dereferenceableBytes;
+        row.HasDereferenceableBytes = true;
+        return self.CompilerFactFunctionSemanticParameterRows.Replace(parameterRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticParameterAlignmentBytes(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parameterRow,
+        u32[0 max] alignmentBytes)
+    {
+        if (!self.CompilerFactFunctionSemanticParameterRows.Contains(parameterRow)
+            || alignmentBytes == 0)
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow row =
+            self.CompilerFactFunctionSemanticParameterRows.Get(parameterRow);
+        row.AlignmentBytes = alignmentBytes;
+        row.HasAlignmentBytes = true;
+        return self.CompilerFactFunctionSemanticParameterRows.Replace(parameterRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticParameterPointeeDeadOnReturn(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parameterRow,
+        bool pointeeDeadOnReturn)
+    {
+        if (!self.CompilerFactFunctionSemanticParameterRows.Contains(parameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow row =
+            self.CompilerFactFunctionSemanticParameterRows.Get(parameterRow);
+        row.PointeeDeadOnReturn = pointeeDeadOnReturn;
+        return self.CompilerFactFunctionSemanticParameterRows.Replace(parameterRow, row);
+    }
+
+    internal fn bool AddCompilerFactFunctionSemanticInitializationRange(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parameterRow,
+        i64[min max] startByte,
+        i64[min max] endByte,
+        out u32[0 max] initializationRangeRow)
+    {
+        initializationRangeRow = 0;
+        if (!self.CompilerFactFunctionSemanticParameterRows.Contains(parameterRow)
+            || startByte < 0
+            || endByte < startByte)
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow parent =
+            self.CompilerFactFunctionSemanticParameterRows.Get(parameterRow);
+        if (parent.InitializationRangeCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow()
+            {
+                ParameterRow = parameterRow,
+                StartByte = startByte,
+                EndByte = endByte
+            };
+        stack u32[0 max] rowIndex =
+            self.CompilerFactFunctionSemanticInitializationRangeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (parent.InitializationRangeCount == 0)
+        {
+            parent.FirstInitializationRangeRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = parent.LastInitializationRangeRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow
+                lastRow = self.CompilerFactFunctionSemanticInitializationRangeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionSemanticInitializationRangeRows.Replace(
+                lastRowIndex,
+                lastRow))
+            {
+                return false;
+            }
+        }
+
+        parent.LastInitializationRangeRow = rowIndex;
+        parent.InitializationRangeCount = parent.InitializationRangeCount + 1;
+        if (!self.CompilerFactFunctionSemanticParameterRows.Replace(parameterRow, parent))
+        {
+            return false;
+        }
+
+        initializationRangeRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactFunctionSemanticCall(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii calleeName,
+        bool readsArgumentMemory,
+        bool writesArgumentMemory,
+        bool capturesArgumentMemory,
+        bool readsOtherMemory,
+        bool writesOtherMemory,
+        bool initializesArgumentMemory,
+        bool hasPointeeDeadOnReturnArgument,
+        out u32[0 max] callRow)
+    {
+        callRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (semanticRow.CallCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] calleeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            calleeName,
+            calleeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                CalleeNameStringIndex = calleeNameStringIndex,
+                MemoryEffects = new LogicalPackageManifestJsonFunctionMemoryEffectFacts()
+                {
+                    ReadsArgumentMemory = readsArgumentMemory,
+                    WritesArgumentMemory = writesArgumentMemory,
+                    CapturesArgumentMemory = capturesArgumentMemory,
+                    ReadsOtherMemory = readsOtherMemory,
+                    WritesOtherMemory = writesOtherMemory,
+                    InitializesArgumentMemory = initializesArgumentMemory,
+                    HasPointeeDeadOnReturnArgument = hasPointeeDeadOnReturnArgument
+                }
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionSemanticCallRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.CallCount == 0)
+        {
+            semanticRow.FirstCallRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastCallRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow lastRow =
+                self.CompilerFactFunctionSemanticCallRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionSemanticCallRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastCallRow = rowIndex;
+        semanticRow.CallCount = semanticRow.CallCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        callRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactFunctionSemanticCallArgument(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callRow,
+        u32[0 max] argumentIndex,
+        ascii captureKind,
+        bool reads,
+        bool writes,
+        out u32[0 max] callArgumentRow)
+    {
+        callArgumentRow = 0;
+        if (!self.CompilerFactFunctionSemanticCallRows.Contains(callRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow parent =
+            self.CompilerFactFunctionSemanticCallRows.Get(callRow);
+        if (parent.ArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] captureKindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            captureKind,
+            captureKindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow()
+            {
+                CallRow = callRow,
+                ArgumentIndex = argumentIndex,
+                CaptureKindStringIndex = captureKindStringIndex,
+                Reads = reads,
+                Writes = writes
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionSemanticCallArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (parent.ArgumentCount == 0)
+        {
+            parent.FirstArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = parent.LastArgumentRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow
+                lastRow = self.CompilerFactFunctionSemanticCallArgumentRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionSemanticCallArgumentRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        parent.LastArgumentRow = rowIndex;
+        parent.ArgumentCount = parent.ArgumentCount + 1;
+        if (!self.CompilerFactFunctionSemanticCallRows.Replace(callRow, parent))
+        {
+            return false;
+        }
+
+        callArgumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticCallArgumentCallerParameterName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callArgumentRow,
+        ascii callerParameterName)
+    {
+        if (!self.CompilerFactFunctionSemanticCallArgumentRows.Contains(callArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] callerParameterNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            callerParameterName,
+            callerParameterNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow row =
+            self.CompilerFactFunctionSemanticCallArgumentRows.Get(callArgumentRow);
+        row.CallerParameterNameStringIndex = callerParameterNameStringIndex;
+        row.HasCallerParameterName = true;
+        return self.CompilerFactFunctionSemanticCallArgumentRows.Replace(callArgumentRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionSemanticCallArgumentCalleeParameterName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callArgumentRow,
+        ascii calleeParameterName)
+    {
+        if (!self.CompilerFactFunctionSemanticCallArgumentRows.Contains(callArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] calleeParameterNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            calleeParameterName,
+            calleeParameterNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow row =
+            self.CompilerFactFunctionSemanticCallArgumentRows.Get(callArgumentRow);
+        row.CalleeParameterNameStringIndex = calleeParameterNameStringIndex;
+        row.HasCalleeParameterName = true;
+        return self.CompilerFactFunctionSemanticCallArgumentRows.Replace(callArgumentRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnership(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        bool ownershipValid)
+    {
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow row =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        row.HasOwnership = true;
+        row.OwnershipValid = ownershipValid;
+        return self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, row);
+    }
+
+    internal fn bool AddCompilerFactFunctionOwnershipImplicitDrop(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        out u32[0 max] implicitDropRow)
+    {
+        implicitDropRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (!semanticRow.HasOwnership
+            || semanticRow.OwnershipImplicitDropCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionOwnershipImplicitDropRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.OwnershipImplicitDropCount == 0)
+        {
+            semanticRow.FirstOwnershipImplicitDropRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastOwnershipImplicitDropRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow lastRow =
+                self.CompilerFactFunctionOwnershipImplicitDropRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionOwnershipImplicitDropRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastOwnershipImplicitDropRow = rowIndex;
+        semanticRow.OwnershipImplicitDropCount = semanticRow.OwnershipImplicitDropCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        implicitDropRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactFunctionOwnershipMove(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        out u32[0 max] moveRow)
+    {
+        moveRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (!semanticRow.HasOwnership
+            || semanticRow.OwnershipMoveCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionOwnershipMoveRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.OwnershipMoveCount == 0)
+        {
+            semanticRow.FirstOwnershipMoveRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastOwnershipMoveRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow lastRow =
+                self.CompilerFactFunctionOwnershipMoveRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionOwnershipMoveRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastOwnershipMoveRow = rowIndex;
+        semanticRow.OwnershipMoveCount = semanticRow.OwnershipMoveCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        moveRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactFunctionOwnershipEvent(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii kind,
+        ascii rootName,
+        ascii placeTypeKind,
+        bool hasIndexProjection,
+        out u32[0 max] ownershipEventRow)
+    {
+        ownershipEventRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (!semanticRow.HasOwnership
+            || semanticRow.OwnershipEventCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] rootNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor placeType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, rootName, rootNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                placeTypeKind,
+                placeType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                KindStringIndex = kindStringIndex,
+                RootNameStringIndex = rootNameStringIndex,
+                PlaceType = placeType,
+                HasIndexProjection = hasIndexProjection
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionOwnershipEventRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.OwnershipEventCount == 0)
+        {
+            semanticRow.FirstOwnershipEventRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastOwnershipEventRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow lastRow =
+                self.CompilerFactFunctionOwnershipEventRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionOwnershipEventRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastOwnershipEventRow = rowIndex;
+        semanticRow.OwnershipEventCount = semanticRow.OwnershipEventCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        ownershipEventRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnershipEventPlaceTypeName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipEventRow,
+        ascii name)
+    {
+        if (!self.CompilerFactFunctionOwnershipEventRows.Contains(ownershipEventRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow row =
+            self.CompilerFactFunctionOwnershipEventRows.Get(ownershipEventRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+            strings,
+            row.PlaceType,
+            name))
+        {
+            return false;
+        }
+
+        return self.CompilerFactFunctionOwnershipEventRows.Replace(ownershipEventRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnershipEventPlaceTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipEventRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.CompilerFactFunctionOwnershipEventRows.Contains(ownershipEventRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow row =
+            self.CompilerFactFunctionOwnershipEventRows.Get(ownershipEventRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+            strings,
+            row.PlaceType,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned))
+        {
+            return false;
+        }
+
+        return self.CompilerFactFunctionOwnershipEventRows.Replace(ownershipEventRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnershipEventLocation(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipEventRow,
+        i64[min max] line,
+        i64[min max] column)
+    {
+        if (!self.CompilerFactFunctionOwnershipEventRows.Contains(ownershipEventRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow row =
+            self.CompilerFactFunctionOwnershipEventRows.Get(ownershipEventRow);
+        row.HasLocation = true;
+        row.LocationLine = line;
+        row.LocationColumn = column;
+        return self.CompilerFactFunctionOwnershipEventRows.Replace(ownershipEventRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnershipEventLocationFilePath(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipEventRow,
+        ascii filePath)
+    {
+        if (!self.CompilerFactFunctionOwnershipEventRows.Contains(ownershipEventRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] filePathStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, filePath, filePathStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow row =
+            self.CompilerFactFunctionOwnershipEventRows.Get(ownershipEventRow);
+        row.LocationFilePathStringIndex = filePathStringIndex;
+        row.HasLocation = true;
+        row.HasLocationFilePath = true;
+        return self.CompilerFactFunctionOwnershipEventRows.Replace(ownershipEventRow, row);
+    }
+
+    internal fn bool AddCompilerFactFunctionOwnershipEventProjection(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipEventRow,
+        ascii projection,
+        out u32[0 max] ownershipProjectionRow)
+    {
+        ownershipProjectionRow = 0;
+        if (!self.CompilerFactFunctionOwnershipEventRows.Contains(ownershipEventRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow eventRow =
+            self.CompilerFactFunctionOwnershipEventRows.Get(ownershipEventRow);
+        if (eventRow.ProjectionCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] projectionStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            projection,
+            projectionStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow()
+            {
+                EventRow = ownershipEventRow,
+                ProjectionStringIndex = projectionStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionOwnershipProjectionRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (eventRow.ProjectionCount == 0)
+        {
+            eventRow.FirstProjectionRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = eventRow.LastProjectionRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow lastRow =
+                self.CompilerFactFunctionOwnershipProjectionRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionOwnershipProjectionRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        eventRow.LastProjectionRow = rowIndex;
+        eventRow.ProjectionCount = eventRow.ProjectionCount + 1;
+        if (!self.CompilerFactFunctionOwnershipEventRows.Replace(ownershipEventRow, eventRow))
+        {
+            return false;
+        }
+
+        ownershipProjectionRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactFunctionOwnershipRoot(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionSemanticRow,
+        ascii name,
+        ascii typeKind,
+        ascii rootKind,
+        ascii finalAvailability,
+        bool isMutable,
+        bool isConstant,
+        bool isAddressTaken,
+        bool hasRawPointerEscape,
+        bool hasMove,
+        bool hasPartialMove,
+        bool hasImplicitDrop,
+        bool hasAssignmentDrop,
+        bool hasReinitialization,
+        bool requiresDrop,
+        out u32[0 max] ownershipRootRow)
+    {
+        ownershipRootRow = 0;
+        if (!self.CompilerFactFunctionSemanticRows.Contains(functionSemanticRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+            self.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        if (!semanticRow.HasOwnership
+            || semanticRow.OwnershipRootCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] rootKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] finalAvailabilityStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, rootKind, rootKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                finalAvailability,
+                finalAvailabilityStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                typeKind,
+                typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow row =
+            new LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow()
+            {
+                FunctionSemanticRow = functionSemanticRow,
+                NameStringIndex = nameStringIndex,
+                TypeReference = typeReference,
+                RootKindStringIndex = rootKindStringIndex,
+                FinalAvailabilityStringIndex = finalAvailabilityStringIndex,
+                IsMutable = isMutable,
+                IsConstant = isConstant,
+                IsAddressTaken = isAddressTaken,
+                HasRawPointerEscape = hasRawPointerEscape,
+                HasMove = hasMove,
+                HasPartialMove = hasPartialMove,
+                HasImplicitDrop = hasImplicitDrop,
+                HasAssignmentDrop = hasAssignmentDrop,
+                HasReinitialization = hasReinitialization,
+                RequiresDrop = requiresDrop
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactFunctionOwnershipRootRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (semanticRow.OwnershipRootCount == 0)
+        {
+            semanticRow.FirstOwnershipRootRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = semanticRow.LastOwnershipRootRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow lastRow =
+                self.CompilerFactFunctionOwnershipRootRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactFunctionOwnershipRootRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        semanticRow.LastOwnershipRootRow = rowIndex;
+        semanticRow.OwnershipRootCount = semanticRow.OwnershipRootCount + 1;
+        if (!self.CompilerFactFunctionSemanticRows.Replace(functionSemanticRow, semanticRow))
+        {
+            return false;
+        }
+
+        ownershipRootRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnershipRootTypeName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipRootRow,
+        ascii name)
+    {
+        if (!self.CompilerFactFunctionOwnershipRootRows.Contains(ownershipRootRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow row =
+            self.CompilerFactFunctionOwnershipRootRows.Get(ownershipRootRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+            strings,
+            row.TypeReference,
+            name))
+        {
+            return false;
+        }
+
+        return self.CompilerFactFunctionOwnershipRootRows.Replace(ownershipRootRow, row);
+    }
+
+    internal fn bool SetCompilerFactFunctionOwnershipRootTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] ownershipRootRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.CompilerFactFunctionOwnershipRootRows.Contains(ownershipRootRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow row =
+            self.CompilerFactFunctionOwnershipRootRows.Get(ownershipRootRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+            strings,
+            row.TypeReference,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned))
+        {
+            return false;
+        }
+
+        return self.CompilerFactFunctionOwnershipRootRows.Replace(ownershipRootRow, row);
+    }
+
+    internal fn bool AddCompilerFactAbiFunction(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii symbolName,
+        ascii sourceReturnTypeKind,
+        ascii llvmReturnTypeKind,
+        bool isFfi,
+        out u32[0 max] abiFunctionRow)
+    {
+        abiFunctionRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.CompilerFactAbiFunctionCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedResolvedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] symbolNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor sourceReturnType = new();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor llvmReturnType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedResolvedName,
+                qualifiedResolvedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                symbolName,
+                symbolNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                sourceReturnTypeKind,
+                sourceReturnType)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                llvmReturnTypeKind,
+                llvmReturnType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            new LogicalPackageManifestJsonCompilerFactAbiFunctionRow()
+            {
+                QualifiedResolvedNameStringIndex = qualifiedResolvedNameStringIndex,
+                SymbolNameStringIndex = symbolNameStringIndex,
+                SourceReturnType = sourceReturnType,
+                LlvmReturnType = llvmReturnType,
+                IsFfi = isFfi
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactAbiFunctionRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            if (!self.CompilerFactAbiFunctionFirstRows.Replace(moduleRow, rowIndex))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = self.CompilerFactAbiFunctionLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow lastRow =
+                self.CompilerFactAbiFunctionRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactAbiFunctionRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.CompilerFactAbiFunctionLastRows.Replace(moduleRow, rowIndex)
+            || !self.CompilerFactAbiFunctionCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        abiFunctionRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionFlags(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        bool usesFastCallingConvention,
+        bool isVarargs,
+        bool usesTailCallingConvention)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        row.UsesFastCallingConvention = usesFastCallingConvention;
+        row.IsVarargs = isVarargs;
+        row.UsesTailCallingConvention = usesTailCallingConvention;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionSourceName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        ascii sourceName)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] sourceNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, sourceName, sourceNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        row.SourceNameStringIndex = sourceNameStringIndex;
+        row.HasSourceName = true;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionFfiAbi(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        ascii ffiAbi)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] ffiAbiStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, ffiAbi, ffiAbiStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        row.FfiAbiStringIndex = ffiAbiStringIndex;
+        row.HasFfiAbi = true;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionLinkName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        ascii linkName)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] linkNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, linkName, linkNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        row.LinkNameStringIndex = linkNameStringIndex;
+        row.HasLinkName = true;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionSourceReturnTypeName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        ascii name)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.SourceReturnType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, descriptor, name))
+        {
+            return false;
+        }
+
+        row.SourceReturnType = descriptor;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionLlvmReturnTypeName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        ascii name)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.LlvmReturnType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, descriptor, name))
+        {
+            return false;
+        }
+
+        row.LlvmReturnType = descriptor;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionSourceReturnIntegerFacts(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.SourceReturnType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+            strings,
+            descriptor,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned))
+        {
+            return false;
+        }
+
+        row.SourceReturnType = descriptor;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiFunctionLlvmReturnBitWidth(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        u32[0 max] bitWidth)
+    {
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow row =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.LlvmReturnType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetBitWidth(descriptor, bitWidth))
+        {
+            return false;
+        }
+
+        row.LlvmReturnType = descriptor;
+        return self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, row);
+    }
+
+    internal fn bool AddCompilerFactAbiParameter(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiFunctionRow,
+        ascii sourceName,
+        ascii llvmName,
+        ascii sourceTypeKind,
+        ascii llvmTypeKind,
+        ascii kind,
+        out u32[0 max] abiParameterRow)
+    {
+        abiParameterRow = 0;
+        if (!self.CompilerFactAbiFunctionRows.Contains(abiFunctionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiFunctionRow functionRow =
+            self.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        if (functionRow.ParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] sourceNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] llvmNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor sourceType = new();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor llvmType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, sourceName, sourceNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, llvmName, llvmNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                sourceTypeKind,
+                sourceType)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                llvmTypeKind,
+                llvmType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactAbiParameterRow row =
+            new LogicalPackageManifestJsonCompilerFactAbiParameterRow()
+            {
+                AbiFunctionRow = abiFunctionRow,
+                SourceNameStringIndex = sourceNameStringIndex,
+                LlvmNameStringIndex = llvmNameStringIndex,
+                SourceType = sourceType,
+                LlvmType = llvmType,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactAbiParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.ParameterCount == 0)
+        {
+            functionRow.FirstParameterRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastParameterRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow lastRow =
+                self.CompilerFactAbiParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactAbiParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastParameterRow = rowIndex;
+        functionRow.ParameterCount = functionRow.ParameterCount + 1;
+        if (!self.CompilerFactAbiFunctionRows.Replace(abiFunctionRow, functionRow))
+        {
+            return false;
+        }
+
+        abiParameterRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactAbiParameterRawPointerElementCountExpression(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiParameterRow,
+        ascii rawPointerElementCountExpression)
+    {
+        if (!self.CompilerFactAbiParameterRows.Contains(abiParameterRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] expressionStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            rawPointerElementCountExpression,
+            expressionStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow row =
+            self.CompilerFactAbiParameterRows.Get(abiParameterRow);
+        row.RawPointerElementCountExpressionStringIndex = expressionStringIndex;
+        row.HasRawPointerElementCountExpression = true;
+        return self.CompilerFactAbiParameterRows.Replace(abiParameterRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiParameterSourceTypeName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiParameterRow,
+        ascii name)
+    {
+        if (!self.CompilerFactAbiParameterRows.Contains(abiParameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow row =
+            self.CompilerFactAbiParameterRows.Get(abiParameterRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.SourceType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, descriptor, name))
+        {
+            return false;
+        }
+
+        row.SourceType = descriptor;
+        return self.CompilerFactAbiParameterRows.Replace(abiParameterRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiParameterLlvmTypeName(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiParameterRow,
+        ascii name)
+    {
+        if (!self.CompilerFactAbiParameterRows.Contains(abiParameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow row =
+            self.CompilerFactAbiParameterRows.Get(abiParameterRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.LlvmType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, descriptor, name))
+        {
+            return false;
+        }
+
+        row.LlvmType = descriptor;
+        return self.CompilerFactAbiParameterRows.Replace(abiParameterRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiParameterSourceTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiParameterRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.CompilerFactAbiParameterRows.Contains(abiParameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow row =
+            self.CompilerFactAbiParameterRows.Get(abiParameterRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.SourceType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+            strings,
+            descriptor,
+            bitWidth,
+            rangeMin,
+            rangeMax,
+            isUnsigned))
+        {
+            return false;
+        }
+
+        row.SourceType = descriptor;
+        return self.CompilerFactAbiParameterRows.Replace(abiParameterRow, row);
+    }
+
+    internal fn bool SetCompilerFactAbiParameterLlvmTypeBitWidth(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiParameterRow,
+        u32[0 max] bitWidth)
+    {
+        if (!self.CompilerFactAbiParameterRows.Contains(abiParameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow row =
+            self.CompilerFactAbiParameterRows.Get(abiParameterRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.LlvmType;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetBitWidth(descriptor, bitWidth))
+        {
+            return false;
+        }
+
+        row.LlvmType = descriptor;
+        return self.CompilerFactAbiParameterRows.Replace(abiParameterRow, row);
+    }
+
+    internal fn bool AddCompilerFactAbiParameterLlvmType(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] abiParameterRow,
+        ascii typeKind,
+        out u32[0 max] llvmTypeRow)
+    {
+        llvmTypeRow = 0;
+        if (!self.CompilerFactAbiParameterRows.Contains(abiParameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterRow parameterRow =
+            self.CompilerFactAbiParameterRows.Get(abiParameterRow);
+        if (parameterRow.LlvmParameterTypeCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow row =
+            new LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow()
+            {
+                AbiParameterRow = abiParameterRow,
+                TypeReference = typeReference
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactAbiParameterLlvmTypeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (parameterRow.LlvmParameterTypeCount == 0)
+        {
+            parameterRow.FirstLlvmParameterTypeRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = parameterRow.LastLlvmParameterTypeRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow lastRow =
+                self.CompilerFactAbiParameterLlvmTypeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactAbiParameterLlvmTypeRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        parameterRow.LastLlvmParameterTypeRow = rowIndex;
+        parameterRow.LlvmParameterTypeCount = parameterRow.LlvmParameterTypeCount + 1;
+        if (!self.CompilerFactAbiParameterRows.Replace(abiParameterRow, parameterRow))
+        {
+            return false;
+        }
+
+        llvmTypeRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetCompilerFactAbiParameterLlvmCarrierTypeBitWidth(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] llvmTypeRow,
+        u32[0 max] bitWidth)
+    {
+        if (!self.CompilerFactAbiParameterLlvmTypeRows.Contains(llvmTypeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow row =
+            self.CompilerFactAbiParameterLlvmTypeRows.Get(llvmTypeRow);
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor descriptor = row.TypeReference;
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetBitWidth(descriptor, bitWidth))
+        {
+            return false;
+        }
+
+        row.TypeReference = descriptor;
+        return self.CompilerFactAbiParameterLlvmTypeRows.Replace(llvmTypeRow, row);
+    }
+
+    internal fn bool AddCompilerFactConcreteLayout(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedTypeName,
+        u32[0 max] sizeBytes,
+        u32[0 max] alignmentBytes,
+        out u32[0 max] concreteLayoutRow)
+    {
+        concreteLayoutRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow) || alignmentBytes == 0)
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.CompilerFactConcreteLayoutCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            qualifiedTypeName,
+            qualifiedTypeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactConcreteLayoutRow row =
+            new LogicalPackageManifestJsonCompilerFactConcreteLayoutRow()
+            {
+                QualifiedTypeNameStringIndex = qualifiedTypeNameStringIndex,
+                SizeBytes = sizeBytes,
+                AlignmentBytes = alignmentBytes
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactConcreteLayoutRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            if (!self.CompilerFactConcreteLayoutFirstRows.Replace(moduleRow, rowIndex))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex =
+                self.CompilerFactConcreteLayoutLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactConcreteLayoutRow lastRow =
+                self.CompilerFactConcreteLayoutRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactConcreteLayoutRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.CompilerFactConcreteLayoutLastRows.Replace(moduleRow, rowIndex)
+            || !self.CompilerFactConcreteLayoutCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        concreteLayoutRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactConcreteField(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] concreteLayoutRow,
+        ascii name,
+        u32[0 max] offsetBytes,
+        u32[0 max] sizeBytes,
+        u32[0 max] naturalAlignmentBytes,
+        u32[0 max] effectiveAlignmentBytes,
+        bool isMisaligned,
+        out u32[0 max] concreteFieldRow)
+    {
+        concreteFieldRow = 0;
+        if (!self.CompilerFactConcreteLayoutRows.Contains(concreteLayoutRow)
+            || naturalAlignmentBytes == 0
+            || effectiveAlignmentBytes == 0)
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactConcreteLayoutRow layoutRow =
+            self.CompilerFactConcreteLayoutRows.Get(concreteLayoutRow);
+        if (layoutRow.FieldCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactConcreteFieldRow row =
+            new LogicalPackageManifestJsonCompilerFactConcreteFieldRow()
+            {
+                ConcreteLayoutRow = concreteLayoutRow,
+                NameStringIndex = nameStringIndex,
+                OffsetBytes = offsetBytes,
+                SizeBytes = sizeBytes,
+                NaturalAlignmentBytes = naturalAlignmentBytes,
+                EffectiveAlignmentBytes = effectiveAlignmentBytes,
+                IsMisaligned = isMisaligned
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactConcreteFieldRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (layoutRow.FieldCount == 0)
+        {
+            layoutRow.FirstFieldRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = layoutRow.LastFieldRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactConcreteFieldRow lastRow =
+                self.CompilerFactConcreteFieldRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactConcreteFieldRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        layoutRow.LastFieldRow = rowIndex;
+        layoutRow.FieldCount = layoutRow.FieldCount + 1;
+        if (!self.CompilerFactConcreteLayoutRows.Replace(concreteLayoutRow, layoutRow))
+        {
+            return false;
+        }
+
+        concreteFieldRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddNativeDependency(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        LogicalPackageNativeDependencyKind kind,
+        ascii value,
+        out u32[0 max] nativeDependencyRow)
+    {
+        nativeDependencyRow = 0;
+        stack mut u32[0 max] count = 0;
+        stack mut u32[0 max] lastRowIndex = 0;
+        switch (kind)
+        {
+            case LogicalPackageNativeDependencyKind.Source:
+                count = self.NativeSourceDependencyCount;
+                lastRowIndex = self.NativeSourceDependencyLastRow;
+            case LogicalPackageNativeDependencyKind.IncludeDirectory:
+                count = self.NativeIncludeDirectoryDependencyCount;
+                lastRowIndex = self.NativeIncludeDirectoryDependencyLastRow;
+            case LogicalPackageNativeDependencyKind.LibraryDirectory:
+                count = self.NativeLibraryDirectoryDependencyCount;
+                lastRowIndex = self.NativeLibraryDirectoryDependencyLastRow;
+            case LogicalPackageNativeDependencyKind.Library:
+                count = self.NativeLibraryDependencyCount;
+                lastRowIndex = self.NativeLibraryDependencyLastRow;
+            case LogicalPackageNativeDependencyKind.LinkArgument:
+                count = self.NativeLinkArgumentDependencyCount;
+                lastRowIndex = self.NativeLinkArgumentDependencyLastRow;
+            case LogicalPackageNativeDependencyKind.PkgConfigPackage:
+                count = self.NativePkgConfigPackageDependencyCount;
+                lastRowIndex = self.NativePkgConfigPackageDependencyLastRow;
+        }
+
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] textStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, value, textStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonNativeDependencyRow row =
+            new LogicalPackageManifestJsonNativeDependencyRow()
+            {
+                Kind = kind,
+                TextStringIndex = textStringIndex
+            };
+        stack u32[0 max] rowIndex = self.NativeDependencyRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            switch (kind)
+            {
+                case LogicalPackageNativeDependencyKind.Source:
+                    self.NativeSourceDependencyFirstRow = rowIndex;
+                case LogicalPackageNativeDependencyKind.IncludeDirectory:
+                    self.NativeIncludeDirectoryDependencyFirstRow = rowIndex;
+                case LogicalPackageNativeDependencyKind.LibraryDirectory:
+                    self.NativeLibraryDirectoryDependencyFirstRow = rowIndex;
+                case LogicalPackageNativeDependencyKind.Library:
+                    self.NativeLibraryDependencyFirstRow = rowIndex;
+                case LogicalPackageNativeDependencyKind.LinkArgument:
+                    self.NativeLinkArgumentDependencyFirstRow = rowIndex;
+                case LogicalPackageNativeDependencyKind.PkgConfigPackage:
+                    self.NativePkgConfigPackageDependencyFirstRow = rowIndex;
+            }
+        }
+        else
+        {
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonNativeDependencyRow lastRow =
+                self.NativeDependencyRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.NativeDependencyRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        switch (kind)
+        {
+            case LogicalPackageNativeDependencyKind.Source:
+                self.NativeSourceDependencyLastRow = rowIndex;
+                self.NativeSourceDependencyCount = count + 1;
+            case LogicalPackageNativeDependencyKind.IncludeDirectory:
+                self.NativeIncludeDirectoryDependencyLastRow = rowIndex;
+                self.NativeIncludeDirectoryDependencyCount = count + 1;
+            case LogicalPackageNativeDependencyKind.LibraryDirectory:
+                self.NativeLibraryDirectoryDependencyLastRow = rowIndex;
+                self.NativeLibraryDirectoryDependencyCount = count + 1;
+            case LogicalPackageNativeDependencyKind.Library:
+                self.NativeLibraryDependencyLastRow = rowIndex;
+                self.NativeLibraryDependencyCount = count + 1;
+            case LogicalPackageNativeDependencyKind.LinkArgument:
+                self.NativeLinkArgumentDependencyLastRow = rowIndex;
+                self.NativeLinkArgumentDependencyCount = count + 1;
+            case LogicalPackageNativeDependencyKind.PkgConfigPackage:
+                self.NativePkgConfigPackageDependencyLastRow = rowIndex;
+                self.NativePkgConfigPackageDependencyCount = count + 1;
+        }
+
+        nativeDependencyRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactLinkage(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii objectFileName,
+        out u32[0 max] linkageRow)
+    {
+        linkageRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow)
+            || self.CompilerFactLinkageRowsByModule.Get(moduleRow) != 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] objectFileNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            objectFileName,
+            objectFileNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactLinkageRow row =
+            new LogicalPackageManifestJsonCompilerFactLinkageRow()
+            {
+                ObjectFileNameStringIndex = objectFileNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactLinkageRows.Add(row);
+        if (rowIndex == 0 || !self.CompilerFactLinkageRowsByModule.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+
+        linkageRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactLinkageDefinedSymbol(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] linkageRow,
+        ascii symbol,
+        out u32[0 max] symbolRow)
+    {
+        symbolRow = 0;
+        if (!self.CompilerFactLinkageRows.Contains(linkageRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactLinkageRow linkage =
+            self.CompilerFactLinkageRows.Get(linkageRow);
+        if (linkage.DefinedSymbolCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] symbolStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, symbol, symbolStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactLinkageSymbolRow row =
+            new LogicalPackageManifestJsonCompilerFactLinkageSymbolRow()
+            {
+                LinkageRow = linkageRow,
+                SymbolStringIndex = symbolStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactLinkageDefinedSymbolRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (linkage.DefinedSymbolCount == 0)
+        {
+            linkage.FirstDefinedSymbolRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = linkage.LastDefinedSymbolRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactLinkageSymbolRow lastRow =
+                self.CompilerFactLinkageDefinedSymbolRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactLinkageDefinedSymbolRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        linkage.LastDefinedSymbolRow = rowIndex;
+        linkage.DefinedSymbolCount = linkage.DefinedSymbolCount + 1;
+        if (!self.CompilerFactLinkageRows.Replace(linkageRow, linkage))
+        {
+            return false;
+        }
+
+        symbolRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddCompilerFactLinkageReferencedSymbol(
+        mut borrow LogicalPackageManifestJsonCompilerFactsBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] linkageRow,
+        ascii symbol,
+        out u32[0 max] symbolRow)
+    {
+        symbolRow = 0;
+        if (!self.CompilerFactLinkageRows.Contains(linkageRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonCompilerFactLinkageRow linkage =
+            self.CompilerFactLinkageRows.Get(linkageRow);
+        if (linkage.ReferencedSymbolCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] symbolStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, symbol, symbolStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactLinkageSymbolRow row =
+            new LogicalPackageManifestJsonCompilerFactLinkageSymbolRow()
+            {
+                LinkageRow = linkageRow,
+                SymbolStringIndex = symbolStringIndex
+            };
+        stack u32[0 max] rowIndex = self.CompilerFactLinkageReferencedSymbolRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (linkage.ReferencedSymbolCount == 0)
+        {
+            linkage.FirstReferencedSymbolRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = linkage.LastReferencedSymbolRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonCompilerFactLinkageSymbolRow lastRow =
+                self.CompilerFactLinkageReferencedSymbolRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.CompilerFactLinkageReferencedSymbolRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        linkage.LastReferencedSymbolRow = rowIndex;
+        linkage.ReferencedSymbolCount = linkage.ReferencedSymbolCount + 1;
+        if (!self.CompilerFactLinkageRows.Replace(linkageRow, linkage))
+        {
+            return false;
+        }
+
+        symbolRow = rowIndex;
+        return true;
+    }
+}

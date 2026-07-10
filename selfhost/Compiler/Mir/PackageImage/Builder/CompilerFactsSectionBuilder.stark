@@ -1,0 +1,2957 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+import Compiler.Mir.PackageImage.Builder.ManifestJsonWriter
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Text
+module Compiler.Mir.PackageImage.Builder.CompilerFactsSectionBuilder
+
+// Serializes ABI, layout, effect, ownership, and linkage facts.
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceObject(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageImageStringTableBuilder strings,
+    LogicalPackageManifestJsonTypeReferenceDescriptor descriptor,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus kindStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Kind",
+        strings,
+        descriptor.KindStringIndex,
+        scratch);
+    switch (kindStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (descriptor.HasName)
+    {
+        stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "Name",
+            strings,
+            descriptor.NameStringIndex,
+            scratch);
+        switch (nameStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (descriptor.HasBitWidth)
+    {
+        stack JsonStatus bitWidthStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "BitWidth",
+            descriptor.BitWidth);
+        switch (bitWidthStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (descriptor.HasRangeMin)
+    {
+        stack JsonStatus rangeMinStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "RangeMin",
+            strings,
+            descriptor.RangeMinStringIndex,
+            scratch);
+        switch (rangeMinStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (descriptor.HasRangeMax)
+    {
+        stack JsonStatus rangeMaxStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "RangeMax",
+            strings,
+            descriptor.RangeMaxStringIndex,
+            scratch);
+        switch (rangeMaxStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (descriptor.HasIsUnsigned)
+    {
+        stack JsonStatus unsignedStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "IsUnsigned",
+            descriptor.IsUnsigned);
+        switch (unsignedStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    borrow LogicalPackageImageStringTableBuilder strings,
+    LogicalPackageManifestJsonTypeReferenceDescriptor descriptor,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceObject(
+        writer,
+        strings,
+        descriptor,
+        scratch);
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionEffectRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionEffectRow effectRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionEffectRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "QualifiedResolvedName",
+        manifestBuilder.Strings,
+        effectRow.QualifiedResolvedNameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus kindStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Kind",
+        manifestBuilder.Strings,
+        effectRow.KindStringIndex,
+        scratch);
+    switch (kindStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus readsStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "ReadsArgumentMemory",
+        effectRow.ReadsArgumentMemory);
+    switch (readsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus pureStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsPure", effectRow.IsPure);
+    switch (pureStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus noSyncStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "NoSync", effectRow.NoSync);
+    switch (noSyncStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus noFreeStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "NoFree", effectRow.NoFree);
+    switch (noFreeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus noUnwindStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "NoUnwind",
+        effectRow.NoUnwind);
+    switch (noUnwindStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus willReturnStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "WillReturn",
+        effectRow.WillReturn);
+    switch (willReturnStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus progressStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "MustProgress",
+        effectRow.MustProgress);
+    switch (progressStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus fastCallStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "UseFastCallingConvention",
+        effectRow.UsesFastCallingConvention);
+    switch (fastCallStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus ffiStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsFfi", effectRow.IsFfi);
+    switch (ffiStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus hotStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsHot", effectRow.IsHot);
+    switch (hotStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus coldStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsCold", effectRow.IsCold);
+    switch (coldStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus inlineStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "InlinePreference",
+        manifestBuilder.Strings,
+        effectRow.InlinePreferenceStringIndex,
+        scratch);
+    switch (inlineStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus strictFpStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "IsStrictFp",
+        effectRow.IsStrictFp);
+    switch (strictFpStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (effectRow.IsVarargs)
+    {
+        stack JsonStatus varargsStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsVarargs", true);
+        switch (varargsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (effectRow.HasFfiAbi)
+    {
+        stack JsonStatus ffiAbiStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "FfiAbi",
+            manifestBuilder.Strings,
+            effectRow.FfiAbiStringIndex,
+            scratch);
+        switch (ffiAbiStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (effectRow.IsTailCallable)
+    {
+        stack JsonStatus tailStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "IsTailCallable",
+            true);
+        switch (tailStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (effectRow.HasBackendOptimizationMode)
+    {
+        stack JsonStatus modeStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "BackendOptimizationMode",
+            manifestBuilder.Strings,
+            effectRow.BackendOptimizationModeStringIndex,
+            scratch);
+        switch (modeStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (effectRow.NoRecurse)
+    {
+        stack JsonStatus recurseStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "NoRecurse", true);
+        switch (recurseStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteFunctionMemoryEffectFactsObject(
+    mut borrow JsonWriter writer,
+    LogicalPackageManifestJsonFunctionMemoryEffectFacts facts)
+{
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus readsArgumentStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "ReadsArgumentMemory",
+        facts.ReadsArgumentMemory);
+    switch (readsArgumentStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus writesArgumentStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "WritesArgumentMemory",
+        facts.WritesArgumentMemory);
+    switch (writesArgumentStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus capturesArgumentStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "CapturesArgumentMemory",
+        facts.CapturesArgumentMemory);
+    switch (capturesArgumentStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus readsOtherStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "ReadsOtherMemory",
+        facts.ReadsOtherMemory);
+    switch (readsOtherStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus writesOtherStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "WritesOtherMemory",
+        facts.WritesOtherMemory);
+    switch (writesOtherStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus initializesStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "InitializesArgumentMemory",
+        facts.InitializesArgumentMemory);
+    switch (initializesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus deadOnReturnStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasPointeeDeadOnReturnArgument",
+        facts.HasPointeeDeadOnReturnArgument);
+    switch (deadOnReturnStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteFunctionMemoryEffectFactsMember(
+    mut borrow JsonWriter writer,
+    ascii memberName,
+    LogicalPackageManifestJsonFunctionMemoryEffectFacts facts)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return LogicalPackageManifestJsonWriteFunctionMemoryEffectFactsObject(writer, facts);
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCalledFunctionsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("CalledFunctions");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] calledFunctionRow = semanticRow.FirstCalledFunctionRow;
+    stack mut u32[0 max] remainingCalledFunctions = semanticRow.CalledFunctionCount;
+    while willexit (remainingCalledFunctions != 0)
+    {
+        if (calledFunctionRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCalledFunctionRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCalledFunctionRows.Get(calledFunctionRow);
+        stack JsonStatus valueStatus = LogicalPackageImageStringTableBuilderWriteTextValue(
+            manifestBuilder.Strings,
+            rowFacts.NameStringIndex,
+            writer,
+            scratch);
+        switch (valueStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        calledFunctionRow = rowFacts.NextRow;
+        remainingCalledFunctions = remainingCalledFunctions - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticInitializationRangeRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow rangeRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticInitializationRangeRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus startStatus = LogicalPackageManifestJsonWriteI64Member(
+        writer,
+        "StartByte",
+        rangeRow.StartByte);
+    switch (startStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus endStatus = LogicalPackageManifestJsonWriteI64Member(
+        writer,
+        "EndByte",
+        rangeRow.EndByte);
+    switch (endStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticInitializationRangesMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow parameterRow)
+{
+    stack JsonStatus keyStatus = writer.Key("InitializationRanges");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] rangeRow = parameterRow.FirstInitializationRangeRow;
+    stack mut u32[0 max] remainingRanges = parameterRow.InitializationRangeCount;
+    while willexit (remainingRanges != 0)
+    {
+        if (rangeRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus rangeStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticInitializationRangeRow(
+                writer,
+                manifestBuilder,
+                rangeRow);
+        switch (rangeStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticInitializationRangeRow
+            rowFacts = manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticInitializationRangeRows.Get(rangeRow);
+        rangeRow = rowFacts.NextRow;
+        remainingRanges = remainingRanges - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticParameterRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow parameterRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticParameterRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Name",
+        manifestBuilder.Strings,
+        parameterRow.NameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus typeStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Type",
+        manifestBuilder.Strings,
+        parameterRow.TypeStringIndex,
+        scratch);
+    switch (typeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus memoryBackedStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "IsMemoryBacked",
+        parameterRow.IsMemoryBacked);
+    switch (memoryBackedStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nonNullStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "GuaranteedNonNull",
+        parameterRow.GuaranteedNonNull);
+    switch (nonNullStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus readOnlyStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "GuaranteedReadOnly",
+        parameterRow.GuaranteedReadOnly);
+    switch (readOnlyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus writeOnlyStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "GuaranteedWriteOnly",
+        parameterRow.GuaranteedWriteOnly);
+    switch (writeOnlyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus noAliasStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "GuaranteedNoAlias",
+        parameterRow.GuaranteedNoAlias);
+    switch (noAliasStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (parameterRow.HasDereferenceableBytes)
+    {
+        stack JsonStatus dereferenceableStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "DereferenceableBytes",
+            parameterRow.DereferenceableBytes);
+        switch (dereferenceableStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (parameterRow.HasAlignmentBytes)
+    {
+        stack JsonStatus alignmentStatus = LogicalPackageManifestJsonWriteU32Member(
+            writer,
+            "AlignmentBytes",
+            parameterRow.AlignmentBytes);
+        switch (alignmentStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    stack JsonStatus readsStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "Reads",
+        parameterRow.Reads);
+    switch (readsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus writesStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "Writes",
+        parameterRow.Writes);
+    switch (writesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus captureStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "CaptureKind",
+        manifestBuilder.Strings,
+        parameterRow.CaptureKindStringIndex,
+        scratch);
+    switch (captureStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (parameterRow.InitializationRangeCount != 0)
+    {
+        stack JsonStatus rangesStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticInitializationRangesMember(
+                writer,
+                manifestBuilder,
+                parameterRow);
+        switch (rangesStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (parameterRow.PointeeDeadOnReturn)
+    {
+        stack JsonStatus deadStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "PointeeDeadOnReturn",
+            true);
+        switch (deadStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticParametersMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Parameters");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] parameterRow = semanticRow.FirstParameterRow;
+    stack mut u32[0 max] remainingParameters = semanticRow.ParameterCount;
+    while willexit (remainingParameters != 0)
+    {
+        if (parameterRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus parameterStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticParameterRow(
+                writer,
+                manifestBuilder,
+                parameterRow,
+                scratch);
+        switch (parameterStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticParameterRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticParameterRows.Get(parameterRow);
+        parameterRow = rowFacts.NextRow;
+        remainingParameters = remainingParameters - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCallArgumentRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow argumentRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCallArgumentRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus indexStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "ArgumentIndex",
+        argumentRow.ArgumentIndex);
+    switch (indexStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (argumentRow.HasCallerParameterName)
+    {
+        stack JsonStatus callerStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "CallerParameterName",
+            manifestBuilder.Strings,
+            argumentRow.CallerParameterNameStringIndex,
+            scratch);
+        switch (callerStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (argumentRow.HasCalleeParameterName)
+    {
+        stack JsonStatus calleeStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "CalleeParameterName",
+            manifestBuilder.Strings,
+            argumentRow.CalleeParameterNameStringIndex,
+            scratch);
+        switch (calleeStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    stack JsonStatus captureStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "CaptureKind",
+        manifestBuilder.Strings,
+        argumentRow.CaptureKindStringIndex,
+        scratch);
+    switch (captureStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus readsStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "Reads",
+        argumentRow.Reads);
+    switch (readsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus writesStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "Writes",
+        argumentRow.Writes);
+    switch (writesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticArgumentsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow callRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Arguments");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] argumentRow = callRow.FirstArgumentRow;
+    stack mut u32[0 max] remainingArguments = callRow.ArgumentCount;
+    while willexit (remainingArguments != 0)
+    {
+        if (argumentRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus argumentStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCallArgumentRow(
+                writer,
+                manifestBuilder,
+                argumentRow,
+                scratch);
+        switch (argumentStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCallArgumentRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCallArgumentRows.Get(argumentRow);
+        argumentRow = rowFacts.NextRow;
+        remainingArguments = remainingArguments - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCallRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow callRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCallRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus calleeStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "CalleeName",
+        manifestBuilder.Strings,
+        callRow.CalleeNameStringIndex,
+        scratch);
+    switch (calleeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus memoryStatus = LogicalPackageManifestJsonWriteFunctionMemoryEffectFactsMember(
+        writer,
+        "MemoryEffects",
+        callRow.MemoryEffects);
+    switch (memoryStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus argumentsStatus =
+        LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticArgumentsMember(
+            writer,
+            manifestBuilder,
+            callRow,
+            scratch);
+    switch (argumentsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCallsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Calls");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] callRow = semanticRow.FirstCallRow;
+    stack mut u32[0 max] remainingCalls = semanticRow.CallCount;
+    while willexit (remainingCalls != 0)
+    {
+        if (callRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus callStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCallRow(
+                writer,
+                manifestBuilder,
+                callRow,
+                scratch);
+        switch (callStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticCallRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCallRows.Get(callRow);
+        callRow = rowFacts.NextRow;
+        remainingCalls = remainingCalls - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipNameArray(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    ascii memberName,
+    borrow IrTable<LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow> nameRows,
+    u32[0 max] firstRow,
+    u32[0 max] nameCount,
+    mut borrow OwnedAscii scratch)
+    where overlap(manifestBuilder, nameRows)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] nameRow = firstRow;
+    stack mut u32[0 max] remainingNames = nameCount;
+    while willexit (remainingNames != 0)
+    {
+        if (nameRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipNameRow rowFacts =
+            nameRows.Get(nameRow);
+        stack JsonStatus nameStatus = LogicalPackageImageStringTableBuilderWriteTextValue(
+            manifestBuilder.Strings,
+            rowFacts.NameStringIndex,
+            writer,
+            scratch);
+        switch (nameStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        nameRow = rowFacts.NextRow;
+        remainingNames = remainingNames - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipProjectionPathMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow eventRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("ProjectionPath");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] projectionRow = eventRow.FirstProjectionRow;
+    stack mut u32[0 max] remainingProjections = eventRow.ProjectionCount;
+    while willexit (remainingProjections != 0)
+    {
+        if (projectionRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipProjectionRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipProjectionRows.Get(projectionRow);
+        stack JsonStatus projectionStatus = LogicalPackageImageStringTableBuilderWriteTextValue(
+            manifestBuilder.Strings,
+            rowFacts.ProjectionStringIndex,
+            writer,
+            scratch);
+        switch (projectionStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        projectionRow = rowFacts.NextRow;
+        remainingProjections = remainingProjections - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipPlaceMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow eventRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Place");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus rootStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "RootName",
+        manifestBuilder.Strings,
+        eventRow.RootNameStringIndex,
+        scratch);
+    switch (rootStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus typeStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+        writer,
+        "Type",
+        manifestBuilder.Strings,
+        eventRow.PlaceType,
+        scratch);
+    switch (typeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (eventRow.ProjectionCount != 0)
+    {
+        stack JsonStatus projectionStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipProjectionPathMember(
+                writer,
+                manifestBuilder,
+                eventRow,
+                scratch);
+        switch (projectionStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (eventRow.HasIndexProjection)
+    {
+        stack JsonStatus indexStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "HasIndexProjection",
+            true);
+        switch (indexStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipLocationMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow eventRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Location");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (eventRow.HasLocationFilePath)
+    {
+        stack JsonStatus fileStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "FilePath",
+            manifestBuilder.Strings,
+            eventRow.LocationFilePathStringIndex,
+            scratch);
+        switch (fileStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    stack JsonStatus lineStatus = LogicalPackageManifestJsonWriteI64Member(
+        writer,
+        "Line",
+        eventRow.LocationLine);
+    switch (lineStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus columnStatus = LogicalPackageManifestJsonWriteI64Member(
+        writer,
+        "Column",
+        eventRow.LocationColumn);
+    switch (columnStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipEventRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow eventRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipEventRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus kindStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Kind",
+        manifestBuilder.Strings,
+        eventRow.KindStringIndex,
+        scratch);
+    switch (kindStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus placeStatus = LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipPlaceMember(
+        writer,
+        manifestBuilder,
+        eventRow,
+        scratch);
+    switch (placeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (eventRow.HasLocation)
+    {
+        stack JsonStatus locationStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipLocationMember(
+                writer,
+                manifestBuilder,
+                eventRow,
+                scratch);
+        switch (locationStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipEventsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Events");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] eventRow = semanticRow.FirstOwnershipEventRow;
+    stack mut u32[0 max] remainingEvents = semanticRow.OwnershipEventCount;
+    while willexit (remainingEvents != 0)
+    {
+        if (eventRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus eventStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipEventRow(
+                writer,
+                manifestBuilder,
+                eventRow,
+                scratch);
+        switch (eventStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipEventRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipEventRows.Get(eventRow);
+        eventRow = rowFacts.NextRow;
+        remainingEvents = remainingEvents - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipRootRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow rootRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipRootRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Name",
+        manifestBuilder.Strings,
+        rootRow.NameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus typeStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+        writer,
+        "Type",
+        manifestBuilder.Strings,
+        rootRow.TypeReference,
+        scratch);
+    switch (typeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus kindStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "RootKind",
+        manifestBuilder.Strings,
+        rootRow.RootKindStringIndex,
+        scratch);
+    switch (kindStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus mutableStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "IsMutable",
+        rootRow.IsMutable);
+    switch (mutableStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus constantStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "IsConstant",
+        rootRow.IsConstant);
+    switch (constantStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus addressStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "IsAddressTaken",
+        rootRow.IsAddressTaken);
+    switch (addressStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus rawEscapeStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasRawPointerEscape",
+        rootRow.HasRawPointerEscape);
+    switch (rawEscapeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus moveStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasMove",
+        rootRow.HasMove);
+    switch (moveStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus partialMoveStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasPartialMove",
+        rootRow.HasPartialMove);
+    switch (partialMoveStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus implicitDropStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasImplicitDrop",
+        rootRow.HasImplicitDrop);
+    switch (implicitDropStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus assignmentDropStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasAssignmentDrop",
+        rootRow.HasAssignmentDrop);
+    switch (assignmentDropStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus reinitStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "HasReinitialization",
+        rootRow.HasReinitialization);
+    switch (reinitStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus requiresDropStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "RequiresDrop",
+        rootRow.RequiresDrop);
+    switch (requiresDropStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus availabilityStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "FinalAvailability",
+        manifestBuilder.Strings,
+        rootRow.FinalAvailabilityStringIndex,
+        scratch);
+    switch (availabilityStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipRootsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Roots");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] rootRow = semanticRow.FirstOwnershipRootRow;
+    stack mut u32[0 max] remainingRoots = semanticRow.OwnershipRootCount;
+    while willexit (remainingRoots != 0)
+    {
+        if (rootRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus rootStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipRootRow(
+                writer,
+                manifestBuilder,
+                rootRow,
+                scratch);
+        switch (rootStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionOwnershipRootRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipRootRows.Get(rootRow);
+        rootRow = rowFacts.NextRow;
+        remainingRoots = remainingRoots - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("Ownership");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus validStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "OwnershipValid",
+        semanticRow.OwnershipValid);
+    switch (validStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus implicitDropsStatus =
+        LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipNameArray(
+            writer,
+            manifestBuilder,
+            "ImplicitDrops",
+            manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipImplicitDropRows,
+            semanticRow.FirstOwnershipImplicitDropRow,
+            semanticRow.OwnershipImplicitDropCount,
+            scratch);
+    switch (implicitDropsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus movesStatus =
+        LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipNameArray(
+            writer,
+            manifestBuilder,
+            "Moves",
+            manifestBuilder.CompilerFacts.CompilerFactFunctionOwnershipMoveRows,
+            semanticRow.FirstOwnershipMoveRow,
+            semanticRow.OwnershipMoveCount,
+            scratch);
+    switch (movesStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (semanticRow.OwnershipEventCount != 0)
+    {
+        stack JsonStatus eventsStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipEventsMember(
+                writer,
+                manifestBuilder,
+                semanticRow,
+                scratch);
+        switch (eventsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (semanticRow.OwnershipRootCount != 0)
+    {
+        stack JsonStatus rootsStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipRootsMember(
+                writer,
+                manifestBuilder,
+                semanticRow,
+                scratch);
+        switch (rootsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactFunctionSemanticRow semanticRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "QualifiedResolvedName",
+        manifestBuilder.Strings,
+        semanticRow.QualifiedResolvedNameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus declaredStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "DeclaredKind",
+        manifestBuilder.Strings,
+        semanticRow.DeclaredKindStringIndex,
+        scratch);
+    switch (declaredStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus effectiveStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "EffectiveKind",
+        manifestBuilder.Strings,
+        semanticRow.EffectiveKindStringIndex,
+        scratch);
+    switch (effectiveStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus calledStatus =
+        LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCalledFunctionsMember(
+            writer,
+            manifestBuilder,
+            semanticRow,
+            scratch);
+    switch (calledStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (semanticRow.HasMemoryEffects)
+    {
+        stack JsonStatus memoryStatus = LogicalPackageManifestJsonWriteFunctionMemoryEffectFactsMember(
+            writer,
+            "MemoryEffects",
+            semanticRow.MemoryEffects);
+        switch (memoryStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (semanticRow.ParameterCount != 0)
+    {
+        stack JsonStatus parametersStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticParametersMember(
+                writer,
+                manifestBuilder,
+                semanticRow,
+                scratch);
+        switch (parametersStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (semanticRow.CallCount != 0)
+    {
+        stack JsonStatus callsStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticCallsMember(
+                writer,
+                manifestBuilder,
+                semanticRow,
+                scratch);
+        switch (callsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (semanticRow.HasOwnership)
+    {
+        stack JsonStatus ownershipStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionOwnershipMember(
+                writer,
+                manifestBuilder,
+                semanticRow,
+                scratch);
+        switch (ownershipStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (semanticRow.HasExplicitHasOpaqueCall)
+    {
+        stack JsonStatus opaqueStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "HasOpaqueCall",
+            semanticRow.HasOpaqueCall);
+        switch (opaqueStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] moduleRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack JsonStatus keyStatus = writer.Key("FunctionSemantics");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] functionSemanticRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticFirstRows.Get(moduleRow);
+    stack mut u32[0 max] remainingFunctionSemantics =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCounts.Get(moduleRow);
+    while willexit (remainingFunctionSemantics != 0)
+    {
+        if (functionSemanticRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus rowStatus = LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticRow(
+            writer,
+            manifestBuilder,
+            functionSemanticRow,
+            scratch);
+        switch (rowStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionSemanticRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticRows.Get(functionSemanticRow);
+        functionSemanticRow = rowFacts.NextRow;
+        remainingFunctionSemantics = remainingFunctionSemantics - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactAbiParameterRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactAbiParameterRow parameterRow =
+        manifestBuilder.CompilerFacts.CompilerFactAbiParameterRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sourceNameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "SourceName",
+        manifestBuilder.Strings,
+        parameterRow.SourceNameStringIndex,
+        scratch);
+    switch (sourceNameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus llvmNameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "LlvmName",
+        manifestBuilder.Strings,
+        parameterRow.LlvmNameStringIndex,
+        scratch);
+    switch (llvmNameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sourceTypeStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+        writer,
+        "SourceType",
+        manifestBuilder.Strings,
+        parameterRow.SourceType,
+        scratch);
+    switch (sourceTypeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus llvmTypeStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+        writer,
+        "LlvmType",
+        manifestBuilder.Strings,
+        parameterRow.LlvmType,
+        scratch);
+    switch (llvmTypeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus kindStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Kind",
+        manifestBuilder.Strings,
+        parameterRow.KindStringIndex,
+        scratch);
+    switch (kindStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (parameterRow.HasRawPointerElementCountExpression)
+    {
+        stack JsonStatus countStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "RawPointerElementCountExpression",
+            manifestBuilder.Strings,
+            parameterRow.RawPointerElementCountExpressionStringIndex,
+            scratch);
+        switch (countStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (parameterRow.LlvmParameterTypeCount != 0)
+    {
+        stack JsonStatus typesKeyStatus = writer.Key("LlvmParameterTypes");
+        switch (typesKeyStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus beginTypesStatus = writer.BeginArray();
+        switch (beginTypesStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack mut u32[0 max] typeRow = parameterRow.FirstLlvmParameterTypeRow;
+        stack mut u32[0 max] remainingTypes = parameterRow.LlvmParameterTypeCount;
+        while willexit (remainingTypes != 0)
+        {
+            if (typeRow == 0)
+            {
+                return JsonStatus.Err(JsonError.InvalidValue);
+            }
+
+            stack LogicalPackageManifestJsonCompilerFactAbiParameterLlvmTypeRow llvmTypeRow =
+                manifestBuilder.CompilerFacts.CompilerFactAbiParameterLlvmTypeRows.Get(typeRow);
+            stack JsonStatus typeStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceObject(
+                writer,
+                manifestBuilder.Strings,
+                llvmTypeRow.TypeReference,
+                scratch);
+            switch (typeStatus)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+
+            typeRow = llvmTypeRow.NextRow;
+            remainingTypes = remainingTypes - 1;
+        }
+
+        stack JsonStatus endTypesStatus = writer.EndArray();
+        switch (endTypesStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactAbiFunctionRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactAbiFunctionRow abiRow =
+        manifestBuilder.CompilerFacts.CompilerFactAbiFunctionRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "QualifiedResolvedName",
+        manifestBuilder.Strings,
+        abiRow.QualifiedResolvedNameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus symbolStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "SymbolName",
+        manifestBuilder.Strings,
+        abiRow.SymbolNameStringIndex,
+        scratch);
+    switch (symbolStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sourceReturnStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+        writer,
+        "SourceReturnType",
+        manifestBuilder.Strings,
+        abiRow.SourceReturnType,
+        scratch);
+    switch (sourceReturnStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus llvmReturnStatus = LogicalPackageManifestJsonWriteCompilerFactAbiTypeReferenceMember(
+        writer,
+        "LlvmReturnType",
+        manifestBuilder.Strings,
+        abiRow.LlvmReturnType,
+        scratch);
+    switch (llvmReturnStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus parametersKeyStatus = writer.Key("Parameters");
+    switch (parametersKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginParametersStatus = writer.BeginArray();
+    switch (beginParametersStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] parameterRow = abiRow.FirstParameterRow;
+    stack mut u32[0 max] remainingParameters = abiRow.ParameterCount;
+    while willexit (remainingParameters != 0)
+    {
+        if (parameterRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus parameterStatus = LogicalPackageManifestJsonWriteCompilerFactAbiParameterRow(
+            writer,
+            manifestBuilder,
+            parameterRow,
+            scratch);
+        switch (parameterStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactAbiParameterRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactAbiParameterRows.Get(parameterRow);
+        parameterRow = rowFacts.NextRow;
+        remainingParameters = remainingParameters - 1;
+    }
+
+    stack JsonStatus endParametersStatus = writer.EndArray();
+    switch (endParametersStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus ffiStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsFfi", abiRow.IsFfi);
+    switch (ffiStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (abiRow.HasSourceName)
+    {
+        stack JsonStatus sourceNameStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "SourceName",
+            manifestBuilder.Strings,
+            abiRow.SourceNameStringIndex,
+            scratch);
+        switch (sourceNameStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (abiRow.UsesFastCallingConvention)
+    {
+        stack JsonStatus fastCallStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "UsesFastCallingConvention",
+            true);
+        switch (fastCallStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (abiRow.IsVarargs)
+    {
+        stack JsonStatus varargsStatus = LogicalPackageManifestJsonWriteBoolMember(writer, "IsVarargs", true);
+        switch (varargsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (abiRow.HasFfiAbi)
+    {
+        stack JsonStatus ffiAbiStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "FfiAbi",
+            manifestBuilder.Strings,
+            abiRow.FfiAbiStringIndex,
+            scratch);
+        switch (ffiAbiStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (abiRow.UsesTailCallingConvention)
+    {
+        stack JsonStatus tailStatus = LogicalPackageManifestJsonWriteBoolMember(
+            writer,
+            "UsesTailCallingConvention",
+            true);
+        switch (tailStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (abiRow.HasLinkName)
+    {
+        stack JsonStatus linkStatus = LogicalPackageManifestJsonWriteStringMember(
+            writer,
+            "LinkName",
+            manifestBuilder.Strings,
+            abiRow.LinkNameStringIndex,
+            scratch);
+        switch (linkStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactConcreteFieldRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactConcreteFieldRow fieldRow =
+        manifestBuilder.CompilerFacts.CompilerFactConcreteFieldRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "Name",
+        manifestBuilder.Strings,
+        fieldRow.NameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus offsetStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "OffsetBytes",
+        fieldRow.OffsetBytes);
+    switch (offsetStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sizeStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "SizeBytes",
+        fieldRow.SizeBytes);
+    switch (sizeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus naturalAlignmentStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "NaturalAlignmentBytes",
+        fieldRow.NaturalAlignmentBytes);
+    switch (naturalAlignmentStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus effectiveAlignmentStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "EffectiveAlignmentBytes",
+        fieldRow.EffectiveAlignmentBytes);
+    switch (effectiveAlignmentStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus misalignedStatus = LogicalPackageManifestJsonWriteBoolMember(
+        writer,
+        "IsMisaligned",
+        fieldRow.IsMisaligned);
+    switch (misalignedStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactConcreteLayoutRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactConcreteLayoutRow layoutRow =
+        manifestBuilder.CompilerFacts.CompilerFactConcreteLayoutRows.Get(row);
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus nameStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "QualifiedTypeName",
+        manifestBuilder.Strings,
+        layoutRow.QualifiedTypeNameStringIndex,
+        scratch);
+    switch (nameStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus sizeStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "SizeBytes",
+        layoutRow.SizeBytes);
+    switch (sizeStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus alignmentStatus = LogicalPackageManifestJsonWriteU32Member(
+        writer,
+        "AlignmentBytes",
+        layoutRow.AlignmentBytes);
+    switch (alignmentStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus fieldsKeyStatus = writer.Key("Fields");
+    switch (fieldsKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginFieldsStatus = writer.BeginArray();
+    switch (beginFieldsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] fieldRow = layoutRow.FirstFieldRow;
+    stack mut u32[0 max] remainingFields = layoutRow.FieldCount;
+    while willexit (remainingFields != 0)
+    {
+        if (fieldRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus fieldStatus = LogicalPackageManifestJsonWriteCompilerFactConcreteFieldRow(
+            writer,
+            manifestBuilder,
+            fieldRow,
+            scratch);
+        switch (fieldStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactConcreteFieldRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactConcreteFieldRows.Get(fieldRow);
+        fieldRow = rowFacts.NextRow;
+        remainingFields = remainingFields - 1;
+    }
+
+    stack JsonStatus endFieldsStatus = writer.EndArray();
+    switch (endFieldsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactLinkageSymbolArray(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    ascii memberName,
+    borrow IrTable<LogicalPackageManifestJsonCompilerFactLinkageSymbolRow> symbolRows,
+    u32[0 max] firstRow,
+    u32[0 max] symbolCount,
+    mut borrow OwnedAscii scratch)
+    where overlap(manifestBuilder, symbolRows)
+{
+    stack JsonStatus keyStatus = writer.Key(memberName);
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginArray();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] symbolRow = firstRow;
+    stack mut u32[0 max] remainingSymbols = symbolCount;
+    while willexit (remainingSymbols != 0)
+    {
+        if (symbolRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactLinkageSymbolRow rowFacts =
+            symbolRows.Get(symbolRow);
+        stack JsonStatus symbolStatus = LogicalPackageImageStringTableBuilderWriteTextValue(
+            manifestBuilder.Strings,
+            rowFacts.SymbolStringIndex,
+            writer,
+            scratch);
+        switch (symbolStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        symbolRow = rowFacts.NextRow;
+        remainingSymbols = remainingSymbols - 1;
+    }
+
+    return writer.EndArray();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactLinkageRow(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] row,
+    mut borrow OwnedAscii scratch)
+{
+    stack LogicalPackageManifestJsonCompilerFactLinkageRow linkageRow =
+        manifestBuilder.CompilerFacts.CompilerFactLinkageRows.Get(row);
+    stack JsonStatus linkageKeyStatus = writer.Key("Linkage");
+    switch (linkageKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus objectFileStatus = LogicalPackageManifestJsonWriteStringMember(
+        writer,
+        "ObjectFileName",
+        manifestBuilder.Strings,
+        linkageRow.ObjectFileNameStringIndex,
+        scratch);
+    switch (objectFileStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus definedStatus = LogicalPackageManifestJsonWriteCompilerFactLinkageSymbolArray(
+        writer,
+        manifestBuilder,
+        "DefinedSymbols",
+        manifestBuilder.CompilerFacts.CompilerFactLinkageDefinedSymbolRows,
+        linkageRow.FirstDefinedSymbolRow,
+        linkageRow.DefinedSymbolCount,
+        scratch);
+    switch (definedStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (linkageRow.ReferencedSymbolCount != 0)
+    {
+        stack JsonStatus referencedStatus = LogicalPackageManifestJsonWriteCompilerFactLinkageSymbolArray(
+            writer,
+            manifestBuilder,
+            "ReferencedSymbols",
+            manifestBuilder.CompilerFacts.CompilerFactLinkageReferencedSymbolRows,
+            linkageRow.FirstReferencedSymbolRow,
+            linkageRow.ReferencedSymbolCount,
+            scratch);
+        switch (referencedStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}
+
+internal unsafe fn JsonStatus LogicalPackageManifestJsonWriteCompilerFactsMember(
+    mut borrow JsonWriter writer,
+    borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    u32[0 max] moduleRow,
+    mut borrow OwnedAscii scratch)
+{
+    stack u32[0 max] functionEffectCount =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionEffectCounts.Get(moduleRow);
+    stack u32[0 max] functionSemanticCount =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionSemanticCounts.Get(moduleRow);
+    stack u32[0 max] abiFunctionCount = manifestBuilder.CompilerFacts.CompilerFactAbiFunctionCounts.Get(moduleRow);
+    stack u32[0 max] concreteLayoutCount =
+        manifestBuilder.CompilerFacts.CompilerFactConcreteLayoutCounts.Get(moduleRow);
+    stack u32[0 max] linkageRow = manifestBuilder.CompilerFacts.CompilerFactLinkageRowsByModule.Get(moduleRow);
+    if (functionEffectCount == 0
+        && functionSemanticCount == 0
+        && abiFunctionCount == 0
+        && concreteLayoutCount == 0
+        && linkageRow == 0)
+    {
+        return JsonStatus.Ok;
+    }
+
+    stack JsonStatus keyStatus = writer.Key("CompilerFacts");
+    switch (keyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginStatus = writer.BeginObject();
+    switch (beginStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus functionEffectsKeyStatus = writer.Key("FunctionEffects");
+    switch (functionEffectsKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginArrayStatus = writer.BeginArray();
+    switch (beginArrayStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] functionEffectRow =
+        manifestBuilder.CompilerFacts.CompilerFactFunctionEffectFirstRows.Get(moduleRow);
+    stack mut u32[0 max] remainingFunctionEffects = functionEffectCount;
+    while willexit (remainingFunctionEffects != 0)
+    {
+        if (functionEffectRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus rowStatus = LogicalPackageManifestJsonWriteCompilerFactFunctionEffectRow(
+            writer,
+            manifestBuilder,
+            functionEffectRow,
+            scratch);
+        switch (rowStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactFunctionEffectRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactFunctionEffectRows.Get(functionEffectRow);
+        functionEffectRow = rowFacts.NextRow;
+        remainingFunctionEffects = remainingFunctionEffects - 1;
+    }
+
+    stack JsonStatus endArrayStatus = writer.EndArray();
+    switch (endArrayStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (functionSemanticCount != 0)
+    {
+        stack JsonStatus functionSemanticsStatus =
+            LogicalPackageManifestJsonWriteCompilerFactFunctionSemanticsMember(
+                writer,
+                manifestBuilder,
+                moduleRow,
+                scratch);
+        switch (functionSemanticsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    stack JsonStatus abiFunctionsKeyStatus = writer.Key("AbiFunctions");
+    switch (abiFunctionsKeyStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack JsonStatus beginAbiFunctionsStatus = writer.BeginArray();
+    switch (beginAbiFunctionsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    stack mut u32[0 max] abiFunctionRow =
+        manifestBuilder.CompilerFacts.CompilerFactAbiFunctionFirstRows.Get(moduleRow);
+    stack mut u32[0 max] remainingAbiFunctions = abiFunctionCount;
+    while willexit (remainingAbiFunctions != 0)
+    {
+        if (abiFunctionRow == 0)
+        {
+            return JsonStatus.Err(JsonError.InvalidValue);
+        }
+
+        stack JsonStatus rowStatus = LogicalPackageManifestJsonWriteCompilerFactAbiFunctionRow(
+            writer,
+            manifestBuilder,
+            abiFunctionRow,
+            scratch);
+        switch (rowStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack LogicalPackageManifestJsonCompilerFactAbiFunctionRow rowFacts =
+            manifestBuilder.CompilerFacts.CompilerFactAbiFunctionRows.Get(abiFunctionRow);
+        abiFunctionRow = rowFacts.NextRow;
+        remainingAbiFunctions = remainingAbiFunctions - 1;
+    }
+
+    stack JsonStatus endAbiFunctionsStatus = writer.EndArray();
+    switch (endAbiFunctionsStatus)
+    {
+        case JsonStatus.Err(var error):
+            return JsonStatus.Err(error);
+        case JsonStatus.Ok:
+    }
+
+    if (concreteLayoutCount != 0)
+    {
+        stack JsonStatus layoutsKeyStatus = writer.Key("ConcreteLayouts");
+        switch (layoutsKeyStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack JsonStatus beginLayoutsStatus = writer.BeginArray();
+        switch (beginLayoutsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+
+        stack mut u32[0 max] concreteLayoutRow =
+            manifestBuilder.CompilerFacts.CompilerFactConcreteLayoutFirstRows.Get(moduleRow);
+        stack mut u32[0 max] remainingConcreteLayouts = concreteLayoutCount;
+        while willexit (remainingConcreteLayouts != 0)
+        {
+            if (concreteLayoutRow == 0)
+            {
+                return JsonStatus.Err(JsonError.InvalidValue);
+            }
+
+            stack JsonStatus rowStatus = LogicalPackageManifestJsonWriteCompilerFactConcreteLayoutRow(
+                writer,
+                manifestBuilder,
+                concreteLayoutRow,
+                scratch);
+            switch (rowStatus)
+            {
+                case JsonStatus.Err(var error):
+                    return JsonStatus.Err(error);
+                case JsonStatus.Ok:
+            }
+
+            stack LogicalPackageManifestJsonCompilerFactConcreteLayoutRow rowFacts =
+                manifestBuilder.CompilerFacts.CompilerFactConcreteLayoutRows.Get(concreteLayoutRow);
+            concreteLayoutRow = rowFacts.NextRow;
+            remainingConcreteLayouts = remainingConcreteLayouts - 1;
+        }
+
+        stack JsonStatus endLayoutsStatus = writer.EndArray();
+        switch (endLayoutsStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    if (linkageRow != 0)
+    {
+        stack JsonStatus linkageStatus = LogicalPackageManifestJsonWriteCompilerFactLinkageRow(
+            writer,
+            manifestBuilder,
+            linkageRow,
+            scratch);
+        switch (linkageStatus)
+        {
+            case JsonStatus.Err(var error):
+                return JsonStatus.Err(error);
+            case JsonStatus.Ok:
+        }
+    }
+
+    return writer.EndObject();
+}

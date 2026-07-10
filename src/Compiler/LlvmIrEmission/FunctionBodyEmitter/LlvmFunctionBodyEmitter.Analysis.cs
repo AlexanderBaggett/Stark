@@ -191,14 +191,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 var hasIndirectAddress = indirectArgumentAddresses is not null
                     && index < indirectArgumentAddresses.Count
                     && indirectArgumentAddresses[index] is not null;
-                var hasPromotedLocal = indirectArgumentLocalNames is not null
-                    && index < indirectArgumentLocalNames.Count
-                    && !string.IsNullOrWhiteSpace(indirectArgumentLocalNames[index]);
-                if (hasIndirectAddress || hasPromotedLocal)
+                if (hasIndirectAddress)
                 {
                     continue;
                 }
 
+                // A promoted local is not necessarily the value used at the
+                // call site: direct pointer-backed borrows still render the SSA
+                // argument itself. Keep that value live conservatively; an
+                // indirect ABI call may emit one harmless unused local load.
                 VisitValue(arguments[index]);
             }
 

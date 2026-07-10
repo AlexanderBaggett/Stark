@@ -1,0 +1,441 @@
+import Compiler.AsmFacts
+import Compiler.Ir
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Loader.PackageImageLoader
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+import Compiler.Mir.PackageImage.Shared.EnumLayoutCodec
+import Compiler.Mir.PackageImage.Shared.LegacyMirCodec
+module Compiler.Mir.PackageImage.Loader.LegacyMirSectionLoader
+
+public fn bool DeserializePackageImageEnumLayoutFacts(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirEnumLayoutFact> outFacts)
+{
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    stack mut u32[0 max] floatPayloadOffset = 0;
+    stack mut u32[0 max] floatPayloadByteCount = 0;
+    stack mut bool hasFloatPayloadBytes = false;
+    stack mut u32[0 max] floatConstantOffset = 0;
+    stack mut u32[0 max] floatConstantCount = 0;
+    stack mut bool hasFloatConstants = false;
+    if (ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+        buf,
+        instrOffset,
+        blockOffset,
+        funcOffset,
+        globalOffset,
+        asmOffset,
+        asmFunctionCount,
+        hasAsm,
+        enumLayoutOffset,
+        enumLayoutFactCount,
+        hasEnumLayoutFacts,
+        textPayloadOffset,
+        textPayloadByteCount,
+        hasTextPayloadBytes,
+        textConstantOffset,
+        textConstantCount,
+        hasTextConstants,
+        floatPayloadOffset,
+        floatPayloadByteCount,
+        hasFloatPayloadBytes,
+        floatConstantOffset,
+        floatConstantCount,
+        hasFloatConstants) != PackageImageValidationStatus.Ok
+        || !hasEnumLayoutFacts)
+    {
+        return false;
+    }
+
+    return DeserializeEnumLayoutFactsAt(buf, enumLayoutOffset, outFacts);
+}
+
+public fn bool DeserializePackageImageTextConstants(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<u8[0 max]> outTextPayloadBytes,
+    mut borrow IrTable<MirTextConstant> outTextConstants)
+{
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    stack mut u32[0 max] floatPayloadOffset = 0;
+    stack mut u32[0 max] floatPayloadByteCount = 0;
+    stack mut bool hasFloatPayloadBytes = false;
+    stack mut u32[0 max] floatConstantOffset = 0;
+    stack mut u32[0 max] floatConstantCount = 0;
+    stack mut bool hasFloatConstants = false;
+    if (ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+        buf,
+        instrOffset,
+        blockOffset,
+        funcOffset,
+        globalOffset,
+        asmOffset,
+        asmFunctionCount,
+        hasAsm,
+        enumLayoutOffset,
+        enumLayoutFactCount,
+        hasEnumLayoutFacts,
+        textPayloadOffset,
+        textPayloadByteCount,
+        hasTextPayloadBytes,
+        textConstantOffset,
+        textConstantCount,
+        hasTextConstants,
+        floatPayloadOffset,
+        floatPayloadByteCount,
+        hasFloatPayloadBytes,
+        floatConstantOffset,
+        floatConstantCount,
+        hasFloatConstants) != PackageImageValidationStatus.Ok
+        || !hasTextPayloadBytes
+        || !hasTextConstants)
+    {
+        return false;
+    }
+
+    if (!DeserializeTextPayloadBytesAt(buf, textPayloadOffset, outTextPayloadBytes))
+    {
+        return false;
+    }
+
+    return DeserializeTextConstantsAt(buf, textConstantOffset, outTextPayloadBytes, outTextConstants);
+}
+
+public fn bool DeserializePackageImageWithTextConstants(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow IrTable<u8[0 max]> outTextPayloadBytes,
+    mut borrow IrTable<MirTextConstant> outTextConstants)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    stack mut u32[0 max] floatPayloadOffset = 0;
+    stack mut u32[0 max] floatPayloadByteCount = 0;
+    stack mut bool hasFloatPayloadBytes = false;
+    stack mut u32[0 max] floatConstantOffset = 0;
+    stack mut u32[0 max] floatConstantCount = 0;
+    stack mut bool hasFloatConstants = false;
+    if (!HasStarkPackageImageMagic(buf)
+        || ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+            buf,
+            instrOffset,
+            blockOffset,
+            funcOffset,
+            globalOffset,
+            asmOffset,
+            asmFunctionCount,
+            hasAsm,
+            enumLayoutOffset,
+            enumLayoutFactCount,
+            hasEnumLayoutFacts,
+            textPayloadOffset,
+            textPayloadByteCount,
+            hasTextPayloadBytes,
+            textConstantOffset,
+            textConstantCount,
+            hasTextConstants,
+            floatPayloadOffset,
+            floatPayloadByteCount,
+            hasFloatPayloadBytes,
+            floatConstantOffset,
+            floatConstantCount,
+            hasFloatConstants) != PackageImageValidationStatus.Ok
+        || hasAsm
+        || !hasTextPayloadBytes
+        || !hasTextConstants)
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    if (!DeserializeTextPayloadBytesAt(buf, textPayloadOffset, outTextPayloadBytes))
+    {
+        return false;
+    }
+
+    return DeserializeTextConstantsAt(buf, textConstantOffset, outTextPayloadBytes, outTextConstants);
+}
+
+public fn bool DeserializePackageImageFloatConstants(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<u8[0 max]> outFloatPayloadBytes,
+    mut borrow IrTable<MirFloatConstant> outFloatConstants)
+{
+    if (!HasStarkPackageImageMagic(buf))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    stack mut u32[0 max] floatPayloadOffset = 0;
+    stack mut u32[0 max] floatPayloadByteCount = 0;
+    stack mut bool hasFloatPayloadBytes = false;
+    stack mut u32[0 max] floatConstantOffset = 0;
+    stack mut u32[0 max] floatConstantCount = 0;
+    stack mut bool hasFloatConstants = false;
+    if (ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+        buf,
+        instrOffset,
+        blockOffset,
+        funcOffset,
+        globalOffset,
+        asmOffset,
+        asmFunctionCount,
+        hasAsm,
+        enumLayoutOffset,
+        enumLayoutFactCount,
+        hasEnumLayoutFacts,
+        textPayloadOffset,
+        textPayloadByteCount,
+        hasTextPayloadBytes,
+        textConstantOffset,
+        textConstantCount,
+        hasTextConstants,
+        floatPayloadOffset,
+        floatPayloadByteCount,
+        hasFloatPayloadBytes,
+        floatConstantOffset,
+        floatConstantCount,
+        hasFloatConstants) != PackageImageValidationStatus.Ok
+        || !hasFloatPayloadBytes
+        || !hasFloatConstants)
+    {
+        return false;
+    }
+
+    if (!DeserializeFloatLiteralPayloadBytesAt(buf, floatPayloadOffset, outFloatPayloadBytes))
+    {
+        return false;
+    }
+
+    return DeserializeFloatConstantsAt(buf, floatConstantOffset, outFloatPayloadBytes, outFloatConstants);
+}
+
+public fn bool DeserializePackageImageWithFloatConstants(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow IrTable<u8[0 max]> outFloatPayloadBytes,
+    mut borrow IrTable<MirFloatConstant> outFloatConstants)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    stack mut bool hasAsm = false;
+    stack mut u32[0 max] enumLayoutOffset = 0;
+    stack mut u32[0 max] enumLayoutFactCount = 0;
+    stack mut bool hasEnumLayoutFacts = false;
+    stack mut u32[0 max] textPayloadOffset = 0;
+    stack mut u32[0 max] textPayloadByteCount = 0;
+    stack mut bool hasTextPayloadBytes = false;
+    stack mut u32[0 max] textConstantOffset = 0;
+    stack mut u32[0 max] textConstantCount = 0;
+    stack mut bool hasTextConstants = false;
+    stack mut u32[0 max] floatPayloadOffset = 0;
+    stack mut u32[0 max] floatPayloadByteCount = 0;
+    stack mut bool hasFloatPayloadBytes = false;
+    stack mut u32[0 max] floatConstantOffset = 0;
+    stack mut u32[0 max] floatConstantCount = 0;
+    stack mut bool hasFloatConstants = false;
+    if (!HasStarkPackageImageMagic(buf)
+        || ReadSectionedPackageImageDirectoryWithEnumLayoutFacts(
+            buf,
+            instrOffset,
+            blockOffset,
+            funcOffset,
+            globalOffset,
+            asmOffset,
+            asmFunctionCount,
+            hasAsm,
+            enumLayoutOffset,
+            enumLayoutFactCount,
+            hasEnumLayoutFacts,
+            textPayloadOffset,
+            textPayloadByteCount,
+            hasTextPayloadBytes,
+            textConstantOffset,
+            textConstantCount,
+            hasTextConstants,
+            floatPayloadOffset,
+            floatPayloadByteCount,
+            hasFloatPayloadBytes,
+            floatConstantOffset,
+            floatConstantCount,
+            hasFloatConstants) != PackageImageValidationStatus.Ok
+        || hasAsm
+        || !hasFloatPayloadBytes
+        || !hasFloatConstants)
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    if (!DeserializeFloatLiteralPayloadBytesAt(buf, floatPayloadOffset, outFloatPayloadBytes))
+    {
+        return false;
+    }
+
+    return DeserializeFloatConstantsAt(buf, floatConstantOffset, outFloatPayloadBytes, outFloatConstants);
+}
+
+// Reads a package image into the four out-tables. Returns false (touching nothing)
+// when the magic or section directory is malformed.
+public fn bool DeserializePackageImage(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirInstruction> outInstrs, mut borrow IrTable<MirBlock> outBlocks, mut borrow IrTable<MirFunction> outFuncs, mut borrow IrTable<MirGlobal> outGlobals)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack mut u32[0 max] asmOffset = 0;
+        stack mut u32[0 max] asmFunctionCount = 0;
+        stack mut bool hasAsm = false;
+        if (ReadSectionedPackageImageDirectory(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount, hasAsm) != PackageImageValidationStatus.Ok
+            || hasAsm)
+        {
+            return false;
+        }
+
+        DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+        DeserializeBlocksAt(buf, blockOffset, outBlocks);
+        DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+        DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+        return true;
+    }
+
+    if (!TryReadMirImageHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset))
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    return true;
+}
+
+public fn bool DeserializePackageImageWithAsm(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow AsmMetadataTable outAsmMetadata)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    if (HasStarkPackageImageMagic(buf))
+    {
+        stack mut bool hasAsm = false;
+        if (ReadSectionedPackageImageDirectory(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount, hasAsm) != PackageImageValidationStatus.Ok
+            || !hasAsm)
+        {
+            return false;
+        }
+
+        DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+        DeserializeBlocksAt(buf, blockOffset, outBlocks);
+        DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+        DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+        return DeserializeAsmMetadataAtUnchecked(buf, asmOffset, outAsmMetadata);
+    }
+
+    if (!TryReadMirImageWithAsmHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount))
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    return DeserializeAsmMetadataAtUnchecked(buf, asmOffset, outAsmMetadata);
+}

@@ -1,0 +1,1759 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+module Compiler.Mir.PackageImage.Builder.SourceSurfaceManifestBuilder
+
+// Source-surface row ownership for the temporary logical-manifest accumulator.
+// Public compatibility methods remain on LogicalPackageManifestJsonBuilder while
+// this focused state is extracted family by family.
+internal struct LogicalPackageManifestJsonSourceSurfaceBuilder
+{
+    internal IrTable<bool> ModuleRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceImportRow> SourceSurfaceImportRows;
+    internal IrTable<u32[0 max]> SourceSurfaceImportFirstRows;
+    internal IrTable<u32[0 max]> SourceSurfaceImportLastRows;
+    internal IrTable<u32[0 max]> SourceSurfaceImportCounts;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceReExportRow> SourceSurfaceReExportRows;
+    internal IrTable<u32[0 max]> SourceSurfaceReExportFirstRows;
+    internal IrTable<u32[0 max]> SourceSurfaceReExportLastRows;
+    internal IrTable<u32[0 max]> SourceSurfaceReExportCounts;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeAliasRow> SourceSurfaceTypeAliasRows;
+    internal IrTable<u32[0 max]> SourceSurfaceTypeAliasFirstRows;
+    internal IrTable<u32[0 max]> SourceSurfaceTypeAliasLastRows;
+    internal IrTable<u32[0 max]> SourceSurfaceTypeAliasCounts;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeAliasGenericParameterRow>
+        SourceSurfaceTypeAliasGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeAliasComptimeGenericParameterRow>
+        SourceSurfaceTypeAliasComptimeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeRow> SourceSurfaceTypeRows;
+    internal IrTable<u32[0 max]> SourceSurfaceTypeFirstRows;
+    internal IrTable<u32[0 max]> SourceSurfaceTypeLastRows;
+    internal IrTable<u32[0 max]> SourceSurfaceTypeCounts;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeFieldRow> SourceSurfaceTypeFieldRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypePrimaryConstructorParameterRow>
+        SourceSurfaceTypePrimaryConstructorParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow> SourceSurfaceTypeEnumVariantRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantPayloadRow>
+        SourceSurfaceTypeEnumVariantPayloadRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeGenericParameterRow>
+        SourceSurfaceTypeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeComptimeGenericParameterRow>
+        SourceSurfaceTypeComptimeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceTypeImplementedTraitRow>
+        SourceSurfaceTypeImplementedTraitRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceGlobalRow> SourceSurfaceGlobalRows;
+    internal IrTable<u32[0 max]> SourceSurfaceGlobalFirstRows;
+    internal IrTable<u32[0 max]> SourceSurfaceGlobalLastRows;
+    internal IrTable<u32[0 max]> SourceSurfaceGlobalCounts;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceFunctionRow> SourceSurfaceFunctionRows;
+    internal IrTable<u32[0 max]> SourceSurfaceFunctionFirstRows;
+    internal IrTable<u32[0 max]> SourceSurfaceFunctionLastRows;
+    internal IrTable<u32[0 max]> SourceSurfaceFunctionCounts;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceFunctionParameterRow>
+        SourceSurfaceFunctionParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceFunctionGenericParameterRow>
+        SourceSurfaceFunctionGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceFunctionComptimeGenericParameterRow>
+        SourceSurfaceFunctionComptimeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonSourceSurfaceFunctionDeadParameterNameRow>
+        SourceSurfaceFunctionDeadParameterNameRows;
+
+    LogicalPackageManifestJsonSourceSurfaceBuilder()
+    {
+        self.ModuleRows = new();
+        self.SourceSurfaceImportRows = new();
+        self.SourceSurfaceImportFirstRows = new();
+        self.SourceSurfaceImportLastRows = new();
+        self.SourceSurfaceImportCounts = new();
+        self.SourceSurfaceReExportRows = new();
+        self.SourceSurfaceReExportFirstRows = new();
+        self.SourceSurfaceReExportLastRows = new();
+        self.SourceSurfaceReExportCounts = new();
+        self.SourceSurfaceTypeAliasRows = new();
+        self.SourceSurfaceTypeAliasFirstRows = new();
+        self.SourceSurfaceTypeAliasLastRows = new();
+        self.SourceSurfaceTypeAliasCounts = new();
+        self.SourceSurfaceTypeAliasGenericParameterRows = new();
+        self.SourceSurfaceTypeAliasComptimeGenericParameterRows = new();
+        self.SourceSurfaceTypeRows = new();
+        self.SourceSurfaceTypeFirstRows = new();
+        self.SourceSurfaceTypeLastRows = new();
+        self.SourceSurfaceTypeCounts = new();
+        self.SourceSurfaceTypeFieldRows = new();
+        self.SourceSurfaceTypePrimaryConstructorParameterRows = new();
+        self.SourceSurfaceTypeEnumVariantRows = new();
+        self.SourceSurfaceTypeEnumVariantPayloadRows = new();
+        self.SourceSurfaceTypeGenericParameterRows = new();
+        self.SourceSurfaceTypeComptimeGenericParameterRows = new();
+        self.SourceSurfaceTypeImplementedTraitRows = new();
+        self.SourceSurfaceGlobalRows = new();
+        self.SourceSurfaceGlobalFirstRows = new();
+        self.SourceSurfaceGlobalLastRows = new();
+        self.SourceSurfaceGlobalCounts = new();
+        self.SourceSurfaceFunctionRows = new();
+        self.SourceSurfaceFunctionFirstRows = new();
+        self.SourceSurfaceFunctionLastRows = new();
+        self.SourceSurfaceFunctionCounts = new();
+        self.SourceSurfaceFunctionParameterRows = new();
+        self.SourceSurfaceFunctionGenericParameterRows = new();
+        self.SourceSurfaceFunctionComptimeGenericParameterRows = new();
+        self.SourceSurfaceFunctionDeadParameterNameRows = new();
+    }
+
+    internal fn bool AddModule(mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self)
+    {
+        return self.ModuleRows.Add(false) != 0
+            && self.SourceSurfaceImportFirstRows.Add(0) != 0
+            && self.SourceSurfaceImportLastRows.Add(0) != 0
+            && self.SourceSurfaceImportCounts.Add(0) != 0
+            && self.SourceSurfaceReExportFirstRows.Add(0) != 0
+            && self.SourceSurfaceReExportLastRows.Add(0) != 0
+            && self.SourceSurfaceReExportCounts.Add(0) != 0
+            && self.SourceSurfaceTypeAliasFirstRows.Add(0) != 0
+            && self.SourceSurfaceTypeAliasLastRows.Add(0) != 0
+            && self.SourceSurfaceTypeAliasCounts.Add(0) != 0
+            && self.SourceSurfaceTypeFirstRows.Add(0) != 0
+            && self.SourceSurfaceTypeLastRows.Add(0) != 0
+            && self.SourceSurfaceTypeCounts.Add(0) != 0
+            && self.SourceSurfaceGlobalFirstRows.Add(0) != 0
+            && self.SourceSurfaceGlobalLastRows.Add(0) != 0
+            && self.SourceSurfaceGlobalCounts.Add(0) != 0
+            && self.SourceSurfaceFunctionFirstRows.Add(0) != 0
+            && self.SourceSurfaceFunctionLastRows.Add(0) != 0
+            && self.SourceSurfaceFunctionCounts.Add(0) != 0;
+    }
+
+    internal fn bool AddSourceSurfaceImport(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii moduleName,
+        bool isExported)
+    {
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.SourceSurfaceImportCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, moduleName, stringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceImportRow row =
+            new LogicalPackageManifestJsonSourceSurfaceImportRow()
+            {
+                ModuleNameStringIndex = stringIndex,
+                IsExported = isExported
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceImportRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.SourceSurfaceImportFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.SourceSurfaceImportLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceImportRow lastRow =
+                self.SourceSurfaceImportRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceImportRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        return self.SourceSurfaceImportLastRows.Replace(moduleRow, rowIndex)
+            && self.SourceSurfaceImportCounts.Replace(moduleRow, count + 1);
+    }
+
+    internal fn bool AddSourceSurfaceReExport(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii moduleName)
+    {
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.SourceSurfaceReExportCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, moduleName, stringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceReExportRow row =
+            new LogicalPackageManifestJsonSourceSurfaceReExportRow()
+            {
+                ModuleNameStringIndex = stringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceReExportRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.SourceSurfaceReExportFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.SourceSurfaceReExportLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceReExportRow lastRow =
+                self.SourceSurfaceReExportRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceReExportRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        return self.SourceSurfaceReExportLastRows.Replace(moduleRow, rowIndex)
+            && self.SourceSurfaceReExportCounts.Replace(moduleRow, count + 1);
+    }
+
+    internal fn bool AddSourceSurfaceTypeAlias(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii targetType,
+        out u32[0 max] typeAliasRow)
+    {
+        typeAliasRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.SourceSurfaceTypeAliasCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] targetTypeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, targetType, targetTypeStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeAliasRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeAliasRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                TargetTypeStringIndex = targetTypeStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeAliasRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.SourceSurfaceTypeAliasFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.SourceSurfaceTypeAliasLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeAliasRow lastRow =
+                self.SourceSurfaceTypeAliasRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeAliasRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.SourceSurfaceTypeAliasLastRows.Replace(moduleRow, rowIndex)
+            || !self.SourceSurfaceTypeAliasCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        typeAliasRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddSourceSurfaceTypeAliasGenericParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeAliasRow,
+        ascii name)
+    {
+        if (!self.SourceSurfaceTypeAliasRows.Contains(typeAliasRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeAliasRow aliasRow =
+            self.SourceSurfaceTypeAliasRows.Get(typeAliasRow);
+        if (aliasRow.GenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeAliasGenericParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeAliasGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeAliasGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (aliasRow.GenericParameterCount == 0)
+        {
+            aliasRow.GenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = aliasRow.GenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeAliasGenericParameterRow lastRow =
+                self.SourceSurfaceTypeAliasGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeAliasGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        aliasRow.GenericParameterLastRow = rowIndex;
+        aliasRow.GenericParameterCount = aliasRow.GenericParameterCount + 1;
+        return self.SourceSurfaceTypeAliasRows.Replace(typeAliasRow, aliasRow);
+    }
+
+    internal fn bool AddSourceSurfaceTypeAliasComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeAliasRow,
+        ascii name,
+        ascii typeKind)
+    {
+        if (!self.SourceSurfaceTypeAliasRows.Contains(typeAliasRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeAliasRow aliasRow =
+            self.SourceSurfaceTypeAliasRows.Get(typeAliasRow);
+        if (aliasRow.ComptimeGenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeAliasComptimeGenericParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeAliasComptimeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeAliasComptimeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (aliasRow.ComptimeGenericParameterCount == 0)
+        {
+            aliasRow.ComptimeGenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = aliasRow.ComptimeGenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeAliasComptimeGenericParameterRow lastRow =
+                self.SourceSurfaceTypeAliasComptimeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeAliasComptimeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        aliasRow.ComptimeGenericParameterLastRow = rowIndex;
+        aliasRow.ComptimeGenericParameterCount = aliasRow.ComptimeGenericParameterCount + 1;
+        return self.SourceSurfaceTypeAliasRows.Replace(typeAliasRow, aliasRow);
+    }
+
+    internal fn bool AddSourceSurfaceType(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        out u32[0 max] typeRow)
+    {
+        typeRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.SourceSurfaceTypeCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, manifestKind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.SourceSurfaceTypeFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.SourceSurfaceTypeLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow lastRow =
+                self.SourceSurfaceTypeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.SourceSurfaceTypeLastRows.Replace(moduleRow, rowIndex)
+            || !self.SourceSurfaceTypeCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        typeRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddSourceSurfaceTypeField(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeText,
+        ascii visibility,
+        bool hasVisibility,
+        u32[0 max] explicitOffsetBytes,
+        bool hasExplicitOffsetBytes,
+        u32[0 max] threadSafetyLawAttributeCount)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        if (typeFacts.FieldCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeText, typeStringIndex))
+        {
+            return false;
+        }
+
+        if (hasVisibility
+            && !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeFieldRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeFieldRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeStringIndex = typeStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                ThreadSafetyLawAttributeCount = threadSafetyLawAttributeCount,
+                ExplicitOffsetBytes = explicitOffsetBytes,
+                HasVisibility = hasVisibility,
+                HasExplicitOffsetBytes = hasExplicitOffsetBytes
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeFieldRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.FieldCount == 0)
+        {
+            typeFacts.FieldFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.FieldLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeFieldRow lastRow =
+                self.SourceSurfaceTypeFieldRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeFieldRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.FieldLastRow = rowIndex;
+        typeFacts.FieldCount = typeFacts.FieldCount + 1;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddSourceSurfaceTypeGenericParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        if (typeFacts.GenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeGenericParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.GenericParameterCount == 0)
+        {
+            typeFacts.GenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.GenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeGenericParameterRow lastRow =
+                self.SourceSurfaceTypeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.GenericParameterLastRow = rowIndex;
+        typeFacts.GenericParameterCount = typeFacts.GenericParameterCount + 1;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddSourceSurfaceTypeComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeKind)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        if (typeFacts.ComptimeGenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeComptimeGenericParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeComptimeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeComptimeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.ComptimeGenericParameterCount == 0)
+        {
+            typeFacts.ComptimeGenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.ComptimeGenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeComptimeGenericParameterRow lastRow =
+                self.SourceSurfaceTypeComptimeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeComptimeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.ComptimeGenericParameterLastRow = rowIndex;
+        typeFacts.ComptimeGenericParameterCount = typeFacts.ComptimeGenericParameterCount + 1;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddSourceSurfaceTypePrimaryConstructorParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeText,
+        ascii rawPointerElementCountExpression,
+        bool hasRawPointerElementCountExpression,
+        bool isDisjoint,
+        bool isConst)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        if (typeFacts.PrimaryConstructorParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] rawCountStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeText, typeStringIndex))
+        {
+            return false;
+        }
+
+        if (hasRawPointerElementCountExpression
+            && !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                rawPointerElementCountExpression,
+                rawCountStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypePrimaryConstructorParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypePrimaryConstructorParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeStringIndex = typeStringIndex,
+                RawPointerElementCountExpressionStringIndex = rawCountStringIndex,
+                HasRawPointerElementCountExpression = hasRawPointerElementCountExpression,
+                IsDisjoint = isDisjoint,
+                IsConst = isConst
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypePrimaryConstructorParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.PrimaryConstructorParameterCount == 0)
+        {
+            typeFacts.PrimaryConstructorParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.PrimaryConstructorParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypePrimaryConstructorParameterRow lastRow =
+                self.SourceSurfaceTypePrimaryConstructorParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypePrimaryConstructorParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.PrimaryConstructorParameterLastRow = rowIndex;
+        typeFacts.PrimaryConstructorParameterCount = typeFacts.PrimaryConstructorParameterCount + 1;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddSourceSurfaceTypeEnumVariant(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        bool usesNamedFields,
+        ascii role,
+        bool hasRole,
+        ascii absorbsErrorType,
+        bool hasAbsorbsErrorType,
+        out u32[0 max] variantRow)
+    {
+        variantRow = 0;
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        if (typeFacts.VariantCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] roleStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] absorbsErrorTypeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        if (hasRole && !LogicalPackageImageStringTableBuilderTryAdd(strings, role, roleStringIndex))
+        {
+            return false;
+        }
+
+        if (hasAbsorbsErrorType
+            && !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                absorbsErrorType,
+                absorbsErrorTypeStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow()
+            {
+                NameStringIndex = nameStringIndex,
+                RoleStringIndex = roleStringIndex,
+                AbsorbsErrorTypeStringIndex = absorbsErrorTypeStringIndex,
+                UsesNamedFields = usesNamedFields,
+                HasRole = hasRole,
+                HasAbsorbsErrorType = hasAbsorbsErrorType
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeEnumVariantRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.VariantCount == 0)
+        {
+            typeFacts.VariantFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.VariantLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow lastRow =
+                self.SourceSurfaceTypeEnumVariantRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeEnumVariantRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.VariantLastRow = rowIndex;
+        typeFacts.VariantCount = typeFacts.VariantCount + 1;
+        if (!self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts))
+        {
+            return false;
+        }
+
+        variantRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddSourceSurfaceTypeEnumVariantPayload(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] variantRow,
+        ascii name,
+        bool hasName,
+        ascii typeText)
+    {
+        if (!self.SourceSurfaceTypeEnumVariantRows.Contains(variantRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantRow variantFacts =
+            self.SourceSurfaceTypeEnumVariantRows.Get(variantRow);
+        if (variantFacts.PayloadCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, typeText, typeStringIndex))
+        {
+            return false;
+        }
+
+        if (hasName && !LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantPayloadRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantPayloadRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeStringIndex = typeStringIndex,
+                HasName = hasName
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeEnumVariantPayloadRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (variantFacts.PayloadCount == 0)
+        {
+            variantFacts.PayloadFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = variantFacts.PayloadLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeEnumVariantPayloadRow lastRow =
+                self.SourceSurfaceTypeEnumVariantPayloadRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeEnumVariantPayloadRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        variantFacts.PayloadLastRow = rowIndex;
+        variantFacts.PayloadCount = variantFacts.PayloadCount + 1;
+        return self.SourceSurfaceTypeEnumVariantRows.Replace(variantRow, variantFacts);
+    }
+
+    internal fn bool AddSourceSurfaceTypeImplementedTrait(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii traitText)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        if (typeFacts.ImplementedTraitCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] traitStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, traitText, traitStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceTypeImplementedTraitRow row =
+            new LogicalPackageManifestJsonSourceSurfaceTypeImplementedTraitRow()
+            {
+                TraitStringIndex = traitStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceTypeImplementedTraitRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.ImplementedTraitCount == 0)
+        {
+            typeFacts.ImplementedTraitFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.ImplementedTraitLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceTypeImplementedTraitRow lastRow =
+                self.SourceSurfaceTypeImplementedTraitRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceTypeImplementedTraitRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.ImplementedTraitLastRow = rowIndex;
+        typeFacts.ImplementedTraitCount = typeFacts.ImplementedTraitCount + 1;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetSourceSurfaceTypeCountFacts(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        u32[0 max] methodCount,
+        u32[0 max] constructorCount,
+        u32[0 max] associatedTypeCount,
+        u32[0 max] threadSafetyLawAttributeCount)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        typeFacts.MethodCount = methodCount;
+        typeFacts.ConstructorCount = constructorCount;
+        typeFacts.AssociatedTypeCount = associatedTypeCount;
+        typeFacts.ThreadSafetyLawAttributeCount = threadSafetyLawAttributeCount;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetSourceSurfaceTypeBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii backendOptimizationMode)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, backendOptimizationMode, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        typeFacts.BackendOptimizationModeStringIndex = stringIndex;
+        typeFacts.HasBackendOptimizationMode = true;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetSourceSurfaceTypeStructLayout(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii structLayout)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, structLayout, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        typeFacts.StructLayoutStringIndex = stringIndex;
+        typeFacts.HasStructLayout = true;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetSourceSurfaceTypePackBytes(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        u32[0 max] packBytes)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        typeFacts.PackBytes = packBytes;
+        typeFacts.HasPackBytes = true;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetSourceSurfaceTypeAlignBytes(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        u32[0 max] alignBytes)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        typeFacts.AlignBytes = alignBytes;
+        typeFacts.HasAlignBytes = true;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetSourceSurfaceTypeFlags(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        bool hasDestructor,
+        bool isDynTrait)
+    {
+        if (!self.SourceSurfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceTypeRow typeFacts = self.SourceSurfaceTypeRows.Get(typeRow);
+        typeFacts.HasDestructor = hasDestructor;
+        typeFacts.IsDynTrait = isDynTrait;
+        return self.SourceSurfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddSourceSurfaceGlobal(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        ascii typeText,
+        bool isMutable,
+        bool hasConstantInitializer)
+    {
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.SourceSurfaceGlobalCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, manifestKind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeText, typeStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceGlobalRow row =
+            new LogicalPackageManifestJsonSourceSurfaceGlobalRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                KindStringIndex = kindStringIndex,
+                TypeStringIndex = typeStringIndex,
+                IsMutable = isMutable,
+                HasConstantInitializer = hasConstantInitializer
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceGlobalRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.SourceSurfaceGlobalFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.SourceSurfaceGlobalLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceGlobalRow lastRow =
+                self.SourceSurfaceGlobalRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceGlobalRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        return self.SourceSurfaceGlobalLastRows.Replace(moduleRow, rowIndex)
+            && self.SourceSurfaceGlobalCounts.Replace(moduleRow, count + 1);
+    }
+
+    internal fn bool AddSourceSurfaceFunction(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii symbolName,
+        ascii manifestKind,
+        ascii returnType,
+        bool isFfi,
+        bool isStrictFp,
+        bool usesFastCallingConvention,
+        out u32[0 max] functionRow)
+    {
+        functionRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.SourceSurfaceFunctionCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] symbolNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] returnTypeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, symbolName, symbolNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, manifestKind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, returnType, returnTypeStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            new LogicalPackageManifestJsonSourceSurfaceFunctionRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                SymbolNameStringIndex = symbolNameStringIndex,
+                KindStringIndex = kindStringIndex,
+                ReturnTypeStringIndex = returnTypeStringIndex,
+                IsFfi = isFfi,
+                IsStrictFp = isStrictFp,
+                UsesFastCallingConvention = usesFastCallingConvention
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceFunctionRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.SourceSurfaceFunctionFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.SourceSurfaceFunctionLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow lastRow =
+                self.SourceSurfaceFunctionRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceFunctionRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.SourceSurfaceFunctionLastRows.Replace(moduleRow, rowIndex)
+            || !self.SourceSurfaceFunctionCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        functionRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetSourceSurfaceFunctionFlags(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        bool hasAsm,
+        bool isHot,
+        bool isCold,
+        bool hasExplicitInlinePreference,
+        bool isUnsafe,
+        bool isVarargs,
+        bool isTailCallable)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow) || (isHot && isCold))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        row.HasAsm = hasAsm;
+        row.IsHot = isHot;
+        row.IsCold = isCold;
+        row.HasExplicitInlinePreference = hasExplicitInlinePreference;
+        row.IsUnsafe = isUnsafe;
+        row.IsVarargs = isVarargs;
+        row.IsTailCallable = isTailCallable;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetSourceSurfaceFunctionInlinePreference(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii inlinePreference)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, inlinePreference, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        row.InlinePreferenceStringIndex = stringIndex;
+        row.HasInlinePreference = true;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetSourceSurfaceFunctionFfiAbi(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii ffiAbi)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, ffiAbi, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        row.FfiAbiStringIndex = stringIndex;
+        row.HasFfiAbi = true;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetSourceSurfaceFunctionBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii backendOptimizationMode)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, backendOptimizationMode, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        row.BackendOptimizationModeStringIndex = stringIndex;
+        row.HasBackendOptimizationMode = true;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetSourceSurfaceFunctionLinkName(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii linkName)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, linkName, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        row.LinkNameStringIndex = stringIndex;
+        row.HasLinkName = true;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetSourceSurfaceFunctionCountFacts(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        u32[0 max] typeParameterConstraintCount,
+        u32[0 max] threadSafetyLawPredicateCount,
+        u32[0 max] valueContractCount,
+        u32[0 max] disjointParameterGroupCount,
+        u32[0 max] overlapParameterGroupCount,
+        u32[0 max] sameParameterGroupCount)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow row =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        row.TypeParameterConstraintCount = typeParameterConstraintCount;
+        row.ThreadSafetyLawPredicateCount = threadSafetyLawPredicateCount;
+        row.ValueContractCount = valueContractCount;
+        row.DisjointParameterGroupCount = disjointParameterGroupCount;
+        row.OverlapParameterGroupCount = overlapParameterGroupCount;
+        row.SameParameterGroupCount = sameParameterGroupCount;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool AddSourceSurfaceFunctionParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeText,
+        ascii rawPointerElementCountExpression,
+        bool hasRawPointerElementCountExpression,
+        bool isDisjoint,
+        bool isConst)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow function =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        if (function.ParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] rawCountStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeText, typeStringIndex)
+            || (hasRawPointerElementCountExpression
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    rawPointerElementCountExpression,
+                    rawCountStringIndex)))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceFunctionParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceFunctionParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeStringIndex = typeStringIndex,
+                RawPointerElementCountExpressionStringIndex = rawCountStringIndex,
+                HasRawPointerElementCountExpression = hasRawPointerElementCountExpression,
+                IsDisjoint = isDisjoint,
+                IsConst = isConst
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceFunctionParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.ParameterCount == 0)
+        {
+            function.ParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.ParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceFunctionParameterRow lastRow =
+                self.SourceSurfaceFunctionParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceFunctionParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.ParameterLastRow = rowIndex;
+        function.ParameterCount = function.ParameterCount + 1;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddSourceSurfaceFunctionGenericParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow function =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        if (function.GenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceFunctionGenericParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceFunctionGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceFunctionGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.GenericParameterCount == 0)
+        {
+            function.GenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.GenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceFunctionGenericParameterRow lastRow =
+                self.SourceSurfaceFunctionGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceFunctionGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.GenericParameterLastRow = rowIndex;
+        function.GenericParameterCount = function.GenericParameterCount + 1;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddSourceSurfaceFunctionComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeKind)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow function =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        if (function.ComptimeGenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceFunctionComptimeGenericParameterRow row =
+            new LogicalPackageManifestJsonSourceSurfaceFunctionComptimeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceFunctionComptimeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.ComptimeGenericParameterCount == 0)
+        {
+            function.ComptimeGenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.ComptimeGenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceFunctionComptimeGenericParameterRow lastRow =
+                self.SourceSurfaceFunctionComptimeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceFunctionComptimeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.ComptimeGenericParameterLastRow = rowIndex;
+        function.ComptimeGenericParameterCount = function.ComptimeGenericParameterCount + 1;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddSourceSurfaceFunctionPointeeDeadOnReturnParameterName(
+        mut borrow LogicalPackageManifestJsonSourceSurfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        if (!self.SourceSurfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonSourceSurfaceFunctionRow function =
+            self.SourceSurfaceFunctionRows.Get(functionRow);
+        if (function.PointeeDeadOnReturnParameterNameCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonSourceSurfaceFunctionDeadParameterNameRow row =
+            new LogicalPackageManifestJsonSourceSurfaceFunctionDeadParameterNameRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.SourceSurfaceFunctionDeadParameterNameRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.PointeeDeadOnReturnParameterNameCount == 0)
+        {
+            function.PointeeDeadOnReturnParameterNameFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.PointeeDeadOnReturnParameterNameLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonSourceSurfaceFunctionDeadParameterNameRow lastRow =
+                self.SourceSurfaceFunctionDeadParameterNameRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.SourceSurfaceFunctionDeadParameterNameRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.PointeeDeadOnReturnParameterNameLastRow = rowIndex;
+        function.PointeeDeadOnReturnParameterNameCount =
+            function.PointeeDeadOnReturnParameterNameCount + 1;
+        return self.SourceSurfaceFunctionRows.Replace(functionRow, function);
+    }
+}

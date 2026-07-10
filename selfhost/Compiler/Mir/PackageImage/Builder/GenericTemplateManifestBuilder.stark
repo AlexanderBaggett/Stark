@@ -1,0 +1,4972 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.ManifestTypeReferenceBuilder
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+module Compiler.Mir.PackageImage.Builder.GenericTemplateManifestBuilder
+
+// Generic-template row ownership for the temporary logical-manifest accumulator.
+internal struct LogicalPackageManifestJsonGenericTemplateBuilder
+{
+    internal IrTable<bool> ModuleRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateFunctionRow>
+        GenericTemplateFunctionRows;
+    internal IrTable<u32[0 max]> GenericTemplateFunctionFirstRows;
+    internal IrTable<u32[0 max]> GenericTemplateFunctionLastRows;
+    internal IrTable<u32[0 max]> GenericTemplateFunctionCounts;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow>
+        GenericTemplateDeferredFunctionInstantiationRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow>
+        GenericTemplateDeferredFunctionInstantiationTypeArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow>
+        GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow>
+        GenericTemplateDeferredTypeInstantiationRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateObjectCreationRow>
+        GenericTemplateObjectCreationRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow>
+        GenericTemplateObjectInitializerMemberRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateEnumRow>
+        GenericTemplateEnumConstructorRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateEnumMemberRow>
+        GenericTemplateEnumConstructorMemberRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateEnumRow>
+        GenericTemplateEnumCallRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateEnumRow>
+        GenericTemplateEnumValueRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateEnumRow>
+        GenericTemplateEnumPatternRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateEnumMemberRow>
+        GenericTemplateEnumPatternMemberRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateCallSignatureRow>
+        GenericTemplateCallSignatureRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateCallParameterRow>
+        GenericTemplateCallParameterRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow>
+        GenericTemplateCallTypeArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow>
+        GenericTemplateCallComptimeValueArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateBoundOperationRow>
+        GenericTemplateBoundOperationRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow>
+        GenericTemplateBoundOperationCallArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow>
+        GenericTemplateBoundOperationTypePayloadRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateBoundOperationTextPayloadRow>
+        GenericTemplateBoundOperationTextPayloadRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateBoundOperationU32PayloadRow>
+        GenericTemplateBoundOperationU32PayloadRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateBoundOperationBoolPayloadRow>
+        GenericTemplateBoundOperationBoolPayloadRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateStatementRow>
+        GenericTemplateStatementRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateExpressionRow>
+        GenericTemplateExpressionRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateExpressionNameListRow>
+        GenericTemplateExpressionMemberNameRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateExpressionNameListRow>
+        GenericTemplateExpressionOperatorNameRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow>
+        GenericTemplateExpressionTypeArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow>
+        GenericTemplateExpressionComptimeValueArgumentRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplateSwitchCaseRow>
+        GenericTemplateSwitchCaseRows;
+    internal IrTable<LogicalPackageManifestJsonGenericTemplatePatternRow>
+        GenericTemplatePatternRows;
+
+    LogicalPackageManifestJsonGenericTemplateBuilder()
+    {
+        self.ModuleRows = new();
+        self.GenericTemplateFunctionRows = new();
+        self.GenericTemplateFunctionFirstRows = new();
+        self.GenericTemplateFunctionLastRows = new();
+        self.GenericTemplateFunctionCounts = new();
+        self.GenericTemplateDeferredFunctionInstantiationRows = new();
+        self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows = new();
+        self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows = new();
+        self.GenericTemplateDeferredTypeInstantiationRows = new();
+        self.GenericTemplateObjectCreationRows = new();
+        self.GenericTemplateObjectInitializerMemberRows = new();
+        self.GenericTemplateEnumConstructorRows = new();
+        self.GenericTemplateEnumConstructorMemberRows = new();
+        self.GenericTemplateEnumCallRows = new();
+        self.GenericTemplateEnumValueRows = new();
+        self.GenericTemplateEnumPatternRows = new();
+        self.GenericTemplateEnumPatternMemberRows = new();
+        self.GenericTemplateCallSignatureRows = new();
+        self.GenericTemplateCallParameterRows = new();
+        self.GenericTemplateCallTypeArgumentRows = new();
+        self.GenericTemplateCallComptimeValueArgumentRows = new();
+        self.GenericTemplateBoundOperationRows = new();
+        self.GenericTemplateBoundOperationCallArgumentRows = new();
+        self.GenericTemplateBoundOperationTypePayloadRows = new();
+        self.GenericTemplateBoundOperationTextPayloadRows = new();
+        self.GenericTemplateBoundOperationU32PayloadRows = new();
+        self.GenericTemplateBoundOperationBoolPayloadRows = new();
+        self.GenericTemplateStatementRows = new();
+        self.GenericTemplateExpressionRows = new();
+        self.GenericTemplateExpressionMemberNameRows = new();
+        self.GenericTemplateExpressionOperatorNameRows = new();
+        self.GenericTemplateExpressionTypeArgumentRows = new();
+        self.GenericTemplateExpressionComptimeValueArgumentRows = new();
+        self.GenericTemplateSwitchCaseRows = new();
+        self.GenericTemplatePatternRows = new();
+    }
+
+    internal fn bool AddModule(mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self)
+    {
+        return self.ModuleRows.Add(false) != 0
+            && self.GenericTemplateFunctionFirstRows.Add(0) != 0
+            && self.GenericTemplateFunctionLastRows.Add(0) != 0
+            && self.GenericTemplateFunctionCounts.Add(0) != 0;
+    }
+
+    internal fn bool AddGenericTemplateFunction(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii qualifiedResolvedName,
+        ascii qualifiedName,
+        ascii overloadKey,
+        out u32[0 max] functionTemplateRow)
+    {
+        functionTemplateRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.GenericTemplateFunctionCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedResolvedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] overloadKeyStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedResolvedName,
+                qualifiedResolvedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedName,
+                qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                overloadKey,
+                overloadKeyStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            new LogicalPackageManifestJsonGenericTemplateFunctionRow()
+            {
+                QualifiedResolvedNameStringIndex = qualifiedResolvedNameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                OverloadKeyStringIndex = overloadKeyStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateFunctionRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            if (!self.GenericTemplateFunctionFirstRows.Replace(moduleRow, rowIndex))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = self.GenericTemplateFunctionLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow lastRow =
+                self.GenericTemplateFunctionRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateFunctionRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.GenericTemplateFunctionLastRows.Replace(moduleRow, rowIndex)
+            || !self.GenericTemplateFunctionCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        functionTemplateRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateFunctionBodyText(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii bodyText)
+    {
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] bodyTextStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, bodyText, bodyTextStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        row.BodyTextStringIndex = bodyTextStringIndex;
+        row.HasBodyText = true;
+        return self.GenericTemplateFunctionRows.Replace(functionTemplateRow, row);
+    }
+
+    internal fn bool SetGenericTemplateFunctionBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii backendOptimizationMode)
+    {
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] modeStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            backendOptimizationMode,
+            modeStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        row.BackendOptimizationModeStringIndex = modeStringIndex;
+        row.HasBackendOptimizationMode = true;
+        return self.GenericTemplateFunctionRows.Replace(functionTemplateRow, row);
+    }
+
+    internal fn bool SetGenericTemplateFunctionTopLevelStatementCount(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] topLevelStatementCount)
+    {
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        row.TopLevelStatementCount = topLevelStatementCount;
+        row.HasTopLevelStatementCount = true;
+        return self.GenericTemplateFunctionRows.Replace(functionTemplateRow, row);
+    }
+
+    internal fn bool SetGenericTemplateFunctionEstimatedBodyCost(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] estimatedBodyCost)
+    {
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        row.EstimatedBodyCost = estimatedBodyCost;
+        row.HasEstimatedBodyCost = true;
+        return self.GenericTemplateFunctionRows.Replace(functionTemplateRow, row);
+    }
+
+    internal fn bool SetGenericTemplateFunctionSectionPresence(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        bool hasSemantics,
+        bool hasTypedBody)
+    {
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow row =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        row.HasSemantics = hasSemantics;
+        row.HasTypedBody = hasTypedBody;
+        return self.GenericTemplateFunctionRows.Replace(functionTemplateRow, row);
+    }
+
+    internal fn bool AddGenericTemplateDeferredFunctionInstantiation(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii calleeTemplateName,
+        out u32[0 max] instantiationRow)
+    {
+        instantiationRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.DeferredFunctionInstantiationCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] calleeTemplateNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            calleeTemplateName,
+            calleeTemplateNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow row =
+            new LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                CalleeTemplateNameStringIndex = calleeTemplateNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateDeferredFunctionInstantiationRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.DeferredFunctionInstantiationCount == 0)
+        {
+            functionRow.FirstDeferredFunctionInstantiationRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastDeferredFunctionInstantiationRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow lastRow =
+                self.GenericTemplateDeferredFunctionInstantiationRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateDeferredFunctionInstantiationRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastDeferredFunctionInstantiationRow = rowIndex;
+        functionRow.DeferredFunctionInstantiationCount =
+            functionRow.DeferredFunctionInstantiationCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        instantiationRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateDeferredFunctionInstantiationTypeArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] instantiationRow,
+        ascii typeKind,
+        out u32[0 max] typeArgumentRow)
+    {
+        typeArgumentRow = 0;
+        if (!self.GenericTemplateDeferredFunctionInstantiationRows.Contains(instantiationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow instantiation =
+            self.GenericTemplateDeferredFunctionInstantiationRows.Get(instantiationRow);
+        if (instantiation.TypeArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow()
+            {
+                InstantiationRow = instantiationRow,
+                TypeReference = typeReference
+            };
+        stack u32[0 max] rowIndex =
+            self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (instantiation.TypeArgumentCount == 0)
+        {
+            instantiation.FirstTypeArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = instantiation.LastTypeArgumentRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow lastRow =
+                self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Replace(
+                    lastRowIndex,
+                    lastRow))
+            {
+                return false;
+            }
+        }
+
+        instantiation.LastTypeArgumentRow = rowIndex;
+        instantiation.TypeArgumentCount = instantiation.TypeArgumentCount + 1;
+        if (!self.GenericTemplateDeferredFunctionInstantiationRows.Replace(
+                instantiationRow,
+                instantiation))
+        {
+            return false;
+        }
+
+        typeArgumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateDeferredFunctionInstantiationTypeArgumentName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeArgumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Contains(
+                typeArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow row =
+            self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Get(typeArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Replace(
+            typeArgumentRow,
+            row);
+    }
+
+    internal fn bool SetGenericTemplateDeferredFunctionInstantiationTypeArgumentIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeArgumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Contains(
+                typeArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationTypeArgumentRow row =
+            self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Get(typeArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateDeferredFunctionInstantiationTypeArgumentRows.Replace(
+            typeArgumentRow,
+            row);
+    }
+
+    internal fn bool AddGenericTemplateDeferredFunctionInstantiationComptimeValueArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] instantiationRow,
+        ascii parameterName,
+        ascii integerValue,
+        ascii typeKind,
+        bool isSymbolic,
+        out u32[0 max] argumentRow)
+    {
+        argumentRow = 0;
+        if (!self.GenericTemplateDeferredFunctionInstantiationRows.Contains(instantiationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationRow instantiation =
+            self.GenericTemplateDeferredFunctionInstantiationRows.Get(instantiationRow);
+        if (instantiation.ComptimeValueArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] parameterNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] integerValueStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                parameterName,
+                parameterNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                integerValue,
+                integerValueStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                typeKind,
+                typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow()
+            {
+                InstantiationRow = instantiationRow,
+                ParameterNameStringIndex = parameterNameStringIndex,
+                IntegerValueStringIndex = integerValueStringIndex,
+                TypeReference = typeReference,
+                IsSymbolic = isSymbolic
+            };
+        stack u32[0 max] rowIndex =
+            self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (instantiation.ComptimeValueArgumentCount == 0)
+        {
+            instantiation.FirstComptimeValueArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = instantiation.LastComptimeValueArgumentRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow lastRow =
+                self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Get(
+                    lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Replace(
+                    lastRowIndex,
+                    lastRow))
+            {
+                return false;
+            }
+        }
+
+        instantiation.LastComptimeValueArgumentRow = rowIndex;
+        instantiation.ComptimeValueArgumentCount = instantiation.ComptimeValueArgumentCount + 1;
+        if (!self.GenericTemplateDeferredFunctionInstantiationRows.Replace(
+                instantiationRow,
+                instantiation))
+        {
+            return false;
+        }
+
+        argumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Contains(
+                argumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow row =
+            self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Get(
+                argumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Replace(
+            argumentRow,
+            row);
+    }
+
+    internal fn bool SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Contains(
+                argumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow row =
+            self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Get(
+                argumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Replace(
+            argumentRow,
+            row);
+    }
+
+    internal fn bool SetGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentSymbolicSourceName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        ascii symbolicSourceName)
+    {
+        if (!self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Contains(
+                argumentRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] symbolicSourceNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            symbolicSourceName,
+            symbolicSourceNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRow row =
+            self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Get(
+                argumentRow);
+        row.SymbolicSourceNameStringIndex = symbolicSourceNameStringIndex;
+        row.HasSymbolicSourceName = true;
+        return self.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentRows.Replace(
+            argumentRow,
+            row);
+    }
+
+    internal fn bool AddGenericTemplateDeferredTypeInstantiation(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii typeKind,
+        out u32[0 max] instantiationRow)
+    {
+        instantiationRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.DeferredTypeInstantiationCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow row =
+            new LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                TypeReference = typeReference
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateDeferredTypeInstantiationRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.DeferredTypeInstantiationCount == 0)
+        {
+            functionRow.FirstDeferredTypeInstantiationRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastDeferredTypeInstantiationRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow lastRow =
+                self.GenericTemplateDeferredTypeInstantiationRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateDeferredTypeInstantiationRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastDeferredTypeInstantiationRow = rowIndex;
+        functionRow.DeferredTypeInstantiationCount = functionRow.DeferredTypeInstantiationCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        instantiationRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateDeferredTypeInstantiationTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] instantiationRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateDeferredTypeInstantiationRows.Contains(instantiationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow row =
+            self.GenericTemplateDeferredTypeInstantiationRows.Get(instantiationRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateDeferredTypeInstantiationRows.Replace(instantiationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateDeferredTypeInstantiationTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] instantiationRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateDeferredTypeInstantiationRows.Contains(instantiationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateDeferredTypeInstantiationRow row =
+            self.GenericTemplateDeferredTypeInstantiationRows.Get(instantiationRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateDeferredTypeInstantiationRows.Replace(instantiationRow, row);
+    }
+
+    internal fn bool AddGenericTemplateObjectCreation(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii createdTypeKind,
+        out u32[0 max] objectCreationRow)
+    {
+        objectCreationRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.ObjectCreationCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor createdType = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            createdTypeKind,
+            createdType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateObjectCreationRow row =
+            new LogicalPackageManifestJsonGenericTemplateObjectCreationRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                CreatedType = createdType
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateObjectCreationRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.ObjectCreationCount == 0)
+        {
+            functionRow.FirstObjectCreationRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastObjectCreationRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow lastRow =
+                self.GenericTemplateObjectCreationRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateObjectCreationRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastObjectCreationRow = rowIndex;
+        functionRow.ObjectCreationCount = functionRow.ObjectCreationCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        objectCreationRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateObjectCreationCreatedTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] objectCreationRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateObjectCreationRows.Contains(objectCreationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow row =
+            self.GenericTemplateObjectCreationRows.Get(objectCreationRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.CreatedType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateObjectCreationRows.Replace(objectCreationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateObjectCreationCreatedTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] objectCreationRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateObjectCreationRows.Contains(objectCreationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow row =
+            self.GenericTemplateObjectCreationRows.Get(objectCreationRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.CreatedType,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateObjectCreationRows.Replace(objectCreationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateObjectCreationStorageSelector(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] objectCreationRow,
+        u32[0 max] storageSelector)
+    {
+        if (!self.GenericTemplateObjectCreationRows.Contains(objectCreationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow row =
+            self.GenericTemplateObjectCreationRows.Get(objectCreationRow);
+        row.StorageSelector = storageSelector;
+        row.HasStorageSelector = true;
+        return self.GenericTemplateObjectCreationRows.Replace(objectCreationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateObjectCreationExpressionText(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] objectCreationRow,
+        ascii expressionText)
+    {
+        if (!self.GenericTemplateObjectCreationRows.Contains(objectCreationRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] textStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, expressionText, textStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow row =
+            self.GenericTemplateObjectCreationRows.Get(objectCreationRow);
+        row.ExpressionTextStringIndex = textStringIndex;
+        row.HasExpressionText = true;
+        return self.GenericTemplateObjectCreationRows.Replace(objectCreationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateObjectCreationConstructor(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] objectCreationRow,
+        ascii constructorTypeName,
+        u32[0 max] parameterCount,
+        bool isPrimaryShape)
+    {
+        if (!self.GenericTemplateObjectCreationRows.Contains(objectCreationRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] constructorTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            constructorTypeName,
+            constructorTypeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow row =
+            self.GenericTemplateObjectCreationRows.Get(objectCreationRow);
+        row.ConstructorTypeNameStringIndex = constructorTypeNameStringIndex;
+        row.ConstructorParameterCount = parameterCount;
+        row.ConstructorIsPrimaryShape = isPrimaryShape;
+        row.HasConstructor = true;
+        return self.GenericTemplateObjectCreationRows.Replace(objectCreationRow, row);
+    }
+
+    internal fn bool AddGenericTemplateObjectInitializerMember(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] objectCreationRow,
+        ascii fieldName,
+        u32[0 max] fieldIndex,
+        ascii fieldTypeKind,
+        out u32[0 max] memberRow)
+    {
+        memberRow = 0;
+        if (!self.GenericTemplateObjectCreationRows.Contains(objectCreationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectCreationRow objectCreation =
+            self.GenericTemplateObjectCreationRows.Get(objectCreationRow);
+        if (objectCreation.InitializerMemberCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] fieldNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor fieldType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                fieldName,
+                fieldNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                fieldTypeKind,
+                fieldType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow row =
+            new LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow()
+            {
+                ObjectCreationRow = objectCreationRow,
+                FieldNameStringIndex = fieldNameStringIndex,
+                FieldIndex = fieldIndex,
+                FieldType = fieldType
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateObjectInitializerMemberRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (objectCreation.InitializerMemberCount == 0)
+        {
+            objectCreation.FirstInitializerMemberRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = objectCreation.LastInitializerMemberRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow lastRow =
+                self.GenericTemplateObjectInitializerMemberRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateObjectInitializerMemberRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        objectCreation.LastInitializerMemberRow = rowIndex;
+        objectCreation.InitializerMemberCount = objectCreation.InitializerMemberCount + 1;
+        if (!self.GenericTemplateObjectCreationRows.Replace(objectCreationRow, objectCreation))
+        {
+            return false;
+        }
+
+        memberRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateObjectInitializerMemberFieldTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] memberRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateObjectInitializerMemberRows.Contains(memberRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow row =
+            self.GenericTemplateObjectInitializerMemberRows.Get(memberRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.FieldType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateObjectInitializerMemberRows.Replace(memberRow, row);
+    }
+
+    internal fn bool SetGenericTemplateObjectInitializerMemberFieldTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] memberRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateObjectInitializerMemberRows.Contains(memberRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateObjectInitializerMemberRow row =
+            self.GenericTemplateObjectInitializerMemberRows.Get(memberRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.FieldType,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateObjectInitializerMemberRows.Replace(memberRow, row);
+    }
+
+    internal fn bool AddGenericTemplateEnumConstructor(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] constructorRow)
+    {
+        constructorRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.EnumConstructorCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor enumType = new();
+        stack mut u32[0 max] variantNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(strings, enumTypeKind, enumType)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                variantName,
+                variantNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            new LogicalPackageManifestJsonGenericTemplateEnumRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                PublishedOrdinal = publishedOrdinal,
+                EnumType = enumType,
+                VariantNameStringIndex = variantNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateEnumConstructorRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.EnumConstructorCount == 0)
+        {
+            functionRow.FirstEnumConstructorRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastEnumConstructorRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateEnumRow lastRow =
+                self.GenericTemplateEnumConstructorRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateEnumConstructorRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastEnumConstructorRow = rowIndex;
+        functionRow.EnumConstructorCount = functionRow.EnumConstructorCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        constructorRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateEnumConstructorTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] constructorRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateEnumConstructorRows.Contains(constructorRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            self.GenericTemplateEnumConstructorRows.Get(constructorRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, row.EnumType, name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumConstructorRows.Replace(constructorRow, row);
+    }
+
+    internal fn bool AddGenericTemplateEnumConstructorMember(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] constructorRow,
+        ascii fieldName,
+        u32[0 max] fieldIndex,
+        ascii fieldTypeKind,
+        out u32[0 max] memberRow)
+    {
+        memberRow = 0;
+        if (!self.GenericTemplateEnumConstructorRows.Contains(constructorRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumRow constructor =
+            self.GenericTemplateEnumConstructorRows.Get(constructorRow);
+        if (constructor.MemberCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] fieldNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor fieldType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                fieldName,
+                fieldNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                fieldTypeKind,
+                fieldType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateEnumMemberRow row =
+            new LogicalPackageManifestJsonGenericTemplateEnumMemberRow()
+            {
+                EnumRow = constructorRow,
+                FieldNameStringIndex = fieldNameStringIndex,
+                FieldIndex = fieldIndex,
+                FieldType = fieldType
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateEnumConstructorMemberRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (constructor.MemberCount == 0)
+        {
+            constructor.FirstMemberRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = constructor.LastMemberRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateEnumMemberRow lastRow =
+                self.GenericTemplateEnumConstructorMemberRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateEnumConstructorMemberRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        constructor.LastMemberRow = rowIndex;
+        constructor.MemberCount = constructor.MemberCount + 1;
+        if (!self.GenericTemplateEnumConstructorRows.Replace(constructorRow, constructor))
+        {
+            return false;
+        }
+
+        memberRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateEnumConstructorMemberFieldTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] memberRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateEnumConstructorMemberRows.Contains(memberRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumMemberRow row =
+            self.GenericTemplateEnumConstructorMemberRows.Get(memberRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.FieldType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumConstructorMemberRows.Replace(memberRow, row);
+    }
+
+    internal fn bool SetGenericTemplateEnumConstructorMemberFieldTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] memberRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateEnumConstructorMemberRows.Contains(memberRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumMemberRow row =
+            self.GenericTemplateEnumConstructorMemberRows.Get(memberRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.FieldType,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumConstructorMemberRows.Replace(memberRow, row);
+    }
+
+    internal fn bool AddGenericTemplateEnumCall(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] callRow)
+    {
+        callRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.EnumCallCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor enumType = new();
+        stack mut u32[0 max] variantNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(strings, enumTypeKind, enumType)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                variantName,
+                variantNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            new LogicalPackageManifestJsonGenericTemplateEnumRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                PublishedOrdinal = publishedOrdinal,
+                EnumType = enumType,
+                VariantNameStringIndex = variantNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateEnumCallRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.EnumCallCount == 0)
+        {
+            functionRow.FirstEnumCallRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastEnumCallRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateEnumRow lastRow =
+                self.GenericTemplateEnumCallRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateEnumCallRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastEnumCallRow = rowIndex;
+        functionRow.EnumCallCount = functionRow.EnumCallCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        callRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateEnumCallTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateEnumCallRows.Contains(callRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            self.GenericTemplateEnumCallRows.Get(callRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, row.EnumType, name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumCallRows.Replace(callRow, row);
+    }
+
+    internal fn bool AddGenericTemplateEnumValue(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] valueRow)
+    {
+        valueRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.EnumValueCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor enumType = new();
+        stack mut u32[0 max] variantNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(strings, enumTypeKind, enumType)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                variantName,
+                variantNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            new LogicalPackageManifestJsonGenericTemplateEnumRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                PublishedOrdinal = publishedOrdinal,
+                EnumType = enumType,
+                VariantNameStringIndex = variantNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateEnumValueRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.EnumValueCount == 0)
+        {
+            functionRow.FirstEnumValueRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastEnumValueRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateEnumRow lastRow =
+                self.GenericTemplateEnumValueRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateEnumValueRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastEnumValueRow = rowIndex;
+        functionRow.EnumValueCount = functionRow.EnumValueCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        valueRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateEnumValueTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] valueRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateEnumValueRows.Contains(valueRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            self.GenericTemplateEnumValueRows.Get(valueRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, row.EnumType, name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumValueRows.Replace(valueRow, row);
+    }
+
+    internal fn bool AddGenericTemplateEnumPattern(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii enumTypeKind,
+        ascii variantName,
+        out u32[0 max] patternRow)
+    {
+        patternRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.EnumPatternCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor enumType = new();
+        stack mut u32[0 max] variantNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(strings, enumTypeKind, enumType)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                variantName,
+                variantNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            new LogicalPackageManifestJsonGenericTemplateEnumRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                PublishedOrdinal = publishedOrdinal,
+                EnumType = enumType,
+                VariantNameStringIndex = variantNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateEnumPatternRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.EnumPatternCount == 0)
+        {
+            functionRow.FirstEnumPatternRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastEnumPatternRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateEnumRow lastRow =
+                self.GenericTemplateEnumPatternRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateEnumPatternRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastEnumPatternRow = rowIndex;
+        functionRow.EnumPatternCount = functionRow.EnumPatternCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        patternRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateEnumPatternTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] patternRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateEnumPatternRows.Contains(patternRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumRow row =
+            self.GenericTemplateEnumPatternRows.Get(patternRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(strings, row.EnumType, name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumPatternRows.Replace(patternRow, row);
+    }
+
+    internal fn bool AddGenericTemplateEnumPatternMember(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] patternRow,
+        ascii fieldName,
+        u32[0 max] fieldIndex,
+        ascii fieldTypeKind,
+        out u32[0 max] memberRow)
+    {
+        memberRow = 0;
+        if (!self.GenericTemplateEnumPatternRows.Contains(patternRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumRow pattern =
+            self.GenericTemplateEnumPatternRows.Get(patternRow);
+        if (pattern.MemberCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] fieldNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor fieldType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                fieldName,
+                fieldNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                fieldTypeKind,
+                fieldType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateEnumMemberRow row =
+            new LogicalPackageManifestJsonGenericTemplateEnumMemberRow()
+            {
+                EnumRow = patternRow,
+                FieldNameStringIndex = fieldNameStringIndex,
+                FieldIndex = fieldIndex,
+                FieldType = fieldType
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateEnumPatternMemberRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (pattern.MemberCount == 0)
+        {
+            pattern.FirstMemberRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = pattern.LastMemberRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateEnumMemberRow lastRow =
+                self.GenericTemplateEnumPatternMemberRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateEnumPatternMemberRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        pattern.LastMemberRow = rowIndex;
+        pattern.MemberCount = pattern.MemberCount + 1;
+        if (!self.GenericTemplateEnumPatternRows.Replace(patternRow, pattern))
+        {
+            return false;
+        }
+
+        memberRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateEnumPatternMemberFieldTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] memberRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateEnumPatternMemberRows.Contains(memberRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumMemberRow row =
+            self.GenericTemplateEnumPatternMemberRows.Get(memberRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.FieldType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumPatternMemberRows.Replace(memberRow, row);
+    }
+
+    internal fn bool SetGenericTemplateEnumPatternMemberFieldTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] memberRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateEnumPatternMemberRows.Contains(memberRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateEnumMemberRow row =
+            self.GenericTemplateEnumPatternMemberRows.Get(memberRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.FieldType,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateEnumPatternMemberRows.Replace(memberRow, row);
+    }
+
+    fn bool AddGenericTemplateTopLevelCallSignature(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        LogicalPackageTemplateCallParentKind parentKind,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        ascii targetTypeKind,
+        bool hasTargetType,
+        out u32[0 max] callSignatureRow)
+    {
+        callSignatureRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        stack mut u32[0 max] parentOrdinal = 0;
+        switch (parentKind)
+        {
+            case LogicalPackageTemplateCallParentKind.DirectCall:
+                parentOrdinal = functionRow.DirectCallCount;
+            case LogicalPackageTemplateCallParentKind.MemberCall:
+                parentOrdinal = functionRow.MemberCallCount;
+            case LogicalPackageTemplateCallParentKind.FunctionAddress:
+                parentOrdinal = functionRow.FunctionAddressCount;
+            case LogicalPackageTemplateCallParentKind.BoundOperation:
+                return false;
+        }
+
+        if (parentOrdinal == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedResolvedNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor returnType = new();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor targetType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedResolvedName,
+                qualifiedResolvedNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                returnTypeKind,
+                returnType))
+        {
+            return false;
+        }
+
+        if (hasTargetType
+            && !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                targetTypeKind,
+                targetType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateCallSignatureRow row =
+            new LogicalPackageManifestJsonGenericTemplateCallSignatureRow()
+            {
+                ParentKind = parentKind,
+                FunctionTemplateRow = functionTemplateRow,
+                ParentOrdinal = parentOrdinal,
+                PublishedOrdinal = publishedOrdinal,
+                QualifiedResolvedNameStringIndex = qualifiedResolvedNameStringIndex,
+                ReturnType = returnType,
+                TargetType = targetType,
+                HasPublishedOrdinal = true,
+                HasTargetType = hasTargetType
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateCallSignatureRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        switch (parentKind)
+        {
+            case LogicalPackageTemplateCallParentKind.DirectCall:
+                if (functionRow.DirectCallCount == 0)
+                {
+                    functionRow.FirstDirectCallSignatureRow = rowIndex;
+                }
+                else
+                {
+                    stack u32[0 max] lastRowIndex = functionRow.LastDirectCallSignatureRow;
+                    if (lastRowIndex == 0)
+                    {
+                        return false;
+                    }
+
+                    stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow lastRow =
+                        self.GenericTemplateCallSignatureRows.Get(lastRowIndex);
+                    lastRow.NextRow = rowIndex;
+                    if (!self.GenericTemplateCallSignatureRows.Replace(lastRowIndex, lastRow))
+                    {
+                        return false;
+                    }
+                }
+
+                functionRow.LastDirectCallSignatureRow = rowIndex;
+                functionRow.DirectCallCount = functionRow.DirectCallCount + 1;
+            case LogicalPackageTemplateCallParentKind.MemberCall:
+                if (functionRow.MemberCallCount == 0)
+                {
+                    functionRow.FirstMemberCallSignatureRow = rowIndex;
+                }
+                else
+                {
+                    stack u32[0 max] lastRowIndex = functionRow.LastMemberCallSignatureRow;
+                    if (lastRowIndex == 0)
+                    {
+                        return false;
+                    }
+
+                    stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow lastRow =
+                        self.GenericTemplateCallSignatureRows.Get(lastRowIndex);
+                    lastRow.NextRow = rowIndex;
+                    if (!self.GenericTemplateCallSignatureRows.Replace(lastRowIndex, lastRow))
+                    {
+                        return false;
+                    }
+                }
+
+                functionRow.LastMemberCallSignatureRow = rowIndex;
+                functionRow.MemberCallCount = functionRow.MemberCallCount + 1;
+            case LogicalPackageTemplateCallParentKind.FunctionAddress:
+                if (functionRow.FunctionAddressCount == 0)
+                {
+                    functionRow.FirstFunctionAddressSignatureRow = rowIndex;
+                }
+                else
+                {
+                    stack u32[0 max] lastRowIndex = functionRow.LastFunctionAddressSignatureRow;
+                    if (lastRowIndex == 0)
+                    {
+                        return false;
+                    }
+
+                    stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow lastRow =
+                        self.GenericTemplateCallSignatureRows.Get(lastRowIndex);
+                    lastRow.NextRow = rowIndex;
+                    if (!self.GenericTemplateCallSignatureRows.Replace(lastRowIndex, lastRow))
+                    {
+                        return false;
+                    }
+                }
+
+                functionRow.LastFunctionAddressSignatureRow = rowIndex;
+                functionRow.FunctionAddressCount = functionRow.FunctionAddressCount + 1;
+            case LogicalPackageTemplateCallParentKind.BoundOperation:
+                return false;
+        }
+
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        callSignatureRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateDirectCall(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.AddGenericTemplateTopLevelCallSignature(
+            strings,
+            functionTemplateRow,
+            LogicalPackageTemplateCallParentKind.DirectCall,
+            publishedOrdinal,
+            qualifiedResolvedName,
+            returnTypeKind,
+            "",
+            false,
+            callSignatureRow);
+    }
+
+    internal fn bool AddGenericTemplateMemberCall(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.AddGenericTemplateTopLevelCallSignature(
+            strings,
+            functionTemplateRow,
+            LogicalPackageTemplateCallParentKind.MemberCall,
+            publishedOrdinal,
+            qualifiedResolvedName,
+            returnTypeKind,
+            "",
+            false,
+            callSignatureRow);
+    }
+
+    internal fn bool AddGenericTemplateFunctionAddress(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        u32[0 max] publishedOrdinal,
+        ascii qualifiedResolvedName,
+        ascii targetTypeKind,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        return self.AddGenericTemplateTopLevelCallSignature(
+            strings,
+            functionTemplateRow,
+            LogicalPackageTemplateCallParentKind.FunctionAddress,
+            publishedOrdinal,
+            qualifiedResolvedName,
+            returnTypeKind,
+            targetTypeKind,
+            true,
+            callSignatureRow);
+    }
+
+    internal fn bool SetGenericTemplateCallSignatureTargetTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow row =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        if (!row.HasTargetType
+            || !LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TargetType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, row);
+    }
+
+    internal fn bool AddGenericTemplateBoundOperation(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii kind,
+        u32[0 max] line,
+        u32[0 max] column,
+        ascii resultTypeKind,
+        out u32[0 max] boundOperationRow)
+    {
+        boundOperationRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.BoundOperationCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor resultType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                resultTypeKind,
+                resultType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateBoundOperationRow row =
+            new LogicalPackageManifestJsonGenericTemplateBoundOperationRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                OperationOrdinal = functionRow.BoundOperationCount,
+                KindStringIndex = kindStringIndex,
+                ResultType = resultType,
+                Line = line,
+                Column = column
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateBoundOperationRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.BoundOperationCount == 0)
+        {
+            functionRow.FirstBoundOperationRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastBoundOperationRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow lastRow =
+                self.GenericTemplateBoundOperationRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateBoundOperationRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastBoundOperationRow = rowIndex;
+        functionRow.BoundOperationCount = functionRow.BoundOperationCount + 1;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        boundOperationRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationResultTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow row =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.ResultType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationResultTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow row =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.ResultType,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationPublishedOrdinal(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        u32[0 max] publishedOrdinal)
+    {
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow row =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        row.PublishedOrdinal = publishedOrdinal;
+        row.HasPublishedOrdinal = true;
+        return self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, row);
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationEnclosingFunctionName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        ascii enclosingFunctionName)
+    {
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                enclosingFunctionName,
+                nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow row =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        row.EnclosingFunctionNameStringIndex = nameStringIndex;
+        row.HasEnclosingFunctionName = true;
+        return self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, row);
+    }
+
+    internal fn bool AddGenericTemplateBoundOperationCallSignature(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        ascii qualifiedResolvedName,
+        ascii returnTypeKind,
+        out u32[0 max] callSignatureRow)
+    {
+        callSignatureRow = 0;
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow operationRow =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (operationRow.HasCallSignature)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] qualifiedResolvedNameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor returnType = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                qualifiedResolvedName,
+                qualifiedResolvedNameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                returnTypeKind,
+                returnType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateCallSignatureRow row =
+            new LogicalPackageManifestJsonGenericTemplateCallSignatureRow()
+            {
+                ParentKind = LogicalPackageTemplateCallParentKind.BoundOperation,
+                FunctionTemplateRow = operationRow.FunctionTemplateRow,
+                ParentOrdinal = operationRow.OperationOrdinal,
+                BoundOperationRow = boundOperationRow,
+                QualifiedResolvedNameStringIndex = qualifiedResolvedNameStringIndex,
+                ReturnType = returnType
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateCallSignatureRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        operationRow.CallSignatureRow = rowIndex;
+        operationRow.HasCallSignature = true;
+        if (!self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, operationRow))
+        {
+            return false;
+        }
+
+        callSignatureRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateCallSignatureQualifiedSourceName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii qualifiedSourceName)
+    {
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedSourceName, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow row =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        row.QualifiedSourceNameStringIndex = nameStringIndex;
+        row.HasQualifiedSourceName = true;
+        return self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, row);
+    }
+
+    internal fn bool SetGenericTemplateCallSignatureQualifiedTemplateName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii qualifiedTemplateName)
+    {
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedTemplateName, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow row =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        row.QualifiedTemplateNameStringIndex = nameStringIndex;
+        row.HasQualifiedTemplateName = true;
+        return self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, row);
+    }
+
+    internal fn bool SetGenericTemplateCallSignatureReturnTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow row =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.ReturnType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, row);
+    }
+
+    internal fn bool AddGenericTemplateCallParameter(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii name,
+        ascii typeKind,
+        bool isDisjoint,
+        bool isConst,
+        out u32[0 max] parameterRow)
+    {
+        parameterRow = 0;
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow signature =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        if (signature.ParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                typeKind,
+                typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateCallParameterRow row =
+            new LogicalPackageManifestJsonGenericTemplateCallParameterRow()
+            {
+                CallSignatureRow = callSignatureRow,
+                NameStringIndex = nameStringIndex,
+                TypeReference = typeReference,
+                IsDisjoint = isDisjoint,
+                IsConst = isConst
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateCallParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (signature.ParameterCount == 0)
+        {
+            signature.FirstParameterRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = signature.LastParameterRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateCallParameterRow lastRow =
+                self.GenericTemplateCallParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateCallParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        signature.LastParameterRow = rowIndex;
+        signature.ParameterCount = signature.ParameterCount + 1;
+        if (!self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, signature))
+        {
+            return false;
+        }
+
+        parameterRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateCallParameterTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parameterRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateCallParameterRows.Contains(parameterRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallParameterRow row =
+            self.GenericTemplateCallParameterRows.Get(parameterRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateCallParameterRows.Replace(parameterRow, row);
+    }
+
+    internal fn bool SetGenericTemplateCallParameterRawPointerElementCountExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parameterRow,
+        ascii expression)
+    {
+        if (!self.GenericTemplateCallParameterRows.Contains(parameterRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] expressionStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, expression, expressionStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallParameterRow row =
+            self.GenericTemplateCallParameterRows.Get(parameterRow);
+        row.RawPointerElementCountExpressionStringIndex = expressionStringIndex;
+        row.HasRawPointerElementCountExpression = true;
+        return self.GenericTemplateCallParameterRows.Replace(parameterRow, row);
+    }
+
+    internal fn bool AddGenericTemplateCallTypeArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii typeKind,
+        out u32[0 max] typeArgumentRow)
+    {
+        typeArgumentRow = 0;
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow signature =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        if (signature.TypeArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow()
+            {
+                CallSignatureRow = callSignatureRow,
+                TypeReference = typeReference
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateCallTypeArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (signature.TypeArgumentCount == 0)
+        {
+            signature.FirstTypeArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = signature.LastTypeArgumentRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow lastRow =
+                self.GenericTemplateCallTypeArgumentRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateCallTypeArgumentRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        signature.LastTypeArgumentRow = rowIndex;
+        signature.TypeArgumentCount = signature.TypeArgumentCount + 1;
+        if (!self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, signature))
+        {
+            return false;
+        }
+
+        typeArgumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateCallTypeArgumentName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeArgumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateCallTypeArgumentRows.Contains(typeArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallTypeArgumentRow row =
+            self.GenericTemplateCallTypeArgumentRows.Get(typeArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateCallTypeArgumentRows.Replace(typeArgumentRow, row);
+    }
+
+    internal fn bool AddGenericTemplateCallComptimeValueArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] callSignatureRow,
+        ascii parameterName,
+        ascii integerValue,
+        ascii typeKind,
+        bool isSymbolic,
+        out u32[0 max] argumentRow)
+    {
+        argumentRow = 0;
+        if (!self.GenericTemplateCallSignatureRows.Contains(callSignatureRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallSignatureRow signature =
+            self.GenericTemplateCallSignatureRows.Get(callSignatureRow);
+        if (signature.ComptimeValueArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] parameterNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] integerValueStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                parameterName,
+                parameterNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                integerValue,
+                integerValueStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                typeKind,
+                typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow()
+            {
+                CallSignatureRow = callSignatureRow,
+                ParameterNameStringIndex = parameterNameStringIndex,
+                IntegerValueStringIndex = integerValueStringIndex,
+                TypeReference = typeReference,
+                IsSymbolic = isSymbolic
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateCallComptimeValueArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (signature.ComptimeValueArgumentCount == 0)
+        {
+            signature.FirstComptimeValueArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = signature.LastComptimeValueArgumentRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow lastRow =
+                self.GenericTemplateCallComptimeValueArgumentRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateCallComptimeValueArgumentRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        signature.LastComptimeValueArgumentRow = rowIndex;
+        signature.ComptimeValueArgumentCount = signature.ComptimeValueArgumentCount + 1;
+        if (!self.GenericTemplateCallSignatureRows.Replace(callSignatureRow, signature))
+        {
+            return false;
+        }
+
+        argumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateCallComptimeValueArgumentTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateCallComptimeValueArgumentRows.Contains(argumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow row =
+            self.GenericTemplateCallComptimeValueArgumentRows.Get(argumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateCallComptimeValueArgumentRows.Replace(argumentRow, row);
+    }
+
+    internal fn bool SetGenericTemplateCallComptimeValueArgumentSymbolicSourceName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        ascii symbolicSourceName)
+    {
+        if (!self.GenericTemplateCallComptimeValueArgumentRows.Contains(argumentRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, symbolicSourceName, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateCallComptimeValueArgumentRow row =
+            self.GenericTemplateCallComptimeValueArgumentRows.Get(argumentRow);
+        row.SymbolicSourceNameStringIndex = nameStringIndex;
+        row.HasSymbolicSourceName = true;
+        return self.GenericTemplateCallComptimeValueArgumentRows.Replace(argumentRow, row);
+    }
+
+    internal fn bool AddGenericTemplateBoundOperationCallArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        u32[0 max] parameterIndex,
+        u32[0 max] sourceArgumentIndex,
+        ascii parameterTypeKind,
+        ascii argumentTypeKind,
+        bool isReceiver,
+        bool requiresAddressable,
+        bool requiresMutable,
+        bool requiresConstProvenance,
+        bool argumentIsAddressable,
+        bool argumentIsMutable,
+        bool argumentHasConstProvenance,
+        out u32[0 max] argumentRow)
+    {
+        argumentRow = 0;
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow operation =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (operation.CallArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor parameterType = new();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor argumentType = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                parameterTypeKind,
+                parameterType)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                argumentTypeKind,
+                argumentType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow()
+            {
+                BoundOperationRow = boundOperationRow,
+                ParameterIndex = parameterIndex,
+                SourceArgumentIndex = sourceArgumentIndex,
+                ParameterType = parameterType,
+                ArgumentType = argumentType,
+                IsReceiver = isReceiver,
+                RequiresAddressable = requiresAddressable,
+                RequiresMutable = requiresMutable,
+                RequiresConstProvenance = requiresConstProvenance,
+                ArgumentIsAddressable = argumentIsAddressable,
+                ArgumentIsMutable = argumentIsMutable,
+                ArgumentHasConstProvenance = argumentHasConstProvenance
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateBoundOperationCallArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (operation.CallArgumentCount == 0)
+        {
+            operation.FirstCallArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = operation.LastCallArgumentRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow lastRow =
+                self.GenericTemplateBoundOperationCallArgumentRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateBoundOperationCallArgumentRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        operation.LastCallArgumentRow = rowIndex;
+        operation.CallArgumentCount = operation.CallArgumentCount + 1;
+        if (!self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, operation))
+        {
+            return false;
+        }
+
+        argumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationCallArgumentParameterTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateBoundOperationCallArgumentRows.Contains(argumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow row =
+            self.GenericTemplateBoundOperationCallArgumentRows.Get(argumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.ParameterType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateBoundOperationCallArgumentRows.Replace(argumentRow, row);
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationCallArgumentArgumentTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] argumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateBoundOperationCallArgumentRows.Contains(argumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationCallArgumentRow row =
+            self.GenericTemplateBoundOperationCallArgumentRows.Get(argumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.ArgumentType,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateBoundOperationCallArgumentRows.Replace(argumentRow, row);
+    }
+
+    internal fn bool AddGenericTemplateBoundOperationTypePayload(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        LogicalPackageTemplateBoundOperationTypePayloadKind payloadKind,
+        ascii typeKind,
+        out u32[0 max] payloadRow)
+    {
+        payloadRow = 0;
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow operation =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (operation.TypePayloadCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow row =
+            new LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow()
+            {
+                BoundOperationRow = boundOperationRow,
+                PayloadKind = payloadKind,
+                TypeReference = typeReference
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateBoundOperationTypePayloadRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (operation.TypePayloadCount == 0)
+        {
+            operation.FirstTypePayloadRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = operation.LastTypePayloadRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow lastRow =
+                self.GenericTemplateBoundOperationTypePayloadRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateBoundOperationTypePayloadRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        operation.LastTypePayloadRow = rowIndex;
+        operation.TypePayloadCount = operation.TypePayloadCount + 1;
+        if (!self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, operation))
+        {
+            return false;
+        }
+
+        payloadRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateBoundOperationTypePayloadName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] payloadRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateBoundOperationTypePayloadRows.Contains(payloadRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationTypePayloadRow row =
+            self.GenericTemplateBoundOperationTypePayloadRows.Get(payloadRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateBoundOperationTypePayloadRows.Replace(payloadRow, row);
+    }
+
+    internal fn bool AddGenericTemplateBoundOperationTextPayload(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        ascii memberName,
+        LogicalPackageGenericTemplateFactTextKind textKind,
+        ascii value,
+        out u32[0 max] payloadRow)
+    {
+        payloadRow = 0;
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow operation =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (operation.TextPayloadCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] memberNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] valueStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, memberName, memberNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, value, valueStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateBoundOperationTextPayloadRow row =
+            new LogicalPackageManifestJsonGenericTemplateBoundOperationTextPayloadRow()
+            {
+                BoundOperationRow = boundOperationRow,
+                MemberNameStringIndex = memberNameStringIndex,
+                TextKind = textKind,
+                ValueStringIndex = valueStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateBoundOperationTextPayloadRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (operation.TextPayloadCount == 0)
+        {
+            operation.FirstTextPayloadRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = operation.LastTextPayloadRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationTextPayloadRow lastRow =
+                self.GenericTemplateBoundOperationTextPayloadRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateBoundOperationTextPayloadRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        operation.LastTextPayloadRow = rowIndex;
+        operation.TextPayloadCount = operation.TextPayloadCount + 1;
+        if (!self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, operation))
+        {
+            return false;
+        }
+
+        payloadRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateBoundOperationU32Payload(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        LogicalPackageTemplateBoundOperationU32PayloadKind payloadKind,
+        u32[0 max] value,
+        out u32[0 max] payloadRow)
+    {
+        payloadRow = 0;
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow operation =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (operation.U32PayloadCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateBoundOperationU32PayloadRow row =
+            new LogicalPackageManifestJsonGenericTemplateBoundOperationU32PayloadRow()
+            {
+                BoundOperationRow = boundOperationRow,
+                PayloadKind = payloadKind,
+                Value = value
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateBoundOperationU32PayloadRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (operation.U32PayloadCount == 0)
+        {
+            operation.FirstU32PayloadRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = operation.LastU32PayloadRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationU32PayloadRow lastRow =
+                self.GenericTemplateBoundOperationU32PayloadRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateBoundOperationU32PayloadRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        operation.LastU32PayloadRow = rowIndex;
+        operation.U32PayloadCount = operation.U32PayloadCount + 1;
+        if (!self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, operation))
+        {
+            return false;
+        }
+
+        payloadRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateBoundOperationBoolPayload(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] boundOperationRow,
+        LogicalPackageTemplateBoundOperationBoolPayloadKind payloadKind,
+        bool value,
+        out u32[0 max] payloadRow)
+    {
+        payloadRow = 0;
+        if (!self.GenericTemplateBoundOperationRows.Contains(boundOperationRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationRow operation =
+            self.GenericTemplateBoundOperationRows.Get(boundOperationRow);
+        if (operation.BoolPayloadCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateBoundOperationBoolPayloadRow row =
+            new LogicalPackageManifestJsonGenericTemplateBoundOperationBoolPayloadRow()
+            {
+                BoundOperationRow = boundOperationRow,
+                PayloadKind = payloadKind,
+                Value = value
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateBoundOperationBoolPayloadRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (operation.BoolPayloadCount == 0)
+        {
+            operation.FirstBoolPayloadRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = operation.LastBoolPayloadRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateBoundOperationBoolPayloadRow lastRow =
+                self.GenericTemplateBoundOperationBoolPayloadRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateBoundOperationBoolPayloadRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        operation.LastBoolPayloadRow = rowIndex;
+        operation.BoolPayloadCount = operation.BoolPayloadCount + 1;
+        if (!self.GenericTemplateBoundOperationRows.Replace(boundOperationRow, operation))
+        {
+            return false;
+        }
+
+        payloadRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii kind,
+        out u32[0 max] expressionRow)
+    {
+        expressionRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow row =
+            new LogicalPackageManifestJsonGenericTemplateExpressionRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        expressionRow = self.GenericTemplateExpressionRows.Add(row);
+        return expressionRow != 0;
+    }
+
+    internal fn bool SetGenericTemplateExpressionName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow row =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        row.NameStringIndex = nameStringIndex;
+        row.HasName = true;
+        return self.GenericTemplateExpressionRows.Replace(expressionRow, row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionLiteralText(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii literalText)
+    {
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] literalTextStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            literalText,
+            literalTextStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow row =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        row.LiteralTextStringIndex = literalTextStringIndex;
+        row.HasLiteralText = true;
+        return self.GenericTemplateExpressionRows.Replace(expressionRow, row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionType(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii typeKind)
+    {
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow row =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        row.TypeReference = typeReference;
+        row.HasType = true;
+        return self.GenericTemplateExpressionRows.Replace(expressionRow, row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow row =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (!row.HasType
+            || !LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateExpressionRows.Replace(expressionRow, row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow row =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (!row.HasType
+            || !LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateExpressionRows.Replace(expressionRow, row);
+    }
+
+    internal fn bool AddGenericTemplateExpressionArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parentExpressionRow,
+        ascii kind,
+        out u32[0 max] expressionRow)
+    {
+        expressionRow = 0;
+        if (!self.GenericTemplateExpressionRows.Contains(parentExpressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow parent =
+            self.GenericTemplateExpressionRows.Get(parentExpressionRow);
+        if (parent.ArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow child =
+            new LogicalPackageManifestJsonGenericTemplateExpressionRow()
+            {
+                FunctionTemplateRow = parent.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] childRow = self.GenericTemplateExpressionRows.Add(child);
+        if (childRow == 0)
+        {
+            return false;
+        }
+
+        if (parent.ArgumentCount == 0)
+        {
+            parent.FirstArgumentExpressionRow = childRow;
+        }
+        else
+        {
+            stack u32[0 max] lastArgumentExpressionRow = parent.LastArgumentExpressionRow;
+            if (lastArgumentExpressionRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow lastArgument =
+                self.GenericTemplateExpressionRows.Get(lastArgumentExpressionRow);
+            lastArgument.NextSiblingExpressionRow = childRow;
+            if (!self.GenericTemplateExpressionRows.Replace(
+                    lastArgumentExpressionRow,
+                    lastArgument))
+            {
+                return false;
+            }
+        }
+
+        parent.LastArgumentExpressionRow = childRow;
+        parent.ArgumentCount = parent.ArgumentCount + 1;
+        if (!self.GenericTemplateExpressionRows.Replace(parentExpressionRow, parent))
+        {
+            return false;
+        }
+
+        expressionRow = childRow;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateExpressionMemberName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii name,
+        out u32[0 max] memberNameRow)
+    {
+        memberNameRow = 0;
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (expression.MemberNameCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateExpressionNameListRow row =
+            new LogicalPackageManifestJsonGenericTemplateExpressionNameListRow()
+            {
+                ExpressionRow = expressionRow,
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateExpressionMemberNameRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (expression.MemberNameCount == 0)
+        {
+            expression.FirstMemberNameRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastMemberNameRow = expression.LastMemberNameRow;
+            if (lastMemberNameRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateExpressionNameListRow lastRow =
+                self.GenericTemplateExpressionMemberNameRows.Get(lastMemberNameRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateExpressionMemberNameRows.Replace(lastMemberNameRow, lastRow))
+            {
+                return false;
+            }
+        }
+
+        expression.LastMemberNameRow = rowIndex;
+        expression.MemberNameCount = expression.MemberNameCount + 1;
+        if (!self.GenericTemplateExpressionRows.Replace(expressionRow, expression))
+        {
+            return false;
+        }
+
+        memberNameRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateExpressionOperatorName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii name,
+        out u32[0 max] operatorNameRow)
+    {
+        operatorNameRow = 0;
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (expression.OperatorNameCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateExpressionNameListRow row =
+            new LogicalPackageManifestJsonGenericTemplateExpressionNameListRow()
+            {
+                ExpressionRow = expressionRow,
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateExpressionOperatorNameRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (expression.OperatorNameCount == 0)
+        {
+            expression.FirstOperatorNameRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastOperatorNameRow = expression.LastOperatorNameRow;
+            if (lastOperatorNameRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateExpressionNameListRow lastRow =
+                self.GenericTemplateExpressionOperatorNameRows.Get(lastOperatorNameRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateExpressionOperatorNameRows.Replace(
+                    lastOperatorNameRow,
+                    lastRow))
+            {
+                return false;
+            }
+        }
+
+        expression.LastOperatorNameRow = rowIndex;
+        expression.OperatorNameCount = expression.OperatorNameCount + 1;
+        if (!self.GenericTemplateExpressionRows.Replace(expressionRow, expression))
+        {
+            return false;
+        }
+
+        operatorNameRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateExpressionTypeArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii typeKind,
+        out u32[0 max] typeArgumentRow)
+    {
+        typeArgumentRow = 0;
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (expression.TypeArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow()
+            {
+                ExpressionRow = expressionRow,
+                TypeReference = typeReference
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateExpressionTypeArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (expression.TypeArgumentCount == 0)
+        {
+            expression.FirstTypeArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastTypeArgumentRow = expression.LastTypeArgumentRow;
+            if (lastTypeArgumentRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow lastRow =
+                self.GenericTemplateExpressionTypeArgumentRows.Get(lastTypeArgumentRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateExpressionTypeArgumentRows.Replace(
+                    lastTypeArgumentRow,
+                    lastRow))
+            {
+                return false;
+            }
+        }
+
+        expression.LastTypeArgumentRow = rowIndex;
+        expression.TypeArgumentCount = expression.TypeArgumentCount + 1;
+        if (!self.GenericTemplateExpressionRows.Replace(expressionRow, expression))
+        {
+            return false;
+        }
+
+        typeArgumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateExpressionTypeArgumentName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeArgumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateExpressionTypeArgumentRows.Contains(typeArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow row =
+            self.GenericTemplateExpressionTypeArgumentRows.Get(typeArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateExpressionTypeArgumentRows.Replace(typeArgumentRow, row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionTypeArgumentIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeArgumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateExpressionTypeArgumentRows.Contains(typeArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionTypeArgumentRow row =
+            self.GenericTemplateExpressionTypeArgumentRows.Get(typeArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateExpressionTypeArgumentRows.Replace(typeArgumentRow, row);
+    }
+
+    internal fn bool AddGenericTemplateExpressionComptimeValueArgument(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] expressionRow,
+        ascii parameterName,
+        ascii integerValue,
+        ascii typeKind,
+        bool isSymbolic,
+        out u32[0 max] comptimeValueArgumentRow)
+    {
+        comptimeValueArgumentRow = 0;
+        if (!self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (expression.ComptimeValueArgumentCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] parameterNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] integerValueStringIndex = PackageImageNullStringIndex();
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                parameterName,
+                parameterNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                integerValue,
+                integerValueStringIndex)
+            || !LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+                strings,
+                typeKind,
+                typeReference))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow row =
+            new LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow()
+            {
+                ExpressionRow = expressionRow,
+                ParameterNameStringIndex = parameterNameStringIndex,
+                IntegerValueStringIndex = integerValueStringIndex,
+                TypeReference = typeReference,
+                IsSymbolic = isSymbolic
+            };
+        stack u32[0 max] rowIndex =
+            self.GenericTemplateExpressionComptimeValueArgumentRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (expression.ComptimeValueArgumentCount == 0)
+        {
+            expression.FirstComptimeValueArgumentRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastComptimeValueArgumentRow =
+                expression.LastComptimeValueArgumentRow;
+            if (lastComptimeValueArgumentRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow lastRow =
+                self.GenericTemplateExpressionComptimeValueArgumentRows.Get(
+                    lastComptimeValueArgumentRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateExpressionComptimeValueArgumentRows.Replace(
+                    lastComptimeValueArgumentRow,
+                    lastRow))
+            {
+                return false;
+            }
+        }
+
+        expression.LastComptimeValueArgumentRow = rowIndex;
+        expression.ComptimeValueArgumentCount = expression.ComptimeValueArgumentCount + 1;
+        if (!self.GenericTemplateExpressionRows.Replace(expressionRow, expression))
+        {
+            return false;
+        }
+
+        comptimeValueArgumentRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateExpressionComptimeValueArgumentTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] comptimeValueArgumentRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateExpressionComptimeValueArgumentRows.Contains(
+                comptimeValueArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow row =
+            self.GenericTemplateExpressionComptimeValueArgumentRows.Get(comptimeValueArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateExpressionComptimeValueArgumentRows.Replace(
+            comptimeValueArgumentRow,
+            row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionComptimeValueArgumentTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] comptimeValueArgumentRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateExpressionComptimeValueArgumentRows.Contains(
+                comptimeValueArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow row =
+            self.GenericTemplateExpressionComptimeValueArgumentRows.Get(comptimeValueArgumentRow);
+        if (!LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateExpressionComptimeValueArgumentRows.Replace(
+            comptimeValueArgumentRow,
+            row);
+    }
+
+    internal fn bool SetGenericTemplateExpressionComptimeValueArgumentSymbolicSourceName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] comptimeValueArgumentRow,
+        ascii symbolicSourceName)
+    {
+        if (!self.GenericTemplateExpressionComptimeValueArgumentRows.Contains(
+                comptimeValueArgumentRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] symbolicSourceNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+                strings,
+                symbolicSourceName,
+                symbolicSourceNameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateExpressionComptimeValueArgumentRow row =
+            self.GenericTemplateExpressionComptimeValueArgumentRows.Get(comptimeValueArgumentRow);
+        row.SymbolicSourceNameStringIndex = symbolicSourceNameStringIndex;
+        row.HasSymbolicSourceName = true;
+        return self.GenericTemplateExpressionComptimeValueArgumentRows.Replace(
+            comptimeValueArgumentRow,
+            row);
+    }
+
+    internal fn bool AddGenericTemplateTopLevelStatement(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionTemplateRow,
+        ascii kind,
+        out u32[0 max] statementRow)
+    {
+        statementRow = 0;
+        if (!self.GenericTemplateFunctionRows.Contains(functionTemplateRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateFunctionRow functionRow =
+            self.GenericTemplateFunctionRows.Get(functionTemplateRow);
+        if (functionRow.TypedBodyStatementCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            new LogicalPackageManifestJsonGenericTemplateStatementRow()
+            {
+                FunctionTemplateRow = functionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateStatementRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (functionRow.TypedBodyStatementCount == 0)
+        {
+            functionRow.FirstTopLevelStatementRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = functionRow.LastTopLevelStatementRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                self.GenericTemplateStatementRows.Get(lastRowIndex);
+            lastRow.NextTopLevelRow = rowIndex;
+            if (!self.GenericTemplateStatementRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        functionRow.LastTopLevelStatementRow = rowIndex;
+        functionRow.TypedBodyStatementCount = functionRow.TypedBodyStatementCount + 1;
+        functionRow.TopLevelStatementCount = functionRow.TypedBodyStatementCount;
+        functionRow.HasTopLevelStatementCount = true;
+        functionRow.HasTypedBody = true;
+        if (!self.GenericTemplateFunctionRows.Replace(functionTemplateRow, functionRow))
+        {
+            return false;
+        }
+
+        statementRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateNestedStatement(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parentStatementRow,
+        LogicalPackageTypedTemplateStatementParentKind parentKind,
+        ascii kind,
+        out u32[0 max] statementRow)
+    {
+        statementRow = 0;
+        if (!self.GenericTemplateStatementRows.Contains(parentStatementRow)
+            || parentKind == LogicalPackageTypedTemplateStatementParentKind.TopLevel
+            || parentKind == LogicalPackageTypedTemplateStatementParentKind.SwitchCase)
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow parent =
+            self.GenericTemplateStatementRows.Get(parentStatementRow);
+        if ((parentKind == LogicalPackageTypedTemplateStatementParentKind.Initializer
+                && parent.InitializerStatementCount == (u32[0 max])(2 ** 32 - 1))
+            || (parentKind == LogicalPackageTypedTemplateStatementParentKind.Iterator
+                && parent.IteratorStatementCount == (u32[0 max])(2 ** 32 - 1))
+            || (parentKind == LogicalPackageTypedTemplateStatementParentKind.Body
+                && parent.BodyStatementCount == (u32[0 max])(2 ** 32 - 1))
+            || (parentKind == LogicalPackageTypedTemplateStatementParentKind.Then
+                && parent.ThenStatementCount == (u32[0 max])(2 ** 32 - 1))
+            || (parentKind == LogicalPackageTypedTemplateStatementParentKind.Else
+                && parent.ElseStatementCount == (u32[0 max])(2 ** 32 - 1)))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateStatementRow child =
+            new LogicalPackageManifestJsonGenericTemplateStatementRow()
+            {
+                FunctionTemplateRow = parent.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateStatementRows.Add(child);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (parentKind == LogicalPackageTypedTemplateStatementParentKind.Initializer)
+        {
+            if (parent.InitializerStatementCount == 0)
+            {
+                parent.FirstInitializerStatementRow = rowIndex;
+            }
+            else
+            {
+                stack u32[0 max] lastRowIndex = parent.LastInitializerStatementRow;
+                if (lastRowIndex == 0)
+                {
+                    return false;
+                }
+
+                stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                    self.GenericTemplateStatementRows.Get(lastRowIndex);
+                lastRow.NextTopLevelRow = rowIndex;
+                if (!self.GenericTemplateStatementRows.Replace(lastRowIndex, lastRow))
+                {
+                    return false;
+                }
+            }
+
+            parent.LastInitializerStatementRow = rowIndex;
+            parent.InitializerStatementCount = parent.InitializerStatementCount + 1;
+        }
+        else if (parentKind == LogicalPackageTypedTemplateStatementParentKind.Iterator)
+        {
+            if (parent.IteratorStatementCount == 0)
+            {
+                parent.FirstIteratorStatementRow = rowIndex;
+            }
+            else
+            {
+                stack u32[0 max] lastRowIndex = parent.LastIteratorStatementRow;
+                if (lastRowIndex == 0)
+                {
+                    return false;
+                }
+
+                stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                    self.GenericTemplateStatementRows.Get(lastRowIndex);
+                lastRow.NextTopLevelRow = rowIndex;
+                if (!self.GenericTemplateStatementRows.Replace(lastRowIndex, lastRow))
+                {
+                    return false;
+                }
+            }
+
+            parent.LastIteratorStatementRow = rowIndex;
+            parent.IteratorStatementCount = parent.IteratorStatementCount + 1;
+        }
+        else if (parentKind == LogicalPackageTypedTemplateStatementParentKind.Body)
+        {
+            if (parent.BodyStatementCount == 0)
+            {
+                parent.FirstBodyStatementRow = rowIndex;
+            }
+            else
+            {
+                stack u32[0 max] lastRowIndex = parent.LastBodyStatementRow;
+                if (lastRowIndex == 0)
+                {
+                    return false;
+                }
+
+                stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                    self.GenericTemplateStatementRows.Get(lastRowIndex);
+                lastRow.NextTopLevelRow = rowIndex;
+                if (!self.GenericTemplateStatementRows.Replace(lastRowIndex, lastRow))
+                {
+                    return false;
+                }
+            }
+
+            parent.LastBodyStatementRow = rowIndex;
+            parent.BodyStatementCount = parent.BodyStatementCount + 1;
+        }
+        else if (parentKind == LogicalPackageTypedTemplateStatementParentKind.Then)
+        {
+            if (parent.ThenStatementCount == 0)
+            {
+                parent.FirstThenStatementRow = rowIndex;
+            }
+            else
+            {
+                stack u32[0 max] lastRowIndex = parent.LastThenStatementRow;
+                if (lastRowIndex == 0)
+                {
+                    return false;
+                }
+
+                stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                    self.GenericTemplateStatementRows.Get(lastRowIndex);
+                lastRow.NextTopLevelRow = rowIndex;
+                if (!self.GenericTemplateStatementRows.Replace(lastRowIndex, lastRow))
+                {
+                    return false;
+                }
+            }
+
+            parent.LastThenStatementRow = rowIndex;
+            parent.ThenStatementCount = parent.ThenStatementCount + 1;
+        }
+        else if (parentKind == LogicalPackageTypedTemplateStatementParentKind.Else)
+        {
+            if (parent.ElseStatementCount == 0)
+            {
+                parent.FirstElseStatementRow = rowIndex;
+            }
+            else
+            {
+                stack u32[0 max] lastRowIndex = parent.LastElseStatementRow;
+                if (lastRowIndex == 0)
+                {
+                    return false;
+                }
+
+                stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                    self.GenericTemplateStatementRows.Get(lastRowIndex);
+                lastRow.NextTopLevelRow = rowIndex;
+                if (!self.GenericTemplateStatementRows.Replace(lastRowIndex, lastRow))
+                {
+                    return false;
+                }
+            }
+
+            parent.LastElseStatementRow = rowIndex;
+            parent.ElseStatementCount = parent.ElseStatementCount + 1;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!self.GenericTemplateStatementRows.Replace(parentStatementRow, parent))
+        {
+            return false;
+        }
+
+        statementRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateSwitchCase(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii kind,
+        out u32[0 max] switchCaseRow)
+    {
+        switchCaseRow = 0;
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow statement =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        if (statement.SwitchCaseCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateSwitchCaseRow row =
+            new LogicalPackageManifestJsonGenericTemplateSwitchCaseRow()
+            {
+                StatementRow = statementRow,
+                FunctionTemplateRow = statement.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateSwitchCaseRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (statement.SwitchCaseCount == 0)
+        {
+            statement.FirstSwitchCaseRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastSwitchCaseRow = statement.LastSwitchCaseRow;
+            if (lastSwitchCaseRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow lastRow =
+                self.GenericTemplateSwitchCaseRows.Get(lastSwitchCaseRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplateSwitchCaseRows.Replace(lastSwitchCaseRow, lastRow))
+            {
+                return false;
+            }
+        }
+
+        statement.LastSwitchCaseRow = rowIndex;
+        statement.SwitchCaseCount = statement.SwitchCaseCount + 1;
+        if (!self.GenericTemplateStatementRows.Replace(statementRow, statement))
+        {
+            return false;
+        }
+
+        switchCaseRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateSwitchCaseStatement(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        ascii kind,
+        out u32[0 max] statementRow)
+    {
+        statementRow = 0;
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow switchCase =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        if (switchCase.StatementCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplateStatementRow child =
+            new LogicalPackageManifestJsonGenericTemplateStatementRow()
+            {
+                FunctionTemplateRow = switchCase.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplateStatementRows.Add(child);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (switchCase.StatementCount == 0)
+        {
+            switchCase.FirstStatementRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastStatementRow = switchCase.LastStatementRow;
+            if (lastStatementRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplateStatementRow lastRow =
+                self.GenericTemplateStatementRows.Get(lastStatementRow);
+            lastRow.NextTopLevelRow = rowIndex;
+            if (!self.GenericTemplateStatementRows.Replace(lastStatementRow, lastRow))
+            {
+                return false;
+            }
+        }
+
+        switchCase.LastStatementRow = rowIndex;
+        switchCase.StatementCount = switchCase.StatementCount + 1;
+        if (!self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, switchCase))
+        {
+            return false;
+        }
+
+        statementRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateStatementConditionPattern(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii kind,
+        out u32[0 max] patternRow)
+    {
+        patternRow = 0;
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow statement =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        if (statement.HasConditionPattern)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplatePatternRow row =
+            new LogicalPackageManifestJsonGenericTemplatePatternRow()
+            {
+                FunctionTemplateRow = statement.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplatePatternRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        statement.ConditionPatternRow = rowIndex;
+        statement.HasConditionPattern = true;
+        if (!self.GenericTemplateStatementRows.Replace(statementRow, statement))
+        {
+            return false;
+        }
+
+        patternRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplateSwitchCaseMemberPattern(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        ascii kind,
+        out u32[0 max] patternRow)
+    {
+        patternRow = 0;
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow switchCase =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        if (switchCase.MemberPatternCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplatePatternRow row =
+            new LogicalPackageManifestJsonGenericTemplatePatternRow()
+            {
+                FunctionTemplateRow = switchCase.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplatePatternRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (switchCase.MemberPatternCount == 0)
+        {
+            switchCase.FirstMemberPatternRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastPatternRow = switchCase.LastMemberPatternRow;
+            if (lastPatternRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplatePatternRow lastRow =
+                self.GenericTemplatePatternRows.Get(lastPatternRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplatePatternRows.Replace(lastPatternRow, lastRow))
+            {
+                return false;
+            }
+        }
+
+        switchCase.LastMemberPatternRow = rowIndex;
+        switchCase.MemberPatternCount = switchCase.MemberPatternCount + 1;
+        if (!self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, switchCase))
+        {
+            return false;
+        }
+
+        patternRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddGenericTemplatePatternMemberPattern(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] parentPatternRow,
+        ascii kind,
+        out u32[0 max] patternRow)
+    {
+        patternRow = 0;
+        if (!self.GenericTemplatePatternRows.Contains(parentPatternRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplatePatternRow parent =
+            self.GenericTemplatePatternRows.Get(parentPatternRow);
+        if (parent.MemberPatternCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonGenericTemplatePatternRow row =
+            new LogicalPackageManifestJsonGenericTemplatePatternRow()
+            {
+                FunctionTemplateRow = parent.FunctionTemplateRow,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.GenericTemplatePatternRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (parent.MemberPatternCount == 0)
+        {
+            parent.FirstMemberPatternRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastPatternRow = parent.LastMemberPatternRow;
+            if (lastPatternRow == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonGenericTemplatePatternRow lastRow =
+                self.GenericTemplatePatternRows.Get(lastPatternRow);
+            lastRow.NextRow = rowIndex;
+            if (!self.GenericTemplatePatternRows.Replace(lastPatternRow, lastRow))
+            {
+                return false;
+            }
+        }
+
+        parent.LastMemberPatternRow = rowIndex;
+        parent.MemberPatternCount = parent.MemberPatternCount + 1;
+        if (!self.GenericTemplatePatternRows.Replace(parentPatternRow, parent))
+        {
+            return false;
+        }
+
+        patternRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetGenericTemplateStatementExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        u32[0 max] expressionRow)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow)
+            || !self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow statement =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (statement.FunctionTemplateRow != expression.FunctionTemplateRow)
+        {
+            return false;
+        }
+
+        statement.ExpressionRow = expressionRow;
+        statement.HasExpression = true;
+        return self.GenericTemplateStatementRows.Replace(statementRow, statement);
+    }
+
+    internal fn bool SetGenericTemplateStatementName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        row.NameStringIndex = nameStringIndex;
+        row.HasName = true;
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementStorageClass(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii storageClass)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] storageClassStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            storageClass,
+            storageClassStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        row.StorageClassStringIndex = storageClassStringIndex;
+        row.HasStorageClass = true;
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementMutability(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        bool isMutable,
+        bool isConstant)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        row.IsMutable = isMutable;
+        row.IsConstant = isConstant;
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementConstProvenance(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii constProvenance)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] constProvenanceStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(
+            strings,
+            constProvenance,
+            constProvenanceStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        row.ConstProvenanceStringIndex = constProvenanceStringIndex;
+        row.HasConstProvenance = true;
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementStorageCapacity(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        u32[0 max] storageCapacity)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        row.StorageCapacity = storageCapacity;
+        row.HasStorageCapacity = true;
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementType(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii typeKind)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypeReferenceDescriptor typeReference = new();
+        if (!LogicalPackageManifestJsonBuildTypeReferenceDescriptor(
+            strings,
+            typeKind,
+            typeReference))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        row.TypeReference = typeReference;
+        row.HasType = true;
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementTypeName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        if (!row.HasType
+            || !LogicalPackageManifestJsonTypeReferenceDescriptorSetName(
+                strings,
+                row.TypeReference,
+                name))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateStatementTypeIntegerFacts(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] statementRow,
+        u32[0 max] bitWidth,
+        ascii rangeMin,
+        ascii rangeMax,
+        bool isUnsigned)
+    {
+        if (!self.GenericTemplateStatementRows.Contains(statementRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateStatementRow row =
+            self.GenericTemplateStatementRows.Get(statementRow);
+        if (!row.HasType
+            || !LogicalPackageManifestJsonTypeReferenceDescriptorSetIntegerFacts(
+                strings,
+                row.TypeReference,
+                bitWidth,
+                rangeMin,
+                rangeMax,
+                isUnsigned))
+        {
+            return false;
+        }
+
+        return self.GenericTemplateStatementRows.Replace(statementRow, row);
+    }
+
+    internal fn bool SetGenericTemplateSwitchCaseName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        ascii name)
+    {
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow row =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        row.NameStringIndex = nameStringIndex;
+        row.HasName = true;
+        return self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, row);
+    }
+
+    internal fn bool SetGenericTemplateSwitchCaseOrdinal(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        u32[0 max] ordinal)
+    {
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow row =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        row.Ordinal = ordinal;
+        row.HasOrdinal = true;
+        return self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, row);
+    }
+
+    internal fn bool SetGenericTemplateSwitchCaseExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        u32[0 max] expressionRow)
+    {
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow)
+            || !self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow switchCase =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (switchCase.FunctionTemplateRow != expression.FunctionTemplateRow)
+        {
+            return false;
+        }
+
+        switchCase.ExpressionRow = expressionRow;
+        switchCase.HasExpression = true;
+        return self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, switchCase);
+    }
+
+    internal fn bool SetGenericTemplateSwitchCaseGuardExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        u32[0 max] expressionRow)
+    {
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow)
+            || !self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow switchCase =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (switchCase.FunctionTemplateRow != expression.FunctionTemplateRow)
+        {
+            return false;
+        }
+
+        switchCase.GuardExpressionRow = expressionRow;
+        switchCase.HasGuardExpression = true;
+        return self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, switchCase);
+    }
+
+    internal fn bool SetGenericTemplateSwitchCaseEndExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] switchCaseRow,
+        u32[0 max] expressionRow)
+    {
+        if (!self.GenericTemplateSwitchCaseRows.Contains(switchCaseRow)
+            || !self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplateSwitchCaseRow switchCase =
+            self.GenericTemplateSwitchCaseRows.Get(switchCaseRow);
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (switchCase.FunctionTemplateRow != expression.FunctionTemplateRow)
+        {
+            return false;
+        }
+
+        switchCase.EndExpressionRow = expressionRow;
+        switchCase.HasEndExpression = true;
+        return self.GenericTemplateSwitchCaseRows.Replace(switchCaseRow, switchCase);
+    }
+
+    internal fn bool SetGenericTemplatePatternName(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] patternRow,
+        ascii name)
+    {
+        if (!self.GenericTemplatePatternRows.Contains(patternRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplatePatternRow row =
+            self.GenericTemplatePatternRows.Get(patternRow);
+        row.NameStringIndex = nameStringIndex;
+        row.HasName = true;
+        return self.GenericTemplatePatternRows.Replace(patternRow, row);
+    }
+
+    internal fn bool SetGenericTemplatePatternOrdinal(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] patternRow,
+        u32[0 max] ordinal)
+    {
+        if (!self.GenericTemplatePatternRows.Contains(patternRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplatePatternRow row =
+            self.GenericTemplatePatternRows.Get(patternRow);
+        row.Ordinal = ordinal;
+        row.HasOrdinal = true;
+        return self.GenericTemplatePatternRows.Replace(patternRow, row);
+    }
+
+    internal fn bool SetGenericTemplatePatternExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] patternRow,
+        u32[0 max] expressionRow)
+    {
+        if (!self.GenericTemplatePatternRows.Contains(patternRow)
+            || !self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplatePatternRow pattern =
+            self.GenericTemplatePatternRows.Get(patternRow);
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (pattern.FunctionTemplateRow != expression.FunctionTemplateRow)
+        {
+            return false;
+        }
+
+        pattern.ExpressionRow = expressionRow;
+        pattern.HasExpression = true;
+        return self.GenericTemplatePatternRows.Replace(patternRow, pattern);
+    }
+
+    internal fn bool SetGenericTemplatePatternEndExpression(
+        mut borrow LogicalPackageManifestJsonGenericTemplateBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] patternRow,
+        u32[0 max] expressionRow)
+    {
+        if (!self.GenericTemplatePatternRows.Contains(patternRow)
+            || !self.GenericTemplateExpressionRows.Contains(expressionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonGenericTemplatePatternRow pattern =
+            self.GenericTemplatePatternRows.Get(patternRow);
+        stack LogicalPackageManifestJsonGenericTemplateExpressionRow expression =
+            self.GenericTemplateExpressionRows.Get(expressionRow);
+        if (pattern.FunctionTemplateRow != expression.FunctionTemplateRow)
+        {
+            return false;
+        }
+
+        pattern.EndExpressionRow = expressionRow;
+        pattern.HasEndExpression = true;
+        return self.GenericTemplatePatternRows.Replace(patternRow, pattern);
+    }
+}

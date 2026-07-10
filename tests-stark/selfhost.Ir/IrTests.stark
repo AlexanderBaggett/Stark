@@ -6348,10 +6348,11 @@ fn bool LogicalPackageManifestJsonBuilderWritesPackageHeaderAndModuleShells()
                 helperTypedFunctionItemsParameterType,
                 helperTypedFunctionItemsParameterKind,
                 helperTypedFunctionItemsParameterName)
-            && TryReadLogicalPackageTypeReferenceJsonSummary(
+            && TryReadLogicalPackageTypedCallableTypeReferenceJsonSummary(
                 manifestJson,
                 0,
-                LogicalPackageTypedDeclarationKind.Function,
+                LogicalPackageTypedCallableKind.Function,
+                0,
                 0,
                 LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType,
                 0,
@@ -8000,8 +8001,10 @@ fn bool LogicalPackageManifestJsonBuilderWritesGenericTemplateTypedBodyStatement
     stack mut OwnedAscii expressionLiteral = new();
     stack mut OwnedAscii statementTypeKind = new();
     stack mut OwnedAscii expressionTypeKind = new();
+    // Three template identity rows, four statement rows (including storage and
+    // const provenance), and two expression rows are preserved.
     return graph.FunctionTemplateRowCount() == 1
-        && graph.TextRowCount() == 8
+        && graph.TextRowCount() == 9
         && graph.TextByteCount() > 0
         && graph.TypeReferenceCount() == 2
         && graph.TypedTemplateStatementRowCount() == 1
@@ -10916,6 +10919,8 @@ fn bool LogicalPackageImageBuildsDecodedManifestModelRows()
         stack LogicalPackageFunctionEffectRow helperEffect = model.ModuleFunctionEffectRowAt(0, 1);
         stack LogicalPackageFunctionTemplateRow helperTemplate =
             model.ModuleGenericTemplateFunctionTemplateRowAt(0, 1);
+        // An explicit SourceSurface owns this family even when its arrays are
+        // absent, so the legacy module arrays must not leak into the bridge graph.
         return manifest.ModuleCount() == 2
             && manifest.RootModuleOrdinal() == 1
             && manifest.HasNativeDependencies()
@@ -10981,17 +10986,17 @@ fn bool LogicalPackageImageBuildsDecodedManifestModelRows()
             && model.ModuleTypedGlobalTypeReferenceCount(0) == 1
             && model.ModuleTypedTypeRowCount(0) == 1
             && model.ModuleTypedTypeEnumVariantRowCount(0) == 0
-            && model.ModuleSourceSurfaceImportRowCount(0) == 2
-            && model.ModuleSourceSurfaceTypeAliasRowCount(0) == 1
-            && model.ModuleSourceSurfaceTypeAliasGenericParameterRowCount(0) == 1
-            && model.ModuleSourceSurfaceTypeRowCount(0) == 1
-            && model.ModuleSourceSurfaceTypeFieldRowCount(0) == 1
-            && model.ModuleSourceSurfaceTypePrimaryConstructorParameterRowCount(0) == 1
-            && model.ModuleSourceSurfaceTypeEnumVariantRowCount(0) == 1
-            && model.ModuleSourceSurfaceTypeEnumVariantPayloadRowCount(0) == 1
-            && model.ModuleSourceSurfaceGlobalRowCount(0) == 1
-            && model.ModuleSourceSurfaceFunctionRowCount(0) == 1
-            && model.ModuleSourceSurfaceFunctionParameterRowCount(0) == 1
+            && model.ModuleSourceSurfaceImportRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypeAliasRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypeAliasGenericParameterRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypeRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypeFieldRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypePrimaryConstructorParameterRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypeEnumVariantRowCount(0) == 0
+            && model.ModuleSourceSurfaceTypeEnumVariantPayloadRowCount(0) == 0
+            && model.ModuleSourceSurfaceGlobalRowCount(0) == 0
+            && model.ModuleSourceSurfaceFunctionRowCount(0) == 0
+            && model.ModuleSourceSurfaceFunctionParameterRowCount(0) == 0
             && model.ModuleFunctionEffectRowCount(0) == 1
             && model.ModuleGenericTemplateFunctionTemplateRowCount(0) == 1
             && model.ModuleAbiFunctionRowCount(0) == 0
@@ -14036,6 +14041,12 @@ fn bool LogicalPackageImageReadsTypedDeclarationTypeReferencePayloads()
                               }
                             }
                           ],
+                          "ComptimeGenericParameters": [
+                            {
+                              "Name": "N",
+                              "Type": { "Kind": "Integer", "BitWidth": 32 }
+                            }
+                          ],
                           "IsFfi": false,
                           "IsStrictFp": false,
                           "UseFastCallingConvention": true
@@ -14128,6 +14139,9 @@ fn bool LogicalPackageImageReadsTypedDeclarationTypeReferencePayloads()
     stack mut LogicalPackageTypeReferenceSummary methodParameter = new();
     stack mut OwnedAscii methodParameterKind = new();
     stack mut OwnedAscii methodParameterName = new();
+    stack mut LogicalPackageTypeReferenceSummary methodComptimeParameterType = new();
+    stack mut OwnedAscii methodComptimeParameterKind = new();
+    stack mut OwnedAscii methodComptimeParameterName = new();
     stack mut LogicalPackageTypeReferenceSummary rejected = new();
     stack mut OwnedAscii rejectedKind = new();
     stack mut OwnedAscii rejectedName = new();
@@ -14277,6 +14291,28 @@ fn bool LogicalPackageImageReadsTypedDeclarationTypeReferencePayloads()
             && methodParameter.HasRangeMax()
             && OwnedAsciiEqualsAscii(methodParameterKind, "Integer")
             && methodParameterName.Length() == 0
+            && TryReadLogicalPackageTypedCallableTypeReferenceJsonSummary(
+                manifestJson,
+                0,
+                LogicalPackageTypedCallableKind.Method,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType,
+                0,
+                methodComptimeParameterType,
+                methodComptimeParameterKind,
+                methodComptimeParameterName)
+            && methodComptimeParameterType.DeclarationKind()
+                == LogicalPackageTypedDeclarationKind.Type
+            && methodComptimeParameterType.DeclarationOrdinal() == 0
+            && methodComptimeParameterType.MethodOrdinal() == 0
+            && methodComptimeParameterType.Source()
+                == LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType
+            && methodComptimeParameterType.PayloadOrdinal() == 0
+            && methodComptimeParameterType.HasBitWidth()
+            && methodComptimeParameterType.BitWidth() == 32
+            && OwnedAsciiEqualsAscii(methodComptimeParameterKind, "Integer")
+            && methodComptimeParameterName.Length() == 0
             && !TryReadLogicalPackageTypeReferenceJsonSummary(
                 manifestJson,
                 0,

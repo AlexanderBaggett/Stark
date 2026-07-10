@@ -1,0 +1,346 @@
+import Compiler.AsmFacts
+import Compiler.Ir
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+import Compiler.Mir.PackageImage.Shared.EnumLayoutCodec
+import Compiler.Mir.PackageImage.Shared.LegacyMirCodec
+import Compiler.Mir.PackageImage.Loader.PackageImageLoader
+module Compiler.Mir.PackageImage.Builder.LegacyMirSectionWriter
+
+// Compatibility writers for MIR1/MIR2 and STARKPKG sectioned-MIR images.
+// Logical package-image construction belongs in PackageImageBuilder.
+
+// Serializes a whole MIR module (instructions/blocks/functions/globals) into one
+// package image in `buf`.
+public fn void SerializePackageImage(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+
+    // Header is 20 bytes (magic + 4 offsets), so the first section starts at byte 21.
+    stack u32[0 max] instrOffset = 21;
+    stack u32[0 max] blockOffset = instrOffset + (u32[0 max])instrBuf.Count();
+    stack u32[0 max] funcOffset = blockOffset + (u32[0 max])blockBuf.Count();
+    stack u32[0 max] globalOffset = funcOffset + (u32[0 max])funcBuf.Count();
+
+    WriteU32(buf, MirImageMagic());
+    WriteU32(buf, instrOffset);
+    WriteU32(buf, blockOffset);
+    WriteU32(buf, funcOffset);
+    WriteU32(buf, globalOffset);
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+}
+
+// Serializes a whole MIR module plus assembly metadata into a five-section image.
+// This is the package-image shape imported packages need for source assembly
+// declarations: consumers can reconstruct the declaration without original source.
+public fn void SerializePackageImageWithAsm(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+
+    // Header is 24 bytes (magic + 5 offsets), so the first section starts at byte 25.
+    stack u32[0 max] instrOffset = 25;
+    stack u32[0 max] blockOffset = instrOffset + (u32[0 max])instrBuf.Count();
+    stack u32[0 max] funcOffset = blockOffset + (u32[0 max])blockBuf.Count();
+    stack u32[0 max] globalOffset = funcOffset + (u32[0 max])funcBuf.Count();
+    stack u32[0 max] asmOffset = globalOffset + (u32[0 max])globalBuf.Count();
+
+    WriteU32(buf, MirImageWithAsmMagic());
+    WriteU32(buf, instrOffset);
+    WriteU32(buf, blockOffset);
+    WriteU32(buf, funcOffset);
+    WriteU32(buf, globalOffset);
+    WriteU32(buf, asmOffset);
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+}
+
+// Serializes a MIR module into the durable STARKPKG v2 section-directory
+// container. Offsets in the directory are 0-based file byte offsets to match the
+// host compiler format; the in-memory IrTable reader converts them to 1-based
+// table indices when loading.
+public fn void SerializeSectionedPackageImage(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+
+    stack u32[0 max] sectionCount = 4;
+    stack u64[0 max] instrOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] totalLength = globalOffset + (u64[0 max])globalBuf.Count();
+    stack bool reserved = TryReservePackageImageCapacity(buf, totalLength);
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithTextConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<u8[0 max]> textPayloadBytes,
+    borrow IrTable<MirTextConstant> textConstants,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> textPayloadBuf = new();
+    SerializeTextPayloadBytes(textPayloadBytes, textPayloadBuf);
+    stack mut IrTable<u8[0 max]> textConstantBuf = new();
+    SerializeTextConstants(textConstants, textConstantBuf);
+
+    stack u32[0 max] sectionCount = 6;
+    stack u64[0 max] instrOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] textPayloadOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] textConstantOffset = textPayloadOffset + (u64[0 max])textPayloadBuf.Count();
+    stack u64[0 max] totalLength = textConstantOffset + (u64[0 max])textConstantBuf.Count();
+    stack bool reserved = TryReservePackageImageCapacity(buf, totalLength);
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionTextPayloadBytes(), SectionFlagsRequired(), textPayloadOffset, (u64[0 max])textPayloadBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionTextConstants(), SectionFlagsRequired(), textConstantOffset, (u64[0 max])textConstantBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, textPayloadBuf);
+    AppendBytes(buf, textConstantBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithFloatConstants(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<u8[0 max]> floatPayloadBytes,
+    borrow IrTable<MirFloatConstant> floatConstants,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> floatPayloadBuf = new();
+    SerializeFloatLiteralPayloadBytes(floatPayloadBytes, floatPayloadBuf);
+    stack mut IrTable<u8[0 max]> floatConstantBuf = new();
+    SerializeFloatConstants(floatConstants, floatConstantBuf);
+
+    stack u32[0 max] sectionCount = 6;
+    stack u64[0 max] instrOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] floatPayloadOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] floatConstantOffset = floatPayloadOffset + (u64[0 max])floatPayloadBuf.Count();
+    stack u64[0 max] totalLength = floatConstantOffset + (u64[0 max])floatConstantBuf.Count();
+    stack bool reserved = TryReservePackageImageCapacity(buf, totalLength);
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFloatPayloadBytes(), SectionFlagsRequired(), floatPayloadOffset, (u64[0 max])floatPayloadBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFloatConstants(), SectionFlagsRequired(), floatConstantOffset, (u64[0 max])floatConstantBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, floatPayloadBuf);
+    AppendBytes(buf, floatConstantBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithAsm(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+
+    stack u32[0 max] sectionCount = 5;
+    stack u64[0 max] instrOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] asmOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] totalLength = asmOffset + (u64[0 max])asmBuf.Count();
+    stack bool reserved = TryReservePackageImageCapacity(buf, totalLength);
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionAsmMetadata(), SectionFlagsRequired(), asmOffset, (u64[0 max])asmBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithEnumLayoutFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> enumLayoutBuf = new();
+    SerializeEnumLayoutFacts(enumLayoutFacts, enumLayoutBuf);
+
+    stack u32[0 max] sectionCount = 5;
+    stack u64[0 max] instrOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] enumLayoutOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] totalLength = enumLayoutOffset + (u64[0 max])enumLayoutBuf.Count();
+    stack bool reserved = TryReservePackageImageCapacity(buf, totalLength);
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionEnumLayoutFacts(), SectionFlagsRequired(), enumLayoutOffset, (u64[0 max])enumLayoutBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, enumLayoutBuf);
+}
+
+public fn void SerializeSectionedPackageImageWithAsmAndEnumLayoutFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    borrow IrTable<MirEnumLayoutFact> enumLayoutFacts,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+    stack mut IrTable<u8[0 max]> enumLayoutBuf = new();
+    SerializeEnumLayoutFacts(enumLayoutFacts, enumLayoutBuf);
+
+    stack u32[0 max] sectionCount = 6;
+    stack u64[0 max] instrOffset = PackageImageDataOffset(sectionCount);
+    stack u64[0 max] blockOffset = instrOffset + (u64[0 max])instrBuf.Count();
+    stack u64[0 max] funcOffset = blockOffset + (u64[0 max])blockBuf.Count();
+    stack u64[0 max] globalOffset = funcOffset + (u64[0 max])funcBuf.Count();
+    stack u64[0 max] asmOffset = globalOffset + (u64[0 max])globalBuf.Count();
+    stack u64[0 max] enumLayoutOffset = asmOffset + (u64[0 max])asmBuf.Count();
+    stack u64[0 max] totalLength = enumLayoutOffset + (u64[0 max])enumLayoutBuf.Count();
+    stack bool reserved = TryReservePackageImageCapacity(buf, totalLength);
+
+    WriteSectionedPackageImageHeader(buf, sectionCount);
+    WritePackageSectionDirectoryEntry(buf, PackageSectionInstructions(), SectionFlagsRequired(), instrOffset, (u64[0 max])instrBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionBlocks(), SectionFlagsRequired(), blockOffset, (u64[0 max])blockBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionFunctions(), SectionFlagsRequired(), funcOffset, (u64[0 max])funcBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionGlobals(), SectionFlagsRequired(), globalOffset, (u64[0 max])globalBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionAsmMetadata(), SectionFlagsRequired(), asmOffset, (u64[0 max])asmBuf.Count(), SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(buf, PackageSectionEnumLayoutFacts(), SectionFlagsRequired(), enumLayoutOffset, (u64[0 max])enumLayoutBuf.Count(), SectionEncodingRaw());
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+    AppendBytes(buf, enumLayoutBuf);
+}
