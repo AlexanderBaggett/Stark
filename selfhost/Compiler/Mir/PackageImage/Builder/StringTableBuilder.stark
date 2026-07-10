@@ -1,0 +1,324 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Builder.StringTableBuilder
+
+internal struct LogicalPackageImageStringTableBuilder
+{
+    internal IrTable<u8[0 max]> Bytes;
+    internal IrTable<u32[0 max]> Starts;
+    internal IrTable<u32[0 max]> Lengths;
+
+    LogicalPackageImageStringTableBuilder()
+    {
+        self.Bytes = new();
+        self.Starts = new();
+        self.Lengths = new();
+    }
+
+    internal inline finite law u32[0 max] StringCount(borrow LogicalPackageImageStringTableBuilder self)
+    {
+        return (u32[0 max])self.Starts.Count();
+    }
+}
+
+internal fn bool LogicalPackageImageTextHasBytes(ascii value)
+{
+    return System.Text.AsciiLength(value) > 0;
+}
+
+internal unsafe fn bool LogicalPackageImageStringTableBuilderEntryMatches(
+    borrow LogicalPackageImageStringTableBuilder builder,
+    u32[0 max] row,
+    rawptr<i8[min max]> data,
+    u32[0 max] byteLength)
+    where overlap(builder, data)
+{
+    stack u32[0 max] storedLength = builder.Lengths.Get(row);
+    if (storedLength != byteLength)
+    {
+        return false;
+    }
+
+    if (byteLength == 0)
+    {
+        return true;
+    }
+
+    stack u32[0 max] start = builder.Starts.Get(row);
+    stack mut u32[0 max] index = 0;
+    while willexit (index < byteLength)
+    {
+        if (builder.Bytes.Get(start + index) != ImageByteFromI8(*(&data[(i64[min max])index])))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageStringTableBuilderTryFind(
+    borrow LogicalPackageImageStringTableBuilder builder,
+    ascii value,
+    out u32[0 max] stringIndex)
+    where overlap(builder, value)
+{
+    stringIndex = PackageImageNullStringIndex();
+    stack i64[min max] signedLength = System.Text.AsciiLength(value);
+    if (signedLength < 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack mut rawptr<i8[min max]> data = null;
+        if (byteLength != 0)
+        {
+            data = System.Text.AsciiData(value);
+            if (data == null)
+            {
+                return false;
+            }
+        }
+
+        stack u64[0 2 ** 63 - 1] rowCount = builder.Starts.Count();
+        stack mut u32[0 max] row = 1;
+        while willexit ((u64[0 2 ** 63 - 1])row <= rowCount)
+        {
+            if (LogicalPackageImageStringTableBuilderEntryMatches(builder, row, data, byteLength))
+            {
+                stringIndex = row - 1;
+                return true;
+            }
+
+            row = row + 1;
+        }
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus LogicalPackageImageStringTableBuilderAppendBytes(
+    mut borrow LogicalPackageImageStringTableBuilder builder,
+    ascii value,
+    u32[0 max] byteLength)
+{
+    if (byteLength == 0)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    switch (builder.Bytes.Reserve((u64[0 2 ** 63 - 1])byteLength))
+    {
+        case MemoryStatus.Err(var reserveError):
+            return MemoryStatus.Err(reserveError);
+        case MemoryStatus.Ok:
+    }
+
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        stack mut u32[0 max] index = 0;
+        while willexit (index < byteLength)
+        {
+            if (builder.Bytes.Add(ImageByteFromI8(*(&data[(i64[min max])index]))) == 0)
+            {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            index = index + 1;
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageImageStringTableBuilderTryAdd(
+    mut borrow LogicalPackageImageStringTableBuilder builder,
+    ascii value,
+    out u32[0 max] stringIndex)
+{
+    stringIndex = PackageImageNullStringIndex();
+    if (!LogicalPackageImageTextHasBytes(value))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] existing = PackageImageNullStringIndex();
+    if (LogicalPackageImageStringTableBuilderTryFind(builder, value, existing))
+    {
+        stringIndex = existing;
+        return true;
+    }
+
+    stack i64[min max] signedLength = System.Text.AsciiLength(value);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] rowCount = builder.Starts.Count();
+    stack u64[0 2 ** 63 - 1] byteCount = builder.Bytes.Count();
+    stack u64[0 2 ** 63 - 1] addedLength = (u64[0 2 ** 63 - 1])signedLength;
+    if (rowCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || byteCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || addedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1) - byteCount)
+    {
+        return false;
+    }
+
+    switch (builder.Starts.Reserve(1))
+    {
+        case MemoryStatus.Err(var startError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    switch (builder.Lengths.Reserve(1))
+    {
+        case MemoryStatus.Err(var lengthError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack u32[0 max] start = (u32[0 max])byteCount + 1;
+    stack u32[0 max] byteLength = (u32[0 max])signedLength;
+    if (builder.Starts.Add(start) == 0 || builder.Lengths.Add(byteLength) == 0)
+    {
+        return false;
+    }
+
+    switch (LogicalPackageImageStringTableBuilderAppendBytes(builder, value, byteLength))
+    {
+        case MemoryStatus.Err(var appendError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stringIndex = (u32[0 max])rowCount;
+    return true;
+}
+
+internal fn bool LogicalPackageImageStringTableBuilderTryFindEntry(
+    borrow LogicalPackageImageStringTableBuilder builder,
+    u32[0 max] stringIndex,
+    out u32[0 max] start,
+    out u32[0 max] byteLength)
+{
+    start = 0;
+    byteLength = 0;
+    if (!LogicalStringIndexIsPresent(stringIndex))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] rowCount = builder.Starts.Count();
+    if ((u64[0 2 ** 63 - 1])stringIndex >= rowCount
+        || rowCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] row = stringIndex + 1;
+    stack u32[0 max] localStart = builder.Starts.Get(row);
+    stack u32[0 max] localByteLength = builder.Lengths.Get(row);
+    if (localStart == 0 || localByteLength == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] lastByte =
+        (u64[0 2 ** 63 - 1])localStart + (u64[0 2 ** 63 - 1])localByteLength - 1;
+    if (lastByte > builder.Bytes.Count())
+    {
+        return false;
+    }
+
+    start = localStart;
+    byteLength = localByteLength;
+    return true;
+}
+
+internal fn MemoryStatus LogicalPackageImageStringTableBuilderAppendString(
+    borrow LogicalPackageImageStringTableBuilder builder,
+    u32[0 max] stringIndex,
+    mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] start = 0;
+    stack mut u32[0 max] byteLength = 0;
+    if (!LogicalPackageImageStringTableBuilderTryFindEntry(builder, stringIndex, start, byteLength))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < byteLength)
+    {
+        stack u8[0 max] value = builder.Bytes.Get(start + index);
+        try sink.AppendByte(ImageByteAsI8(value));
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageImageStringTableBuilderEntryEquals(
+    borrow LogicalPackageImageStringTableBuilder left,
+    u32[0 max] leftStringIndex,
+    borrow LogicalPackageImageStringTableBuilder right,
+    u32[0 max] rightStringIndex)
+{
+    stack mut u32[0 max] leftStart = 0;
+    stack mut u32[0 max] leftLength = 0;
+    stack mut u32[0 max] rightStart = 0;
+    stack mut u32[0 max] rightLength = 0;
+    if (!LogicalPackageImageStringTableBuilderTryFindEntry(left, leftStringIndex, leftStart, leftLength)
+        || !LogicalPackageImageStringTableBuilderTryFindEntry(right, rightStringIndex, rightStart, rightLength)
+        || leftLength != rightLength)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < leftLength)
+    {
+        if (left.Bytes.Get(leftStart + index) != right.Bytes.Get(rightStart + index))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal unsafe fn JsonStatus LogicalPackageImageStringTableBuilderWriteTextValue(
+    borrow LogicalPackageImageStringTableBuilder builder,
+    u32[0 max] stringIndex,
+    mut borrow JsonWriter writer,
+    mut borrow OwnedAscii scratch)
+{
+    scratch.Clear();
+    switch (LogicalPackageImageStringTableBuilderAppendString(builder, stringIndex, scratch))
+    {
+        case MemoryStatus.Err(var memoryError):
+            return JsonStatus.Err(JsonError.Memory(memoryError));
+        case MemoryStatus.Ok:
+    }
+
+    stack ascii text = scratch.View();
+    return writer.TextValue(text);
+}

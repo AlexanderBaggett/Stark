@@ -1,0 +1,1903 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Builder.StringTableBuilder
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.BinaryFormat
+import System.Text
+module Compiler.Mir.PackageImage.Builder.TypedInterfaceManifestBuilder
+
+// Typed-interface row ownership for the temporary logical-manifest accumulator.
+internal struct LogicalPackageManifestJsonTypedInterfaceBuilder
+{
+    internal IrTable<bool> ModuleRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceFunctionRow> TypedInterfaceFunctionRows;
+    internal IrTable<u32[0 max]> TypedInterfaceFunctionFirstRows;
+    internal IrTable<u32[0 max]> TypedInterfaceFunctionLastRows;
+    internal IrTable<u32[0 max]> TypedInterfaceFunctionCounts;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceFunctionParameterRow>
+        TypedInterfaceFunctionParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceFunctionGenericParameterRow>
+        TypedInterfaceFunctionGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceFunctionComptimeGenericParameterRow>
+        TypedInterfaceFunctionComptimeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceFunctionDeadParameterNameRow>
+        TypedInterfaceFunctionDeadParameterNameRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceGlobalRow> TypedInterfaceGlobalRows;
+    internal IrTable<u32[0 max]> TypedInterfaceGlobalFirstRows;
+    internal IrTable<u32[0 max]> TypedInterfaceGlobalLastRows;
+    internal IrTable<u32[0 max]> TypedInterfaceGlobalCounts;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeAliasRow> TypedInterfaceTypeAliasRows;
+    internal IrTable<u32[0 max]> TypedInterfaceTypeAliasFirstRows;
+    internal IrTable<u32[0 max]> TypedInterfaceTypeAliasLastRows;
+    internal IrTable<u32[0 max]> TypedInterfaceTypeAliasCounts;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeAliasGenericParameterRow>
+        TypedInterfaceTypeAliasGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeAliasComptimeGenericParameterRow>
+        TypedInterfaceTypeAliasComptimeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeRow> TypedInterfaceTypeRows;
+    internal IrTable<u32[0 max]> TypedInterfaceTypeFirstRows;
+    internal IrTable<u32[0 max]> TypedInterfaceTypeLastRows;
+    internal IrTable<u32[0 max]> TypedInterfaceTypeCounts;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeFieldRow> TypedInterfaceTypeFieldRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeGenericParameterRow>
+        TypedInterfaceTypeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeComptimeGenericParameterRow>
+        TypedInterfaceTypeComptimeGenericParameterRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeAssociatedTypeRow>
+        TypedInterfaceTypeAssociatedTypeRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow>
+        TypedInterfaceTypeEnumVariantRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantPayloadRow>
+        TypedInterfaceTypeEnumVariantPayloadRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitRow>
+        TypedInterfaceTypeImplementedTraitRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitTypeRow>
+        TypedInterfaceTypeImplementedTraitTypeRows;
+    internal IrTable<LogicalPackageManifestJsonTypedInterfaceTypeThreadSafetyLawAttributeRow>
+        TypedInterfaceTypeThreadSafetyLawAttributeRows;
+
+    LogicalPackageManifestJsonTypedInterfaceBuilder()
+    {
+        self.ModuleRows = new();
+        self.TypedInterfaceFunctionRows = new();
+        self.TypedInterfaceFunctionFirstRows = new();
+        self.TypedInterfaceFunctionLastRows = new();
+        self.TypedInterfaceFunctionCounts = new();
+        self.TypedInterfaceFunctionParameterRows = new();
+        self.TypedInterfaceFunctionGenericParameterRows = new();
+        self.TypedInterfaceFunctionComptimeGenericParameterRows = new();
+        self.TypedInterfaceFunctionDeadParameterNameRows = new();
+        self.TypedInterfaceGlobalRows = new();
+        self.TypedInterfaceGlobalFirstRows = new();
+        self.TypedInterfaceGlobalLastRows = new();
+        self.TypedInterfaceGlobalCounts = new();
+        self.TypedInterfaceTypeAliasRows = new();
+        self.TypedInterfaceTypeAliasFirstRows = new();
+        self.TypedInterfaceTypeAliasLastRows = new();
+        self.TypedInterfaceTypeAliasCounts = new();
+        self.TypedInterfaceTypeAliasGenericParameterRows = new();
+        self.TypedInterfaceTypeAliasComptimeGenericParameterRows = new();
+        self.TypedInterfaceTypeRows = new();
+        self.TypedInterfaceTypeFirstRows = new();
+        self.TypedInterfaceTypeLastRows = new();
+        self.TypedInterfaceTypeCounts = new();
+        self.TypedInterfaceTypeFieldRows = new();
+        self.TypedInterfaceTypeGenericParameterRows = new();
+        self.TypedInterfaceTypeComptimeGenericParameterRows = new();
+        self.TypedInterfaceTypeAssociatedTypeRows = new();
+        self.TypedInterfaceTypeEnumVariantRows = new();
+        self.TypedInterfaceTypeEnumVariantPayloadRows = new();
+        self.TypedInterfaceTypeImplementedTraitRows = new();
+        self.TypedInterfaceTypeImplementedTraitTypeRows = new();
+        self.TypedInterfaceTypeThreadSafetyLawAttributeRows = new();
+    }
+
+    internal fn bool AddModule(mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self)
+    {
+        return self.ModuleRows.Add(false) != 0
+            && self.TypedInterfaceFunctionFirstRows.Add(0) != 0
+            && self.TypedInterfaceFunctionLastRows.Add(0) != 0
+            && self.TypedInterfaceFunctionCounts.Add(0) != 0
+            && self.TypedInterfaceGlobalFirstRows.Add(0) != 0
+            && self.TypedInterfaceGlobalLastRows.Add(0) != 0
+            && self.TypedInterfaceGlobalCounts.Add(0) != 0
+            && self.TypedInterfaceTypeAliasFirstRows.Add(0) != 0
+            && self.TypedInterfaceTypeAliasLastRows.Add(0) != 0
+            && self.TypedInterfaceTypeAliasCounts.Add(0) != 0
+            && self.TypedInterfaceTypeFirstRows.Add(0) != 0
+            && self.TypedInterfaceTypeLastRows.Add(0) != 0
+            && self.TypedInterfaceTypeCounts.Add(0) != 0;
+    }
+
+    internal fn bool AddTypedInterfaceTypeAlias(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii targetTypeKind,
+        ascii targetTypeName,
+        out u32[0 max] typeAliasRow)
+    {
+        typeAliasRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.TypedInterfaceTypeAliasCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] targetTypeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] targetTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, targetTypeKind, targetTypeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, targetTypeName, targetTypeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeAliasRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeAliasRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                TargetTypeKindStringIndex = targetTypeKindStringIndex,
+                TargetTypeNameStringIndex = targetTypeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeAliasRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.TypedInterfaceTypeAliasFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.TypedInterfaceTypeAliasLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeAliasRow lastRow =
+                self.TypedInterfaceTypeAliasRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeAliasRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.TypedInterfaceTypeAliasLastRows.Replace(moduleRow, rowIndex)
+            || !self.TypedInterfaceTypeAliasCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        typeAliasRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddTypedInterfaceTypeAliasGenericParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeAliasRow,
+        ascii name)
+    {
+        if (!self.TypedInterfaceTypeAliasRows.Contains(typeAliasRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeAliasRow aliasRow =
+            self.TypedInterfaceTypeAliasRows.Get(typeAliasRow);
+        if (aliasRow.GenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeAliasGenericParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeAliasGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeAliasGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (aliasRow.GenericParameterCount == 0)
+        {
+            aliasRow.GenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = aliasRow.GenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeAliasGenericParameterRow lastRow =
+                self.TypedInterfaceTypeAliasGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeAliasGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        aliasRow.GenericParameterLastRow = rowIndex;
+        aliasRow.GenericParameterCount = aliasRow.GenericParameterCount + 1;
+        return self.TypedInterfaceTypeAliasRows.Replace(typeAliasRow, aliasRow);
+    }
+
+    internal fn bool AddTypedInterfaceTypeAliasComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeAliasRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        if (!self.TypedInterfaceTypeAliasRows.Contains(typeAliasRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeAliasRow aliasRow =
+            self.TypedInterfaceTypeAliasRows.Get(typeAliasRow);
+        if (aliasRow.ComptimeGenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeAliasComptimeGenericParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeAliasComptimeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeAliasComptimeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (aliasRow.ComptimeGenericParameterCount == 0)
+        {
+            aliasRow.ComptimeGenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = aliasRow.ComptimeGenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeAliasComptimeGenericParameterRow lastRow =
+                self.TypedInterfaceTypeAliasComptimeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeAliasComptimeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        aliasRow.ComptimeGenericParameterLastRow = rowIndex;
+        aliasRow.ComptimeGenericParameterCount = aliasRow.ComptimeGenericParameterCount + 1;
+        return self.TypedInterfaceTypeAliasRows.Replace(typeAliasRow, aliasRow);
+    }
+
+    internal fn bool AddTypedInterfaceFunction(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii symbolName,
+        ascii manifestKind,
+        ascii returnTypeKind,
+        ascii returnTypeName,
+        bool isFfi,
+        bool isStrictFp,
+        bool usesFastCallingConvention,
+        out u32[0 max] functionRow)
+    {
+        functionRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.TypedInterfaceFunctionCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] symbolNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] returnTypeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] returnTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, symbolName, symbolNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, manifestKind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, returnTypeKind, returnTypeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, returnTypeName, returnTypeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            new LogicalPackageManifestJsonTypedInterfaceFunctionRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                SymbolNameStringIndex = symbolNameStringIndex,
+                KindStringIndex = kindStringIndex,
+                ReturnTypeKindStringIndex = returnTypeKindStringIndex,
+                ReturnTypeNameStringIndex = returnTypeNameStringIndex,
+                IsFfi = isFfi,
+                IsStrictFp = isStrictFp,
+                UsesFastCallingConvention = usesFastCallingConvention
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceFunctionRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.TypedInterfaceFunctionFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.TypedInterfaceFunctionLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow lastRow =
+                self.TypedInterfaceFunctionRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceFunctionRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.TypedInterfaceFunctionLastRows.Replace(moduleRow, rowIndex)
+            || !self.TypedInterfaceFunctionCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        functionRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetTypedInterfaceFunctionFlags(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        bool hasGenericTemplateBody,
+        bool isHot,
+        bool isCold,
+        bool hasExplicitInlinePreference,
+        bool isUnsafe,
+        bool isVarargs,
+        bool isTailCallable,
+        bool hasBody)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow) || (isHot && isCold))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.HasGenericTemplateBody = hasGenericTemplateBody;
+        row.IsHot = isHot;
+        row.IsCold = isCold;
+        row.HasExplicitInlinePreference = hasExplicitInlinePreference;
+        row.IsUnsafe = isUnsafe;
+        row.IsVarargs = isVarargs;
+        row.IsTailCallable = isTailCallable;
+        row.HasBody = hasBody;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetTypedInterfaceFunctionQualifiedResolvedName(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii qualifiedResolvedName)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedResolvedName, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.QualifiedResolvedNameStringIndex = stringIndex;
+        row.HasQualifiedResolvedName = true;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetTypedInterfaceFunctionPublishedOverloadKey(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii publishedOverloadKey)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, publishedOverloadKey, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.PublishedOverloadKeyStringIndex = stringIndex;
+        row.HasPublishedOverloadKey = true;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetTypedInterfaceFunctionInlinePreference(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii inlinePreference)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, inlinePreference, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.InlinePreferenceStringIndex = stringIndex;
+        row.HasInlinePreference = true;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetTypedInterfaceFunctionFfiAbi(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii ffiAbi)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, ffiAbi, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.FfiAbiStringIndex = stringIndex;
+        row.HasFfiAbi = true;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetTypedInterfaceFunctionBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii backendOptimizationMode)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, backendOptimizationMode, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.BackendOptimizationModeStringIndex = stringIndex;
+        row.HasBackendOptimizationMode = true;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool SetTypedInterfaceFunctionLinkName(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii linkName)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, linkName, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow row =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        row.LinkNameStringIndex = stringIndex;
+        row.HasLinkName = true;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, row);
+    }
+
+    internal fn bool AddTypedInterfaceFunctionParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName,
+        ascii rawPointerElementCountExpression,
+        bool hasRawPointerElementCountExpression,
+        bool isDisjoint,
+        bool isConst)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow function =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        if (function.ParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] rawCountStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex)
+            || (hasRawPointerElementCountExpression
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    rawPointerElementCountExpression,
+                    rawCountStringIndex)))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceFunctionParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceFunctionParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex,
+                RawPointerElementCountExpressionStringIndex = rawCountStringIndex,
+                HasRawPointerElementCountExpression = hasRawPointerElementCountExpression,
+                IsDisjoint = isDisjoint,
+                IsConst = isConst
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceFunctionParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.ParameterCount == 0)
+        {
+            function.ParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.ParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceFunctionParameterRow lastRow =
+                self.TypedInterfaceFunctionParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceFunctionParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.ParameterLastRow = rowIndex;
+        function.ParameterCount = function.ParameterCount + 1;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddTypedInterfaceFunctionGenericParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow function =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        if (function.GenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceFunctionGenericParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceFunctionGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceFunctionGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.GenericParameterCount == 0)
+        {
+            function.GenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.GenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceFunctionGenericParameterRow lastRow =
+                self.TypedInterfaceFunctionGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceFunctionGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.GenericParameterLastRow = rowIndex;
+        function.GenericParameterCount = function.GenericParameterCount + 1;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddTypedInterfaceFunctionComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow function =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        if (function.ComptimeGenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceFunctionComptimeGenericParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceFunctionComptimeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceFunctionComptimeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.ComptimeGenericParameterCount == 0)
+        {
+            function.ComptimeGenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.ComptimeGenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceFunctionComptimeGenericParameterRow lastRow =
+                self.TypedInterfaceFunctionComptimeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceFunctionComptimeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.ComptimeGenericParameterLastRow = rowIndex;
+        function.ComptimeGenericParameterCount = function.ComptimeGenericParameterCount + 1;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddTypedInterfaceFunctionPointeeDeadOnReturnParameterName(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] functionRow,
+        ascii name)
+    {
+        if (!self.TypedInterfaceFunctionRows.Contains(functionRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceFunctionRow function =
+            self.TypedInterfaceFunctionRows.Get(functionRow);
+        if (function.PointeeDeadOnReturnParameterNameCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceFunctionDeadParameterNameRow row =
+            new LogicalPackageManifestJsonTypedInterfaceFunctionDeadParameterNameRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceFunctionDeadParameterNameRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (function.PointeeDeadOnReturnParameterNameCount == 0)
+        {
+            function.PointeeDeadOnReturnParameterNameFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = function.PointeeDeadOnReturnParameterNameLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceFunctionDeadParameterNameRow lastRow =
+                self.TypedInterfaceFunctionDeadParameterNameRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceFunctionDeadParameterNameRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        function.PointeeDeadOnReturnParameterNameLastRow = rowIndex;
+        function.PointeeDeadOnReturnParameterNameCount =
+            function.PointeeDeadOnReturnParameterNameCount + 1;
+        return self.TypedInterfaceFunctionRows.Replace(functionRow, function);
+    }
+
+    internal fn bool AddTypedInterfaceGlobal(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        ascii typeKind,
+        ascii typeName,
+        bool isMutable,
+        out u32[0 max] globalRow)
+    {
+        globalRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.TypedInterfaceGlobalCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, manifestKind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceGlobalRow row =
+            new LogicalPackageManifestJsonTypedInterfaceGlobalRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                KindStringIndex = kindStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex,
+                IsMutable = isMutable
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceGlobalRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.TypedInterfaceGlobalFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.TypedInterfaceGlobalLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceGlobalRow lastRow =
+                self.TypedInterfaceGlobalRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceGlobalRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.TypedInterfaceGlobalLastRows.Replace(moduleRow, rowIndex)
+            || !self.TypedInterfaceGlobalCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        globalRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool SetTypedInterfaceGlobalScalarConstantInitializer(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] globalRow,
+        ascii initializerKind,
+        ascii initializerTypeKind,
+        ascii initializerTypeName,
+        ascii integerValue,
+        bool hasIntegerValue,
+        ascii floatLiteralText,
+        bool hasFloatLiteralText,
+        bool boolValue,
+        bool hasBoolValue,
+        ascii textLiteralText,
+        bool hasTextLiteralText)
+    {
+        if (!self.TypedInterfaceGlobalRows.Contains(globalRow))
+        {
+            return false;
+        }
+
+        stack bool isInteger = System.Text.Equals(initializerKind, "integer");
+        stack bool isFloat = System.Text.Equals(initializerKind, "float");
+        stack bool isBool = System.Text.Equals(initializerKind, "bool");
+        stack bool isText = System.Text.Equals(initializerKind, "text");
+        stack bool isNull = System.Text.Equals(initializerKind, "null");
+        if ((!isInteger && !isFloat && !isBool && !isText && !isNull)
+            || (isInteger != hasIntegerValue)
+            || (isFloat != hasFloatLiteralText)
+            || (isBool != hasBoolValue)
+            || (isText != hasTextLiteralText)
+            || (isNull
+                && (hasIntegerValue || hasFloatLiteralText || hasBoolValue || hasTextLiteralText)))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] integerValueStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] floatLiteralTextStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] textLiteralTextStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, initializerKind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, initializerTypeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, initializerTypeName, typeNameStringIndex)
+            || (hasIntegerValue
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    integerValue,
+                    integerValueStringIndex))
+            || (hasFloatLiteralText
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    floatLiteralText,
+                    floatLiteralTextStringIndex))
+            || (hasTextLiteralText
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    textLiteralText,
+                    textLiteralTextStringIndex)))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceGlobalRow row =
+            self.TypedInterfaceGlobalRows.Get(globalRow);
+        row.HasConstantInitializer = true;
+        row.InitializerKindStringIndex = kindStringIndex;
+        row.InitializerTypeKindStringIndex = typeKindStringIndex;
+        row.InitializerTypeNameStringIndex = typeNameStringIndex;
+        row.InitializerIntegerValueStringIndex = integerValueStringIndex;
+        row.InitializerFloatLiteralTextStringIndex = floatLiteralTextStringIndex;
+        row.InitializerTextLiteralTextStringIndex = textLiteralTextStringIndex;
+        row.HasInitializerIntegerValue = hasIntegerValue;
+        row.HasInitializerFloatLiteralText = hasFloatLiteralText;
+        row.HasInitializerBoolValue = hasBoolValue;
+        row.InitializerBoolValue = boolValue;
+        row.HasInitializerTextLiteralText = hasTextLiteralText;
+        return self.TypedInterfaceGlobalRows.Replace(globalRow, row);
+    }
+
+    internal fn bool AddTypedInterfaceType(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] moduleOrdinal,
+        ascii name,
+        ascii qualifiedName,
+        ascii visibility,
+        ascii manifestKind,
+        out u32[0 max] typeRow)
+    {
+        typeRow = 0;
+        stack u32[0 max] moduleRow = moduleOrdinal + 1;
+        if (!self.ModuleRows.Contains(moduleRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] count = self.TypedInterfaceTypeCounts.Get(moduleRow);
+        if (count == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] qualifiedNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] visibilityStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, qualifiedName, qualifiedNameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, visibility, visibilityStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, manifestKind, kindStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeRow()
+            {
+                NameStringIndex = nameStringIndex,
+                QualifiedNameStringIndex = qualifiedNameStringIndex,
+                VisibilityStringIndex = visibilityStringIndex,
+                KindStringIndex = kindStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (count == 0 && !self.TypedInterfaceTypeFirstRows.Replace(moduleRow, rowIndex))
+        {
+            return false;
+        }
+        else if (count != 0)
+        {
+            stack u32[0 max] lastRowIndex = self.TypedInterfaceTypeLastRows.Get(moduleRow);
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow lastRow =
+                self.TypedInterfaceTypeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        if (!self.TypedInterfaceTypeLastRows.Replace(moduleRow, rowIndex)
+            || !self.TypedInterfaceTypeCounts.Replace(moduleRow, count + 1))
+        {
+            return false;
+        }
+
+        typeRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddTypedInterfaceTypeField(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.FieldCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeFieldRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeFieldRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeFieldRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.FieldCount == 0)
+        {
+            typeFacts.FieldFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.FieldLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeFieldRow lastRow =
+                self.TypedInterfaceTypeFieldRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeFieldRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.FieldLastRow = rowIndex;
+        typeFacts.FieldCount = typeFacts.FieldCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeGenericParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.GenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeGenericParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.GenericParameterCount == 0)
+        {
+            typeFacts.GenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.GenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeGenericParameterRow lastRow =
+                self.TypedInterfaceTypeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.GenericParameterLastRow = rowIndex;
+        typeFacts.GenericParameterCount = typeFacts.GenericParameterCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeComptimeGenericParameter(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.ComptimeGenericParameterCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeComptimeGenericParameterRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeComptimeGenericParameterRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeComptimeGenericParameterRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.ComptimeGenericParameterCount == 0)
+        {
+            typeFacts.ComptimeGenericParameterFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.ComptimeGenericParameterLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeComptimeGenericParameterRow lastRow =
+                self.TypedInterfaceTypeComptimeGenericParameterRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeComptimeGenericParameterRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.ComptimeGenericParameterLastRow = rowIndex;
+        typeFacts.ComptimeGenericParameterCount = typeFacts.ComptimeGenericParameterCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeAssociatedType(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        ascii targetTypeKind,
+        ascii targetTypeName,
+        bool hasTargetType)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.AssociatedTypeCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] targetTypeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] targetTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || (hasTargetType
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    targetTypeKind,
+                    targetTypeKindStringIndex))
+            || (hasTargetType
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    targetTypeName,
+                    targetTypeNameStringIndex)))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeAssociatedTypeRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeAssociatedTypeRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TargetTypeKindStringIndex = targetTypeKindStringIndex,
+                TargetTypeNameStringIndex = targetTypeNameStringIndex,
+                HasTargetType = hasTargetType
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeAssociatedTypeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.AssociatedTypeCount == 0)
+        {
+            typeFacts.AssociatedTypeFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.AssociatedTypeLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeAssociatedTypeRow lastRow =
+                self.TypedInterfaceTypeAssociatedTypeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeAssociatedTypeRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.AssociatedTypeLastRow = rowIndex;
+        typeFacts.AssociatedTypeCount = typeFacts.AssociatedTypeCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeEnumVariant(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii name,
+        bool usesNamedFields,
+        ascii role,
+        bool hasRole,
+        ascii absorbsErrorTypeKind,
+        ascii absorbsErrorTypeName,
+        bool hasAbsorbsErrorType,
+        out u32[0 max] variantRow)
+    {
+        variantRow = 0;
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.VariantCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] roleStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] absorbsErrorTypeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] absorbsErrorTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || (hasRole && !LogicalPackageImageStringTableBuilderTryAdd(strings, role, roleStringIndex))
+            || (hasAbsorbsErrorType
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    absorbsErrorTypeKind,
+                    absorbsErrorTypeKindStringIndex))
+            || (hasAbsorbsErrorType
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    absorbsErrorTypeName,
+                    absorbsErrorTypeNameStringIndex)))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow()
+            {
+                NameStringIndex = nameStringIndex,
+                RoleStringIndex = roleStringIndex,
+                AbsorbsErrorTypeKindStringIndex = absorbsErrorTypeKindStringIndex,
+                AbsorbsErrorTypeNameStringIndex = absorbsErrorTypeNameStringIndex,
+                UsesNamedFields = usesNamedFields,
+                HasRole = hasRole,
+                HasAbsorbsErrorType = hasAbsorbsErrorType
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeEnumVariantRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.VariantCount == 0)
+        {
+            typeFacts.VariantFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.VariantLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow lastRow =
+                self.TypedInterfaceTypeEnumVariantRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeEnumVariantRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.VariantLastRow = rowIndex;
+        typeFacts.VariantCount = typeFacts.VariantCount + 1;
+        if (!self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts))
+        {
+            return false;
+        }
+
+        variantRow = rowIndex;
+        return true;
+    }
+
+    internal fn bool AddTypedInterfaceTypeEnumVariantPayload(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] variantRow,
+        ascii name,
+        ascii typeKind,
+        ascii typeName)
+    {
+        if (!self.TypedInterfaceTypeEnumVariantRows.Contains(variantRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantRow variantFacts =
+            self.TypedInterfaceTypeEnumVariantRows.Get(variantRow);
+        if (variantFacts.PayloadCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] nameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, name, nameStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantPayloadRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantPayloadRow()
+            {
+                NameStringIndex = nameStringIndex,
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeEnumVariantPayloadRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (variantFacts.PayloadCount == 0)
+        {
+            variantFacts.PayloadFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = variantFacts.PayloadLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeEnumVariantPayloadRow lastRow =
+                self.TypedInterfaceTypeEnumVariantPayloadRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeEnumVariantPayloadRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        variantFacts.PayloadLastRow = rowIndex;
+        variantFacts.PayloadCount = variantFacts.PayloadCount + 1;
+        return self.TypedInterfaceTypeEnumVariantRows.Replace(variantRow, variantFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeImplementedTrait(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii traitText)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.ImplementedTraitCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] traitStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, traitText, traitStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitRow()
+            {
+                TraitStringIndex = traitStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeImplementedTraitRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.ImplementedTraitCount == 0)
+        {
+            typeFacts.ImplementedTraitFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.ImplementedTraitLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitRow lastRow =
+                self.TypedInterfaceTypeImplementedTraitRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeImplementedTraitRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.ImplementedTraitLastRow = rowIndex;
+        typeFacts.ImplementedTraitCount = typeFacts.ImplementedTraitCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeImplementedTraitType(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii typeKind,
+        ascii typeName)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.ImplementedTraitTypeCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] typeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] typeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, typeKind, typeKindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, typeName, typeNameStringIndex))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitTypeRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitTypeRow()
+            {
+                TypeKindStringIndex = typeKindStringIndex,
+                TypeNameStringIndex = typeNameStringIndex
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeImplementedTraitTypeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.ImplementedTraitTypeCount == 0)
+        {
+            typeFacts.ImplementedTraitTypeFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.ImplementedTraitTypeLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeImplementedTraitTypeRow lastRow =
+                self.TypedInterfaceTypeImplementedTraitTypeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeImplementedTraitTypeRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.ImplementedTraitTypeLastRow = rowIndex;
+        typeFacts.ImplementedTraitTypeCount = typeFacts.ImplementedTraitTypeCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool AddTypedInterfaceTypeThreadSafetyLawAttribute(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii kind,
+        ascii lawName,
+        ascii conditionLawName,
+        ascii conditionTypeKind,
+        ascii conditionTypeName,
+        bool hasCondition)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        if (typeFacts.ThreadSafetyLawAttributeCount == (u32[0 max])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] kindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] lawNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] conditionLawNameStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] conditionTypeKindStringIndex = PackageImageNullStringIndex();
+        stack mut u32[0 max] conditionTypeNameStringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, kind, kindStringIndex)
+            || !LogicalPackageImageStringTableBuilderTryAdd(strings, lawName, lawNameStringIndex)
+            || (hasCondition
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    conditionLawName,
+                    conditionLawNameStringIndex))
+            || (hasCondition
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    conditionTypeKind,
+                    conditionTypeKindStringIndex))
+            || (hasCondition
+                && !LogicalPackageImageStringTableBuilderTryAdd(
+                    strings,
+                    conditionTypeName,
+                    conditionTypeNameStringIndex)))
+        {
+            return false;
+        }
+
+        stack LogicalPackageManifestJsonTypedInterfaceTypeThreadSafetyLawAttributeRow row =
+            new LogicalPackageManifestJsonTypedInterfaceTypeThreadSafetyLawAttributeRow()
+            {
+                KindStringIndex = kindStringIndex,
+                LawNameStringIndex = lawNameStringIndex,
+                ConditionLawNameStringIndex = conditionLawNameStringIndex,
+                ConditionTypeKindStringIndex = conditionTypeKindStringIndex,
+                ConditionTypeNameStringIndex = conditionTypeNameStringIndex,
+                HasCondition = hasCondition
+            };
+        stack u32[0 max] rowIndex = self.TypedInterfaceTypeThreadSafetyLawAttributeRows.Add(row);
+        if (rowIndex == 0)
+        {
+            return false;
+        }
+
+        if (typeFacts.ThreadSafetyLawAttributeCount == 0)
+        {
+            typeFacts.ThreadSafetyLawAttributeFirstRow = rowIndex;
+        }
+        else
+        {
+            stack u32[0 max] lastRowIndex = typeFacts.ThreadSafetyLawAttributeLastRow;
+            if (lastRowIndex == 0)
+            {
+                return false;
+            }
+
+            stack mut LogicalPackageManifestJsonTypedInterfaceTypeThreadSafetyLawAttributeRow lastRow =
+                self.TypedInterfaceTypeThreadSafetyLawAttributeRows.Get(lastRowIndex);
+            lastRow.NextRow = rowIndex;
+            if (!self.TypedInterfaceTypeThreadSafetyLawAttributeRows.Replace(lastRowIndex, lastRow))
+            {
+                return false;
+            }
+        }
+
+        typeFacts.ThreadSafetyLawAttributeLastRow = rowIndex;
+        typeFacts.ThreadSafetyLawAttributeCount = typeFacts.ThreadSafetyLawAttributeCount + 1;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetTypedInterfaceTypeCountFacts(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        u32[0 max] methodCount,
+        u32[0 max] constructorCount)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        typeFacts.MethodCount = methodCount;
+        typeFacts.ConstructorCount = constructorCount;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetTypedInterfaceTypeBackendOptimizationMode(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii backendOptimizationMode)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, backendOptimizationMode, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        typeFacts.BackendOptimizationModeStringIndex = stringIndex;
+        typeFacts.HasBackendOptimizationMode = true;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetTypedInterfaceTypeStructLayout(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        ascii structLayout)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] stringIndex = PackageImageNullStringIndex();
+        if (!LogicalPackageImageStringTableBuilderTryAdd(strings, structLayout, stringIndex))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        typeFacts.StructLayoutStringIndex = stringIndex;
+        typeFacts.HasStructLayout = true;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetTypedInterfaceTypePackBytes(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        u32[0 max] packBytes)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        typeFacts.PackBytes = packBytes;
+        typeFacts.HasPackBytes = true;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetTypedInterfaceTypeAlignBytes(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        u32[0 max] alignBytes)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        typeFacts.AlignBytes = alignBytes;
+        typeFacts.HasAlignBytes = true;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+
+    internal fn bool SetTypedInterfaceTypeFlags(
+        mut borrow LogicalPackageManifestJsonTypedInterfaceBuilder self,
+        mut borrow LogicalPackageImageStringTableBuilder strings,
+        u32[0 max] typeRow,
+        bool isDynTrait)
+    {
+        if (!self.TypedInterfaceTypeRows.Contains(typeRow))
+        {
+            return false;
+        }
+
+        stack mut LogicalPackageManifestJsonTypedInterfaceTypeRow typeFacts =
+            self.TypedInterfaceTypeRows.Get(typeRow);
+        typeFacts.IsDynTrait = isDynTrait;
+        return self.TypedInterfaceTypeRows.Replace(typeRow, typeFacts);
+    }
+}

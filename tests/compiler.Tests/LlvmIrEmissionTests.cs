@@ -8281,6 +8281,50 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RetborrowReceiverTemporaryLoadRemainsLiveForDirectBorrowCall()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Row
+            {
+                i32[min max] Value;
+
+                finite law i32[min max] Read(borrow Row self)
+                {
+                    return self.Value;
+                }
+            }
+
+            struct Holder
+            {
+                Row Item;
+
+                finite law retborrow Row Get(borrow Holder self)
+                {
+                    return self.Item;
+                }
+
+                finite law i32[min max] Read(borrow Holder self)
+                {
+                    return self.Get().Read();
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var body = ExtractDefinitionBody(GetLlvmRaw(result), "Holder_Read");
+        var temporaryLoad = Regex.Match(
+            body,
+            @"(?m)^\s*%(v\d+) = load ptr, ptr %slot__tmp\d+_ptrcast[^\n]*\n\s*%v\d+ = call[^\n]* %\1\)");
+
+        Assert.True(
+            temporaryLoad.Success,
+            $"Expected the direct borrow call to consume the emitted retborrow temporary load:{Environment.NewLine}{body}");
+    }
+
+    [Fact]
     public void StoreBorrowParametersEmitEscapingCaptureAttributes()
     {
         var result = Compile(

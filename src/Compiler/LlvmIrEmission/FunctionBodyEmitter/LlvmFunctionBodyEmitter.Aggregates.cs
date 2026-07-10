@@ -1792,9 +1792,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     valueInstruction.Value.Type,
                     visitingValueNames);
             case SsaExtractFieldRValue extractField when IsNamedReference(extractField.Target, valueName):
-                return !CanExtractAggregateElementFromAddress(valueType, extractField.FieldIndex, extractField.Type);
+                return AggregateValueHasPendingInsert(valueName, new HashSet<string>(StringComparer.Ordinal))
+                    || !CanExtractAggregateElementFromAddress(valueType, extractField.FieldIndex, extractField.Type);
             case SsaExtractIndexRValue extractIndex when IsNamedReference(extractIndex.Target, valueName):
-                return !CanExtractAggregateElementFromAddress(valueType, extractIndex.ElementIndex, extractIndex.Type);
+                return AggregateValueHasPendingInsert(valueName, new HashSet<string>(StringComparer.Ordinal))
+                    || !CanExtractAggregateElementFromAddress(valueType, extractIndex.ElementIndex, extractIndex.Type);
             case SsaCallRValue call:
                 for (var index = 0; index < call.Arguments.Count; index++)
                 {
@@ -1813,6 +1815,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
             default:
                 return RValueContainsNamedReference(valueInstruction.Value, valueName);
         }
+    }
+
+    private bool AggregateValueHasPendingInsert(string valueName, ISet<string> visitedValueNames)
+    {
+        if (!visitedValueNames.Add(valueName)
+            || !_valueDefinitions.TryGetValue(valueName, out var definition))
+        {
+            return false;
+        }
+
+        return definition switch
+        {
+            SsaInsertFieldRValue => true,
+            SsaInsertIndexRValue => true,
+            SsaUseRValue { Value: SsaValueReference reference } =>
+                AggregateValueHasPendingInsert(reference.Name, visitedValueNames),
+            _ => false
+        };
     }
 
     private bool CallRequiresAggregateValueMaterialization(

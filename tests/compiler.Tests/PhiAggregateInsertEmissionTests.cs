@@ -36,6 +36,7 @@ public sealed class PhiAggregateInsertEmissionTests
                     u32[0 max] J;
                     u32[0 max] K;
                     u32[0 max] First;
+                    u32[0 max] Last;
                     u32[0 max] Count;
 
                     Row()
@@ -52,6 +53,7 @@ public sealed class PhiAggregateInsertEmissionTests
                         self.J = 0;
                         self.K = 0;
                         self.First = 0;
+                        self.Last = 0;
                         self.Count = 0;
                     }
                 }
@@ -112,6 +114,7 @@ public sealed class PhiAggregateInsertEmissionTests
                         return false;
                     }
 
+                    row.Last = added;
                     row.Count = row.Count + 1;
                     if (!graph.FunctionRows.Replace(functionRow, row))
                     {
@@ -157,9 +160,9 @@ public sealed class PhiAggregateInsertEmissionTests
     }
 
     /// <summary>
-    /// Every register consumed as a store VALUE must be defined (or be a
-    /// parameter) inside the same function — the exact invariant the
-    /// deferred-aggregate bug broke.
+    /// Every register use must be defined (or be a parameter) inside the same
+    /// function. This catches both deferred stores and a scalar extraction from
+    /// a deferred insert chain.
     /// </summary>
     private static void AssertNoUndefinedRegisterUses(string moduleText)
     {
@@ -174,12 +177,15 @@ public sealed class PhiAggregateInsertEmissionTests
                 defined.Add(parameter.Groups[1].Value);
             }
 
-            foreach (Match store in Regex.Matches(body, @"store [^,]+ %([A-Za-z0-9_.$]+),"))
+            var labels = Regex.Matches(body, @"(?m)^([A-Za-z0-9_.$]+):")
+                .Select(static match => match.Groups[1].Value)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (Match use in Regex.Matches(body, @"%((?:v|abi_|slot_|arg_)[A-Za-z0-9_.$]+)"))
             {
-                var register = store.Groups[1].Value;
+                var register = use.Groups[1].Value;
                 Assert.True(
-                    defined.Contains(register),
-                    $"store consumes undefined register %{register}:\n{store.Value}");
+                    defined.Contains(register) || labels.Contains(register),
+                    $"LLVM body consumes undefined register %{register}:\n{use.Value}");
             }
         }
     }

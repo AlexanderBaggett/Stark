@@ -38,7 +38,6 @@ import Compiler.Mir.LlvmFunctions
 import Compiler.Mir.LlvmInstructions
 import Compiler.Mir.LlvmModules
 import Compiler.Mir.Model
-import Compiler.Mir.PackageCodec
 import Compiler.Mir.PackageImage
 import Compiler.Mir.SourceExpressionLowering
 import Compiler.Mir.SourceExpressions

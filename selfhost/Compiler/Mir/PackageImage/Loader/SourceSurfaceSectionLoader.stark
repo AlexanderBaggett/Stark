@@ -1,0 +1,2303 @@
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
+
+// Validates and locates source-surface manifest nodes for later materialization.
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceImportNodes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] importsNode,
+    out u32[0 max] importCount,
+    out u64[0 2 ** 63 - 1] reExportsNode,
+    out u32[0 max] reExportCount)
+{
+    importsNode = 0;
+    importCount = 0;
+    reExportsNode = 0;
+    reExportCount = 0;
+    stack mut u64[0 2 ** 63 - 1] sourceSurfaceNode = 0;
+    stack mut bool hasSourceSurface = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "SourceSurface", sourceSurfaceNode, hasSourceSurface))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] ownerNode = moduleNode;
+    if (hasSourceSurface)
+    {
+        ownerNode = sourceSurfaceNode;
+    }
+
+    return LogicalPackageImageJsonOptionalArrayMember(document, ownerNode, "Imports", importsNode, importCount)
+        && LogicalPackageImageJsonOptionalArrayMember(document, ownerNode, "ReExports", reExportsNode, reExportCount);
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeAliasNodes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] typeAliasesNode,
+    out u32[0 max] typeAliasCount)
+{
+    typeAliasesNode = 0;
+    typeAliasCount = 0;
+    stack mut u64[0 2 ** 63 - 1] sourceSurfaceNode = 0;
+    stack mut bool hasSourceSurface = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "SourceSurface", sourceSurfaceNode, hasSourceSurface))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] ownerNode = moduleNode;
+    if (hasSourceSurface)
+    {
+        ownerNode = sourceSurfaceNode;
+    }
+
+    return LogicalPackageImageJsonOptionalArrayMember(document, ownerNode, "TypeAliases", typeAliasesNode, typeAliasCount);
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeNodes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] typesNode,
+    out u32[0 max] typeCount)
+{
+    typesNode = 0;
+    typeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] sourceSurfaceNode = 0;
+    stack mut bool hasSourceSurface = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "SourceSurface", sourceSurfaceNode, hasSourceSurface))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] ownerNode = moduleNode;
+    if (hasSourceSurface)
+    {
+        ownerNode = sourceSurfaceNode;
+    }
+
+    return LogicalPackageImageJsonOptionalArrayMember(document, ownerNode, "Types", typesNode, typeCount);
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceGlobalNodes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] globalsNode,
+    out u32[0 max] globalCount)
+{
+    globalsNode = 0;
+    globalCount = 0;
+    stack mut u64[0 2 ** 63 - 1] sourceSurfaceNode = 0;
+    stack mut bool hasSourceSurface = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "SourceSurface", sourceSurfaceNode, hasSourceSurface))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] ownerNode = moduleNode;
+    if (hasSourceSurface)
+    {
+        ownerNode = sourceSurfaceNode;
+    }
+
+    return LogicalPackageImageJsonOptionalArrayMember(document, ownerNode, "Globals", globalsNode, globalCount);
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceFunctionNodes(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] functionsNode,
+    out u32[0 max] functionCount)
+{
+    functionsNode = 0;
+    functionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] sourceSurfaceNode = 0;
+    stack mut bool hasSourceSurface = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "SourceSurface", sourceSurfaceNode, hasSourceSurface))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] ownerNode = moduleNode;
+    if (hasSourceSurface)
+    {
+        ownerNode = sourceSurfaceNode;
+    }
+
+    return LogicalPackageImageJsonOptionalArrayMember(document, ownerNode, "Functions", functionsNode, functionCount);
+}
+
+internal fn bool LogicalPackageImageJsonImportModuleNameEquals(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] importsNode,
+    u32[0 max] importIndex,
+    ascii expectedModuleName)
+    where overlap(document, expectedModuleName)
+{
+    stack mut u64[0 2 ** 63 - 1] importNode = 0;
+    stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+    if (importsNode == 0
+        || !document.TryChildAt(importsNode, (u64[0 2 ** 63 - 1])importIndex, importNode)
+        || document.KindAt(importNode) != JsonKind.Object
+        || !document.TryFindMember(importNode, "ModuleName", moduleNameNode)
+        || document.KindAt(moduleNameNode) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii moduleName = document.TextAt(moduleNameNode);
+    return System.Text.AsciiLength(moduleName) > 0
+        && moduleName == expectedModuleName;
+}
+
+internal fn bool LogicalPackageImageJsonReExportModuleNameEquals(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] reExportsNode,
+    u32[0 max] reExportIndex,
+    ascii expectedModuleName)
+    where overlap(document, expectedModuleName)
+{
+    stack mut u64[0 2 ** 63 - 1] reExportNode = 0;
+    stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+    if (reExportsNode == 0
+        || !document.TryChildAt(reExportsNode, (u64[0 2 ** 63 - 1])reExportIndex, reExportNode)
+        || document.KindAt(reExportNode) != JsonKind.Object
+        || !document.TryFindMember(reExportNode, "ModuleName", moduleNameNode)
+        || document.KindAt(moduleNameNode) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii moduleName = document.TextAt(moduleNameNode);
+    return System.Text.AsciiLength(moduleName) > 0
+        && moduleName == expectedModuleName;
+}
+
+internal fn bool LogicalPackageImageJsonImportListHasModuleName(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] importsNode,
+    u32[0 max] importCount,
+    ascii moduleName)
+    where overlap(document, moduleName)
+{
+    stack mut u32[0 max] importIndex = 0;
+    while willexit (importIndex < importCount)
+    {
+        if (LogicalPackageImageJsonImportModuleNameEquals(document, importsNode, importIndex, moduleName))
+        {
+            return true;
+        }
+
+        importIndex = importIndex + 1;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonReExportListHasModuleName(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] reExportsNode,
+    u32[0 max] reExportCount,
+    ascii moduleName)
+    where overlap(document, moduleName)
+{
+    stack mut u32[0 max] reExportIndex = 0;
+    while willexit (reExportIndex < reExportCount)
+    {
+        if (LogicalPackageImageJsonReExportModuleNameEquals(document, reExportsNode, reExportIndex, moduleName))
+        {
+            return true;
+        }
+
+        reExportIndex = reExportIndex + 1;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeAliasNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] typeAliasOrdinal,
+    out u64[0 2 ** 63 - 1] typeAliasNode)
+{
+    typeAliasNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typeAliasesNode = 0;
+    stack mut u32[0 max] typeAliasCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceTypeAliasNodes(document, moduleNode, typeAliasesNode, typeAliasCount)
+        || typeAliasesNode == 0
+        || typeAliasOrdinal >= typeAliasCount
+        || !document.TryChildAt(typeAliasesNode, (u64[0 2 ** 63 - 1])typeAliasOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    typeAliasNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] typeOrdinal,
+    out u64[0 2 ** 63 - 1] typeNode)
+{
+    typeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typesNode = 0;
+    stack mut u32[0 max] typeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceTypeNodes(document, moduleNode, typesNode, typeCount)
+        || typesNode == 0
+        || typeOrdinal >= typeCount
+        || !document.TryChildAt(typesNode, (u64[0 2 ** 63 - 1])typeOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    typeNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeFieldNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] fieldOrdinal,
+    out u64[0 2 ** 63 - 1] fieldNode)
+{
+    fieldNode = 0;
+    stack mut u64[0 2 ** 63 - 1] fieldsNode = 0;
+    stack mut u32[0 max] fieldCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, typeNode, "Fields", fieldsNode, fieldCount)
+        || fieldOrdinal >= fieldCount
+        || !document.TryChildAt(fieldsNode, (u64[0 2 ** 63 - 1])fieldOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    fieldNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypePrimaryConstructorParameterNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] parameterOrdinal,
+    out u64[0 2 ** 63 - 1] parameterNode)
+{
+    parameterNode = 0;
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            typeNode,
+            "PrimaryConstructorParameters",
+            parametersNode,
+            parameterCount)
+        || parameterOrdinal >= parameterCount
+        || !document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])parameterOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    parameterNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeEnumVariantNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] variantOrdinal,
+    out u64[0 2 ** 63 - 1] variantNode)
+{
+    variantNode = 0;
+    stack mut u64[0 2 ** 63 - 1] variantsNode = 0;
+    stack mut u32[0 max] variantCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "Variants", variantsNode, variantCount)
+        || variantOrdinal >= variantCount
+        || !document.TryChildAt(variantsNode, (u64[0 2 ** 63 - 1])variantOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    variantNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeEnumVariantPayloadNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] variantNode,
+    u32[0 max] payloadOrdinal,
+    out u64[0 2 ** 63 - 1] payloadNode)
+{
+    payloadNode = 0;
+    stack mut u64[0 2 ** 63 - 1] payloadsNode = 0;
+    stack mut u32[0 max] payloadCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, variantNode, "Fields", payloadsNode, payloadCount)
+        || payloadOrdinal >= payloadCount
+        || !document.TryChildAt(payloadsNode, (u64[0 2 ** 63 - 1])payloadOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    payloadNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceGlobalNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] globalOrdinal,
+    out u64[0 2 ** 63 - 1] globalNode)
+{
+    globalNode = 0;
+    stack mut u64[0 2 ** 63 - 1] globalsNode = 0;
+    stack mut u32[0 max] globalCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceGlobalNodes(document, moduleNode, globalsNode, globalCount)
+        || globalsNode == 0
+        || globalOrdinal >= globalCount
+        || !document.TryChildAt(globalsNode, (u64[0 2 ** 63 - 1])globalOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    globalNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceFunctionNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] functionOrdinal,
+    out u64[0 2 ** 63 - 1] functionNode)
+{
+    functionNode = 0;
+    stack mut u64[0 2 ** 63 - 1] functionsNode = 0;
+    stack mut u32[0 max] functionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceFunctionNodes(document, moduleNode, functionsNode, functionCount)
+        || functionsNode == 0
+        || functionOrdinal >= functionCount
+        || !document.TryChildAt(functionsNode, (u64[0 2 ** 63 - 1])functionOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    functionNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceFunctionParameterNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] functionNode,
+    u32[0 max] parameterOrdinal,
+    out u64[0 2 ** 63 - 1] parameterNode)
+{
+    parameterNode = 0;
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, functionNode, "Parameters", parametersNode, parameterCount)
+        || parameterOrdinal >= parameterCount
+        || !document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])parameterOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    parameterNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeAliasGenericParameterNodes(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeAliasNode,
+    out u64[0 2 ** 63 - 1] genericParametersNode,
+    out u32[0 max] genericParameterCount)
+{
+    genericParametersNode = 0;
+    genericParameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] localGenericParametersNode = 0;
+    stack mut u32[0 max] localGenericParameterCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        typeAliasNode,
+        "GenericParameters",
+        localGenericParametersNode,
+        localGenericParameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localGenericParameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        if (!document.TryChildAt(localGenericParametersNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Text
+            || System.Text.AsciiLength(document.TextAt(parameterNode)) <= 0)
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    genericParametersNode = localGenericParametersNode;
+    genericParameterCount = localGenericParameterCount;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonSourceSurfaceTypeAliasComptimeGenericParameterCount(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeAliasNode,
+    out u32[0 max] comptimeGenericParameterCount)
+{
+    comptimeGenericParameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] comptimeParametersNode = 0;
+    stack mut u32[0 max] localComptimeGenericParameterCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        typeAliasNode,
+        "ComptimeGenericParameters",
+        comptimeParametersNode,
+        localComptimeGenericParameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < localComptimeGenericParameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        if (!document.TryChildAt(comptimeParametersNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !document.TryFindMember(parameterNode, "Name", nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text
+            || System.Text.AsciiLength(document.TextAt(nameNode)) <= 0
+            || !LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    comptimeGenericParameterCount = localComptimeGenericParameterCount;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceImportRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] importsNode = 0;
+    stack mut u32[0 max] importCount = 0;
+    stack mut u64[0 2 ** 63 - 1] reExportsNode = 0;
+    stack mut u32[0 max] reExportCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceImportNodes(
+        document,
+        moduleNode,
+        importsNode,
+        importCount,
+        reExportsNode,
+        reExportCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] effectiveOrdinal = 0;
+    stack mut u32[0 max] importIndex = 0;
+    while willexit (importIndex < importCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] importNode = 0;
+        stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+        stack mut bool isExported = false;
+        if (!document.TryChildAt(importsNode, (u64[0 2 ** 63 - 1])importIndex, importNode)
+            || document.KindAt(importNode) != JsonKind.Object
+            || !document.TryFindMember(importNode, "ModuleName", moduleNameNode)
+            || document.KindAt(moduleNameNode) != JsonKind.Text
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, importNode, "IsExported", isExported))
+        {
+            return false;
+        }
+
+        stack ascii importModuleName = document.TextAt(moduleNameNode);
+        if (System.Text.AsciiLength(importModuleName) <= 0)
+        {
+            return false;
+        }
+
+        stack bool hasReExport = LogicalPackageImageJsonReExportListHasModuleName(
+            document,
+            reExportsNode,
+            reExportCount,
+            importModuleName);
+        stack LogicalPackageSourceSurfaceImportSummary row = new LogicalPackageSourceSurfaceImportSummary()
+        {
+            ModuleOrdinalValue = moduleOrdinal,
+            ImportOrdinalValue = effectiveOrdinal,
+            HasDirectImportValue = true,
+            HasReExportValue = hasReExport,
+            IsExportedValue = isExported || hasReExport
+        };
+        if (graph.ImportRows.Add(row) == 0)
+        {
+            return false;
+        }
+
+        importIndex = importIndex + 1;
+        effectiveOrdinal = effectiveOrdinal + 1;
+    }
+
+    stack mut u32[0 max] reExportIndex = 0;
+    while willexit (reExportIndex < reExportCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] reExportNode = 0;
+        stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+        if (!document.TryChildAt(reExportsNode, (u64[0 2 ** 63 - 1])reExportIndex, reExportNode)
+            || document.KindAt(reExportNode) != JsonKind.Object
+            || !document.TryFindMember(reExportNode, "ModuleName", moduleNameNode)
+            || document.KindAt(moduleNameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii reExportModuleName = document.TextAt(moduleNameNode);
+        if (System.Text.AsciiLength(reExportModuleName) <= 0)
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageJsonImportListHasModuleName(
+                document,
+                importsNode,
+                importCount,
+                reExportModuleName))
+        {
+            stack LogicalPackageSourceSurfaceImportSummary row = new LogicalPackageSourceSurfaceImportSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                ImportOrdinalValue = effectiveOrdinal,
+                HasDirectImportValue = false,
+                HasReExportValue = true,
+                IsExportedValue = true
+            };
+            if (graph.ImportRows.Add(row) == 0)
+            {
+                return false;
+            }
+
+            effectiveOrdinal = effectiveOrdinal + 1;
+        }
+
+        reExportIndex = reExportIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceTypeAliasRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] typeAliasesNode = 0;
+    stack mut u32[0 max] typeAliasCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceTypeAliasNodes(
+        document,
+        moduleNode,
+        typeAliasesNode,
+        typeAliasCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeAliasIndex = 0;
+    while willexit (typeAliasIndex < typeAliasCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeAliasNode = 0;
+        stack mut u64[0 2 ** 63 - 1] genericParametersNode = 0;
+        stack mut u32[0 max] genericParameterCount = 0;
+        stack mut u32[0 max] comptimeGenericParameterCount = 0;
+        if (!document.TryChildAt(typeAliasesNode, (u64[0 2 ** 63 - 1])typeAliasIndex, typeAliasNode)
+            || document.KindAt(typeAliasNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeAliasNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeAliasNode, "QualifiedName")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeAliasNode, "Visibility")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeAliasNode, "TargetType")
+            || !LogicalPackageImageJsonSourceSurfaceTypeAliasGenericParameterNodes(
+                document,
+                typeAliasNode,
+                genericParametersNode,
+                genericParameterCount)
+            || !LogicalPackageImageJsonSourceSurfaceTypeAliasComptimeGenericParameterCount(
+                document,
+                typeAliasNode,
+                comptimeGenericParameterCount))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceTypeAliasSummary aliasRow =
+            new LogicalPackageSourceSurfaceTypeAliasSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeAliasOrdinalValue = typeAliasIndex,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount
+            };
+        if (graph.TypeAliasRows.Add(aliasRow) == 0)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] parameterIndex = 0;
+        while willexit (parameterIndex < genericParameterCount)
+        {
+            stack LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary parameterRow =
+                new LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary()
+                {
+                    ModuleOrdinalValue = moduleOrdinal,
+                    TypeAliasOrdinalValue = typeAliasIndex,
+                    ParameterOrdinalValue = parameterIndex
+                };
+            if (graph.TypeAliasGenericParameterRows.Add(parameterRow) == 0)
+            {
+                return false;
+            }
+
+            parameterIndex = parameterIndex + 1;
+        }
+
+        typeAliasIndex = typeAliasIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceTypeFieldRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] fieldsNode,
+    u32[0 max] fieldCount,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u32[0 max] fieldIndex = 0;
+    while willexit (fieldIndex < fieldCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] fieldNode = 0;
+        stack mut u32[0 max] threadSafetyLawAttributeCount = 0;
+        stack mut u32[0 max] explicitOffsetBytes = 0;
+        stack mut bool hasVisibility = false;
+        stack mut bool hasExplicitOffsetBytes = false;
+        if (!document.TryChildAt(fieldsNode, (u64[0 2 ** 63 - 1])fieldIndex, fieldNode)
+            || document.KindAt(fieldNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, fieldNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, fieldNode, "Type")
+            || !LogicalPackageImageJsonMemberIsPresentText(document, fieldNode, "Visibility", hasVisibility)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                fieldNode,
+                "ExplicitOffsetBytes",
+                hasExplicitOffsetBytes,
+                explicitOffsetBytes)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                fieldNode,
+                "ThreadSafetyLawAttributes",
+                threadSafetyLawAttributeCount))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceTypeFieldSummary row =
+            new LogicalPackageSourceSurfaceTypeFieldSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                FieldOrdinalValue = fieldIndex,
+                ThreadSafetyLawAttributeCountValue = threadSafetyLawAttributeCount,
+                ExplicitOffsetBytesValue = explicitOffsetBytes,
+                HasVisibilityValue = hasVisibility,
+                HasExplicitOffsetBytesValue = hasExplicitOffsetBytes
+            };
+        if (graph.TypeFieldRows.Add(row) == 0)
+        {
+            return false;
+        }
+
+        fieldIndex = fieldIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceTypePrimaryConstructorParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parametersNode,
+    u32[0 max] parameterCount,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut bool isDisjoint = false;
+        stack mut bool isConst = false;
+        stack mut bool hasRawPointerElementCountExpression = false;
+        if (!document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])parameterIndex, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, parameterNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, parameterNode, "Type")
+            || !LogicalPackageImageJsonMemberIsPresentText(
+                document,
+                parameterNode,
+                "RawPointerElementCountExpression",
+                hasRawPointerElementCountExpression)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsDisjoint", isDisjoint)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary row =
+            new LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                ParameterOrdinalValue = parameterIndex,
+                IsDisjointValue = isDisjoint,
+                IsConstValue = isConst,
+                HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+            };
+        if (graph.TypePrimaryConstructorParameterRows.Add(row) == 0)
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceTypeEnumVariantPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] payloadsNode,
+    u32[0 max] payloadCount,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] variantOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u32[0 max] payloadIndex = 0;
+    while willexit (payloadIndex < payloadCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+        stack mut bool hasName = false;
+        if (!document.TryChildAt(payloadsNode, (u64[0 2 ** 63 - 1])payloadIndex, payloadNode)
+            || document.KindAt(payloadNode) != JsonKind.Object
+            || !LogicalPackageImageJsonOptionalTextMemberPresentAllowEmpty(document, payloadNode, "Name", hasName)
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, payloadNode, "Type"))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary row =
+            new LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                VariantOrdinalValue = variantOrdinal,
+                PayloadOrdinalValue = payloadIndex,
+                HasNameValue = hasName
+            };
+        if (graph.TypeEnumVariantPayloadRows.Add(row) == 0)
+        {
+            return false;
+        }
+
+        payloadIndex = payloadIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceTypeEnumVariantRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] variantsNode,
+    u32[0 max] variantCount,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u32[0 max] variantIndex = 0;
+    while willexit (variantIndex < variantCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] variantNode = 0;
+        stack mut u64[0 2 ** 63 - 1] payloadsNode = 0;
+        stack mut u32[0 max] payloadCount = 0;
+        stack mut bool usesNamedFields = false;
+        stack mut bool hasRole = false;
+        stack mut bool hasAbsorbsErrorType = false;
+        if (!document.TryChildAt(variantsNode, (u64[0 2 ** 63 - 1])variantIndex, variantNode)
+            || document.KindAt(variantNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, variantNode, "Name")
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                variantNode,
+                "UsesNamedFields",
+                usesNamedFields)
+            || !LogicalPackageImageJsonRequiredArrayMember(document, variantNode, "Fields", payloadsNode, payloadCount)
+            || !LogicalPackageImageJsonMemberIsPresentText(document, variantNode, "Role", hasRole)
+            || !LogicalPackageImageJsonMemberIsPresentText(
+                document,
+                variantNode,
+                "AbsorbsErrorType",
+                hasAbsorbsErrorType))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceTypeEnumVariantSummary row =
+            new LogicalPackageSourceSurfaceTypeEnumVariantSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                VariantOrdinalValue = variantIndex,
+                PayloadCountValue = payloadCount,
+                UsesNamedFieldsValue = usesNamedFields,
+                HasRoleValue = hasRole,
+                HasAbsorbsErrorTypeValue = hasAbsorbsErrorType
+            };
+        if (graph.TypeEnumVariantRows.Add(row) == 0
+            || !LogicalPackageImageJsonMaterializeSourceSurfaceTypeEnumVariantPayloadRows(
+                document,
+                payloadsNode,
+                payloadCount,
+                moduleOrdinal,
+                typeOrdinal,
+                variantIndex,
+                graph))
+        {
+            return false;
+        }
+
+        variantIndex = variantIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceTypeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] typesNode = 0;
+    stack mut u32[0 max] typeCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceTypeNodes(document, moduleNode, typesNode, typeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] typeIndex = 0;
+    while willexit (typeIndex < typeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldsNode = 0;
+        stack mut u64[0 2 ** 63 - 1] primaryConstructorParametersNode = 0;
+        stack mut u64[0 2 ** 63 - 1] variantsNode = 0;
+        stack mut u64[0 2 ** 63 - 1] destructorNode = 0;
+        stack mut u32[0 max] genericParameterCount = 0;
+        stack mut u32[0 max] comptimeGenericParameterCount = 0;
+        stack mut u32[0 max] primaryConstructorParameterCount = 0;
+        stack mut u32[0 max] fieldCount = 0;
+        stack mut u32[0 max] variantCount = 0;
+        stack mut u32[0 max] methodCount = 0;
+        stack mut u32[0 max] constructorCount = 0;
+        stack mut u32[0 max] associatedTypeCount = 0;
+        stack mut u32[0 max] implementedTraitCount = 0;
+        stack mut u32[0 max] threadSafetyLawAttributeCount = 0;
+        stack mut u32[0 max] packBytes = 0;
+        stack mut u32[0 max] alignBytes = 0;
+        stack mut bool hasBackendOptimizationMode = false;
+        stack mut bool hasStructLayout = false;
+        stack mut bool hasPackBytes = false;
+        stack mut bool hasAlignBytes = false;
+        stack mut bool hasDestructor = false;
+        stack mut bool isDynTrait = false;
+        if (!document.TryChildAt(typesNode, (u64[0 2 ** 63 - 1])typeIndex, typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeNode, "QualifiedName")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeNode, "Visibility")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, typeNode, "Kind")
+            || !LogicalPackageImageJsonRequiredArrayMember(document, typeNode, "Fields", fieldsNode, fieldCount)
+            || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                document,
+                typeNode,
+                "GenericParameters",
+                genericParameterCount)
+            || !LogicalPackageImageJsonOptionalComptimeGenericParameterArrayMemberCount(
+                document,
+                typeNode,
+                "ComptimeGenericParameters",
+                comptimeGenericParameterCount)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                typeNode,
+                "PrimaryConstructorParameters",
+                primaryConstructorParametersNode,
+                primaryConstructorParameterCount)
+            || !LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "Variants", variantsNode, variantCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeNode, "Methods", methodCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeNode, "Constructors", constructorCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                typeNode,
+                "AssociatedTypes",
+                associatedTypeCount)
+            || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                document,
+                typeNode,
+                "ImplementedTraits",
+                implementedTraitCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                typeNode,
+                "ThreadSafetyLawAttributes",
+                threadSafetyLawAttributeCount)
+            || !LogicalPackageImageJsonMemberIsPresentText(
+                document,
+                typeNode,
+                "BackendOptimizationMode",
+                hasBackendOptimizationMode)
+            || !LogicalPackageImageJsonMemberIsPresentText(document, typeNode, "StructLayout", hasStructLayout)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeNode, "PackBytes", hasPackBytes, packBytes)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeNode, "AlignBytes", hasAlignBytes, alignBytes)
+            || !LogicalPackageImageJsonOptionalObjectMember(document, typeNode, "Destructor", destructorNode, hasDestructor)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeNode, "IsDynTrait", isDynTrait))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceTypeSummary row = new LogicalPackageSourceSurfaceTypeSummary()
+        {
+            ModuleOrdinalValue = moduleOrdinal,
+            TypeOrdinalValue = typeIndex,
+            GenericParameterCountValue = genericParameterCount,
+            ComptimeGenericParameterCountValue = comptimeGenericParameterCount,
+            PrimaryConstructorParameterCountValue = primaryConstructorParameterCount,
+            FieldCountValue = fieldCount,
+            VariantCountValue = variantCount,
+            MethodCountValue = methodCount,
+            ConstructorCountValue = constructorCount,
+            AssociatedTypeCountValue = associatedTypeCount,
+            ImplementedTraitCountValue = implementedTraitCount,
+            ThreadSafetyLawAttributeCountValue = threadSafetyLawAttributeCount,
+            PackBytesValue = packBytes,
+            AlignBytesValue = alignBytes,
+            HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+            HasStructLayoutValue = hasStructLayout,
+            HasPackBytesValue = hasPackBytes,
+            HasAlignBytesValue = hasAlignBytes,
+            HasDestructorValue = hasDestructor,
+            IsDynTraitValue = isDynTrait
+        };
+        if (graph.TypeRows.Add(row) == 0
+            || !LogicalPackageImageJsonMaterializeSourceSurfaceTypeFieldRows(
+                document,
+                fieldsNode,
+                fieldCount,
+                moduleOrdinal,
+                typeIndex,
+                graph)
+            || !LogicalPackageImageJsonMaterializeSourceSurfaceTypePrimaryConstructorParameterRows(
+                document,
+                primaryConstructorParametersNode,
+                primaryConstructorParameterCount,
+                moduleOrdinal,
+                typeIndex,
+                graph)
+            || !LogicalPackageImageJsonMaterializeSourceSurfaceTypeEnumVariantRows(
+                document,
+                variantsNode,
+                variantCount,
+                moduleOrdinal,
+                typeIndex,
+                graph))
+        {
+            return false;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceGlobalRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] globalsNode = 0;
+    stack mut u32[0 max] globalCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceGlobalNodes(document, moduleNode, globalsNode, globalCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] globalIndex = 0;
+    while willexit (globalIndex < globalCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] globalNode = 0;
+        stack mut u64[0 2 ** 63 - 1] constantInitializerNode = 0;
+        stack mut bool isMutable = false;
+        stack mut bool hasConstantInitializer = false;
+        if (!document.TryChildAt(globalsNode, (u64[0 2 ** 63 - 1])globalIndex, globalNode)
+            || document.KindAt(globalNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, globalNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, globalNode, "QualifiedName")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, globalNode, "Visibility")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, globalNode, "Kind")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, globalNode, "Type")
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, globalNode, "IsMutable", isMutable)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                globalNode,
+                "ConstantInitializer",
+                constantInitializerNode,
+                hasConstantInitializer))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceGlobalSummary row = new LogicalPackageSourceSurfaceGlobalSummary()
+        {
+            ModuleOrdinalValue = moduleOrdinal,
+            GlobalOrdinalValue = globalIndex,
+            IsMutableValue = isMutable,
+            HasConstantInitializerValue = hasConstantInitializer
+        };
+        if (graph.GlobalRows.Add(row) == 0)
+        {
+            return false;
+        }
+
+        globalIndex = globalIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceFunctionParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parametersNode,
+    u32[0 max] parameterCount,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u32[0 max] parameterIndex = 0;
+    while willexit (parameterIndex < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut bool isDisjoint = false;
+        stack mut bool isConst = false;
+        stack mut bool hasRawPointerElementCountExpression = false;
+        if (!document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])parameterIndex, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, parameterNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, parameterNode, "Type")
+            || !LogicalPackageImageJsonMemberIsPresentText(
+                document,
+                parameterNode,
+                "RawPointerElementCountExpression",
+                hasRawPointerElementCountExpression)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsDisjoint", isDisjoint)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceFunctionParameterSummary row =
+            new LogicalPackageSourceSurfaceFunctionParameterSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                FunctionOrdinalValue = functionOrdinal,
+                ParameterOrdinalValue = parameterIndex,
+                IsDisjointValue = isDisjoint,
+                IsConstValue = isConst,
+                HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+            };
+        if (graph.FunctionParameterRows.Add(row) == 0)
+        {
+            return false;
+        }
+
+        parameterIndex = parameterIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceFunctionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] functionsNode = 0;
+    stack mut u32[0 max] functionCount = 0;
+    if (!LogicalPackageImageJsonSourceSurfaceFunctionNodes(document, moduleNode, functionsNode, functionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] functionIndex = 0;
+    while willexit (functionIndex < functionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] functionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+        stack mut u64[0 2 ** 63 - 1] asmNode = 0;
+        stack mut u32[0 max] parameterCount = 0;
+        stack mut u32[0 max] genericParameterCount = 0;
+        stack mut u32[0 max] comptimeGenericParameterCount = 0;
+        stack mut u32[0 max] typeParameterConstraintCount = 0;
+        stack mut u32[0 max] threadSafetyLawPredicateCount = 0;
+        stack mut u32[0 max] valueContractCount = 0;
+        stack mut u32[0 max] disjointParameterGroupCount = 0;
+        stack mut u32[0 max] overlapParameterGroupCount = 0;
+        stack mut u32[0 max] sameParameterGroupCount = 0;
+        stack mut u32[0 max] pointeeDeadOnReturnParameterNameCount = 0;
+        stack mut bool hasInlinePreference = false;
+        stack mut bool hasFfiAbi = false;
+        stack mut bool hasBackendOptimizationMode = false;
+        stack mut bool hasLinkName = false;
+        stack mut bool hasAsm = false;
+        stack mut bool isFfi = false;
+        stack mut bool isStrictFp = false;
+        stack mut bool usesFastCallingConvention = false;
+        stack mut bool isHot = false;
+        stack mut bool isCold = false;
+        stack mut bool hasExplicitInlinePreference = false;
+        stack mut bool isUnsafe = false;
+        stack mut bool isVarargs = false;
+        stack mut bool isTailCallable = false;
+        if (!document.TryChildAt(functionsNode, (u64[0 2 ** 63 - 1])functionIndex, functionNode)
+            || document.KindAt(functionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, functionNode, "Name")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, functionNode, "QualifiedName")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, functionNode, "Visibility")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, functionNode, "SymbolName")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, functionNode, "Kind")
+            || !LogicalPackageImageJsonRequiredTextMemberPresent(document, functionNode, "ReturnType")
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                functionNode,
+                "Parameters",
+                parametersNode,
+                parameterCount)
+            || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                document,
+                functionNode,
+                "GenericParameters",
+                genericParameterCount)
+            || !LogicalPackageImageJsonOptionalComptimeGenericParameterArrayMemberCount(
+                document,
+                functionNode,
+                "ComptimeGenericParameters",
+                comptimeGenericParameterCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                functionNode,
+                "TypeParameterConstraints",
+                typeParameterConstraintCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                functionNode,
+                "ThreadSafetyLawPredicates",
+                threadSafetyLawPredicateCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                functionNode,
+                "ValueContracts",
+                valueContractCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                functionNode,
+                "DisjointParameterGroups",
+                disjointParameterGroupCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                functionNode,
+                "OverlapParameterGroups",
+                overlapParameterGroupCount)
+            || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                document,
+                functionNode,
+                "SameParameterGroups",
+                sameParameterGroupCount)
+            || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                document,
+                functionNode,
+                "PointeeDeadOnReturnParameterNames",
+                pointeeDeadOnReturnParameterNameCount)
+            || !LogicalPackageImageJsonMemberIsPresentText(
+                document,
+                functionNode,
+                "InlinePreference",
+                hasInlinePreference)
+            || !LogicalPackageImageJsonMemberIsPresentText(document, functionNode, "FfiAbi", hasFfiAbi)
+            || !LogicalPackageImageJsonMemberIsPresentText(
+                document,
+                functionNode,
+                "BackendOptimizationMode",
+                hasBackendOptimizationMode)
+            || !LogicalPackageImageJsonMemberIsPresentText(document, functionNode, "LinkName", hasLinkName)
+            || !LogicalPackageImageJsonOptionalObjectMember(document, functionNode, "Asm", asmNode, hasAsm)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, functionNode, "IsFfi", isFfi)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, functionNode, "IsStrictFp", isStrictFp)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                functionNode,
+                "UseFastCallingConvention",
+                usesFastCallingConvention)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsHot", isHot)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsCold", isCold)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                functionNode,
+                "HasExplicitInlinePreference",
+                hasExplicitInlinePreference)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsUnsafe", isUnsafe)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsVarargs", isVarargs)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsTailCallable", isTailCallable))
+        {
+            return false;
+        }
+
+        stack LogicalPackageSourceSurfaceFunctionSummary row =
+            new LogicalPackageSourceSurfaceFunctionSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                FunctionOrdinalValue = functionIndex,
+                ParameterCountValue = parameterCount,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount,
+                TypeParameterConstraintCountValue = typeParameterConstraintCount,
+                ThreadSafetyLawPredicateCountValue = threadSafetyLawPredicateCount,
+                ValueContractCountValue = valueContractCount,
+                DisjointParameterGroupCountValue = disjointParameterGroupCount,
+                OverlapParameterGroupCountValue = overlapParameterGroupCount,
+                SameParameterGroupCountValue = sameParameterGroupCount,
+                PointeeDeadOnReturnParameterNameCountValue = pointeeDeadOnReturnParameterNameCount,
+                HasInlinePreferenceValue = hasInlinePreference,
+                HasFfiAbiValue = hasFfiAbi,
+                HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+                HasLinkNameValue = hasLinkName,
+                HasAsmValue = hasAsm,
+                IsFfiValue = isFfi,
+                IsStrictFpValue = isStrictFp,
+                UsesFastCallingConventionValue = usesFastCallingConvention,
+                IsHotValue = isHot,
+                IsColdValue = isCold,
+                HasExplicitInlinePreferenceValue = hasExplicitInlinePreference,
+                IsUnsafeValue = isUnsafe,
+                IsVarargsValue = isVarargs,
+                IsTailCallableValue = isTailCallable
+            };
+        if (graph.FunctionRows.Add(row) == 0
+            || !LogicalPackageImageJsonMaterializeSourceSurfaceFunctionParameterRows(
+                document,
+                parametersNode,
+                parameterCount,
+                moduleOrdinal,
+                functionIndex,
+                graph))
+        {
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeSourceSurfaceBridgeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageSourceSurfaceBridgeGraph graph)
+{
+    return LogicalPackageImageJsonMaterializeSourceSurfaceImportRows(
+            document,
+            moduleNode,
+            moduleOrdinal,
+            graph)
+        && LogicalPackageImageJsonMaterializeSourceSurfaceTypeAliasRows(
+            document,
+            moduleNode,
+            moduleOrdinal,
+            graph)
+        && LogicalPackageImageJsonMaterializeSourceSurfaceTypeRows(
+            document,
+            moduleNode,
+            moduleOrdinal,
+            graph)
+        && LogicalPackageImageJsonMaterializeSourceSurfaceGlobalRows(
+            document,
+            moduleNode,
+            moduleOrdinal,
+            graph)
+        && LogicalPackageImageJsonMaterializeSourceSurfaceFunctionRows(
+            document,
+            moduleNode,
+            moduleOrdinal,
+            graph);
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceImportJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] importOrdinal,
+    out LogicalPackageSourceSurfaceImportSummary importSummary,
+    mut borrow OwnedAscii moduleName)
+{
+    importSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] importsNode = 0;
+            stack mut u32[0 max] importCount = 0;
+            stack mut u64[0 2 ** 63 - 1] reExportsNode = 0;
+            stack mut u32[0 max] reExportCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceImportNodes(
+                    document,
+                    moduleNode,
+                    importsNode,
+                    importCount,
+                    reExportsNode,
+                    reExportCount))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] effectiveOrdinal = 0;
+            stack mut u32[0 max] importIndex = 0;
+            while willexit (importIndex < importCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] importNode = 0;
+                stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+                stack mut bool isExported = false;
+                if (!document.TryChildAt(importsNode, (u64[0 2 ** 63 - 1])importIndex, importNode)
+                    || document.KindAt(importNode) != JsonKind.Object
+                    || !document.TryFindMember(importNode, "ModuleName", moduleNameNode)
+                    || document.KindAt(moduleNameNode) != JsonKind.Text
+                    || !LogicalPackageImageJsonRequiredBoolMemberValue(document, importNode, "IsExported", isExported))
+                {
+                    return false;
+                }
+
+                stack ascii importModuleName = document.TextAt(moduleNameNode);
+                if (System.Text.AsciiLength(importModuleName) <= 0)
+                {
+                    return false;
+                }
+
+                stack bool hasReExport = LogicalPackageImageJsonReExportListHasModuleName(
+                    document,
+                    reExportsNode,
+                    reExportCount,
+                    importModuleName);
+                if (effectiveOrdinal == importOrdinal)
+                {
+                    switch (moduleName.AppendAscii(importModuleName))
+                    {
+                        case MemoryStatus.Err(var error):
+                            return false;
+                        case MemoryStatus.Ok:
+                            importSummary = new LogicalPackageSourceSurfaceImportSummary()
+                            {
+                                ModuleOrdinalValue = moduleOrdinal,
+                                ImportOrdinalValue = effectiveOrdinal,
+                                HasDirectImportValue = true,
+                                HasReExportValue = hasReExport,
+                                IsExportedValue = isExported || hasReExport
+                            };
+                            return true;
+                    }
+                }
+
+                importIndex = importIndex + 1;
+                effectiveOrdinal = effectiveOrdinal + 1;
+            }
+
+            stack mut u32[0 max] reExportIndex = 0;
+            while willexit (reExportIndex < reExportCount)
+            {
+                stack mut u64[0 2 ** 63 - 1] reExportNode = 0;
+                stack mut u64[0 2 ** 63 - 1] moduleNameNode = 0;
+                if (!document.TryChildAt(reExportsNode, (u64[0 2 ** 63 - 1])reExportIndex, reExportNode)
+                    || document.KindAt(reExportNode) != JsonKind.Object
+                    || !document.TryFindMember(reExportNode, "ModuleName", moduleNameNode)
+                    || document.KindAt(moduleNameNode) != JsonKind.Text)
+                {
+                    return false;
+                }
+
+                stack ascii reExportModuleName = document.TextAt(moduleNameNode);
+                if (System.Text.AsciiLength(reExportModuleName) <= 0)
+                {
+                    return false;
+                }
+
+                if (!LogicalPackageImageJsonImportListHasModuleName(
+                    document,
+                    importsNode,
+                    importCount,
+                    reExportModuleName))
+                {
+                    if (effectiveOrdinal == importOrdinal)
+                    {
+                        switch (moduleName.AppendAscii(reExportModuleName))
+                        {
+                            case MemoryStatus.Err(var error):
+                                return false;
+                            case MemoryStatus.Ok:
+                                importSummary = new LogicalPackageSourceSurfaceImportSummary()
+                                {
+                                    ModuleOrdinalValue = moduleOrdinal,
+                                    ImportOrdinalValue = effectiveOrdinal,
+                                    HasDirectImportValue = false,
+                                    HasReExportValue = true,
+                                    IsExportedValue = true
+                                };
+                                return true;
+                        }
+                    }
+
+                    effectiveOrdinal = effectiveOrdinal + 1;
+                }
+
+                reExportIndex = reExportIndex + 1;
+            }
+
+            return false;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypeAliasJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    out LogicalPackageSourceSurfaceTypeAliasSummary typeAliasSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii targetType)
+{
+    typeAliasSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeAliasNode = 0;
+            stack mut u64[0 2 ** 63 - 1] genericParametersNode = 0;
+            stack mut u32[0 max] genericParameterCount = 0;
+            stack mut u32[0 max] comptimeGenericParameterCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeAliasNode(
+                    document,
+                    moduleNode,
+                    typeAliasOrdinal,
+                    typeAliasNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeAliasGenericParameterNodes(
+                    document,
+                    typeAliasNode,
+                    genericParametersNode,
+                    genericParameterCount)
+                || !LogicalPackageImageJsonSourceSurfaceTypeAliasComptimeGenericParameterCount(
+                    document,
+                    typeAliasNode,
+                    comptimeGenericParameterCount)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeAliasNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(
+                    document,
+                    typeAliasNode,
+                    "QualifiedName",
+                    qualifiedName)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeAliasNode, "Visibility", visibility)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeAliasNode, "TargetType", targetType))
+            {
+                return false;
+            }
+
+            typeAliasSummary = new LogicalPackageSourceSurfaceTypeAliasSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeAliasOrdinalValue = typeAliasOrdinal,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypeAliasGenericParameterJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    u32[0 max] parameterOrdinal,
+    out LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary parameterSummary,
+    mut borrow OwnedAscii name)
+{
+    parameterSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeAliasNode = 0;
+            stack mut u64[0 2 ** 63 - 1] genericParametersNode = 0;
+            stack mut u32[0 max] genericParameterCount = 0;
+            stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeAliasNode(
+                    document,
+                    moduleNode,
+                    typeAliasOrdinal,
+                    typeAliasNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeAliasGenericParameterNodes(
+                    document,
+                    typeAliasNode,
+                    genericParametersNode,
+                    genericParameterCount)
+                || parameterOrdinal >= genericParameterCount
+                || !document.TryChildAt(genericParametersNode, (u64[0 2 ** 63 - 1])parameterOrdinal, parameterNode)
+                || document.KindAt(parameterNode) != JsonKind.Text)
+            {
+                return false;
+            }
+
+            stack ascii parameterName = document.TextAt(parameterNode);
+            switch (name.AppendAscii(parameterName))
+            {
+                case MemoryStatus.Err(var error):
+                    return false;
+                case MemoryStatus.Ok:
+                    parameterSummary = new LogicalPackageSourceSurfaceTypeAliasGenericParameterSummary()
+                    {
+                        ModuleOrdinalValue = moduleOrdinal,
+                        TypeAliasOrdinalValue = typeAliasOrdinal,
+                        ParameterOrdinalValue = parameterOrdinal
+                    };
+                    return true;
+            }
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypeJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    out LogicalPackageSourceSurfaceTypeSummary typeSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii manifestKind,
+    mut borrow OwnedAscii backendOptimizationMode,
+    mut borrow OwnedAscii structLayout)
+{
+    typeSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] destructorNode = 0;
+            stack mut u32[0 max] genericParameterCount = 0;
+            stack mut u32[0 max] comptimeGenericParameterCount = 0;
+            stack mut u32[0 max] primaryConstructorParameterCount = 0;
+            stack mut u32[0 max] fieldCount = 0;
+            stack mut u32[0 max] variantCount = 0;
+            stack mut u32[0 max] methodCount = 0;
+            stack mut u32[0 max] constructorCount = 0;
+            stack mut u32[0 max] associatedTypeCount = 0;
+            stack mut u32[0 max] implementedTraitCount = 0;
+            stack mut u32[0 max] threadSafetyLawAttributeCount = 0;
+            stack mut u32[0 max] packBytes = 0;
+            stack mut u32[0 max] alignBytes = 0;
+            stack mut bool hasBackendOptimizationMode = false;
+            stack mut bool hasStructLayout = false;
+            stack mut bool hasPackBytes = false;
+            stack mut bool hasAlignBytes = false;
+            stack mut bool hasDestructor = false;
+            stack mut bool isDynTrait = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeNode(document, moduleNode, typeOrdinal, typeNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeNode, "QualifiedName", qualifiedName)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeNode, "Visibility", visibility)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, typeNode, "Kind", manifestKind)
+                || !LogicalPackageImageJsonRequiredArrayMemberCount(document, typeNode, "Fields", fieldCount)
+                || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                    document,
+                    typeNode,
+                    "GenericParameters",
+                    genericParameterCount)
+                || !LogicalPackageImageJsonOptionalComptimeGenericParameterArrayMemberCount(
+                    document,
+                    typeNode,
+                    "ComptimeGenericParameters",
+                    comptimeGenericParameterCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    typeNode,
+                    "PrimaryConstructorParameters",
+                    primaryConstructorParameterCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeNode, "Variants", variantCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeNode, "Methods", methodCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(document, typeNode, "Constructors", constructorCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    typeNode,
+                    "AssociatedTypes",
+                    associatedTypeCount)
+                || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                    document,
+                    typeNode,
+                    "ImplementedTraits",
+                    implementedTraitCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    typeNode,
+                    "ThreadSafetyLawAttributes",
+                    threadSafetyLawAttributeCount)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    typeNode,
+                    "BackendOptimizationMode",
+                    backendOptimizationMode,
+                    hasBackendOptimizationMode)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    typeNode,
+                    "StructLayout",
+                    structLayout,
+                    hasStructLayout)
+                || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeNode, "PackBytes", hasPackBytes, packBytes)
+                || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeNode, "AlignBytes", hasAlignBytes, alignBytes)
+                || !LogicalPackageImageJsonOptionalObjectMember(document, typeNode, "Destructor", destructorNode, hasDestructor)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeNode, "IsDynTrait", isDynTrait))
+            {
+                return false;
+            }
+
+            typeSummary = new LogicalPackageSourceSurfaceTypeSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount,
+                PrimaryConstructorParameterCountValue = primaryConstructorParameterCount,
+                FieldCountValue = fieldCount,
+                VariantCountValue = variantCount,
+                MethodCountValue = methodCount,
+                ConstructorCountValue = constructorCount,
+                AssociatedTypeCountValue = associatedTypeCount,
+                ImplementedTraitCountValue = implementedTraitCount,
+                ThreadSafetyLawAttributeCountValue = threadSafetyLawAttributeCount,
+                PackBytesValue = packBytes,
+                AlignBytesValue = alignBytes,
+                HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+                HasStructLayoutValue = hasStructLayout,
+                HasPackBytesValue = hasPackBytes,
+                HasAlignBytesValue = hasAlignBytes,
+                HasDestructorValue = hasDestructor,
+                IsDynTraitValue = isDynTrait
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypeFieldJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] fieldOrdinal,
+    out LogicalPackageSourceSurfaceTypeFieldSummary fieldSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii typeText,
+    mut borrow OwnedAscii visibility)
+{
+    fieldSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] fieldNode = 0;
+            stack mut u32[0 max] threadSafetyLawAttributeCount = 0;
+            stack mut u32[0 max] explicitOffsetBytes = 0;
+            stack mut bool hasVisibility = false;
+            stack mut bool hasExplicitOffsetBytes = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeNode(document, moduleNode, typeOrdinal, typeNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeFieldNode(document, typeNode, fieldOrdinal, fieldNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, fieldNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, fieldNode, "Type", typeText)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    fieldNode,
+                    "Visibility",
+                    visibility,
+                    hasVisibility)
+                || !LogicalPackageImageJsonOptionalU32MemberValue(
+                    document,
+                    fieldNode,
+                    "ExplicitOffsetBytes",
+                    hasExplicitOffsetBytes,
+                    explicitOffsetBytes)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    fieldNode,
+                    "ThreadSafetyLawAttributes",
+                    threadSafetyLawAttributeCount))
+            {
+                return false;
+            }
+
+            fieldSummary = new LogicalPackageSourceSurfaceTypeFieldSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                FieldOrdinalValue = fieldOrdinal,
+                ThreadSafetyLawAttributeCountValue = threadSafetyLawAttributeCount,
+                ExplicitOffsetBytesValue = explicitOffsetBytes,
+                HasVisibilityValue = hasVisibility,
+                HasExplicitOffsetBytesValue = hasExplicitOffsetBytes
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypePrimaryConstructorParameterJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] parameterOrdinal,
+    out LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary parameterSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii typeText,
+    mut borrow OwnedAscii rawPointerElementCountExpression)
+{
+    parameterSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+            stack mut bool isDisjoint = false;
+            stack mut bool isConst = false;
+            stack mut bool hasRawPointerElementCountExpression = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeNode(document, moduleNode, typeOrdinal, typeNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypePrimaryConstructorParameterNode(
+                    document,
+                    typeNode,
+                    parameterOrdinal,
+                    parameterNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, parameterNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, parameterNode, "Type", typeText)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    parameterNode,
+                    "RawPointerElementCountExpression",
+                    rawPointerElementCountExpression,
+                    hasRawPointerElementCountExpression)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsDisjoint", isDisjoint)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst))
+            {
+                return false;
+            }
+
+            parameterSummary = new LogicalPackageSourceSurfaceTypePrimaryConstructorParameterSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                ParameterOrdinalValue = parameterOrdinal,
+                IsDisjointValue = isDisjoint,
+                IsConstValue = isConst,
+                HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypeEnumVariantJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] variantOrdinal,
+    out LogicalPackageSourceSurfaceTypeEnumVariantSummary variantSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii role,
+    mut borrow OwnedAscii absorbsErrorType)
+{
+    variantSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] variantNode = 0;
+            stack mut u64[0 2 ** 63 - 1] payloadsNode = 0;
+            stack mut u32[0 max] payloadCount = 0;
+            stack mut bool usesNamedFields = false;
+            stack mut bool hasRole = false;
+            stack mut bool hasAbsorbsErrorType = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeNode(document, moduleNode, typeOrdinal, typeNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeEnumVariantNode(
+                    document,
+                    typeNode,
+                    variantOrdinal,
+                    variantNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, variantNode, "Name", name)
+                || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                    document,
+                    variantNode,
+                    "UsesNamedFields",
+                    usesNamedFields)
+                || !LogicalPackageImageJsonRequiredArrayMember(document, variantNode, "Fields", payloadsNode, payloadCount)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(document, variantNode, "Role", role, hasRole)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    variantNode,
+                    "AbsorbsErrorType",
+                    absorbsErrorType,
+                    hasAbsorbsErrorType))
+            {
+                return false;
+            }
+
+            variantSummary = new LogicalPackageSourceSurfaceTypeEnumVariantSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                VariantOrdinalValue = variantOrdinal,
+                PayloadCountValue = payloadCount,
+                UsesNamedFieldsValue = usesNamedFields,
+                HasRoleValue = hasRole,
+                HasAbsorbsErrorTypeValue = hasAbsorbsErrorType
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceTypeEnumVariantPayloadJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    out LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary payloadSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii typeText)
+{
+    payloadSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] variantNode = 0;
+            stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+            stack mut bool hasName = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeNode(document, moduleNode, typeOrdinal, typeNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeEnumVariantNode(
+                    document,
+                    typeNode,
+                    variantOrdinal,
+                    variantNode)
+                || !LogicalPackageImageJsonSourceSurfaceTypeEnumVariantPayloadNode(
+                    document,
+                    variantNode,
+                    payloadOrdinal,
+                    payloadNode)
+                || !LogicalPackageImageJsonAppendOptionalTextMemberAllowEmpty(document, payloadNode, "Name", name, hasName)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, payloadNode, "Type", typeText))
+            {
+                return false;
+            }
+
+            payloadSummary = new LogicalPackageSourceSurfaceTypeEnumVariantPayloadSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                TypeOrdinalValue = typeOrdinal,
+                VariantOrdinalValue = variantOrdinal,
+                PayloadOrdinalValue = payloadOrdinal,
+                HasNameValue = hasName
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceGlobalJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] globalOrdinal,
+    out LogicalPackageSourceSurfaceGlobalSummary globalSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii manifestKind,
+    mut borrow OwnedAscii typeText)
+{
+    globalSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] globalNode = 0;
+            stack mut u64[0 2 ** 63 - 1] constantInitializerNode = 0;
+            stack mut bool isMutable = false;
+            stack mut bool hasConstantInitializer = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceGlobalNode(document, moduleNode, globalOrdinal, globalNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, globalNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(
+                    document,
+                    globalNode,
+                    "QualifiedName",
+                    qualifiedName)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, globalNode, "Visibility", visibility)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, globalNode, "Kind", manifestKind)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, globalNode, "Type", typeText)
+                || !LogicalPackageImageJsonRequiredBoolMemberValue(document, globalNode, "IsMutable", isMutable)
+                || !LogicalPackageImageJsonOptionalObjectMember(
+                    document,
+                    globalNode,
+                    "ConstantInitializer",
+                    constantInitializerNode,
+                    hasConstantInitializer))
+            {
+                return false;
+            }
+
+            globalSummary = new LogicalPackageSourceSurfaceGlobalSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                GlobalOrdinalValue = globalOrdinal,
+                IsMutableValue = isMutable,
+                HasConstantInitializerValue = hasConstantInitializer
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceFunctionJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionOrdinal,
+    out LogicalPackageSourceSurfaceFunctionSummary functionSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii symbolName,
+    mut borrow OwnedAscii manifestKind,
+    mut borrow OwnedAscii returnType,
+    mut borrow OwnedAscii inlinePreference,
+    mut borrow OwnedAscii ffiAbi,
+    mut borrow OwnedAscii backendOptimizationMode,
+    mut borrow OwnedAscii linkName)
+{
+    functionSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] functionNode = 0;
+            stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+            stack mut u64[0 2 ** 63 - 1] asmNode = 0;
+            stack mut u32[0 max] parameterCount = 0;
+            stack mut u32[0 max] genericParameterCount = 0;
+            stack mut u32[0 max] comptimeGenericParameterCount = 0;
+            stack mut u32[0 max] typeParameterConstraintCount = 0;
+            stack mut u32[0 max] threadSafetyLawPredicateCount = 0;
+            stack mut u32[0 max] valueContractCount = 0;
+            stack mut u32[0 max] disjointParameterGroupCount = 0;
+            stack mut u32[0 max] overlapParameterGroupCount = 0;
+            stack mut u32[0 max] sameParameterGroupCount = 0;
+            stack mut u32[0 max] pointeeDeadOnReturnParameterNameCount = 0;
+            stack mut bool hasInlinePreference = false;
+            stack mut bool hasFfiAbi = false;
+            stack mut bool hasBackendOptimizationMode = false;
+            stack mut bool hasLinkName = false;
+            stack mut bool hasAsm = false;
+            stack mut bool isFfi = false;
+            stack mut bool isStrictFp = false;
+            stack mut bool usesFastCallingConvention = false;
+            stack mut bool isHot = false;
+            stack mut bool isCold = false;
+            stack mut bool hasExplicitInlinePreference = false;
+            stack mut bool isUnsafe = false;
+            stack mut bool isVarargs = false;
+            stack mut bool isTailCallable = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceFunctionNode(
+                    document,
+                    moduleNode,
+                    functionOrdinal,
+                    functionNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, functionNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(
+                    document,
+                    functionNode,
+                    "QualifiedName",
+                    qualifiedName)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, functionNode, "Visibility", visibility)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, functionNode, "SymbolName", symbolName)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, functionNode, "Kind", manifestKind)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, functionNode, "ReturnType", returnType)
+                || !LogicalPackageImageJsonRequiredArrayMember(document, functionNode, "Parameters", parametersNode, parameterCount)
+                || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                    document,
+                    functionNode,
+                    "GenericParameters",
+                    genericParameterCount)
+                || !LogicalPackageImageJsonOptionalComptimeGenericParameterArrayMemberCount(
+                    document,
+                    functionNode,
+                    "ComptimeGenericParameters",
+                    comptimeGenericParameterCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    functionNode,
+                    "TypeParameterConstraints",
+                    typeParameterConstraintCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    functionNode,
+                    "ThreadSafetyLawPredicates",
+                    threadSafetyLawPredicateCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    functionNode,
+                    "ValueContracts",
+                    valueContractCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    functionNode,
+                    "DisjointParameterGroups",
+                    disjointParameterGroupCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    functionNode,
+                    "OverlapParameterGroups",
+                    overlapParameterGroupCount)
+                || !LogicalPackageImageJsonOptionalArrayMemberCount(
+                    document,
+                    functionNode,
+                    "SameParameterGroups",
+                    sameParameterGroupCount)
+                || !LogicalPackageImageJsonOptionalTextArrayMemberCount(
+                    document,
+                    functionNode,
+                    "PointeeDeadOnReturnParameterNames",
+                    pointeeDeadOnReturnParameterNameCount)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    functionNode,
+                    "InlinePreference",
+                    inlinePreference,
+                    hasInlinePreference)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(document, functionNode, "FfiAbi", ffiAbi, hasFfiAbi)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    functionNode,
+                    "BackendOptimizationMode",
+                    backendOptimizationMode,
+                    hasBackendOptimizationMode)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(document, functionNode, "LinkName", linkName, hasLinkName)
+                || !LogicalPackageImageJsonOptionalObjectMember(document, functionNode, "Asm", asmNode, hasAsm)
+                || !LogicalPackageImageJsonRequiredBoolMemberValue(document, functionNode, "IsFfi", isFfi)
+                || !LogicalPackageImageJsonRequiredBoolMemberValue(document, functionNode, "IsStrictFp", isStrictFp)
+                || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                    document,
+                    functionNode,
+                    "UseFastCallingConvention",
+                    usesFastCallingConvention)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsHot", isHot)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsCold", isCold)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                    document,
+                    functionNode,
+                    "HasExplicitInlinePreference",
+                    hasExplicitInlinePreference)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsUnsafe", isUnsafe)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsVarargs", isVarargs)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, functionNode, "IsTailCallable", isTailCallable))
+            {
+                return false;
+            }
+
+            functionSummary = new LogicalPackageSourceSurfaceFunctionSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                FunctionOrdinalValue = functionOrdinal,
+                ParameterCountValue = parameterCount,
+                GenericParameterCountValue = genericParameterCount,
+                ComptimeGenericParameterCountValue = comptimeGenericParameterCount,
+                TypeParameterConstraintCountValue = typeParameterConstraintCount,
+                ThreadSafetyLawPredicateCountValue = threadSafetyLawPredicateCount,
+                ValueContractCountValue = valueContractCount,
+                DisjointParameterGroupCountValue = disjointParameterGroupCount,
+                OverlapParameterGroupCountValue = overlapParameterGroupCount,
+                SameParameterGroupCountValue = sameParameterGroupCount,
+                PointeeDeadOnReturnParameterNameCountValue = pointeeDeadOnReturnParameterNameCount,
+                HasInlinePreferenceValue = hasInlinePreference,
+                HasFfiAbiValue = hasFfiAbi,
+                HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+                HasLinkNameValue = hasLinkName,
+                HasAsmValue = hasAsm,
+                IsFfiValue = isFfi,
+                IsStrictFpValue = isStrictFp,
+                UsesFastCallingConventionValue = usesFastCallingConvention,
+                IsHotValue = isHot,
+                IsColdValue = isCold,
+                HasExplicitInlinePreferenceValue = hasExplicitInlinePreference,
+                IsUnsafeValue = isUnsafe,
+                IsVarargsValue = isVarargs,
+                IsTailCallableValue = isTailCallable
+            };
+            return true;
+    }
+}
+
+public unsafe fn bool TryReadLogicalPackageSourceSurfaceFunctionParameterJsonSummary(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionOrdinal,
+    u32[0 max] parameterOrdinal,
+    out LogicalPackageSourceSurfaceFunctionParameterSummary parameterSummary,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii typeText,
+    mut borrow OwnedAscii rawPointerElementCountExpression)
+{
+    parameterSummary = new();
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] functionNode = 0;
+            stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+            stack mut bool isDisjoint = false;
+            stack mut bool isConst = false;
+            stack mut bool hasRawPointerElementCountExpression = false;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonSourceSurfaceFunctionNode(
+                    document,
+                    moduleNode,
+                    functionOrdinal,
+                    functionNode)
+                || !LogicalPackageImageJsonSourceSurfaceFunctionParameterNode(
+                    document,
+                    functionNode,
+                    parameterOrdinal,
+                    parameterNode)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, parameterNode, "Name", name)
+                || !LogicalPackageImageJsonAppendRequiredTextMember(document, parameterNode, "Type", typeText)
+                || !LogicalPackageImageJsonAppendOptionalTextMember(
+                    document,
+                    parameterNode,
+                    "RawPointerElementCountExpression",
+                    rawPointerElementCountExpression,
+                    hasRawPointerElementCountExpression)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsDisjoint", isDisjoint)
+                || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst))
+            {
+                return false;
+            }
+
+            parameterSummary = new LogicalPackageSourceSurfaceFunctionParameterSummary()
+            {
+                ModuleOrdinalValue = moduleOrdinal,
+                FunctionOrdinalValue = functionOrdinal,
+                ParameterOrdinalValue = parameterOrdinal,
+                IsDisjointValue = isDisjoint,
+                IsConstValue = isConst,
+                HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+            };
+            return true;
+    }
+}
