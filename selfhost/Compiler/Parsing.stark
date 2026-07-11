@@ -30,23 +30,29 @@ const HeaderKindModule = 1;
 // A parsed header item, reconstructed on access. The dotted name occupies
 // tokens `[NameStart, NameStart + NameTokenCount)` (identifier segments
 // interleaved with `.`); callers recover the text through
-// `Compiler.Lexing.TokenTextOf`. `KeywordToken` is the `import`/`module` token
-// index, and `NameSegments` counts the dotted identifier segments.
+// `Compiler.Lexing.TokenTextOf`. `StartToken` retains leading attributes or
+// `export`, `KeywordToken` is the `import`/`module` token index,
+// `NameSegments` counts the dotted identifier segments, and `IsExported`
+// preserves the leading `export` on re-export imports.
 public struct HeaderItem
 {
     SyntaxKind Kind;
+    u32[0 max] StartToken;
     u32[0 max] KeywordToken;
     u32[0 max] NameStart;
     u32[0 max] NameTokenCount;
     u32[0 max] NameSegments;
+    bool IsExported;
 
     HeaderItem()
     {
         self.Kind = SyntaxKind.ImportDeclaration;
+        self.StartToken = 0;
         self.KeywordToken = 0;
         self.NameStart = 0;
         self.NameTokenCount = 0;
         self.NameSegments = 0;
+        self.IsExported = false;
     }
 }
 
@@ -327,19 +333,23 @@ internal fn System.Memory.MemoryStatus CollectTextLiteralSyntaxDiagnostics(
 public struct CompilationUnitHeader
 {
     internal dynamic u32[0 max] Kinds;
+    internal dynamic u32[0 max] StartTokens;
     internal dynamic u32[0 max] KeywordTokens;
     internal dynamic u32[0 max] NameStarts;
     internal dynamic u32[0 max] NameTokenCounts;
     internal dynamic u32[0 max] NameSegmentCounts;
+    internal dynamic u32[0 max] ExportedFlags;
     u32[0 max] NextToken;
 
     CompilationUnitHeader()
     {
         self.Kinds = new();
+        self.StartTokens = new();
         self.KeywordTokens = new();
         self.NameStarts = new();
         self.NameTokenCounts = new();
         self.NameSegmentCounts = new();
+        self.ExportedFlags = new();
         self.NextToken = 0;
     }
 
@@ -364,6 +374,11 @@ public struct CompilationUnitHeader
                 item.Kind = SyntaxKind.ImportDeclaration;
             }
 
+            if (index < self.StartTokens.Length)
+            {
+                item.StartToken = self.StartTokens[index];
+            }
+
             if (index < self.KeywordTokens.Length)
             {
                 item.KeywordToken = self.KeywordTokens[index];
@@ -383,6 +398,11 @@ public struct CompilationUnitHeader
             {
                 item.NameSegments = self.NameSegmentCounts[index];
             }
+
+            if (index < self.ExportedFlags.Length)
+            {
+                item.IsExported = self.ExportedFlags[index] != 0;
+            }
         }
 
         return item;
@@ -394,19 +414,25 @@ public struct CompilationUnitHeader
     internal fn System.Memory.MemoryStatus Append(mut borrow CompilationUnitHeader self, u32[0 max] kindCode, HeaderItem item)
     {
         if (!self.Kinds.TryReserve(1)
+            || !self.StartTokens.TryReserve(1)
             || !self.KeywordTokens.TryReserve(1)
             || !self.NameStarts.TryReserve(1)
             || !self.NameTokenCounts.TryReserve(1)
-            || !self.NameSegmentCounts.TryReserve(1))
+            || !self.NameSegmentCounts.TryReserve(1)
+            || !self.ExportedFlags.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
 
         init self.Kinds[self.Kinds.Length] = kindCode;
+        init self.StartTokens[self.StartTokens.Length] = item.StartToken;
         init self.KeywordTokens[self.KeywordTokens.Length] = item.KeywordToken;
         init self.NameStarts[self.NameStarts.Length] = item.NameStart;
         init self.NameTokenCounts[self.NameTokenCounts.Length] = item.NameTokenCount;
         init self.NameSegmentCounts[self.NameSegmentCounts.Length] = item.NameSegments;
+        init self.ExportedFlags[self.ExportedFlags.Length] = item.IsExported
+            ? (u32[0 max])1
+            : (u32[0 max])0;
         return System.Memory.MemoryStatus.Ok;
     }
 }
@@ -443,16 +469,22 @@ public fn ParseResult<CompilationUnitHeader> ParseHeader(borrow TokenStream stre
     stack mut CompilationUnitHeader header = new();
     stack mut u32[0 max] index = 0;
 
-    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.Import)
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.Import
+        || (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.Export
+            && stream.KindAt((u64[0 2 ** 63 - 1])(index + 1)) == TokenKind.Import))
     {
         stack mut HeaderItem item = new();
+        stack bool isExported = stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.Export;
+        stack u32[0 max] importToken = isExported ? (u32[0 max])(index + 1) : index;
         item.Kind = SyntaxKind.ImportDeclaration;
-        item.KeywordToken = index;
-        if (!ParseDottedName(stream, (u32[0 max])(index + 1), item))
+        item.StartToken = index;
+        item.KeywordToken = importToken;
+        item.IsExported = isExported;
+        if (!ParseDottedName(stream, (u32[0 max])(importToken + 1), item))
         {
             return ParseResult<CompilationUnitHeader>.Err(ParseError.ExpectedName
             {
-                Token: (u32[0 max])(index + 1)
+                Token: (u32[0 max])(importToken + 1)
             });
         }
 
@@ -465,16 +497,19 @@ public fn ParseResult<CompilationUnitHeader> ParseHeader(borrow TokenStream stre
         }
     }
 
-    if (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.Module)
+    stack u32[0 max] moduleStart = index;
+    stack u32[0 max] moduleKeyword = SkipDeclarationAttributes(stream, moduleStart);
+    if (stream.KindAt((u64[0 2 ** 63 - 1])moduleKeyword) == TokenKind.Module)
     {
         stack mut HeaderItem moduleItem = new();
         moduleItem.Kind = SyntaxKind.ModuleDeclaration;
-        moduleItem.KeywordToken = index;
-        if (!ParseDottedName(stream, (u32[0 max])(index + 1), moduleItem))
+        moduleItem.StartToken = moduleStart;
+        moduleItem.KeywordToken = moduleKeyword;
+        if (!ParseDottedName(stream, (u32[0 max])(moduleKeyword + 1), moduleItem))
         {
             return ParseResult<CompilationUnitHeader>.Err(ParseError.ExpectedName
             {
-                Token: (u32[0 max])(index + 1)
+                Token: (u32[0 max])(moduleKeyword + 1)
             });
         }
 
@@ -888,9 +923,7 @@ finite law bool IsDeclarationModifierKind(TokenKind kind)
             return true;
         case TokenKind.Export:
             return true;
-        case TokenKind.Finite:
-            return true;
-        case TokenKind.Law:
+        case TokenKind.Dyn:
             return true;
         case TokenKind.Inline:
             return true;
@@ -1091,6 +1124,10 @@ finite law DeclarationKind ClassifyDeclarationKind(TokenKind kind)
         case TokenKind.Alias:
             return DeclarationKind.Alias;
         case TokenKind.Fn:
+            return DeclarationKind.Function;
+        case TokenKind.Finite:
+            return DeclarationKind.Function;
+        case TokenKind.Law:
             return DeclarationKind.Function;
         case TokenKind.Const:
             return DeclarationKind.Const;
@@ -3648,8 +3685,13 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
 {
     stack mut FunctionSignature signature = new();
     signature.IsTailCallable = FunctionHasTailModifierBefore(stream, fnKeyword);
-    signature.IsFiniteKind = FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Finite);
-    signature.IsLawKind = FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Law);
+    stack TokenKind functionKeywordKind = stream.KindAt((u64[0 2 ** 63 - 1])fnKeyword);
+    signature.IsFiniteKind = functionKeywordKind == TokenKind.Finite
+        || FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Finite);
+    signature.IsLawKind = functionKeywordKind == TokenKind.Law
+        || (functionKeywordKind == TokenKind.Finite
+            && stream.KindAt((u64[0 2 ** 63 - 1])(fnKeyword + 1)) == TokenKind.Law)
+        || FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Law);
     CollectAsmSpecifierBeforeFunction(signature, stream, fnKeyword);
     stack mut u32[0 max] index = (u32[0 max])(fnKeyword + 1);
     stack mut u32[0 max] lastIdentifier = 0;

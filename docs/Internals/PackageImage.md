@@ -27,6 +27,62 @@ Self-hosting direction:
 - JSON/text sidecars are views of the package image, not independent sources of
   truth
 
+The Stage1 implementation keeps the stable
+`Compiler.Mir.PackageImage` module as a small compatibility facade. Package
+models live in `PackageImage.Models`; fixed binary and type codecs live under
+`PackageImage.Shared`; logical and legacy writers live under
+`PackageImage.Builder`; validated materialization lives under
+`PackageImage.Loader`; and deterministic rendering and file adapters live under
+`PackageImage.Inspection`. Focused modules depend on models and shared codecs,
+never back through the facade. This preserves an acyclic hot path and lets the
+compiler load only the package families it consumes.
+
+The synthetic-source bridge is intentionally not part of the ordinary loader.
+Stage1 has materialized the source-surface bridge graph, but source-document
+reconstruction remains a separate compatibility feature until the Stage1
+frontend owns a loaded-module/source-document model. Direct typed-interface,
+compiler-fact, ABI, layout, ownership, alias, range, native-metadata, and
+generic-template loading does not wait on that bridge.
+The focused Stage1 bridge module now performs one `MANF` parse to render the
+effective import/re-export prefix, module identity, and source type aliases;
+later declaration/body reconstruction extends that boundary without moving
+bridge behavior back into the loader.
+
+Stage1 now also has a first source-free imported-template MIR path. A typed
+template whose complete body is an ordered top-level sequence of empty or pure
+constant-expression statements followed by one integer or boolean expression
+return lowers directly from the materialized generic-template graph. The same
+sequence may be wrapped in one terminal top-level block when its body is flat.
+Discarded
+constant roots are evaluated for validation and conversion-row consumption but
+emit no runtime work. Bounded
+nested literal/unary/binary/comparison-chain/conditional/comptime/conversion
+arithmetic, comparisons, and boolean logic fold during import lowering to one
+MIR constant, avoiding a runtime operator tree. Conversions consume ordered
+published conversion side rows, require exact target scalar/range identity, and
+use Stage0-compatible two's-complement width normalization before rechecking the
+target's inclusive range. Conversion ordinals remain in source order across
+all statement roots. The path consumes the canonical Stage0 schema
+(lowercase type kinds, `Name`-backed unary/binary operators, operator-row
+comparison chains, and inferred expression result types) rather than requiring
+normalized result annotations. The path
+preflights the entire per-template statement/expression shape, refuses overflow
+and any unconsumed call, ownership, layout, enum, or bound-operation
+family, requires the graph result type, signedness, and exact folded range to
+satisfy the specialized function return contract supplied by its caller, and
+rejects scalar-inapplicable caller fact families rather than silently dropping
+LLVM inputs. Statement and expression spans are validated once and then walked
+by direct row offset, avoiding whole-graph rescans on wider bodies. The flat
+block boundary exploits the loader's contiguous direct-child batch, preserving
+source-ordered conversion facts without allocating a parent index. Deeper
+nesting remains on compatibility fallback. It reserves
+all dense output tables only after those checks. It records the
+folded value's exact range on both the MIR value and the function-return fact
+table, so LLVM definitions and downstream call sites receive that fact without
+rediscovering it from synthetic source. Unsupported bodies continue through the
+compatibility bridge; malformed graphs and fact-table misalignment do not
+silently fall back.
+
 Historical note:
 
 - some internal type names and older comments still use `Manifest` because the
@@ -191,6 +247,76 @@ That means:
 Direct compiler loading is the primary model.
 Synthetic-source reconstruction is temporary bridge behavior.
 
+Stage1 now owns that compatibility result as a loaded source document: the
+rendered bytes are retained beside the compilation-unit token and declaration
+tables, syntax diagnostics reject the document, and parsed header rows preserve
+the `export` bit on re-export imports. This is deliberately not a second source
+of compiler truth. The loaded typed-interface, compiler-fact, ownership,
+layout, ABI, and generic-template graphs remain canonical downstream.
+
+Global constants make the boundary especially important. The compatibility
+source uses neutral, type-correct literals (`0`, `false`, `""`, `null`, or a
+recursively shaped fixed array) only so parsing and name resolution can proceed.
+The actual scalar values, integer ranges, aggregate elements, and types remain
+in typed constant-initializer rows for CTFE and LLVM lowering. Unsupported
+aggregate placeholder shapes fail the bridge instead of inventing a value.
+
+Generic-template body matching follows the same structured-first rule. A
+template is identified by qualified source name plus overload key. The bridge
+first uses the published overload key from the effective typed interface and
+otherwise derives the Stage0-compatible key from canonicalized source
+parameter types. Legacy `BodyText` may be attached to a matching top-level
+function or method only when that template has no `TypedBody`; a present typed
+body always wins, even if stale legacy text is also present. Duplicate template
+identities reject the bridge instead of choosing an order-dependent body.
+
+The overload-key builder reuses one owned scratch buffer across declarations
+and canonicalizes qualifier order before removing whitespace. This keeps the
+compatibility import path allocation-bounded while matching Stage0 identity
+semantics. For structured typed bodies, a bounded statement/expression/pattern
+walk decides whether the compatibility parser needs body text at all. Bodies
+whose operations are consumed directly by imported-template lowering remain
+declarations. The first source-required form renders an exact single-return
+direct call by matching its published ordinal and selecting the Stage0 target
+name precedence (`QualifiedSourceName`, then `QualifiedTemplateName`, then
+`QualifiedResolvedName`). The recursive expression subset also joins field
+access and non-generic member-call ordinals, recovers the member spelling from
+its qualified source name, supports nested name/literal arguments, and uses an
+object-creation row's exact authored `ExpressionText` when the expression has
+no reconstructed arguments. It also reconstructs enum constructor/call/value
+expressions, synthesized named-type constructor/initializer and arena
+allocations, and generic/comptime direct and member calls. Direct calls retain
+Stage0's parsing optimization: pure type arguments remain inferred, while a
+comptime argument makes the complete explicit generic list necessary. Typed
+bodies render ordered local declarations, empty statements, expression
+statements, assignments, breaks, continues, and returns into one reused owned
+scratch buffer. Local declarations preserve their storage class, mutability,
+structured named type, and initializer. Object-initializer expressions retain
+member order and require an exact member/value count before rendering.
+Bounded recursive statement rendering also reconstructs typed `if`/`else`
+trees, labeled `while` loops, counted `for` loops, allocation-free traversal
+loops, explicit blocks, and switches. Loop behavior, ordered loop contracts,
+labels, traversal bindings, guards, case order, and recursive child statements
+come directly from typed rows. Condition and switch patterns cover discard,
+capture, literal, inclusive range, exact list, enum, aggregate, named-field,
+positional, and whole-value capture forms; enum/aggregate member names are
+joined through exact published ordinals.
+
+Structured type rendering covers scalar, integer-range, floating, raw-pointer,
+fixed-array, slice, dynamic, named/generic, associated, dyn-trait,
+function-pointer, and closure forms. It retains qualifier order, source aliases,
+symbolic comptime arguments, callable kind/safety/ABI/tail facts, bounded raw
+pointer counts, closure storage/capability, and deduplicated overlap/same/dead
+memory contracts without temporary collections. The expression renderer also
+handles array and object initializers, assignment, conversion, `try`, unary and
+binary operators, comparison chains, conditionals, `comptime`, layout queries,
+closure calls, indexing, and dyn-trait construction around ordinal-backed
+operations. Malformed counts, duplicate operation ordinals, or incomplete
+callable facts fail closed. In every case, operation/type rows remain canonical
+for specialization and LLVM lowering and are never replaced with legacy body
+text. The compatibility bridge remains only until direct imported-template
+lowering consumes every structured typed-body family.
+
 ## Generic Template Publication Rules
 
 The `generic-templates` section is package-boundary specialization material,
@@ -302,3 +428,47 @@ That legacy naming does not change the intended model:
 - JSON/text inspection output remains compiler-owned and deterministic
 - direct structured loading is the primary path
 - legacy manifest-style reconstruction is temporary bridge behavior, not the semantic source of truth for imported package handling
+
+The Stage1 module split was verified against the pre-split implementation with
+the same deterministic sectioned-MIR fixture. Both implementations emitted the
+same 124-byte image with SHA-256
+`4897f97f7db9eea83207f0134adf217e744e441a761a304ca71756e8660fd5b6`.
+Logical-image coverage separately exercises exact `STRS`/`PINF`/`MANF`
+directory facts, deduplicated string indexes, target/backend facts, compressed
+payload copying, and all materialized graph families.
+
+Stage1 package emission uses standards-compliant uncompressed Brotli
+meta-blocks for `MANF`; Stage1 decodes that bounded subset directly with a
+single pass over the validated image range, without first allocating a second
+compressed-payload buffer. General Brotli streams produced by Stage0's
+optimal compressor remain on the host decompression handoff until a full
+Stage1 decoder or an explicitly shipped native decoder lands.
+
+The focused Stage1 source bridge renders effective imports/re-exports, module
+identity and opaque backend policy, aliases, and declaration-only
+source-surface functions from one parsed manifest. Function rendering retains
+link name, source-spellable opaque backend mode, strict floating-point policy,
+hot/cold and inline preferences, unsafe/FFI ABI, varargs/tail, bounded raw
+pointer counts, `dead_on_return`, generic trait constraints, thread laws, value
+contracts, and named or bounded disjoint/overlap/same groups. Count-only
+placeholder objects are rejected instead of silently erasing semantic, range,
+or alias inputs before parsing or LLVM lowering.
+
+The same one-parse bridge reconstructs source-spellable immutable/mutable
+static globals and simple structs, records, traits, and enums. Type reconstruction
+retains opaque optimization mode, struct layout, pack/alignment, generic
+parameters, record primary constructors, associated aliases, implemented-trait
+bases, dyn-trait identity, type/field thread-safety laws, explicit field
+offsets, visibility, and source field types. Primary-constructor field names are
+filtered with direct scans over the parsed rows rather than a temporary hash
+set.
+Enum reconstruction preserves positional and named payload types, `[Ok]`/`[Err]`
+roles, and `from` conversion funnels, including an exact check that the funnel
+payload agrees with the absorbed error type. Struct/record constructors and
+destructors retain their authored bodies, while struct/record/trait method
+headers retain the same ABI, performance, generic, thread-law, value-contract,
+and alias-region facts as top-level callables. Method bodies remain sourced
+from typed generic-template facts rather than guessed from a header; enum
+methods, constants, and malformed or count-only member payloads fail closed.
+The bridge never substitutes a weaker declaration that would change LLVM
+layout or optimization inputs.

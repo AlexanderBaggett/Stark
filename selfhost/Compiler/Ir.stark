@@ -881,6 +881,142 @@ public fn bool ImportFunctionReturnValueFactsForMirValue(
     return ImportValueFactsForMirValue(facts, value, functionReturnFacts, callee.Index());
 }
 
+// SSA uses the same dense, 1-based fact-table discipline as MIR. Rewrite passes
+// must choose an explicit transfer policy instead of dropping optimizer facts
+// and asking ABI/LLVM lowering to rediscover them.
+public finite law ValueFacts ValueFactsForSsaValue(
+    borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    return ValueFactsAtIndex(facts, value.Index());
+}
+
+public fn bool RecordValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    ValueFacts row)
+{
+    stack u32[0 max] targetIndex = value.Index();
+    if (targetIndex == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] targetBefore = (u64[0 2 ** 63 - 1])(targetIndex - 1);
+    while willexit (facts.Count() < targetBefore)
+    {
+        stack mut ValueFacts empty = new();
+        if (facts.Add(empty) == 0)
+        {
+            return false;
+        }
+    }
+
+    if (facts.Count() != targetBefore)
+    {
+        return false;
+    }
+
+    return facts.Add(row) == targetIndex;
+}
+
+public fn bool RecordGeneratedValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    ValueFacts generated)
+{
+    return RecordValueFactsForSsaValue(facts, value, generated);
+}
+
+public fn bool RecordEmptyValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool PreserveValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    SsaValueId source)
+{
+    return RecordValueFactsForSsaValue(facts, value, ValueFactsForSsaValue(facts, source));
+}
+
+public fn bool TranslateValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    ValueFacts translated)
+{
+    return RecordValueFactsForSsaValue(facts, value, translated);
+}
+
+public fn bool RecomputeValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool ConsumeValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool DropDebugOnlyValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForSsaValue(facts, value, empty);
+}
+
+public fn bool ImportValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> sourceFacts,
+    u32[0 max] sourceIndex)
+{
+    return RecordValueFactsForSsaValue(facts, value, ValueFactsAtIndex(sourceFacts, sourceIndex));
+}
+
+public fn bool ImportParameterValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> parameterFacts,
+    u32[0 max] parameterIndex)
+{
+    if (parameterIndex == (u32[0 max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    return ImportValueFactsForSsaValue(facts, value, parameterFacts, parameterIndex + 1);
+}
+
+public fn bool ImportGlobalValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> globalFacts,
+    u32[0 max] globalId)
+{
+    return ImportValueFactsForSsaValue(facts, value, globalFacts, globalId);
+}
+
+public fn bool ImportFunctionReturnValueFactsForSsaValue(
+    mut borrow IrTable<ValueFacts> facts,
+    SsaValueId value,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    MirFuncId callee)
+{
+    return ImportValueFactsForSsaValue(facts, value, functionReturnFacts, callee.Index());
+}
+
 public enum IrFactCategory
 {
     Unknown,
@@ -1327,6 +1463,7 @@ public enum IrFactValidationStatus
     Ok,
     UnknownCategory,
     StaleHandle,
+    MismatchedPreservedFact,
     DroppedForbidDropFact,
     MissingAbiFact,
     MissingAliasFact,
@@ -1345,6 +1482,8 @@ public finite law ascii IrFactValidationStatusName(IrFactValidationStatus status
             return "unknown-category";
         case IrFactValidationStatus.StaleHandle:
             return "stale-handle";
+        case IrFactValidationStatus.MismatchedPreservedFact:
+            return "mismatched-preserved-fact";
         case IrFactValidationStatus.DroppedForbidDropFact:
             return "dropped-forbid-drop-fact";
         case IrFactValidationStatus.MissingAbiFact:
@@ -1541,6 +1680,238 @@ public fn IrFactValidationStatus ValidateMirValueFactAtBoundary<T>(
 
     stack ValueFacts row = ValueFactsAtIndex(valueFacts, value.Index());
     return ValidateRequiredFactCategory(category, ValueFactsContainCategory(row, category));
+}
+
+public fn IrFactValidationStatus ValidateSsaValueFactAtBoundary<T>(
+    borrow IrTable<T> valueDefinitions,
+    borrow IrTable<ValueFacts> valueFacts,
+    SsaValueId value,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus handleStatus = ValidateSsaValueHandle<T>(valueDefinitions, value);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!valueFacts.Contains(value.Index()))
+    {
+        return MissingFactStatusForCategory(category);
+    }
+
+    stack ValueFacts row = ValueFactsAtIndex(valueFacts, value.Index());
+    return ValidateRequiredFactCategory(category, ValueFactsContainCategory(row, category));
+}
+
+public finite law bool ValueFactsCategoryMatches(
+    borrow ValueFacts source,
+    borrow ValueFacts target,
+    IrFactCategory category)
+{
+    switch (category)
+    {
+        case IrFactCategory.ValueAlignment:
+            return source.HasAlignment()
+                && target.HasAlignment()
+                && source.AlignmentBytes() == target.AlignmentBytes();
+        case IrFactCategory.ValueNoAlias:
+            return source.HasNoAlias() && target.HasNoAlias();
+        case IrFactCategory.ValueVolatile:
+            return source.Volatile() && target.Volatile();
+        case IrFactCategory.ValueIntegerRange:
+            return source.HasIntegerRange()
+                && target.HasIntegerRange()
+                && source.IntegerRangeLower() == target.IntegerRangeLower()
+                && source.IntegerRangeUpperExclusive() == target.IntegerRangeUpperExclusive();
+        case IrFactCategory.ValueNullability:
+            return source.HasNullability()
+                && target.HasNullability()
+                && source.KnownNull() == target.KnownNull()
+                && source.KnownNonNull() == target.KnownNonNull();
+        case IrFactCategory.ValueTextConstant:
+            return source.HasTextConstant()
+                && target.HasTextConstant()
+                && source.TextConstantRowIndex() == target.TextConstantRowIndex()
+                && source.TextConstantPayloadStart() == target.TextConstantPayloadStart()
+                && source.TextConstantPayloadByteLength() == target.TextConstantPayloadByteLength()
+                && source.TextConstantCodePointLength() == target.TextConstantCodePointLength()
+                && source.TextConstantStorageEncodingCode()
+                    == target.TextConstantStorageEncodingCode();
+        case IrFactCategory.CallableAbi:
+            return source.HasCallingAbi()
+                && target.HasCallingAbi()
+                && source.CallingAbi() == target.CallingAbi();
+        default:
+            return false;
+    }
+}
+
+// Rewrite passes call this for every fact category whose transfer policy is
+// Preserve. Missing facts use the category-specific diagnostic; changed facts
+// are distinguished from drops so optimizer defects cannot reach ABI/LLVM as
+// merely less-optimized IR.
+public fn IrFactValidationStatus ValidateSsaValueFactPreservedAtRewriteBoundary<
+    TSourceDefinition,
+    TTargetDefinition>(
+    borrow IrTable<TSourceDefinition> sourceDefinitions,
+    borrow IrTable<ValueFacts> sourceFacts,
+    SsaValueId sourceValue,
+    borrow IrTable<TTargetDefinition> targetDefinitions,
+    borrow IrTable<ValueFacts> targetFacts,
+    SsaValueId targetValue,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus sourceStatus = ValidateSsaValueFactAtBoundary<TSourceDefinition>(
+        sourceDefinitions,
+        sourceFacts,
+        sourceValue,
+        category);
+    if (sourceStatus != IrFactValidationStatus.Ok)
+    {
+        return sourceStatus;
+    }
+
+    stack IrFactValidationStatus targetStatus = ValidateSsaValueFactAtBoundary<TTargetDefinition>(
+        targetDefinitions,
+        targetFacts,
+        targetValue,
+        category);
+    if (targetStatus != IrFactValidationStatus.Ok)
+    {
+        return targetStatus;
+    }
+
+    stack ValueFacts source = ValueFactsForSsaValue(sourceFacts, sourceValue);
+    stack ValueFacts target = ValueFactsForSsaValue(targetFacts, targetValue);
+    if (!ValueFactsCategoryMatches(source, target, category))
+    {
+        return IrFactValidationStatus.MismatchedPreservedFact;
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+// Checks every backend value fact that is present on the source value. This is
+// the default optimizer rewrite gate: fixed cost, no temporary collections,
+// and no category can be forgotten by an individual pass.
+public fn IrFactValidationStatus ValidateAllPresentSsaValueFactsPreservedAtRewriteBoundary<
+    TSourceDefinition,
+    TTargetDefinition>(
+    borrow IrTable<TSourceDefinition> sourceDefinitions,
+    borrow IrTable<ValueFacts> sourceFacts,
+    SsaValueId sourceValue,
+    borrow IrTable<TTargetDefinition> targetDefinitions,
+    borrow IrTable<ValueFacts> targetFacts,
+    SsaValueId targetValue)
+{
+    if (ValidateSsaValueHandle<TSourceDefinition>(sourceDefinitions, sourceValue)
+            != IrFactValidationStatus.Ok
+        || ValidateSsaValueHandle<TTargetDefinition>(targetDefinitions, targetValue)
+            != IrFactValidationStatus.Ok)
+    {
+        return IrFactValidationStatus.StaleHandle;
+    }
+
+    if (!sourceFacts.Contains(sourceValue.Index())
+        || !targetFacts.Contains(targetValue.Index()))
+    {
+        return IrFactValidationStatus.MissingRequiredFact;
+    }
+
+    stack ValueFacts source = ValueFactsForSsaValue(sourceFacts, sourceValue);
+    stack ValueFacts target = ValueFactsForSsaValue(targetFacts, targetValue);
+    if (source.HasAlignment())
+    {
+        if (!target.HasAlignment())
+        {
+            return IrFactValidationStatus.MissingLayoutFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueAlignment))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasCallingAbi())
+    {
+        if (!target.HasCallingAbi())
+        {
+            return IrFactValidationStatus.MissingAbiFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.CallableAbi))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasNoAlias())
+    {
+        if (!target.HasNoAlias())
+        {
+            return IrFactValidationStatus.MissingAliasFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueNoAlias))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.Volatile())
+    {
+        if (!target.Volatile())
+        {
+            return IrFactValidationStatus.DroppedForbidDropFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueVolatile))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasIntegerRange())
+    {
+        if (!target.HasIntegerRange())
+        {
+            return IrFactValidationStatus.MissingRequiredFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueIntegerRange))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasNullability())
+    {
+        if (!target.HasNullability())
+        {
+            return IrFactValidationStatus.MissingRequiredFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueNullability))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    if (source.HasTextConstant())
+    {
+        if (!target.HasTextConstant())
+        {
+            return IrFactValidationStatus.MissingRequiredFact;
+        }
+
+        if (!ValueFactsCategoryMatches(source, target, IrFactCategory.ValueTextConstant))
+        {
+            return IrFactValidationStatus.MismatchedPreservedFact;
+        }
+    }
+
+    return IrFactValidationStatus.Ok;
 }
 
 public fn IrFactValidationStatus ValidateCallableAbiFactAtBoundary<T>(

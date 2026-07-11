@@ -7709,3 +7709,545 @@ comments explaining which platform is required.
   - `./stark selfhost/Compiler/Mir/PackageCodec.stark --check -I selfhost`: passed.
   - `./stark selfhost/Compiler/Mir/PackageImage.stark --check -I selfhost`: passed with existing recursive generic-template writer stack-growth warnings.
 - No broad test sweep was run.
+
+## 2026-07-10 Package Image Split Closure And Stage1 MANF Decode Slice
+
+- Closed the short-lived PackageImage split tracker after moving the durable
+  module-boundary notes into `docs/Internals/PackageImage.md`.
+- Compared the identical sectioned-MIR fixture through the pre-split source at
+  `d4d7d9ef` and the split implementation at `07da7238`; both emitted the same
+  124-byte image with SHA-256
+  `4897f97f7db9eea83207f0134adf217e744e441a761a304ca71756e8660fd5b6`.
+- Added a bounded Stage1 Brotli reader for the uncompressed meta-block streams
+  emitted by the Stage1 package writer. The reader validates the window bit,
+  meta-block lengths, uncompressed marker, zero padding, final empty block, and
+  exact end of input while reserving and copying payload bytes blockwise.
+- Removed the image-level compressed-payload staging allocation: decoding now
+  reads the validated `MANF` byte range in place and writes only the final JSON
+  byte table; bit extraction is a constant-time shift/mask rather than a
+  per-bit divisor loop.
+- Added the focused source-bridge module with one-parse rendering for effective
+  imports/re-exports, module identity, and source aliases including generic and
+  comptime parameters. Full loaded-document/body reconstruction remains open.
+- Added dense `SsaValueId` fact-transfer APIs for generated, preserved,
+  translated, recomputed, consumed, debug-only, and imported value boundaries.
+  The transfer retains alignment, ABI, noalias, volatile, integer range,
+  nullability, and text-constant facts without map lookups or rediscovery.
+- Kept general compressed Stage0 Brotli streams explicitly open; those still
+  use the host decompression handoff.
+- Revalidated the package-free full `Compiler.Mir` `EnumReturnProbe`: the
+  `List<MirEnumLayoutFact>` LLVM type is non-empty, no `dereferenceable(0)`
+  attributes remain, and Clang accepted the emitted 14 MiB LLVM module.
+- Narrow verification:
+  - focused `PackageImageLoader.stark --check`: passed.
+  - full focused `PackageImage.stark --check`: passed.
+  - focused `Compiler.Ir.stark --check`: passed.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - PackageImage dependency-direction guard: passed.
+  - `git diff --check`: passed.
+  - focused Stage1 Brotli runtime fact: passed 1/1 through the fully optimized
+    test-project build; the 70,000-byte payload exercised multiple meta-blocks.
+  - focused source bridge module check: passed.
+  - standalone optimized SSA fact-transfer executable: passed with exit 0.
+  - combined current-source optimized package-image executable: passed with
+    exit 0 after a 70,000-byte encode/decode, direct in-image range decode,
+    byte-for-byte comparison, and exact source-bridge output comparison.
+
+## 2026-07-10 Package Source Function Bridge And SSA Rewrite Gate Slice
+
+- Extended the one-parse package source bridge with declaration-only function
+  rendering for the lossless source-surface subset. The renderer preserves
+  link name, opaque backend mode, strictfp, hot/cold, explicit inline preference,
+  unsafe/FFI ABI, varargs/tail, generic/comptime parameters, bounded raw
+  pointer counts, and `dead_on_return` contracts.
+- Made unsupported non-empty source constraint and alias-group placeholder
+  arrays fail the bridge instead of emitting a declaration with weakened
+  aliasing or semantic contracts.
+- Added exact SSA rewrite-boundary validation for alignment, callable ABI,
+  noalias, volatile, integer range, nullability, and text-constant facts. A
+  changed preserved fact now reports `mismatched-preserved-fact`, separately
+  from category-specific missing-fact diagnostics.
+- Added static-global reconstruction and simple struct/record/trait
+  reconstruction to the same one-parse bridge. Layout, pack/align, field
+  offset, field visibility/type, generic, mutability, and opaque-backend facts
+  are emitted exactly; constant, destructor, and other unrendered payloads are
+  rejected.
+- Added enum reconstruction with positional and named payloads, role
+  attributes, and absorbed-error funnels. Funnel rows are accepted only when
+  their single positional payload exactly matches `AbsorbsErrorType`, keeping
+  try propagation and enum layout inputs intact.
+- Extended the same one-parse bridge with effective module opaque-backend
+  policy, record primary constructors, implemented traits, associated aliases,
+  dyn-trait identity, and type/field thread-safety laws. Duplicate synthesized
+  primary-constructor fields are filtered with allocation-free direct scans.
+- Connected callable type constraints, thread-law predicates, value contracts,
+  and named or bounded disjoint/overlap/same groups. Bounded region expressions
+  are rendered exactly so scoped noalias inputs survive the compatibility path;
+  partially specified regions and count-only placeholder objects fail closed.
+- Added struct/record constructor and destructor body reconstruction plus
+  struct/record/trait method-header reconstruction. Method headers reuse the
+  same exact ABI, opaque-backend, inline/hot/cold, generic/comptime, bounded
+  pointer, thread-law, value-contract, and alias-region renderers as top-level
+  functions; enum methods and incomplete member rows remain rejected.
+- Corrected the positive dyn-trait fixture so associated aliases remain on a
+  plain trait and the dyn trait is object-safe, then added a dyn-trait method
+  signature to exercise the vtable-shaping surface.
+- Added a fixed-cost all-present-facts SSA rewrite gate so optimizer passes do
+  not need a dynamic set or a hand-maintained subset of LLVM-visible facts.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed.
+  - full `PackageImage.stark --check`: passed after the enum bridge slice.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - combined optimized package-image executable: passed with exact module
+    backend policy, struct/record/enum/dyn-trait, thread-law, associated-type,
+    implemented-trait, constructor/destructor, method/dyn-method,
+    static-global, callable constraint, bounded alias-region, and function
+    declaration text plus the existing 70,000-byte direct MANF range decode.
+  - unsupported-payload bridge executable: passed with the bridge rejecting
+    non-lossless constraint, constant-initializer, and destructor payloads.
+  - optimized SSA transfer/rewrite-gate executable: passed with exact preserved
+    text facts and a changed alignment reported as mismatched.
+  - PackageImage dependency-direction guard, stale split-tracker reference
+    scan, and `git diff --check`: passed.
+
+## 2026-07-10 Package Source Constant, Doctrine, And Loaded Document Slice
+
+- Added source-bridge doctrine rendering with generic parameters, associated
+  aliases, and method/law declarations; doctrines reject fields while dyn
+  traits continue to reject associated aliases that would violate object
+  safety.
+- Added global-constant compatibility rendering for scalar, text, null, and
+  recursively shaped fixed-array initializers. Strict integer range spelling
+  is removed from the parse-only constant declaration where Stark requires the
+  bare storage type.
+- Kept typed constant initializer rows authoritative: the fixture deliberately
+  stores integer `123` and boolean `true` while the bridge emits neutral `0`
+  and `false`. Those placeholders are never imported as CTFE, range, ABI, or
+  LLVM facts, and unsupported complex aggregate shapes fail closed.
+- Extended the Stage1 compilation-unit header parser to accept `export import`
+  and preserve its re-export bit in a dense parallel column.
+- Added a Stage1-owned loaded compatibility document that retains reconstructed
+  source bytes beside the parsed compilation-unit syntax, rejects syntax
+  diagnostics, and records the source module ordinal. Structured typed,
+  compiler, template, ownership, ABI, and layout graphs remain the canonical
+  backend inputs.
+- Parser repair details:
+  - module-header rows now retain their leading attribute start token as well
+    as the `module` keyword token;
+  - declaration parsing recognizes dyn-trait headers and bare `finite`, `law`,
+    and `finite law` callable kinds emitted by the compatibility bridge;
+  - focused parser facts cover exported imports, attributed modules, and bare
+    callable-kind flags.
+  - deterministic compilation-unit artifact text exposes header `start` and
+    `exported` fields so the retained compatibility syntax facts are visible.
+- Verification:
+  - focused `Parsing.stark --check`: passed with the parser's existing bounded
+    recursive-descent stack-growth warnings.
+  - `selfhost.Parsing/ParsingTests.stark --check`: passed.
+  - focused `PackageImageSourceBridge.stark --check`: passed with one bounded
+    fixed-array initializer recursion warning.
+  - combined current-source fixture `--check`: passed with exact doctrine,
+    constant, loaded-document, declaration-count, and exported-import checks.
+  - combined optimized package-image executable: passed with exit 0 after the
+    existing 70,000-byte direct MANF decode plus exact source, owned loaded
+    document, attributed-module, exported-import, and 12-declaration checks.
+  - full `PackageImage.stark --check`: passed.
+  - package-free full `selfhost.Ir/IrTests.stark --check`: passed.
+  - focused `ArtifactRendering.stark --check`,
+    `selfhost.Artifacts/ArtifactsTests.stark --check`, and
+    `selfhost.Parsing/ParsingTests.stark --check`: passed.
+  - PackageImage dependency-direction guard, stale split-tracker reference
+    scan, and `git diff --check`: passed.
+  - focused parser runtime test command was stopped after repeated silent
+    build/setup intervals before runner output; the parser test project and the
+    focused parser source both pass `--check`, and the optimized combined
+    executable exercises the same exported-import/attributed-module path.
+
+## 2026-07-10 Package Generic Template Body Matching Slice
+
+- Connected legacy generic-template bodies to reconstructed top-level function
+  and type-method declarations by exact qualified name and overload key.
+- Matched Stage0 identity precedence: effective typed-interface
+  `PublishedOverloadKey` wins, otherwise the bridge derives a canonical key
+  from source parameter type spelling, including ordered ownership/access/init
+  qualifiers and whitespace removal.
+- Reused one owned overload-key scratch buffer across every declaration in the
+  one-parse bridge. No dictionary, per-callable key allocation, or temporary
+  parameter-name set was added to the compatibility path.
+- Preserved structured template authority: when a matching row contains
+  `TypedBody`, conflicting legacy `BodyText` is ignored and the declaration
+  remains bodyless until the structured operation subset is rendered or
+  lowered directly.
+- Duplicate qualified-name/overload-key template identities now reject the
+  bridge rather than selecting a body by manifest order.
+- Optimized combined package-image fixture: passed with exit 0 after exact
+  method/top-level legacy body attachment, published-key and canonical-key
+  matching, typed-body suppression, duplicate rejection, owned loaded-document
+  parsing, and the existing 70,000-byte direct MANF decode.
+
+## 2026-07-10 Package Structured Template Direct-Call Slice
+
+- Added bounded, allocation-free traversal of typed template statements,
+  expressions, patterns, switch cases, and nested statement lists to identify
+  operation kinds that still require compatibility source text. The maximum
+  nesting depth is 64 and malformed/deeper graphs reject the bridge.
+- Added exact rendering for a typed body containing one returned direct call.
+  The call expression is joined to `DirectCalls` by ordinal, duplicate ordinal
+  facts reject, and target selection preserves Stage0 source/template/resolved
+  name precedence. Name and literal arguments render without per-argument
+  allocation; the owned body scratch is reused across all callables.
+- Extended the typed expression renderer recursively through ordinal-backed
+  field access and non-generic member calls. The positive body now proves the
+  nested shape
+  `Source.Identity(value.Value.Combine(new Source.Value()))`, including
+  direct-call source-name precedence, field-name lookup, member-name recovery,
+  and exact authored object-creation text without temporary strings.
+- Kept the structured graph authoritative: the positive fixture includes
+  conflicting legacy `BodyText`, but reconstructs
+  `{ return Source.Identity(value.Value.Combine(new Source.Value())); }` from
+  typed operation facts. Pure typed
+  bodies still remain declaration-only, while comptime calls and other
+  source-required forms fail closed until their fact-complete renderers land.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed; only bounded
+    recursion warnings are reported.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - optimized combined package-image executable: passed with exit 0 after the
+    typed direct-call precedence/body assertion, loaded-source parse, ambiguity
+    rejection, comptime-call fail-closed rejection, and existing 70,000-byte
+    direct MANF decode.
+  - full `PackageImage.stark --check`: passed.
+  - PackageImage dependency-direction guard, stale split-tracker reference
+    scan, and `git diff --check`: passed.
+
+## 2026-07-10 Package Structured Template Enum And Statement Slice
+
+- Extended compatibility expression rendering through ordinal-backed enum
+  constructors, enum calls, and enum values. Enum types are reconstructed from
+  bounded named type-reference facts, including canonical qualifier order,
+  nested type arguments, and symbolic/integer comptime arguments.
+- Added Stage0-compatible generic call spelling. Direct calls omit pure type
+  arguments when inference is sufficient, but render the complete type/value
+  list when comptime arguments require explicit syntax. Member calls retain
+  their explicit generic list and recover their source member name.
+- Completed fact-driven named object construction for constructor calls,
+  initializer-member rows, arena selection, and exact authored zero-argument
+  text. Initializer member/argument counts must match; unknown storage selectors
+  reject instead of producing guessed allocation syntax.
+- Replaced the single-return shortcut with ordered multiline rendering for
+  empty, expression, assignment, break, continue, and return statements.
+  Assignment targets may come from a name or typed target expression and retain
+  the published operator, including `init =` spelling.
+- The optimized fixture reconstructs a three-statement body containing enum
+  value use, assignment, a generic/comptime direct call, a generic/comptime
+  member call, all three enum operation kinds, field access, and synthesized
+  arena allocation. Conflicting legacy body text remains ignored. A typed `if`
+  shape remains an explicit fail-closed negative fixture.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed with only bounded
+    recursion warnings.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - optimized combined package-image executable: passed with exit 0, including
+    exact reconstructed source, negative unsupported-shape rejection, loaded
+    source parsing, duplicate-template rejection, and the 70,000-byte direct
+    MANF decode.
+  - full `PackageImage.stark --check`: passed.
+  - PackageImage dependency-direction guard, stale split-tracker reference
+    scan, and `git diff --check`: passed.
+
+## 2026-07-11 Package Structured Template Local And Initializer Slice
+
+- Added typed local-declaration rendering with exact storage class, mutability,
+  named type arguments, source name, and initializer order. Constant locals
+  retain `const` spelling and malformed declarations fail closed.
+- Added recursive object-initializer rendering before ordinal lookup, preserving
+  manifest member order and requiring each non-empty member name to have one
+  corresponding typed value expression.
+- Extended the optimized fixture with
+  `stack mut Source.Option<T> current = { Value = Source.Option.None };` ahead
+  of the existing enum/call/assignment body. The typed operation graph remains
+  canonical and conflicting legacy body text remains ignored.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed with only the
+    existing bounded recursion warnings.
+  - optimized combined package-image executable: passed with exit 0, including
+    exact reconstructed source and loaded-source parsing.
+
+## 2026-07-11 Package Structured Template Conditional Slice
+
+- Refactored typed statement rendering into a depth-bounded recursive array
+  renderer with direct indentation writes and no per-block string allocation.
+- Added typed `if`/`else` reconstruction over published condition expressions,
+  `ThenStatements`, and `ElseStatements`. Condition-pattern facts remain an
+  explicit rejection until the pattern renderer lands.
+- Extended the optimized fixture with an `if (true)` containing an ordinal-backed
+  enum value and an `else` containing an empty statement. The previous negative
+  fixture now uses an unsupported typed `switch`, preserving fail-closed
+  coverage for the next control-flow slice.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed with only bounded
+    recursion warnings.
+  - optimized combined package-image executable: passed with exit 0, including
+    exact nested source reconstruction, loaded-source parsing, and unsupported
+    switch rejection.
+
+## 2026-07-11 Package Structured Template While Slice
+
+- Added labeled typed `while` reconstruction with exact `LoopBehavior`, ordered
+  non-empty `LoopContracts`, condition expression, and depth-bounded recursive
+  `BodyStatements` rendering.
+- Preserved statement labels and labeled `break`/`continue` targets without a
+  temporary label table. Condition-pattern payloads still reject rather than
+  being silently omitted.
+- Extended the optimized fixture with
+  `retry: while willexit bounded (false)` containing an ordinal-backed enum
+  value and `break retry;`.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed with only bounded
+    recursion warnings.
+  - optimized combined package-image executable: passed with exit 0, including
+    exact labeled-loop source reconstruction and loaded-source parsing.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - full `PackageImage.stark --check`: passed.
+  - PackageImage dependency-direction guard, stale split-tracker reference
+    scan, and `git diff --check`: passed.
+
+## 2026-07-11 Package Structured Template Completion Slice
+
+- Added allocation-free counted `for` header rendering over typed initializer
+  and iterator statement arrays, plus traversal loops with optional index
+  bindings, typed element bindings, labels, loop behavior/contracts, and
+  bounded recursive bodies.
+- Added explicit block and switch reconstruction. Switches retain source case
+  order, guards, child statements, and default/match-all/literal/range/list/
+  enum/aggregate patterns. Pattern ordinals join exact enum/aggregate type,
+  variant, and named-field facts; malformed joins reject.
+- Completed structured type-reference rendering for scalar, ranged integer,
+  float, raw pointer, fixed array, slice, dynamic, named/generic, associated,
+  dyn-trait, function-pointer, and closure forms. Callable rendering retains
+  unsafe/ABI/tail/kind, bounded-pointer expressions, closure storage/capability,
+  and deduplicated overlap/same/dead contracts with direct scans instead of
+  temporary sets.
+- Completed the Stage0-compatible non-ordinal expression surface around typed
+  operations: array/object initialization, assignment, conversion, `try`,
+  unary/binary/comparison/conditional forms, `comptime`, layout queries,
+  closure/index calls, and dyn-trait construction.
+- The optimized fixture now covers counted/traversal loops, condition and
+  switch patterns, explicit blocks, scalar/container/callable types, callable
+  memory contracts, conversions, conditional/comptime nesting, and array
+  initializers while continuing to reject malformed typed data and ignore
+  conflicting legacy body text.
+- During optimized verification, an untyped ternary in a renderer arity check
+  exposed a Stage0 MIR pair-comparison invariant; replacing it with explicit
+  kind-specific comparisons removed the ambiguous operand shape.
+- Verification:
+  - focused `PackageImageSourceBridge.stark --check`: passed with only bounded
+    recursion warnings.
+  - optimized combined package-image executable: passed with exit 0 after the
+    expanded exact-source and loaded-source assertions.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - full `PackageImage.stark --check`: passed.
+  - PackageImage dependency-direction guard, stale split-tracker reference
+    scan, and `git diff --check`: passed.
+
+## 2026-07-11 Direct Imported Template Scalar Return Slice
+
+- Added the first source-free Stage1 imported-template MIR lowering entry for
+  complete typed bodies containing one integer or boolean literal return.
+- The lowerer preflights the whole per-template statement/expression subgraph
+  and rejects any auxiliary operation count, detached row, non-root expression,
+  irrelevant statement/expression payload, unsupported scalar carrier, or
+  output fact-table misalignment. Unsupported but valid bodies leave every MIR
+  table unchanged for compatibility-source fallback.
+- Dense MIR instruction/block/function/value-fact/function-return-fact tables
+  reserve before mutation. Exact literal ranges are attached to the produced
+  value and function return, including the i64 maximum sentinel convention, so
+  the LLVM definition receives the strongest legal `range` attribute.
+- Added package-model presence accessors needed to prove that return/literal
+  rows do not carry ignored assignment, storage, traversal, ordinal, or target
+  payloads.
+- Added direct generic-template type contains/summary accessors and inspect the
+  owned type graph by borrow, avoiding a temporary copy of its dynamic storage
+  on the imported-template hot path.
+- Regression coverage materializes integer, boolean, and unsupported name-body
+  templates from one package graph, appends two direct-lowered functions into
+  shared tables, proves fallback is non-mutating, and checks exact emitted LLVM
+  text including `range(i32 7, 8)`.
+- Verification:
+  - focused `ImportedTemplateLowering.stark --check`: passed.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - full `PackageImage.stark --check`: passed.
+  - PackageImage dependency-direction guard, stale split-tracker scan, and
+    `git diff --check`: passed.
+
+## 2026-07-11 Direct Imported Template Constant Expression Slice
+
+- Extended the source-free scalar-return path from one literal to bounded
+  nested literal/binary/conditional expression trees. Supported operators cover checked
+  integer add/subtract/multiply/divide/remainder, scalar comparisons, and
+  boolean `&&`/`||`.
+- Audited the path against Stage0's 7,936-line imported-template lowerer and
+  corrected the first fixture's normalized assumptions: real producers publish
+  lowercase `integer`/`bool` kinds, binary operators through `Name`, and infer
+  binary/conditional result types. Stage1 now consumes that canonical shape
+  directly while retaining the older operator-row carrier as a compatibility
+  input.
+- Constant trees fold during imported-template preflight and emit one typed MIR
+  constant. This removes runtime arithmetic before SSA while preserving the
+  exact folded value range on the MIR value and function-return fact rows that
+  LLVM consumes.
+- Added exact parent-row, parent-kind, ordinal, operator-row, and child-row
+  joins. Duplicate, detached, cyclic/deeper-than-64, type-inconsistent,
+  overflowing, divide-by-zero, and unconsumed operation shapes fail closed
+  before output-table mutation.
+- Validate each loader-produced template's contiguous expression/operator span
+  once, then constrain recursive child/operator lookup to that compact span so
+  nested evaluation does not repeatedly scan unrelated package templates.
+- Expanded package-graph regression coverage with canonical-schema nested
+  `4 + 3 * 2` folding, nested comparison/boolean folding, a constant
+  conditional selecting `6 * 7`, shared-table appends, exact value facts, and
+  the existing non-mutating name-body fallback.
+- Verification:
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the five
+    expected bounded-recursion warnings.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed after
+    the canonical Stage0 carrier and conditional-fold regressions were added.
+  - focused canonical Stage0-schema conditional fixture: emitted as an
+    executable and ran with exit 0 after asserting one `i32 42` MIR constant
+    plus exact `[42, 43)` value and function-return facts.
+  - optimized package-free binary-fold fixture: emitted and ran with exit 0;
+    LLVM carried `range(i32 10, 11)` and the MIR contained one constant.
+  - optimized package-free direct-lowering fixture: emitted and ran with exit 0,
+    including the exact LLVM range assertion.
+
+## 2026-07-11 Direct Imported Template Unary And Comparison-Chain Slice
+
+- Extended source-free scalar template evaluation to canonical Stage0 unary
+  `+`, checked signed `-`, logical `!`, signed-width `~`, ordered
+  `comparison-chain` rows, and transparent `comptime` wrappers.
+- Comparison chains evaluate each constant operand once, consume every ordered
+  operator row, enforce adjacent scalar type/unsignedness compatibility, and
+  fold the combined result to one boolean MIR constant. Unsupported unsigned
+  complement/negation and any value outside the signed `i64` fact carrier fail
+  closed instead of dropping or wrapping LLVM range facts.
+- Exploit the loader's contiguous ordered argument-row batches: each expression
+  scans once for ordinal zero and validates later siblings by O(1) row offset,
+  avoiding the former whole-template scan for every wide-chain operand.
+- The regression graph combines `comptime`, a conditional, all four supported
+  unary operators, and a two-operator comparison chain; the result remains one
+  `i1 1` MIR instruction with exact `[1, 2)` value and function-return facts.
+- Direct lowering now requires the caller's specialized return `MirType` and
+  unsignedness. A mismatch returns `ReturnTypeMismatch` before reservation or
+  table mutation, preventing a package/substitution error from reaching LLVM
+  with a valid-looking but ABI-incompatible definition.
+- Stage1's specialization plan remains an artifact/dependency contract without
+  an executable MIR orchestration hook. Direct package-template integration is
+  intentionally left on the open specialization task rather than introducing
+  a disconnected pseudo-driver.
+- Verification:
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the nine
+    expected depth-64 bounded-recursion warnings.
+  - optimized combined unary/comparison/comptime fixture: emitted and ran with
+    exit 0 after asserting one `i1 1` plus exact `[1, 2)` value/return facts.
+  - optimized three-operand contiguous comparison-chain fixture: emitted and
+    ran with exit 0 after the sibling-offset lookup optimization.
+  - optimized expected-return contract fixture: emitted and ran with exit 0;
+    an `I64`/`I32` mismatch left every output table empty, then the matching
+    `I32` request emitted one constant with exact `[7, 8)` facts.
+  - package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed with
+    the canonical unary/comparison/comptime and return-contract regressions.
+
+## 2026-07-11 Direct Imported Template Scalar Conversion Slice
+
+- Added source-free constant scalar conversions with Stage0-compatible
+  two's-complement normalization for runtime-width integer sources. Nested
+  conversions consume their side rows in syntax preorder and must match both
+  the expression target and published target type exactly.
+- Published integer `RangeMin`/`RangeMax` facts are now enforced for literals,
+  annotated constant intermediates, and conversion targets. Simple numeric and
+  storage `min`/`max` endpoints are accepted; symbolic bounds fail closed until
+  specialization can substitute them.
+- Exact numeric full-range unsigned maxima (`255`, `65535`, `4294967295`, and
+  `18446744073709551615`) are recognized as storage endpoints, so a small
+  representable unsigned constant retains its exact LLVM fact without forcing
+  the bound itself through the signed `i64` carrier.
+- Exact-range preservation remains stronger than emitting a conversion tree:
+  `i32 300` converted through `i8[0,100]` and then `i16[0,1000]` emits one
+  `i16 44` with `[44,45)` on both the MIR value and function-return fact rows.
+- A target-side-row range mismatch is rejected before output reservation or
+  mutation, preventing package corruption from reaching LLVM as a plausible
+  narrow integer constant.
+- The specialization caller now supplies its expected return `ValueFacts` in
+  addition to type and signedness. The exact folded singleton must be a subset
+  of that published range, and scalar-inapplicable alignment, ABI, alias,
+  volatility, nullability, or text facts are rejected rather than discarded.
+  A mismatch returns `ReturnFactMismatch` before reserving any MIR table row.
+- Verification:
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the ten
+    expected depth-64 bounded-recursion warnings.
+  - full package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed
+    with the conversion and expected-return-fact regressions.
+  - cold optimized project run from `tests-stark/selfhost.Ir` with
+    `../../stark test --filter ImportedTypedTemplateScalarReturnsLowerDirectlyWithExactLlvmFacts --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
+    emitted the compiler library/package and test executable, then passed the
+    selected fact 1/1. The build exercised the normal SSA optimization and LLVM
+    emission pipeline rather than a check-only shortcut.
+  - optimized nested-conversion and mismatched-side-fact fixture: emitted and
+    ran with exit 0.
+  - optimized full-range `u32` numeric-max fixture: emitted and ran with exit 0
+    while retaining exact `[7, 8)` value/return facts.
+
+## 2026-07-11 Direct Imported Template Scalar Statement-Preamble Slice
+
+- Extended source-free scalar template lowering from a single return statement
+  to ordered top-level `empty` and pure constant `expression` statements
+  followed by the terminal return. Any other statement kind, nested parent,
+  misplaced return, or statement payload fails closed for compatibility-source
+  fallback.
+- Validate the loader-produced statement span once and address each top-level
+  statement by direct row offset. Expression roots are likewise consumed once,
+  keeping traversal linear in body size without temporary collections or
+  repeated whole-package scans.
+- Evaluate discarded constant roots in source order so conversion side-row
+  ordinals and published target/range facts remain exact across statement
+  boundaries, but emit no MIR instruction for those roots.
+- Added a package-graph regression containing an empty statement, a discarded
+  narrowing conversion, and a converted/binary return. The complete body must
+  emit only one `i16 307` instruction and preserve exact `[307, 308)` facts on
+  both the MIR value and function return delivered to LLVM.
+- The initial regression also established that an unimplemented nested block
+  returned non-mutating `UnsupportedBody` rather than being misclassified as
+  package corruption; the next slice promotes the flat form directly.
+- Verification:
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the ten
+    expected depth-64 bounded-recursion warnings.
+  - full package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - optimized package-backed project run with
+    `../../stark test --filter ImportedTypedTemplateScalarPreambleStatementsFoldWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
+    rebuilt and emitted the self-host compiler library/package plus test
+    executable, exercised the normal SSA optimization and LLVM emission passes,
+    and passed the selected fact 1/1.
+
+## 2026-07-11 Direct Imported Template Flat Block Slice
+
+- Extended the constant-only scalar path through one terminal top-level
+  `block` whose direct body is a flat ordered empty/expression/return sequence.
+- Exploit the loader's breadth-first layout only where it gives a contiguous
+  direct-child batch in exact source order. This keeps validation/evaluation
+  linear and allocation-free while preserving conversion side-row ordinals;
+  mixed or deeper block nesting retains compatibility-source fallback instead
+  of guessing order or building a temporary parent index.
+- Expanded the package-graph regression so both the top-level and flat-block
+  bodies consume discarded narrowing conversions and emit exactly one runtime
+  constant each. The block result is `i16 9`, with exact `[9, 10)` facts on the
+  MIR value, function return, and LLVM definition.
+- Added a two-level nested block in the same graph and require non-mutating
+  `UnsupportedBody` after both direct functions have been emitted.
+- Verification:
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the ten
+    expected depth-64 bounded-recursion warnings.
+  - full package-free `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - optimized package-backed project run with
+    `../../stark test --filter ImportedTypedTemplateScalarPreambleStatementsFoldWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
+    rebuilt/emitted the self-host compiler library/package and test executable,
+    exercised normal SSA optimization plus LLVM emission, and passed 1/1.

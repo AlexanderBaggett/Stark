@@ -64,6 +64,113 @@ fn bool ParsesImportsAndModule()
 }
 
 [Fact]
+fn bool ParsesExportImportsAndPreservesReExportIdentity()
+{
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderOk("import Plain\nexport import Re.Exported\nmodule Demo\n", header)
+        || header.Count() != 3)
+    {
+        return false;
+    }
+
+    stack HeaderItem plain = header.ItemAt(0);
+    stack HeaderItem reExport = header.ItemAt(1);
+    stack HeaderItem moduleItem = header.ItemAt(2);
+    return plain.Kind == SyntaxKind.ImportDeclaration
+        && !plain.IsExported
+        && reExport.Kind == SyntaxKind.ImportDeclaration
+        && reExport.IsExported
+        && reExport.KeywordToken == 3
+        && reExport.NameSegments == 2
+        && moduleItem.Kind == SyntaxKind.ModuleDeclaration
+        && !moduleItem.IsExported;
+}
+
+[Fact]
+fn bool ParsesAttributedModuleHeaderAndPreservesAttributeStart()
+{
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderOk("[Backend(Opaque)]\nmodule Demo\n", header)
+        || header.Count() != 1)
+    {
+        return false;
+    }
+
+    stack HeaderItem moduleItem = header.ItemAt(0);
+    return moduleItem.Kind == SyntaxKind.ModuleDeclaration
+        && moduleItem.StartToken == 0
+        && moduleItem.KeywordToken == 6
+        && moduleItem.NameSegments == 1;
+}
+
+[Fact]
+fn bool ParsesBareFiniteAndLawFunctionKinds()
+{
+    stack ascii source = "module Demo\nfinite u32 First();\nlaw bool Second();\nfinite law bool Third();\n";
+    stack mut TokenStream stream = new();
+    stack mut CompilationUnitHeader header = new();
+    stack mut DeclarationList declarations = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var parsedHeader):
+            header = parsedHeader;
+    }
+
+    switch (ParseDeclarations(stream, header.NextToken))
+    {
+        case ParseResult<DeclarationList>.Err(var declarationError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDeclarations):
+            declarations = parsedDeclarations;
+    }
+
+    if (declarations.Count() != 3)
+    {
+        return false;
+    }
+
+    stack DeclItem first = declarations.ItemAt(0);
+    stack DeclItem second = declarations.ItemAt(1);
+    stack DeclItem third = declarations.ItemAt(2);
+    switch (ParseFunctionSignature(stream, first.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var firstError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var firstSignature):
+            if (!firstSignature.IsFiniteKind || firstSignature.IsLawKind)
+            {
+                return false;
+            }
+    }
+
+    switch (ParseFunctionSignature(stream, second.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var secondError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var secondSignature):
+            if (secondSignature.IsFiniteKind || !secondSignature.IsLawKind)
+            {
+                return false;
+            }
+    }
+
+    switch (ParseFunctionSignature(stream, third.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var thirdError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var thirdSignature):
+            return thirdSignature.IsFiniteKind && thirdSignature.IsLawKind;
+    }
+}
+
+[Fact]
 fn bool ModuleNameTokenTextIsRecoverable()
 {
     stack ascii source = "import System.Memory\nmodule Foo.Bar\n";
