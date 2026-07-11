@@ -43,6 +43,7 @@ export import Compiler.Mir.EnumLayout
 export import Compiler.Mir.TextRendering
 export import Compiler.Mir.PackageCodec
 export import Compiler.Mir.PackageImage
+export import Compiler.Mir.ImportedTemplateLowering
 export import Compiler.Mir.Facts
 export import Compiler.Mir.SourceRangeFacts
 export import Compiler.Mir.SourceSemanticProbes

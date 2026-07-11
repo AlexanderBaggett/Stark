@@ -3782,6 +3782,48 @@ public struct LogicalPackageTypedTemplateStatementRow
         return self.NameTextRowValue;
     }
 
+    public inline finite law bool HasAssignmentOperator(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasAssignmentOperatorValue;
+    }
+
+    public inline finite law bool HasStorageClass(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasStorageClassValue;
+    }
+
+    public inline finite law bool HasLoopBehavior(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasLoopBehaviorValue;
+    }
+
+    public inline finite law bool HasConstProvenance(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasConstProvenanceValue;
+    }
+
+    public inline finite law bool HasTraversalIndexName(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasTraversalIndexNameValue;
+    }
+
+    public inline finite law bool HasTraversalIndexStorageClass(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasTraversalIndexStorageClassValue;
+    }
+
+    public inline finite law bool HasTraversalElementName(
+        borrow LogicalPackageTypedTemplateStatementRow self)
+    {
+        return self.HasTraversalElementNameValue;
+    }
+
     public inline finite law bool IsMutable(borrow LogicalPackageTypedTemplateStatementRow self)
     {
         return self.IsMutableValue;
@@ -3976,6 +4018,24 @@ public struct LogicalPackageTypedTemplateExpressionRow
         borrow LogicalPackageTypedTemplateExpressionRow self)
     {
         return self.NameTextRowValue;
+    }
+
+    public inline finite law bool HasAssignmentOperator(
+        borrow LogicalPackageTypedTemplateExpressionRow self)
+    {
+        return self.HasAssignmentOperatorValue;
+    }
+
+    public inline finite law bool HasOrdinal(
+        borrow LogicalPackageTypedTemplateExpressionRow self)
+    {
+        return self.HasOrdinalValue;
+    }
+
+    public inline finite law bool HasTargetExpression(
+        borrow LogicalPackageTypedTemplateExpressionRow self)
+    {
+        return self.HasTargetExpressionValue;
     }
 
     public inline finite law bool HasLiteralText(
@@ -7110,6 +7170,20 @@ public struct LogicalPackageGenericTemplateFactGraph
         u32[0 max] row)
     {
         return self.TemplateBoundOperationBoolPayloadRows.Get(row);
+    }
+
+    public inline finite law bool ContainsTypeReference(
+        borrow LogicalPackageGenericTemplateFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeReferences.ContainsTypeReference(row);
+    }
+
+    public finite law LogicalPackageTypeReferenceSummary TypeReferenceSummaryAt(
+        borrow LogicalPackageGenericTemplateFactGraph self,
+        u32[0 max] row)
+    {
+        return self.TypeReferences.TypeReferenceAt(row).Summary();
     }
 
     public finite law retborrow LogicalPackageTypeReferenceGraph TypeReferenceGraph(

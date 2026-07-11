@@ -1338,6 +1338,8 @@ public fn System.Memory.MemoryStatus AppendCompilationUnitSyntaxArtifact(
         try writer.AppendAscii(SyntaxKindName(item.Kind));
         try writer.AppendAscii(" ");
         try AppendHeaderName(writer, source, syntax, item);
+        try writer.AppendAscii(" start=");
+        try AppendU32Text(writer, item.StartToken);
         try writer.AppendAscii(" keyword=");
         try AppendU32Text(writer, item.KeywordToken);
         try writer.AppendAscii(" name-start=");
@@ -1346,6 +1348,8 @@ public fn System.Memory.MemoryStatus AppendCompilationUnitSyntaxArtifact(
         try AppendU32Text(writer, item.NameTokenCount);
         try writer.AppendAscii(" segments=");
         try AppendU32Text(writer, item.NameSegments);
+        try writer.AppendAscii(" exported=");
+        try AppendBoolText(writer, item.IsExported);
         try writer.AppendAscii("\n");
         headerIndex += 1;
     }

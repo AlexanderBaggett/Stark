@@ -37,6 +37,70 @@ fn bool DefaultHandleIsInvalidZero()
 }
 
 [Fact]
+fn bool SsaValueFactTransferAndImportsPreserveEveryBackendFactFamily()
+{
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts generated = new();
+    generated.SetAlignment(16);
+    generated.SetCallingAbi(AbiKind.CAbi);
+    generated.MarkNoAlias();
+    generated.MarkVolatile();
+    generated.SetIntegerRange(4, 29);
+    generated.MarkKnownNonNull();
+    generated.SetTextConstant(7, 11, 13, 9, 2);
+
+    stack mut IrTable<ValueFacts> importedFacts = new();
+    if (importedFacts.Add(generated) == 0
+        || !RecordGeneratedValueFactsForSsaValue(facts, SsaValueIdOf(2), generated)
+        || !PreserveValueFactsForSsaValue(facts, SsaValueIdOf(3), SsaValueIdOf(2))
+        || !RecomputeValueFactsForSsaValue(facts, SsaValueIdOf(4))
+        || !ImportParameterValueFactsForSsaValue(facts, SsaValueIdOf(5), importedFacts, 0)
+        || !ImportGlobalValueFactsForSsaValue(facts, SsaValueIdOf(6), importedFacts, 1)
+        || !ImportFunctionReturnValueFactsForSsaValue(
+            facts,
+            SsaValueIdOf(7),
+            importedFacts,
+            MirFuncIdOf(1))
+        || !RecordEmptyValueFactsForSsaValue(facts, SsaValueIdOf(8))
+        || RecordGeneratedValueFactsForSsaValue(facts, SsaValueIdOf(3), generated))
+    {
+        return false;
+    }
+
+    stack ValueFacts preserved = ValueFactsForSsaValue(facts, SsaValueIdOf(3));
+    stack ValueFacts recomputed = ValueFactsForSsaValue(facts, SsaValueIdOf(4));
+    return facts.Count() == 8
+        && !ValueFactsForSsaValue(facts, SsaValueIdOf(1)).HasAlignment()
+        && preserved.HasAlignment()
+        && preserved.AlignmentBytes() == 16
+        && preserved.HasCallingAbi()
+        && preserved.CallingAbi() == AbiKind.CAbi
+        && preserved.HasNoAlias()
+        && preserved.Volatile()
+        && preserved.HasIntegerRange()
+        && preserved.IntegerRangeLower() == 4
+        && preserved.IntegerRangeUpperExclusive() == 29
+        && preserved.KnownNonNull()
+        && preserved.HasTextConstant()
+        && preserved.TextConstantRowIndex() == 7
+        && preserved.TextConstantPayloadStart() == 11
+        && preserved.TextConstantPayloadByteLength() == 13
+        && preserved.TextConstantCodePointLength() == 9
+        && preserved.TextConstantStorageEncodingCode() == 2
+        && !recomputed.HasAlignment()
+        && !recomputed.HasCallingAbi()
+        && !recomputed.HasNoAlias()
+        && !recomputed.Volatile()
+        && !recomputed.HasIntegerRange()
+        && !recomputed.HasNullability()
+        && !recomputed.HasTextConstant()
+        && ValueFactsForSsaValue(facts, SsaValueIdOf(5)).HasTextConstant()
+        && ValueFactsForSsaValue(facts, SsaValueIdOf(6)).HasNoAlias()
+        && ValueFactsForSsaValue(facts, SsaValueIdOf(7)).HasCallingAbi()
+        && !ValueFactsForSsaValue(facts, SsaValueIdOf(8)).HasAlignment();
+}
+
+[Fact]
 fn bool HandleEqualityComparesIndex()
 {
     // Equality is by index; distinct indices are unequal.
@@ -1749,6 +1813,145 @@ fn bool IrFactValidationChecksMirValueFactsAtBoundary()
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueNullability) == IrFactValidationStatus.MissingRequiredFact
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueTextConstant) == IrFactValidationStatus.MissingRequiredFact
         && ValidateMirValueFactAtBoundary(instrs, valueFacts, MirValueIdOf(3), IrFactCategory.ValueNoAlias) == IrFactValidationStatus.StaleHandle;
+}
+
+[Fact]
+fn bool IrFactValidationChecksSsaRewritePreservationExactly()
+{
+    stack mut IrTable<u32[0 max]> sourceDefinitions = new();
+    stack mut IrTable<u32[0 max]> targetDefinitions = new();
+    stack mut IrTable<ValueFacts> sourceFacts = new();
+    stack mut IrTable<ValueFacts> preservedFacts = new();
+    stack mut IrTable<ValueFacts> changedFacts = new();
+    stack mut IrTable<ValueFacts> missingFacts = new();
+    stack mut ValueFacts source = new();
+    source.SetAlignment(8);
+    source.SetCallingAbi(AbiKind.CAbi);
+    source.MarkNoAlias();
+    source.MarkVolatile();
+    source.SetIntegerRange(3, 19);
+    source.MarkKnownNonNull();
+    source.SetTextConstant(5, 7, 11, 9, 2);
+    stack mut ValueFacts changed = source;
+    changed.SetAlignment(16);
+    stack mut ValueFacts empty = new();
+    if (sourceDefinitions.Add(1) == 0
+        || targetDefinitions.Add(1) == 0
+        || sourceFacts.Add(source) == 0
+        || preservedFacts.Add(source) == 0
+        || changedFacts.Add(changed) == 0
+        || missingFacts.Add(empty) == 0)
+    {
+        return false;
+    }
+
+    stack SsaValueId value = SsaValueIdOf(1);
+    return ValidateAllPresentSsaValueFactsPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value) == IrFactValidationStatus.Ok
+        && ValidateAllPresentSsaValueFactsPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            changedFacts,
+            value) == IrFactValidationStatus.MismatchedPreservedFact
+        && ValidateAllPresentSsaValueFactsPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            missingFacts,
+            value) == IrFactValidationStatus.MissingLayoutFact
+        && ValidateSsaValueFactAtBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            IrFactCategory.ValueIntegerRange) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.ValueAlignment) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.CallableAbi) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.ValueNoAlias) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.ValueVolatile) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.ValueIntegerRange) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.ValueNullability) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            preservedFacts,
+            value,
+            IrFactCategory.ValueTextConstant) == IrFactValidationStatus.Ok
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            changedFacts,
+            value,
+            IrFactCategory.ValueAlignment)
+            == IrFactValidationStatus.MismatchedPreservedFact
+        && ValidateSsaValueFactPreservedAtRewriteBoundary(
+            sourceDefinitions,
+            sourceFacts,
+            value,
+            targetDefinitions,
+            missingFacts,
+            value,
+            IrFactCategory.ValueNoAlias) == IrFactValidationStatus.MissingAliasFact
+        && ValidateSsaValueFactAtBoundary(
+            targetDefinitions,
+            preservedFacts,
+            SsaValueIdOf(2),
+            IrFactCategory.ValueAlignment) == IrFactValidationStatus.StaleHandle
+        && IrFactValidationStatusName(IrFactValidationStatus.MismatchedPreservedFact)
+            == "mismatched-preserved-fact";
 }
 
 [Fact]
@@ -5432,6 +5635,98 @@ fn bool BrotliUtf8JsonPayloadWritesUncompressedMetaBlockStream()
         && encoded.Get(5) == 98
         && encoded.Get(6) == 99
         && encoded.Get(7) == 3;
+}
+
+[Fact]
+fn bool Stage1BrotliManifestPayloadDecodesWithoutHostHandoff()
+{
+    stack mut IrTable<u8[0 max]> raw = new();
+    stack mut u32[0 max] index = 0;
+    stack mut u8[0 250] byteValue = 3;
+    while willexit (index < 70000)
+    {
+        if (raw.Add((u8[0 max])byteValue) == 0)
+        {
+            return false;
+        }
+
+        if (byteValue >= 234)
+        {
+            byteValue = byteValue - 234;
+        }
+        else
+        {
+            byteValue = byteValue + 17;
+        }
+
+        index = index + 1;
+    }
+
+    stack mut IrTable<u8[0 max]> encoded = new();
+    stack mut IrTable<u8[0 max]> decoded = new();
+    if (!TryEncodeBrotliUtf8JsonPayload(raw, encoded)
+        || !TryDecodeStage1BrotliUtf8JsonPayload(encoded, decoded)
+        || decoded.Count() != raw.Count())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] byteIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])byteIndex <= raw.Count())
+    {
+        if (decoded.Get(byteIndex) != raw.Get(byteIndex))
+        {
+            return false;
+        }
+
+        byteIndex = byteIndex + 1;
+    }
+
+    stack mut LogicalPackageImageBuilder packageBuilder = new();
+    if (!packageBuilder.SetRootModule("DecoderFixture")
+        || !packageBuilder.SetLibraryFileName("libDecoderFixture.a")
+        || !packageBuilder.SetBuildProfile("release")
+        || !packageBuilder.SetTargetTriple("arm64-apple-macosx")
+        || !packageBuilder.SetTargetDataLayout("e-m:o-i64:64-i128:128-n32:64-S128")
+        || !packageBuilder.SetTargetCpu("generic")
+        || !packageBuilder.SetRelocationModel("pic")
+        || !packageBuilder.SetCodeModel("small")
+        || !packageBuilder.SetCDataModel("macos", true, 64, 64, 64, 64)
+        || !packageBuilder.SetAggregatePointerLayout(8, 8))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> image = new();
+    stack mut LogicalPackageImageFacts imageFacts = new();
+    stack mut IrTable<u8[0 max]> imageDecoded = new();
+    if (!TrySerializeLogicalPackageImage(packageBuilder, encoded, image)
+        || !TryReadLogicalPackageImageFacts(image, imageFacts)
+        || !TryDecodeLogicalPackageImageManifestJsonBytes(image, imageFacts, imageDecoded)
+        || imageDecoded.Count() != raw.Count())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] imageByteIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])imageByteIndex <= raw.Count())
+    {
+        if (imageDecoded.Get(imageByteIndex) != raw.Get(imageByteIndex))
+        {
+            return false;
+        }
+
+        imageByteIndex = imageByteIndex + 1;
+    }
+
+    stack mut IrTable<u8[0 max]> malformed = new();
+    if (malformed.Add(255) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> rejected = new();
+    return !TryDecodeStage1BrotliUtf8JsonPayload(malformed, rejected);
 }
 
 [Fact]
@@ -11200,6 +11495,1175 @@ fn bool LogicalPackageImageReadsSourceSurfaceImportRows()
                 0,
                 rejected,
                 rejectedName);
+    }
+}
+
+[Fact]
+fn bool LogicalPackageSourceBridgeRendersEffectiveImportHeaderSingleParse()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Source",
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "CompilerFacts": {
+                  "BackendOptimizationMode": "opaque"
+                },
+                "TypedInterface": {
+                  "Functions": [
+                    {
+                      "Name": "Identity",
+                      "QualifiedName": "Source.Identity",
+                      "Visibility": "public",
+                      "SymbolName": "Source_Identity",
+                      "Kind": "finite law",
+                      "ReturnType": { "Kind": "named", "Name": "T" },
+                      "Parameters": [
+                        {
+                          "Name": "value",
+                          "Type": { "Kind": "named", "Name": "T" }
+                        }
+                      ],
+                      "IsFfi": false,
+                      "IsStrictFp": false,
+                      "UseFastCallingConvention": false,
+                      "GenericParameters": [ "T" ],
+                      "QualifiedResolvedName": "Source.Identity#0",
+                      "PublishedOverloadKey": "published-identity",
+                      "HasGenericTemplateBody": true,
+                      "HasBody": false
+                    },
+                    {
+                      "Name": "Invoke",
+                      "QualifiedName": "Source.Invoke",
+                      "Visibility": "public",
+                      "SymbolName": "Source_Invoke",
+                      "Kind": "finite law",
+                      "ReturnType": { "Kind": "named", "Name": "T" },
+                      "Parameters": [
+                        {
+                          "Name": "value",
+                          "Type": { "Kind": "named", "Name": "T" }
+                        }
+                      ],
+                      "IsFfi": false,
+                      "IsStrictFp": false,
+                      "UseFastCallingConvention": false,
+                      "GenericParameters": [ "T" ],
+                      "QualifiedResolvedName": "Source.Invoke#0",
+                      "PublishedOverloadKey": "published-invoke",
+                      "HasGenericTemplateBody": true,
+                      "HasBody": false
+                    }
+                  ],
+                  "Types": [],
+                  "Globals": [],
+                  "TypeAliases": []
+                },
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Source.Packet.Inspect#0",
+                      "QualifiedName": "Source.Packet.Inspect",
+                      "OverloadKey": "()",
+                      "BodyText": "{ return 7; }"
+                    },
+                    {
+                      "QualifiedResolvedName": "Source.Copy#0",
+                      "QualifiedName": "Source.Copy",
+                      "OverloadKey": "(rawptr<u8[0max]>,rawmutptr<u8[0max]>,u64[0max])",
+                      "BodyText": "{ return false; }",
+                      "TypedBody": { "Statements": [] }
+                    },
+                    {
+                      "QualifiedResolvedName": "Source.Identity#0",
+                      "QualifiedName": "Source.Identity",
+                      "OverloadKey": "published-identity",
+                      "BodyText": "{ return value; }"
+                    },
+                    {
+                      "QualifiedResolvedName": "Source.Invoke#0",
+                      "QualifiedName": "Source.Invoke",
+                      "OverloadKey": "published-invoke",
+                      "BodyText": "{ return value; }",
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "local-variable",
+                            "Name": "current",
+                            "StorageClass": "stack",
+                            "IsMutable": true,
+                            "IsConstant": false,
+                            "Type": {
+                              "Kind": "named",
+                              "Name": "Source.Option",
+                              "TypeArguments": [ { "Kind": "named", "Name": "T" } ]
+                            },
+                            "Expression": {
+                              "Kind": "object-initializer",
+                              "MemberNames": [ "Value" ],
+                              "Arguments": [
+                                { "Kind": "enum-value", "Ordinal": 5, "Arguments": [] }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "callback",
+                            "StorageClass": "stack",
+                            "Type": {
+                              "Kind": "functionpointer",
+                              "FunctionKind": "finite law",
+                              "FunctionAbi": "c",
+                              "FunctionIsUnsafe": true,
+                              "FunctionIsTailCallable": true,
+                              "ReturnType": { "Kind": "void" },
+                              "ParameterTypes": [
+                                {
+                                  "Kind": "rawpointer",
+                                  "ElementType": {
+                                    "Kind": "integer",
+                                    "BitWidth": 8,
+                                    "IsUnsigned": true
+                                  }
+                                }
+                              ],
+                              "ParameterRawPointerElementCountExpressions": [ "count" ],
+                              "OverlapParameterGroups": [
+                                { "ParameterNames": [ "arg0", "arg1", "arg0" ] }
+                              ],
+                              "SameParameterGroups": [
+                                { "ParameterNames": [ "arg0", "arg2" ] }
+                              ],
+                              "PointeeDeadOnReturnParameterNames": [ "arg0", "arg0" ]
+                            },
+                            "Expression": { "Kind": "name", "Name": "value" }
+                          },
+                          {
+                            "Kind": "local-variable",
+                            "Name": "closureValue",
+                            "StorageClass": "stack",
+                            "Type": {
+                              "Kind": "closure",
+                              "ClosureStorageKind": "heap",
+                              "ClosureCallCapability": "once",
+                              "FunctionKind": "finite law",
+                              "FunctionIsTailCallable": true,
+                              "ReturnType": { "Kind": "void" },
+                              "ParameterTypes": [
+                                { "Kind": "integer", "BitWidth": 8, "IsUnsigned": true }
+                              ]
+                            },
+                            "Expression": { "Kind": "name", "Name": "value" }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "enum-value",
+                              "Ordinal": 5,
+                              "Arguments": []
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "conversion",
+                              "Type": { "Kind": "integer", "BitWidth": 8, "IsUnsigned": true },
+                              "Arguments": [
+                                { "Kind": "enum-value", "Ordinal": 5, "Arguments": [] }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "comptime",
+                              "Arguments": [
+                                {
+                                  "Kind": "conditional",
+                                  "Arguments": [
+                                    { "Kind": "literal", "LiteralText": "true" },
+                                    { "Kind": "enum-value", "Ordinal": 5, "Arguments": [] },
+                                    { "Kind": "enum-value", "Ordinal": 5, "Arguments": [] }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "if",
+                            "Expression": { "Kind": "literal", "LiteralText": "true" },
+                            "ConditionPattern": {
+                              "Kind": "literal",
+                              "Expression": { "Kind": "literal", "LiteralText": "true" }
+                            },
+                            "ThenStatements": [
+                              {
+                                "Kind": "expression",
+                                "Expression": {
+                                  "Kind": "enum-value",
+                                  "Ordinal": 5,
+                                  "Arguments": []
+                                }
+                              }
+                            ],
+                            "ElseStatements": [ { "Kind": "empty" } ]
+                          },
+                          {
+                            "Kind": "while",
+                            "Name": "retry",
+                            "LoopBehavior": "willexit",
+                            "LoopContracts": [ "bounded" ],
+                            "Expression": { "Kind": "literal", "LiteralText": "false" },
+                            "BodyStatements": [
+                              {
+                                "Kind": "expression",
+                                "Expression": {
+                                  "Kind": "enum-value",
+                                  "Ordinal": 5,
+                                  "Arguments": []
+                                }
+                              },
+                              { "Kind": "break", "Name": "retry" }
+                            ]
+                          },
+                          {
+                            "Kind": "for",
+                            "LoopBehavior": "willexit",
+                            "LoopContracts": [ "independent" ],
+                            "InitializerStatements": [
+                              {
+                                "Kind": "local-variable",
+                                "Name": "index",
+                                "StorageClass": "stack",
+                                "IsMutable": true,
+                                "Type": {
+                                  "Kind": "fixedarray",
+                                  "FixedLength": 4,
+                                  "ElementType": {
+                                    "Kind": "integer",
+                                    "BitWidth": 8,
+                                    "RangeMin": "0",
+                                    "RangeMax": "max",
+                                    "IsUnsigned": true
+                                  }
+                                },
+                                "Expression": {
+                                  "Kind": "array-initializer",
+                                  "Arguments": [
+                                    { "Kind": "literal", "LiteralText": "0" },
+                                    { "Kind": "literal", "LiteralText": "0" },
+                                    { "Kind": "literal", "LiteralText": "0" },
+                                    { "Kind": "literal", "LiteralText": "0" }
+                                  ]
+                                }
+                              }
+                            ],
+                            "Expression": { "Kind": "literal", "LiteralText": "false" },
+                            "IteratorStatements": [
+                              {
+                                "Kind": "assignment",
+                                "Name": "index",
+                                "Expression": { "Kind": "literal", "LiteralText": "0" }
+                              }
+                            ],
+                            "BodyStatements": [
+                              {
+                                "Kind": "expression",
+                                "Expression": {
+                                  "Kind": "enum-value",
+                                  "Ordinal": 5,
+                                  "Arguments": []
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "Kind": "for-traversal",
+                            "LoopBehavior": "willexit",
+                            "TraversalSource": { "Kind": "name", "Name": "value" },
+                            "TraversalIndexName": "itemIndex",
+                            "TraversalIndexStorageClass": "register",
+                            "TraversalIndexType": {
+                              "Kind": "integer",
+                              "BitWidth": 64,
+                              "IsUnsigned": true
+                            },
+                            "TraversalElementName": "item",
+                            "TraversalElementType": {
+                              "BorrowKind": "borrow",
+                              "Kind": "rawpointer",
+                              "ElementType": {
+                                "Kind": "integer",
+                                "BitWidth": 8,
+                                "IsUnsigned": true
+                              }
+                            },
+                            "BodyStatements": [
+                              {
+                                "Kind": "expression",
+                                "Expression": {
+                                  "Kind": "enum-value",
+                                  "Ordinal": 5,
+                                  "Arguments": []
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "Kind": "switch",
+                            "Expression": { "Kind": "name", "Name": "value" },
+                            "SwitchCases": [
+                              {
+                                "Kind": "enum-pattern",
+                                "Ordinal": 6,
+                                "Members": [ { "Kind": "capture", "Name": "payload" } ],
+                                "Statements": [
+                                  {
+                                    "Kind": "expression",
+                                    "Expression": {
+                                      "Kind": "enum-value",
+                                      "Ordinal": 5,
+                                      "Arguments": []
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Kind": "range",
+                                "Expression": { "Kind": "literal", "LiteralText": "0" },
+                                "EndExpression": { "Kind": "literal", "LiteralText": "3" },
+                                "GuardExpression": { "Kind": "literal", "LiteralText": "true" },
+                                "Statements": [
+                                  {
+                                    "Kind": "expression",
+                                    "Expression": {
+                                      "Kind": "enum-value",
+                                      "Ordinal": 5,
+                                      "Arguments": []
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Kind": "list-pattern",
+                                "Members": [
+                                  { "Kind": "discard" },
+                                  { "Kind": "capture", "Name": "tail" }
+                                ],
+                                "Statements": [
+                                  {
+                                    "Kind": "expression",
+                                    "Expression": {
+                                      "Kind": "enum-value",
+                                      "Ordinal": 5,
+                                      "Arguments": []
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Kind": "default",
+                                "Statements": [
+                                  {
+                                    "Kind": "expression",
+                                    "Expression": {
+                                      "Kind": "enum-value",
+                                      "Ordinal": 5,
+                                      "Arguments": []
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "Kind": "block",
+                            "BodyStatements": [
+                              {
+                                "Kind": "expression",
+                                "Expression": {
+                                  "Kind": "enum-value",
+                                  "Ordinal": 5,
+                                  "Arguments": []
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "Kind": "assignment",
+                            "Name": "value",
+                            "AssignmentOperator": "=",
+                            "Expression": {
+                              "Kind": "enum-call",
+                              "Ordinal": 4,
+                              "Arguments": [ { "Kind": "name", "Name": "value" } ]
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "direct-call",
+                              "Ordinal": 0,
+                              "Arguments": [
+                                {
+                                  "Kind": "member-call",
+                                  "Ordinal": 2,
+                                  "Arguments": [
+                                    {
+                                      "Kind": "field-access",
+                                      "Ordinal": 1,
+                                      "Arguments": [ { "Kind": "name", "Name": "value" } ]
+                                    },
+                                    {
+                                      "Kind": "enum-constructor",
+                                      "Ordinal": 3,
+                                      "Arguments": [
+                                        {
+                                          "Kind": "object-creation",
+                                          "Ordinal": 0,
+                                          "Arguments": [ { "Kind": "literal", "LiteralText": "16" } ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "Kind": "enum-call",
+                                      "Ordinal": 4,
+                                      "Arguments": [ { "Kind": "name", "Name": "value" } ]
+                                    },
+                                    { "Kind": "enum-value", "Ordinal": 5, "Arguments": [] }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "DirectCalls": [
+                        {
+                          "Ordinal": 0,
+                          "QualifiedResolvedName": "Source.Identity#0",
+                          "QualifiedSourceName": "Source.Identity",
+                          "QualifiedTemplateName": "Source.Identity<T>",
+                          "ReturnType": { "Kind": "named", "Name": "T" },
+                          "Parameters": [
+                            {
+                              "Name": "value",
+                              "Type": { "Kind": "named", "Name": "T" }
+                            }
+                          ],
+                          "TypeArguments": [ { "Kind": "named", "Name": "T" } ],
+                          "ComptimeValueArguments": [
+                            {
+                              "ParameterName": "N",
+                              "IntegerValue": "8",
+                              "IsSymbolic": true,
+                              "SymbolicSourceName": "N"
+                            }
+                          ]
+                        }
+                      ],
+                      "ObjectCreations": [
+                        {
+                          "CreatedType": { "Kind": "named", "Name": "Source.Value" },
+                          "StorageSelector": 1,
+                          "InitializerMembers": []
+                        }
+                      ],
+                      "EnumConstructors": [
+                        {
+                          "Ordinal": 3,
+                          "EnumType": {
+                            "Kind": "named",
+                            "Name": "Source.Option",
+                            "TypeArguments": [ { "Kind": "named", "Name": "T" } ],
+                            "ComptimeValueArguments": [
+                              {
+                                "ParameterName": "N",
+                                "IntegerValue": "4",
+                                "IsSymbolic": true,
+                                "SymbolicSourceName": "N"
+                              }
+                            ]
+                          },
+                          "VariantName": "Some",
+                          "Members": []
+                        }
+                      ],
+                      "EnumCalls": [
+                        {
+                          "Ordinal": 4,
+                          "EnumType": { "Kind": "named", "Name": "Source.Option" },
+                          "VariantName": "Make"
+                        }
+                      ],
+                      "EnumValues": [
+                        {
+                          "Ordinal": 5,
+                          "EnumType": { "Kind": "named", "Name": "Source.Option" },
+                          "VariantName": "None"
+                        }
+                      ],
+                      "EnumPatterns": [
+                        {
+                          "Ordinal": 6,
+                          "EnumType": {
+                            "Kind": "named",
+                            "Name": "Source.Option",
+                            "TypeArguments": [ { "Kind": "named", "Name": "T" } ]
+                          },
+                          "VariantName": "Some",
+                          "Members": [
+                            {
+                              "FieldName": "Value",
+                              "FieldIndex": 0,
+                              "FieldType": { "Kind": "named", "Name": "T" }
+                            }
+                          ]
+                        }
+                      ],
+                      "FieldAccesses": [
+                        {
+                          "Ordinal": 1,
+                          "FieldName": "Value",
+                          "FieldIndex": 0,
+                          "FieldType": { "Kind": "named", "Name": "T" }
+                        }
+                      ],
+                      "MemberCalls": [
+                        {
+                          "Ordinal": 2,
+                          "QualifiedResolvedName": "Source.Value.Combine#0",
+                          "QualifiedSourceName": "Source.Value.Combine",
+                          "ReturnType": { "Kind": "named", "Name": "T" },
+                          "Parameters": [],
+                          "TypeArguments": [ { "Kind": "named", "Name": "T" } ],
+                          "ComptimeValueArguments": [
+                            { "ParameterName": "N", "IntegerValue": "4" }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "SourceSurface": {
+                "Imports": [
+                  { "ModuleName": "Source.Import", "IsExported": false },
+                  { "ModuleName": "Source.Export", "IsExported": true },
+                  { "ModuleName": "Source.Both", "IsExported": false }
+                ],
+                "ReExports": [
+                  { "ModuleName": "Source.Both" },
+                  { "ModuleName": "Source.ReExport" }
+                ],
+                "TypeAliases": [
+                  {
+                    "Name": "Pair",
+                    "QualifiedName": "Source.Pair",
+                    "Visibility": "public",
+                    "TargetType": "(T, U)",
+                    "GenericParameters": [ "T" ],
+                    "ComptimeGenericParameters": [
+                      { "Name": "U", "Type": { "Kind": "type" } }
+                    ]
+                  }
+                ],
+                "Types": [
+                  {
+                    "Name": "Buffer",
+                    "QualifiedName": "Source.Buffer",
+                    "Visibility": "public",
+                    "Kind": "struct",
+                    "GenericParameters": [ "T" ],
+                    "Fields": [
+                      {
+                        "Name": "Data",
+                        "Type": "rawptr<T>",
+                        "Visibility": "internal",
+                        "ExplicitOffsetBytes": 0,
+                        "ThreadSafetyLawAttributes": [
+                          { "Kind": "deny", "LawName": "Transferable" }
+                        ]
+                      },
+                      {
+                        "Name": "Length",
+                        "Type": "u64[0 max]",
+                        "Visibility": "public"
+                      }
+                    ],
+                    "BackendOptimizationMode": "opaque",
+                    "StructLayout": "C",
+                    "PackBytes": 4,
+                    "AlignBytes": 8,
+                    "ThreadSafetyLawAttributes": [
+                      {
+                        "Kind": "grant",
+                        "LawName": "Shareable",
+                        "Condition": {
+                          "LawName": "Transferable",
+                          "Type": "T"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "Outcome",
+                    "QualifiedName": "Source.Outcome",
+                    "Visibility": "public",
+                    "Kind": "enum",
+                    "GenericParameters": [ "T" ],
+                    "Fields": [],
+                    "Variants": [
+                      {
+                        "Name": "Value",
+                        "UsesNamedFields": false,
+                        "Fields": [ { "Name": "Item0", "Type": "T" } ],
+                        "Role": "ok"
+                      },
+                      {
+                        "Name": "Named",
+                        "UsesNamedFields": true,
+                        "Fields": [ { "Name": "code", "Type": "u32[0 max]" } ]
+                      },
+                      {
+                        "Name": "Failure",
+                        "UsesNamedFields": false,
+                        "Fields": [ { "Name": "Item0", "Type": "Source.Error" } ],
+                        "Role": "err",
+                        "AbsorbsErrorType": "Source.Error"
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "Packet",
+                    "QualifiedName": "Source.Packet",
+                    "Visibility": "public",
+                    "Kind": "record",
+                    "GenericParameters": [ "T" ],
+                    "PrimaryConstructorParameters": [
+                      {
+                        "Name": "Data",
+                        "Type": "rawptr<T>",
+                        "RawPointerElementCountExpression": "count",
+                        "IsConst": true
+                      },
+                      { "Name": "count", "Type": "u64[0 max]" }
+                    ],
+                    "Fields": [
+                      { "Name": "Data", "Type": "rawptr<T>" },
+                      { "Name": "count", "Type": "u64[0 max]" },
+                      { "Name": "Code", "Type": "u32[0 max]" }
+                    ],
+                    "AssociatedTypes": [
+                      { "Name": "Element", "TargetType": "T" },
+                      { "Name": "Required" }
+                    ],
+                    "ImplementedTraits": [
+                      "Source.Copyable",
+                      "Source.Serializable"
+                    ],
+                    "Constructors": [
+                      {
+                        "Parameters": [
+                          { "Name": "code", "Type": "u32[0 max]" }
+                        ],
+                        "BodyText": "{ self.Code = code; }"
+                      }
+                    ],
+                    "Destructor": {
+                      "IsMutable": true,
+                      "BodyText": "{ self.Code = 0; }"
+                    },
+                    "Methods": [
+                      {
+                        "Name": "Inspect",
+                        "QualifiedName": "Source.Packet.Inspect",
+                        "SymbolName": "Source_Packet_Inspect",
+                        "Kind": "finite law",
+                        "ReturnType": "u32[0 max]",
+                        "Parameters": [],
+                        "Visibility": "public",
+                        "IsFfi": false,
+                        "IsStrictFp": false,
+                        "UseFastCallingConvention": false,
+                        "IsStatic": true,
+                        "IsHot": true,
+                        "InlinePreference": "inline",
+                        "HasExplicitInlinePreference": true,
+                        "BackendOptimizationMode": "opaque"
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "Handler",
+                    "QualifiedName": "Source.Handler",
+                    "Visibility": "public",
+                    "Kind": "trait",
+                    "Fields": [],
+                    "AssociatedTypes": [ { "Name": "Input" } ]
+                  },
+                  {
+                    "Name": "Dispatcher",
+                    "QualifiedName": "Source.Dispatcher",
+                    "Visibility": "public",
+                    "Kind": "trait",
+                    "Fields": [],
+                    "Methods": [
+                      {
+                        "Name": "Dispatch",
+                        "QualifiedName": "Source.Dispatcher.Dispatch",
+                        "SymbolName": "Source_Dispatcher_Dispatch",
+                        "Kind": "finite law",
+                        "ReturnType": "u32[0 max]",
+                        "Parameters": [
+                          { "Name": "self", "Type": "borrow Self" }
+                        ],
+                        "IsFfi": false,
+                        "IsStrictFp": false,
+                        "UseFastCallingConvention": false
+                      }
+                    ],
+                    "IsDynTrait": true
+                  },
+                  {
+                    "Name": "Rules",
+                    "QualifiedName": "Source.Rules",
+                    "Visibility": "public",
+                    "Kind": "doctrine",
+                    "GenericParameters": [ "T" ],
+                    "Fields": [],
+                    "AssociatedTypes": [
+                      { "Name": "Item", "TargetType": "T" }
+                    ],
+                    "Methods": [
+                      {
+                        "Name": "Check",
+                        "QualifiedName": "Source.Rules.Check",
+                        "SymbolName": "Source_Rules_Check",
+                        "Kind": "law",
+                        "ReturnType": "bool",
+                        "Parameters": [
+                          { "Name": "value", "Type": "T" }
+                        ],
+                        "IsFfi": false,
+                        "IsStrictFp": false,
+                        "UseFastCallingConvention": false
+                      }
+                    ]
+                  }
+                ],
+                "Globals": [
+                  {
+                    "Name": "Zero",
+                    "QualifiedName": "Source.Zero",
+                    "Visibility": "public",
+                    "Kind": "globalconstant",
+                    "Type": "u32[0 max]",
+                    "IsMutable": false,
+                    "ConstantInitializer": {
+                      "Kind": "integer",
+                      "Type": {
+                        "Kind": "integer",
+                        "BitWidth": 32,
+                        "IsUnsigned": true,
+                        "RangeMin": "0",
+                        "RangeMax": "max"
+                      },
+                      "IntegerValue": "123"
+                    }
+                  },
+                  {
+                    "Name": "Flags",
+                    "QualifiedName": "Source.Flags",
+                    "Visibility": "internal",
+                    "Kind": "globalconstant",
+                    "Type": "bool[2]",
+                    "IsMutable": false,
+                    "ConstantInitializer": {
+                      "Kind": "fixedarray",
+                      "Type": { "Kind": "fixedarray" },
+                      "Elements": [
+                        {
+                          "Kind": "bool",
+                          "Type": { "Kind": "bool" },
+                          "BoolValue": true
+                        },
+                        {
+                          "Kind": "bool",
+                          "Type": { "Kind": "bool" },
+                          "BoolValue": false
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "Name": "Epoch",
+                    "QualifiedName": "Source.Epoch",
+                    "Visibility": "public",
+                    "Kind": "static",
+                    "Type": "u64[0 max]",
+                    "IsMutable": false
+                  },
+                  {
+                    "Name": "Enabled",
+                    "QualifiedName": "Source.Enabled",
+                    "Visibility": "internal",
+                    "Kind": "static mut",
+                    "Type": "bool",
+                    "IsMutable": true
+                  }
+                ],
+                "Functions": [
+                  {
+                    "Name": "Copy",
+                    "QualifiedName": "Source.Copy",
+                    "Visibility": "public",
+                    "SymbolName": "Source_Copy",
+                    "Kind": "finite",
+                    "ReturnType": "bool",
+                    "GenericParameters": [ "T" ],
+                    "Parameters": [
+                      {
+                        "Name": "input",
+                        "Type": "rawptr<u8[0 max]>",
+                        "RawPointerElementCountExpression": "count",
+                        "IsDisjoint": true,
+                        "IsConst": true
+                      },
+                      {
+                        "Name": "output",
+                        "Type": "rawmutptr<u8[0 max]>",
+                        "RawPointerElementCountExpression": "count"
+                      },
+                      { "Name": "count", "Type": "u64[0 max]" }
+                    ],
+                    "IsFfi": true,
+                    "IsStrictFp": true,
+                    "UseFastCallingConvention": false,
+                    "IsHot": true,
+                    "InlinePreference": "inline",
+                    "HasExplicitInlinePreference": true,
+                    "IsUnsafe": true,
+                    "IsVarargs": true,
+                    "IsTailCallable": true,
+                    "FfiAbi": "c",
+                    "BackendOptimizationMode": "opaque",
+                    "LinkName": "source_copy",
+                    "PointeeDeadOnReturnParameterNames": [ "input" ],
+                    "DisjointParameterGroups": [
+                      {
+                        "ParameterNames": [ "input", "output" ],
+                        "Regions": [
+                          {
+                            "ParameterName": "input",
+                            "StartExpression": "0",
+                            "CountExpression": "count"
+                          },
+                          {
+                            "ParameterName": "output",
+                            "StartExpression": "0",
+                            "CountExpression": "count"
+                          }
+                        ]
+                      }
+                    ],
+                    "TypeParameterConstraints": [
+                      {
+                        "ParameterName": "T",
+                        "BoundTraits": [ "Source.Copyable" ]
+                      }
+                    ],
+                    "ThreadSafetyLawPredicates": [
+                      { "LawName": "Transferable", "Type": "T" }
+                    ],
+                    "ValueContracts": [
+                      { "Left": "count", "Operator": ">", "Right": "0" }
+                    ]
+                  },
+                  {
+                    "Name": "Identity",
+                    "QualifiedName": "Source.Identity",
+                    "Visibility": "public",
+                    "SymbolName": "Source_Identity",
+                    "Kind": "finite law",
+                    "ReturnType": "T",
+                    "GenericParameters": [ "T" ],
+                    "Parameters": [
+                      { "Name": "value", "Type": "T" }
+                    ],
+                    "IsFfi": false,
+                    "IsStrictFp": false,
+                    "UseFastCallingConvention": false
+                  },
+                  {
+                    "Name": "Invoke",
+                    "QualifiedName": "Source.Invoke",
+                    "Visibility": "public",
+                    "SymbolName": "Source_Invoke",
+                    "Kind": "finite law",
+                    "ReturnType": "T",
+                    "GenericParameters": [ "T" ],
+                    "Parameters": [
+                      { "Name": "value", "Type": "T" }
+                    ],
+                    "IsFfi": false,
+                    "IsStrictFp": false,
+                    "UseFastCallingConvention": false
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+    stack ascii unsupportedManifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Unsupported",
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "SourceSurface": {
+                "Functions": [
+                  {
+                    "Name": "Run",
+                    "QualifiedName": "Unsupported.Run",
+                    "Visibility": "public",
+                    "SymbolName": "Unsupported_Run",
+                    "Kind": "fn",
+                    "ReturnType": "void",
+                    "Parameters": [],
+                    "IsFfi": false,
+                    "IsStrictFp": false,
+                    "UseFastCallingConvention": false,
+                    "ValueContracts": [ {} ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+    stack ascii unsupportedGlobalManifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "UnsupportedGlobal",
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "SourceSurface": {
+                "Globals": [
+                  {
+                    "Name": "Count",
+                    "QualifiedName": "UnsupportedGlobal.Count",
+                    "Visibility": "public",
+                    "Kind": "globalconstant",
+                    "Type": "u32[0 max]",
+                    "IsMutable": false,
+                    "ConstantInitializer": { "Kind": "integer" }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+    stack ascii unsupportedTypeManifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "UnsupportedType",
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "SourceSurface": {
+                "Types": [
+                  {
+                    "Name": "Owned",
+                    "QualifiedName": "UnsupportedType.Owned",
+                    "Visibility": "public",
+                    "Kind": "struct",
+                    "Fields": [],
+                    "Destructor": {}
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+    stack ascii ambiguousTemplateManifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "AmbiguousTemplate",
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "AmbiguousTemplate.Identity#0",
+                      "QualifiedName": "AmbiguousTemplate.Identity",
+                      "OverloadKey": "(T)",
+                      "BodyText": "{ return value; }"
+                    },
+                    {
+                      "QualifiedResolvedName": "AmbiguousTemplate.Identity#1",
+                      "QualifiedName": "AmbiguousTemplate.Identity",
+                      "OverloadKey": "(T)",
+                      "BodyText": "{ return value; }"
+                    }
+                  ]
+                }
+              },
+              "SourceSurface": {
+                "Functions": [
+                  {
+                    "Name": "Identity",
+                    "QualifiedName": "AmbiguousTemplate.Identity",
+                    "Visibility": "public",
+                    "SymbolName": "AmbiguousTemplate_Identity",
+                    "Kind": "finite law",
+                    "ReturnType": "T",
+                    "GenericParameters": [ "T" ],
+                    "Parameters": [ { "Name": "value", "Type": "T" } ],
+                    "IsFfi": false,
+                    "IsStrictFp": false,
+                    "UseFastCallingConvention": false
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+    stack ascii unsupportedTypedTemplateManifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "UnsupportedTypedTemplate",
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "UnsupportedTypedTemplate.Invoke#0",
+                      "QualifiedName": "UnsupportedTypedTemplate.Invoke",
+                      "OverloadKey": "(T)",
+                      "BodyText": "{ return value; }",
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "switch",
+                            "Expression": {
+                              "Kind": "direct-call",
+                              "Ordinal": 0,
+                              "Arguments": [ { "Kind": "name", "Name": "value" } ]
+                            }
+                          }
+                        ]
+                      },
+                      "DirectCalls": [
+                        {
+                          "Ordinal": 0,
+                          "QualifiedResolvedName": "UnsupportedTypedTemplate.Identity#0",
+                          "QualifiedSourceName": "UnsupportedTypedTemplate.Identity",
+                          "ReturnType": { "Kind": "named", "Name": "T" },
+                          "Parameters": [],
+                          "ComptimeValueArguments": [
+                            {
+                              "ParameterName": "N",
+                              "IntegerValue": "4",
+                              "Type": { "Kind": "integer", "BitWidth": 32 }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "SourceSurface": {
+                "Functions": [
+                  {
+                    "Name": "Invoke",
+                    "QualifiedName": "UnsupportedTypedTemplate.Invoke",
+                    "Visibility": "public",
+                    "SymbolName": "UnsupportedTypedTemplate_Invoke",
+                    "Kind": "finite law",
+                    "ReturnType": "T",
+                    "GenericParameters": [ "T" ],
+                    "Parameters": [ { "Name": "value", "Type": "T" } ],
+                    "IsFfi": false,
+                    "IsStrictFp": false,
+                    "UseFastCallingConvention": false
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut OwnedAscii rendered = new();
+    stack mut OwnedAscii rejected = new();
+    stack mut OwnedAscii rejectedGlobal = new();
+    stack mut OwnedAscii rejectedType = new();
+    stack mut OwnedAscii rejectedTemplate = new();
+    stack mut OwnedAscii rejectedTypedTemplate = new();
+    stack mut LogicalPackageLoadedSourceDocument loaded = new();
+    unsafe
+    {
+        return TryRenderLogicalPackageSourceBridgePrefix(manifestJson, 0, rendered)
+            && LlvmTextEquals(
+                rendered,
+                "import Source.Import\nexport import Source.Export\nexport import Source.Both\nexport import Source.ReExport\n\n[Backend(Opaque)]\nmodule Source\n\npublic alias Pair<T, comptime type U> = (T, U);\n\n[Backend(Opaque)]\n[StructLayout(C), Pack(4), Align(8)]\n[Grant(Shareable) where Transferable(T)] public struct Buffer<T>\n{\n    [FieldOffset(0)] [Deny(Transferable)] internal rawptr<T> Data;\n    u64[0 max] Length;\n}\npublic enum Outcome<T>\n{\n    [Ok] Value(T),\n    Named { code: u32[0 max] },\n    [Err] Failure from Source.Error,\n}\npublic record Packet<T>(const rawptr<T>[count] Data, u64[0 max] count) : Source.Copyable, Source.Serializable\n{\n    alias Element = T;\n    alias Required;\n\n    u32[0 max] Code;\n\n    Packet(u32[0 max] code) { self.Code = code; }\n\n    mut drop { self.Code = 0; }\n\n    [Backend(Opaque)]\n    public static hot inline finite law u32[0 max] Inspect() { return 7; }\n}\npublic trait Handler\n{\n    alias Input;\n}\npublic dyn trait Dispatcher\n{\n    finite law u32[0 max] Dispatch(borrow Self self);\n}\npublic doctrine Rules<T>\n{\n    alias Item = T;\n\n    law bool Check(T value);\n}\n\npublic const u32 Zero = 0;\ninternal const bool[2] Flags = { false, false };\npublic static u64[0 max] Epoch;\ninternal static mut bool Enabled;\n\n[LinkName(\"source_copy\")]\n[Backend(Opaque)]\npublic strictfp hot inline unsafe ffi(c) varargs tail finite bool Copy<T>(disjoint const rawptr<u8[0 max]>[count] input, rawmutptr<u8[0 max]>[count] output, u64[0 max] count) where T: Source.Copyable where disjoint(input[0, count], output[0, count]) where dead_on_return(input) where Transferable(T) where count > 0;\npublic finite law T Identity<T>(T value) { return value; }\npublic finite law T Invoke<T>(T value) {\n    stack mut Source.Option<T> current = { Value = Source.Option.None };\n    stack fnptr<unsafe ffi(c) tail finite law void(rawptr<u8[0 max]>[count]) where overlap(arg0, arg1), same(arg0, arg2), dead_on_return(arg0)> callback = value;\n    stack heap closure<once tail finite law void(u8[0 max])> closureValue = value;\n    Source.Option.None;\n    (u8[0 max])Source.Option.None;\n    comptime (true ? Source.Option.None : Source.Option.None);\n    if (true is true) {\n        Source.Option.None;\n    } else {\n        ;\n    }\n    retry: while willexit bounded (false) {\n        Source.Option.None;\n        break retry;\n    }\n    for willexit independent (stack mut u8[0 max][4] index = { 0, 0, 0, 0 }; false; index = 0) {\n        Source.Option.None;\n    }\n    for willexit (register u64[0 max] itemIndex, borrow rawptr<u8[0 max]> item in value) {\n        Source.Option.None;\n    }\n    switch (value)\n    {\n        case Source.Option<T>.Some { Value: var payload }:\n            Source.Option.None;\n        case 0..3 when true:\n            Source.Option.None;\n        case [_, var tail]:\n            Source.Option.None;\n        default:\n            Source.Option.None;\n    }\n    {\n        Source.Option.None;\n    }\n    value = Source.Option.Make(value);\n    return Source.Identity<T, comptime N>(value.Value.Combine<T, 4>(Source.Option<T, comptime N>.Some(new(arena, 16)), Source.Option.Make(value), Source.Option.None));\n}\n")
+            && TryBuildLogicalPackageLoadedSourceDocument(manifestJson, 0, loaded)
+            && loaded.ModuleOrdinal() == 0
+            && loaded.SourceTextEquals(rendered.View())
+            && loaded.Syntax().Succeeded()
+            && loaded.Syntax().HeaderCount() == 5
+            && !loaded.Syntax().HeaderItemAt(0).IsExported
+            && loaded.Syntax().HeaderItemAt(1).IsExported
+            && loaded.Syntax().HeaderItemAt(2).IsExported
+            && loaded.Syntax().HeaderItemAt(3).IsExported
+            && loaded.Syntax().DeclarationCount() == 14
+            && !TryRenderLogicalPackageSourceBridgePrefix(
+                unsupportedManifestJson,
+                0,
+                rejected)
+            && !TryRenderLogicalPackageSourceBridgePrefix(
+                unsupportedGlobalManifestJson,
+                0,
+                rejectedGlobal)
+            && !TryRenderLogicalPackageSourceBridgePrefix(
+                unsupportedTypeManifestJson,
+                0,
+                rejectedType)
+            && !TryRenderLogicalPackageSourceBridgePrefix(
+                ambiguousTemplateManifestJson,
+                0,
+                rejectedTemplate)
+            && !TryRenderLogicalPackageSourceBridgePrefix(
+                unsupportedTypedTemplateManifestJson,
+                0,
+                rejectedTypedTemplate);
     }
 }
 
@@ -17812,6 +19276,1106 @@ fn bool LogicalPackageImageMaterializesGenericTemplateFactGraphRows()
         && OwnedAsciiEqualsAscii(templateBoundOperationKind, "direct-call")
         && OwnedAsciiEqualsAscii(templateBoundOperationEnclosingFunctionName, "Demo.Map")
         && OwnedAsciiEqualsAscii(templateBoundCallResolvedName, "Demo.Bound#0");
+}
+
+[Fact]
+fn bool ImportedTypedTemplateScalarReturnsLowerDirectlyWithExactLlvmFacts()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.Seven#0",
+                      "QualifiedName": "Demo.Seven",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "BackendOptimizationMode": "aggressive",
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "7",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 32,
+                                "RangeMin": "0",
+                                "RangeMax": "10"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Yes#0",
+                      "QualifiedName": "Demo.Yes",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "true",
+                              "Type": { "Kind": "bool" }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Folded#0",
+                      "QualifiedName": "Demo.Folded",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+",
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "4",
+                                  "Type": { "Kind": "integer", "BitWidth": 32 }
+                                },
+                                {
+                                  "Kind": "binary",
+                                  "Name": "*",
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "3",
+                                      "Type": { "Kind": "integer", "BitWidth": 32 }
+                                    },
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "2",
+                                      "Type": { "Kind": "integer", "BitWidth": 32 }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Logical#0",
+                      "QualifiedName": "Demo.Logical",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "&&",
+                              "Arguments": [
+                                {
+                                  "Kind": "binary",
+                                  "Name": "==",
+                                  "Arguments": [
+                                    {
+                                      "Kind": "binary",
+                                      "Name": "+",
+                                      "Arguments": [
+                                        { "Kind": "literal", "LiteralText": "2", "Type": { "Kind": "integer", "BitWidth": 32 } },
+                                        { "Kind": "literal", "LiteralText": "3", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                      ]
+                                    },
+                                    { "Kind": "literal", "LiteralText": "5", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                  ]
+                                },
+                                { "Kind": "literal", "LiteralText": "true", "Type": { "Kind": "bool" } }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Conditional#0",
+                      "QualifiedName": "Demo.Conditional",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "conditional",
+                              "Arguments": [
+                                { "Kind": "literal", "LiteralText": "false", "Type": { "Kind": "bool" } },
+                                { "Kind": "literal", "LiteralText": "99", "Type": { "Kind": "integer", "BitWidth": 32 } },
+                                {
+                                  "Kind": "binary",
+                                  "Name": "*",
+                                  "Arguments": [
+                                    { "Kind": "literal", "LiteralText": "6", "Type": { "Kind": "integer", "BitWidth": 32 } },
+                                    { "Kind": "literal", "LiteralText": "7", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.RichFold#0",
+                      "QualifiedName": "Demo.RichFold",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "comptime",
+                              "Arguments": [
+                                {
+                                  "Kind": "conditional",
+                                  "Arguments": [
+                                    {
+                                      "Kind": "unary",
+                                      "Name": "!",
+                                      "Arguments": [
+                                        { "Kind": "literal", "LiteralText": "false", "Type": { "Kind": "bool" } }
+                                      ]
+                                    },
+                                    {
+                                      "Kind": "comparison-chain",
+                                      "OperatorNames": [ "<", "==" ],
+                                      "Arguments": [
+                                        {
+                                          "Kind": "unary",
+                                          "Name": "+",
+                                          "Arguments": [
+                                            { "Kind": "literal", "LiteralText": "2", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                          ]
+                                        },
+                                        {
+                                          "Kind": "unary",
+                                          "Name": "-",
+                                          "Arguments": [
+                                            {
+                                              "Kind": "unary",
+                                              "Name": "-",
+                                              "Arguments": [
+                                                { "Kind": "literal", "LiteralText": "3", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "Kind": "unary",
+                                          "Name": "~",
+                                          "Arguments": [
+                                            {
+                                              "Kind": "unary",
+                                              "Name": "-",
+                                              "Arguments": [
+                                                { "Kind": "literal", "LiteralText": "4", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    { "Kind": "literal", "LiteralText": "false", "Type": { "Kind": "bool" } }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.UnsignedSeven#0",
+                      "QualifiedName": "Demo.UnsignedSeven",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "7",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 32,
+                                "IsUnsigned": true,
+                                "RangeMin": "0",
+                                "RangeMax": "4294967295"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Converted#0",
+                      "QualifiedName": "Demo.Converted",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "Conversions": [
+                        {
+                          "Ordinal": 0,
+                          "TargetType": { "Kind": "integer", "BitWidth": 16, "RangeMin": "0", "RangeMax": "1000" }
+                        },
+                        {
+                          "Ordinal": 1,
+                          "TargetType": { "Kind": "integer", "BitWidth": 8, "RangeMin": "0", "RangeMax": "100" }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "conversion",
+                              "Type": { "Kind": "integer", "BitWidth": 16, "RangeMin": "0", "RangeMax": "1000" },
+                              "Arguments": [
+                                {
+                                  "Kind": "conversion",
+                                  "Type": { "Kind": "integer", "BitWidth": 8, "RangeMin": "0", "RangeMax": "100" },
+                                  "Arguments": [
+                                    { "Kind": "literal", "LiteralText": "300", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.BadConversion#0",
+                      "QualifiedName": "Demo.BadConversion",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "Conversions": [
+                        {
+                          "Ordinal": 0,
+                          "TargetType": { "Kind": "integer", "BitWidth": 8, "RangeMin": "0", "RangeMax": "90" }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "conversion",
+                              "Type": { "Kind": "integer", "BitWidth": 8, "RangeMin": "0", "RangeMax": "100" },
+                              "Arguments": [
+                                { "Kind": "literal", "LiteralText": "44", "Type": { "Kind": "integer", "BitWidth": 32 } }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.NeedsBinding#0",
+                      "QualifiedName": "Demo.NeedsBinding",
+                      "OverloadKey": "(value)",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "name",
+                              "Name": "value",
+                              "Type": { "Kind": "integer", "BitWidth": 32 }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph graph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+            manifestJson,
+            0,
+            graph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts unconstrainedExpectedReturnFacts = new();
+    stack mut ValueFacts sevenExpectedReturnFacts = new();
+    sevenExpectedReturnFacts.SetIntegerRange(0, 11);
+    stack mut MirFuncId sevenFunction = MirFuncIdOf(0);
+    stack mut MirFuncId yesFunction = MirFuncIdOf(0);
+    stack mut MirFuncId foldedFunction = MirFuncIdOf(0);
+    stack mut MirFuncId logicalFunction = MirFuncIdOf(0);
+    stack mut MirFuncId conditionalFunction = MirFuncIdOf(0);
+    stack mut MirFuncId richFoldFunction = MirFuncIdOf(0);
+    stack mut MirFuncId unsignedSevenFunction = MirFuncIdOf(0);
+    stack mut MirFuncId convertedFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I32,
+            false,
+            sevenExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            sevenFunction) != ImportedTemplateMirLoweringStatus.Ok
+        || LowerImportedTemplateScalarReturnToMir(
+            graph,
+            2,
+            MirType.I1,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            yesFunction) != ImportedTemplateMirLoweringStatus.Ok
+        || LowerImportedTemplateScalarReturnToMir(
+            graph,
+            3,
+            MirType.I32,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            foldedFunction) != ImportedTemplateMirLoweringStatus.Ok
+        || LowerImportedTemplateScalarReturnToMir(
+            graph,
+            4,
+            MirType.I1,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            logicalFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            5,
+            MirType.I32,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            conditionalFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            6,
+            MirType.I1,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            richFoldFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            7,
+            MirType.I32,
+            true,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            unsignedSevenFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            8,
+            MirType.I16,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            convertedFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut MirFuncId mismatchedFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I64,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            mismatchedFunction) != ImportedTemplateMirLoweringStatus.ReturnTypeMismatch
+        || mismatchedFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    stack mut ValueFacts rejectedExpectedReturnFacts = new();
+    rejectedExpectedReturnFacts.SetIntegerRange(8, 10);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I32,
+            false,
+            rejectedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            mismatchedFunction) != ImportedTemplateMirLoweringStatus.ReturnFactMismatch
+        || mismatchedFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    stack mut MirFuncId unsupportedFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            9,
+            MirType.I8,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            unsupportedFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+        || unsupportedFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            10,
+            MirType.I32,
+            false,
+            unconstrainedExpectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            unsupportedFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+        || unsupportedFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    stack MirInstruction sevenLiteral = instructions.Get(1);
+    stack MirInstruction yesLiteral = instructions.Get(2);
+    stack MirInstruction foldedLiteral = instructions.Get(3);
+    stack MirInstruction logicalLiteral = instructions.Get(4);
+    stack MirInstruction conditionalLiteral = instructions.Get(5);
+    stack MirInstruction richFoldLiteral = instructions.Get(6);
+    stack MirInstruction unsignedSevenLiteral = instructions.Get(7);
+    stack MirInstruction convertedLiteral = instructions.Get(8);
+    stack ValueFacts sevenValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(1));
+    stack ValueFacts yesValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(2));
+    stack ValueFacts foldedValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(3));
+    stack ValueFacts logicalValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(4));
+    stack ValueFacts conditionalValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(5));
+    stack ValueFacts richFoldValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(6));
+    stack ValueFacts unsignedSevenValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(7));
+    stack ValueFacts convertedValueFacts = ValueFactsForMirValue(valueFacts, MirValueIdOf(8));
+    stack ValueFacts sevenReturnFacts = ValueFactsAtIndex(functionReturnFacts, sevenFunction.Index());
+    stack ValueFacts yesReturnFacts = ValueFactsAtIndex(functionReturnFacts, yesFunction.Index());
+    stack ValueFacts foldedReturnFacts = ValueFactsAtIndex(functionReturnFacts, foldedFunction.Index());
+    stack ValueFacts logicalReturnFacts = ValueFactsAtIndex(functionReturnFacts, logicalFunction.Index());
+    stack ValueFacts conditionalReturnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        conditionalFunction.Index());
+    stack ValueFacts richFoldReturnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        richFoldFunction.Index());
+    stack ValueFacts unsignedSevenReturnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        unsignedSevenFunction.Index());
+    stack ValueFacts convertedReturnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        convertedFunction.Index());
+    stack MirFunction seven = functions.Get(sevenFunction.Index());
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut OwnedAscii llvm = new();
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_const",
+            sevenReturnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            seven.EntryIndex(),
+            seven.FirstInstrIndex(),
+            seven.OwnedInstrCount(),
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return sevenFunction.Index() == 1
+        && yesFunction.Index() == 2
+        && foldedFunction.Index() == 3
+        && logicalFunction.Index() == 4
+        && conditionalFunction.Index() == 5
+        && richFoldFunction.Index() == 6
+        && unsignedSevenFunction.Index() == 7
+        && convertedFunction.Index() == 8
+        && instructions.Count() == 8
+        && blocks.Count() == 8
+        && functions.Count() == 8
+        && sevenLiteral.Opcode() == MirOp.ConstInt
+        && sevenLiteral.ResultType() == MirType.I32
+        && sevenLiteral.Immediate() == 7
+        && yesLiteral.Opcode() == MirOp.ConstInt
+        && yesLiteral.ResultType() == MirType.I1
+        && yesLiteral.Immediate() == 1
+        && foldedLiteral.Opcode() == MirOp.ConstInt
+        && foldedLiteral.ResultType() == MirType.I32
+        && foldedLiteral.Immediate() == 10
+        && logicalLiteral.Opcode() == MirOp.ConstInt
+        && logicalLiteral.ResultType() == MirType.I1
+        && logicalLiteral.Immediate() == 1
+        && conditionalLiteral.Opcode() == MirOp.ConstInt
+        && conditionalLiteral.ResultType() == MirType.I32
+        && conditionalLiteral.Immediate() == 42
+        && richFoldLiteral.Opcode() == MirOp.ConstInt
+        && richFoldLiteral.ResultType() == MirType.I1
+        && richFoldLiteral.Immediate() == 1
+        && unsignedSevenLiteral.Opcode() == MirOp.ConstInt
+        && unsignedSevenLiteral.ResultType() == MirType.I32
+        && unsignedSevenLiteral.Immediate() == 7
+        && convertedLiteral.Opcode() == MirOp.ConstInt
+        && convertedLiteral.ResultType() == MirType.I16
+        && convertedLiteral.Immediate() == 44
+        && sevenValueFacts.HasIntegerRange()
+        && sevenValueFacts.IntegerRangeLower() == 7
+        && sevenValueFacts.IntegerRangeUpperExclusive() == 8
+        && yesValueFacts.HasIntegerRange()
+        && yesValueFacts.IntegerRangeLower() == 1
+        && yesValueFacts.IntegerRangeUpperExclusive() == 2
+        && foldedValueFacts.HasIntegerRange()
+        && foldedValueFacts.IntegerRangeLower() == 10
+        && foldedValueFacts.IntegerRangeUpperExclusive() == 11
+        && logicalValueFacts.HasIntegerRange()
+        && logicalValueFacts.IntegerRangeLower() == 1
+        && logicalValueFacts.IntegerRangeUpperExclusive() == 2
+        && conditionalValueFacts.HasIntegerRange()
+        && conditionalValueFacts.IntegerRangeLower() == 42
+        && conditionalValueFacts.IntegerRangeUpperExclusive() == 43
+        && richFoldValueFacts.HasIntegerRange()
+        && richFoldValueFacts.IntegerRangeLower() == 1
+        && richFoldValueFacts.IntegerRangeUpperExclusive() == 2
+        && unsignedSevenValueFacts.HasIntegerRange()
+        && unsignedSevenValueFacts.IntegerRangeLower() == 7
+        && unsignedSevenValueFacts.IntegerRangeUpperExclusive() == 8
+        && convertedValueFacts.HasIntegerRange()
+        && convertedValueFacts.IntegerRangeLower() == 44
+        && convertedValueFacts.IntegerRangeUpperExclusive() == 45
+        && sevenReturnFacts.HasIntegerRange()
+        && sevenReturnFacts.IntegerRangeLower() == 7
+        && sevenReturnFacts.IntegerRangeUpperExclusive() == 8
+        && yesReturnFacts.HasIntegerRange()
+        && yesReturnFacts.IntegerRangeLower() == 1
+        && yesReturnFacts.IntegerRangeUpperExclusive() == 2
+        && foldedReturnFacts.HasIntegerRange()
+        && foldedReturnFacts.IntegerRangeLower() == 10
+        && foldedReturnFacts.IntegerRangeUpperExclusive() == 11
+        && logicalReturnFacts.HasIntegerRange()
+        && logicalReturnFacts.IntegerRangeLower() == 1
+        && logicalReturnFacts.IntegerRangeUpperExclusive() == 2
+        && conditionalReturnFacts.HasIntegerRange()
+        && conditionalReturnFacts.IntegerRangeLower() == 42
+        && conditionalReturnFacts.IntegerRangeUpperExclusive() == 43
+        && richFoldReturnFacts.HasIntegerRange()
+        && richFoldReturnFacts.IntegerRangeLower() == 1
+        && richFoldReturnFacts.IntegerRangeUpperExclusive() == 2
+        && unsignedSevenReturnFacts.HasIntegerRange()
+        && unsignedSevenReturnFacts.IntegerRangeLower() == 7
+        && unsignedSevenReturnFacts.IntegerRangeUpperExclusive() == 8
+        && convertedReturnFacts.HasIntegerRange()
+        && convertedReturnFacts.IntegerRangeLower() == 44
+        && convertedReturnFacts.IntegerRangeUpperExclusive() == 45
+        && LlvmTextEquals(
+            llvm,
+            "define range(i32 7, 8) i32 @imported_const() {\nb1:\n  %v1 = add i32 0, 7\n  ret i32 %v1\n}\n");
+}
+
+[Fact]
+fn bool ImportedTypedTemplateScalarPreambleStatementsFoldWithoutRuntimeWork()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.Preamble#0",
+                      "QualifiedName": "Demo.Preamble",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 3,
+                      "Conversions": [
+                        {
+                          "Ordinal": 0,
+                          "TargetType": {
+                            "Kind": "integer",
+                            "BitWidth": 8,
+                            "RangeMin": "0",
+                            "RangeMax": "100"
+                          }
+                        },
+                        {
+                          "Ordinal": 1,
+                          "TargetType": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "1000"
+                          }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          { "Kind": "empty" },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "conversion",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 8,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "300",
+                                  "Type": { "Kind": "integer", "BitWidth": 32 }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "1000"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "conversion",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "1000"
+                                  },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "300",
+                                      "Type": { "Kind": "integer", "BitWidth": 32 }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "7",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Nested#0",
+                      "QualifiedName": "Demo.Nested",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "Conversions": [
+                        {
+                          "Ordinal": 0,
+                          "TargetType": {
+                            "Kind": "integer",
+                            "BitWidth": 8,
+                            "RangeMin": "0",
+                            "RangeMax": "100"
+                          }
+                        },
+                        {
+                          "Ordinal": 1,
+                          "TargetType": {
+                            "Kind": "integer",
+                            "BitWidth": 16,
+                            "RangeMin": "0",
+                            "RangeMax": "1000"
+                          }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "block",
+                            "BodyStatements": [
+                              { "Kind": "empty" },
+                              {
+                                "Kind": "expression",
+                                "Expression": {
+                                  "Kind": "conversion",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 8,
+                                    "RangeMin": "0",
+                                    "RangeMax": "100"
+                                  },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "300",
+                                      "Type": { "Kind": "integer", "BitWidth": 32 }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "Kind": "return",
+                                "Expression": {
+                                  "Kind": "conversion",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "1000"
+                                  },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "9",
+                                      "Type": { "Kind": "integer", "BitWidth": 32 }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.DeepNested#0",
+                      "QualifiedName": "Demo.DeepNested",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "block",
+                            "BodyStatements": [
+                              {
+                                "Kind": "block",
+                                "BodyStatements": [
+                                  {
+                                    "Kind": "return",
+                                    "Expression": {
+                                      "Kind": "literal",
+                                      "LiteralText": "11",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph graph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+            manifestJson,
+            0,
+            graph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts expectedReturnFacts = new();
+    expectedReturnFacts.SetIntegerRange(0, 1001);
+    stack mut MirFuncId function = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            function) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut MirFuncId nestedFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            2,
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            nestedFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut MirFuncId deepNestedFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            3,
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            deepNestedFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+        || deepNestedFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    stack MirInstruction literal = instructions.Get(1);
+    stack MirInstruction nestedLiteral = instructions.Get(2);
+    stack ValueFacts literalFacts = ValueFactsForMirValue(
+        valueFacts,
+        MirValueIdOf(1));
+    stack ValueFacts returnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        function.Index());
+    stack ValueFacts nestedLiteralFacts = ValueFactsForMirValue(
+        valueFacts,
+        MirValueIdOf(2));
+    stack ValueFacts nestedReturnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        nestedFunction.Index());
+    stack MirFunction lowered = functions.Get(function.Index());
+    stack MirFunction nestedLowered = functions.Get(nestedFunction.Index());
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut OwnedAscii llvm = new();
+    stack mut OwnedAscii nestedLlvm = new();
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_preamble",
+            returnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            lowered.EntryIndex(),
+            lowered.FirstInstrIndex(),
+            lowered.OwnedInstrCount(),
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_nested",
+            nestedReturnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            nestedLowered.EntryIndex(),
+            nestedLowered.FirstInstrIndex(),
+            nestedLowered.OwnedInstrCount(),
+            nestedLlvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return function.Index() == 1
+        && nestedFunction.Index() == 2
+        && instructions.Count() == 2
+        && blocks.Count() == 2
+        && functions.Count() == 2
+        && literal.Opcode() == MirOp.ConstInt
+        && literal.ResultType() == MirType.I16
+        && literal.Immediate() == 307
+        && literalFacts.HasIntegerRange()
+        && literalFacts.IntegerRangeLower() == 307
+        && literalFacts.IntegerRangeUpperExclusive() == 308
+        && nestedLiteral.Opcode() == MirOp.ConstInt
+        && nestedLiteral.ResultType() == MirType.I16
+        && nestedLiteral.Immediate() == 9
+        && nestedLiteralFacts.HasIntegerRange()
+        && nestedLiteralFacts.IntegerRangeLower() == 9
+        && nestedLiteralFacts.IntegerRangeUpperExclusive() == 10
+        && returnFacts.HasIntegerRange()
+        && returnFacts.IntegerRangeLower() == 307
+        && returnFacts.IntegerRangeUpperExclusive() == 308
+        && nestedReturnFacts.HasIntegerRange()
+        && nestedReturnFacts.IntegerRangeLower() == 9
+        && nestedReturnFacts.IntegerRangeUpperExclusive() == 10
+        && LlvmTextEquals(
+            llvm,
+            "define range(i16 307, 308) i16 @imported_preamble() {\nb1:\n  %v1 = add i16 0, 307\n  ret i16 %v1\n}\n")
+        && LlvmTextEquals(
+            nestedLlvm,
+            "define range(i16 9, 10) i16 @imported_nested() {\nb2:\n  %v2 = add i16 0, 9\n  ret i16 %v2\n}\n");
 }
 
 [Fact]

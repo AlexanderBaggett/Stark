@@ -14,6 +14,218 @@ import System.Memory
 import System.Text
 module Compiler.Mir.PackageImage.Loader.PackageImageLoader
 
+// Stage1 writes MANF with Brotli uncompressed meta-blocks. Keeping the matching
+// reader here avoids a host decompression handoff for Stage1-produced images and
+// copies the JSON payload exactly once. General compressed Stage0 Brotli streams
+// remain outside this deliberately small decoder.
+internal struct Stage1BrotliBitReader
+{
+    u32[0 max] ByteIndex;
+    u32[0 max] EndByteIndex;
+    u32[0 max] BitOffset;
+
+    Stage1BrotliBitReader()
+    {
+        self.ByteIndex = 1;
+        self.EndByteIndex = 0;
+        self.BitOffset = 0;
+    }
+}
+
+internal fn bool TryReadStage1BrotliBit(
+    borrow IrTable<u8[0 max]> encoded,
+    mut borrow Stage1BrotliBitReader reader,
+    out bool value)
+{
+    value = false;
+    if (reader.ByteIndex == 0
+        || reader.ByteIndex > reader.EndByteIndex
+        || reader.BitOffset >= 8)
+    {
+        return false;
+    }
+
+    stack u8[0 max] byteValue = encoded.Get(reader.ByteIndex);
+    value = (((u32[0 max])byteValue >> reader.BitOffset) & 1) != 0;
+    reader.BitOffset = reader.BitOffset + 1;
+    if (reader.BitOffset == 8)
+    {
+        reader.BitOffset = 0;
+        reader.ByteIndex = reader.ByteIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryReadStage1BrotliBits(
+    borrow IrTable<u8[0 max]> encoded,
+    mut borrow Stage1BrotliBitReader reader,
+    u32[0 max] bitCount,
+    out u32[0 max] value)
+{
+    value = 0;
+    if (bitCount > 24)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] multiplier = 1;
+    stack mut u32[0 max] index = 0;
+    while willexit (index < bitCount)
+    {
+        stack mut bool bit = false;
+        if (!TryReadStage1BrotliBit(encoded, reader, bit))
+        {
+            return false;
+        }
+
+        if (bit)
+        {
+            value = value + multiplier;
+        }
+
+        multiplier = multiplier * 2;
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryAlignStage1BrotliReader(
+    borrow IrTable<u8[0 max]> encoded,
+    mut borrow Stage1BrotliBitReader reader)
+{
+    while willexit (reader.BitOffset != 0)
+    {
+        stack mut bool padding = false;
+        if (!TryReadStage1BrotliBit(encoded, reader, padding) || padding)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool TryDecodeStage1BrotliUtf8JsonPayloadRange(
+    borrow IrTable<u8[0 max]> encoded,
+    u32[0 max] encodedStart,
+    u64[0 2 ** 63 - 1] encodedCount,
+    mut borrow IrTable<u8[0 max]> decoded)
+{
+    if (encodedStart == 0
+        || encodedCount == 0
+        || encodedCount >= (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || encodedCount > (u64[0 2 ** 63 - 1])(2 ** 32 - 1) - (u64[0 2 ** 63 - 1])encodedStart
+        || !CanReadImageBytes(encoded, encodedStart, encodedCount))
+    {
+        return false;
+    }
+
+    stack mut Stage1BrotliBitReader reader = new();
+    reader.ByteIndex = encodedStart;
+    reader.EndByteIndex = encodedStart + (u32[0 max])encodedCount - 1;
+    stack mut bool windowHeader = false;
+    if (!TryReadStage1BrotliBit(encoded, reader, windowHeader) || windowHeader)
+    {
+        return false;
+    }
+
+    while willexit (true)
+    {
+        stack mut bool isLast = false;
+        if (!TryReadStage1BrotliBit(encoded, reader, isLast))
+        {
+            return false;
+        }
+
+        if (isLast)
+        {
+            stack mut bool isEmpty = false;
+            return TryReadStage1BrotliBit(encoded, reader, isEmpty)
+                && isEmpty
+                && TryAlignStage1BrotliReader(encoded, reader)
+                && reader.ByteIndex == reader.EndByteIndex + 1;
+        }
+
+        stack mut u32[0 max] nibblePattern = 0;
+        if (!TryReadStage1BrotliBits(encoded, reader, 2, nibblePattern)
+            || nibblePattern > 2)
+        {
+            return false;
+        }
+
+        stack u32[0 max] nibbleCount = 4 + nibblePattern;
+        stack mut u32[0 max] lengthMinusOne = 0;
+        stack mut bool isUncompressed = false;
+        if (!TryReadStage1BrotliBits(encoded, reader, nibbleCount * 4, lengthMinusOne)
+            || !TryReadStage1BrotliBit(encoded, reader, isUncompressed)
+            || !isUncompressed
+            || !TryAlignStage1BrotliReader(encoded, reader))
+        {
+            return false;
+        }
+
+        stack u64[0 max] blockLength = (u64[0 max])lengthMinusOne + 1;
+        stack u64[0 max] blockStart = (u64[0 max])reader.ByteIndex;
+        if (blockLength == 0
+            || blockStart == 0
+            || blockStart > (u64[0 max])reader.EndByteIndex
+            || blockLength > (u64[0 max])reader.EndByteIndex - blockStart + 1)
+        {
+            return false;
+        }
+
+        switch (decoded.Reserve((u64[0 2 ** 63 - 1])blockLength))
+        {
+            case MemoryStatus.Err(var reserveError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut u64[0 max] offset = 0;
+        while willexit (offset < blockLength)
+        {
+            if (decoded.Add(encoded.Get((u32[0 max])(blockStart + offset))) == 0)
+            {
+                return false;
+            }
+
+            offset = offset + 1;
+        }
+
+        reader.ByteIndex = (u32[0 max])(blockStart + blockLength);
+    }
+}
+
+public fn bool TryDecodeStage1BrotliUtf8JsonPayload(
+    borrow IrTable<u8[0 max]> encoded,
+    mut borrow IrTable<u8[0 max]> decoded)
+{
+    return TryDecodeStage1BrotliUtf8JsonPayloadRange(encoded, 1, encoded.Count(), decoded);
+}
+
+public fn bool TryDecodeLogicalPackageImageManifestJsonBytes(
+    borrow IrTable<u8[0 max]> image,
+    LogicalPackageImageFacts facts,
+    mut borrow IrTable<u8[0 max]> decoded)
+{
+    if (facts.ManifestOffsetValue == 0
+        || facts.ManifestLengthValue == 0
+        || facts.ManifestLengthValue > (u64[0 max])(2 ** 63 - 1)
+        || !SectionLastByteFitsU32(facts.ManifestOffsetValue, facts.ManifestLengthValue)
+        || !CanReadImageBytes(image, facts.ManifestOffsetValue, facts.ManifestLengthValue))
+    {
+        return false;
+    }
+
+    return TryDecodeStage1BrotliUtf8JsonPayloadRange(
+        image,
+        facts.ManifestOffsetValue,
+        (u64[0 2 ** 63 - 1])facts.ManifestLengthValue,
+        decoded);
+}
+
 // The magic identifying a MIR package image ("MIR1" little-endian-ish constant).
 internal fn u32[0 max] MirImageMagic()
 {

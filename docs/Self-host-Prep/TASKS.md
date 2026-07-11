@@ -1063,7 +1063,9 @@ family lands):
   - [ ] Port compile-time evaluated expressions.
   - [~] Port imported source lowering.
     - [x] Lower unit enum values referenced through an imported source module's own imports.
-  - [ ] Port imported-template lowering.
+  - [~] Port imported-template lowering.
+    - [x] Lower fact-complete typed integer/bool constant-expression return templates directly from the package graph to MIR, without reconstructed source. Consume ordered top-level empty and pure constant-expression preambles plus the terminal return, including the same sequence inside one terminal flat block; consume canonical Stage0 lowercase type kinds and inferred `Name`-backed unary/binary results; fold bounded nested literal/unary/binary/comparison-chain/conditional/comptime/conversion arithmetic, comparison, and boolean trees to one MIR constant; join ordered conversion expressions to exact published target-type/range side facts across statement roots; require an exact specialized return type/signedness/range-fact match; reject scalar-inapplicable caller fact families rather than dropping LLVM inputs; reject overflow, malformed/detached rows, and every template carrying unconsumed operation families; keep statement/expression traversal linear and allocation-free with transactional output reservation; and publish exact MIR value plus function-return ranges to LLVM. (2026-07-11)
+    - [ ] Connect direct package-template MIR lowering to imported generic specialization and expand it across the remaining structured statement/expression families before deleting the compatibility source bridge.
   - [~] Preserve range facts through MIR lowering.
     - [x] Reject integer range facts on pointer HIR values at the common value-fact compatibility boundary.
     - [x] Reject stale pointer range facts when binding or rebinding SSA local symbols.
@@ -1131,10 +1133,15 @@ family lands):
   - [ ] Port SSA control-flow validation.
   - [ ] Port SSA memory validation.
   - [ ] Port SSA range-fact validation.
+    - [x] Validate exact integer-range preservation at the foundational SSA rewrite boundary.
   - [ ] Port SSA ABI-fact validation.
+    - [x] Validate exact callable-ABI preservation at the foundational SSA rewrite boundary.
   - [ ] Port SSA package-fact validation.
   - [ ] Port value fact analysis.
   - [ ] Revalidate facts at each SSA rewrite boundary.
+    - [x] Establish dense `SsaValueId` generated/empty/preserve/translate/recompute/consume and parameter/global/return import APIs for every current backend value-fact family.
+    - [x] Distinguish missing facts from changed preserved facts and validate exact alignment, ABI, noalias, volatile, range, nullability, and text-constant payloads.
+    - [x] Add one constant-time gate that validates every backend value fact present on a rewritten SSA value, avoiding per-pass category omissions and temporary collections.
   - [ ] Port cleanup.
   - [ ] Port branch pruning.
   - [ ] Port branch shaping.
@@ -1152,6 +1159,9 @@ family lands):
   - [ ] Port SROA.
   - [ ] Port ownership traffic optimization.
   - [ ] Preserve backend facts consumed by ABI and LLVM lowering through every SSA pass.
+    - [x] Preserve alignment, ABI, noalias, volatile, range, nullability, and text-constant facts through the foundational SSA value-transfer boundary.
+    - [x] Add an exact preservation gate for those fact families so a rewrite cannot silently weaken or mutate LLVM inputs.
+    - [x] Provide an all-present-facts optimizer gate for the default SSA rewrite path before ABI/LLVM lowering.
 
 - [~] Implement ABI lowering.
   - [ ] Port ABI lowering from optimized SSA into target-shaped callable and global layouts.
@@ -1231,7 +1241,7 @@ family lands):
   - [x] Design durable package-image typed indexes.
   - [x] Design durable package-image target facts.
   - [x] Design durable package-image profile facts.
-  - [ ] Implement the logical package-image load path.
+  - [~] Implement the logical package-image load path.
     - [x] Validate the host logical `STRS`/`PINF`/`MANF` section wrapper.
     - [x] Inspect the host logical `STRS`/`PINF`/`MANF` section wrapper.
     - [x] Preserve and inspect logical package identity/profile/target facts from `PINF`/`STRS`.
@@ -1242,17 +1252,19 @@ family lands):
     - [x] Compile library dependency objects only from source-backed imports and use package-backed facts as imports.
     - [~] Decode `MANF` and build the self-host logical package model from binary images.
       - [x] Expose validated `MANF` section range facts and compressed payload copying for the self-host logical load handoff.
+      - [x] Decode Stage1-produced uncompressed Brotli `MANF` streams without a host handoff.
+      - [ ] Decode general Brotli `MANF` streams emitted by Stage0 before the host handoff is removed.
       - [x] Parse already-decoded Stage0 `MANF` JSON into a compact self-host manifest summary while validating identity/profile/target/backend facts against `PINF`/`STRS`.
       - [x] Parse decoded Stage0 `MANF` module rows into compact module-section summaries for typed-interface loader handoff.
       - [x] Build a compact single-parse self-host logical manifest model with manifest summary facts and ordered module rows.
-    - [~] Materialize typed interface declarations.
+    - [x] Materialize typed interface declarations.
       - [x] Parse typed-interface declaration header rows with owned name/qualified-name/visibility/kind text and compact count/flag facts.
       - [x] Materialize typed-interface declaration type-reference payloads into package-owned fact rows.
         - [x] Parse top-level declaration type-reference payload summaries for alias targets, function returns/parameters, globals, and type fields.
         - [x] Intern decoded type-reference text and nested type-reference graph rows into package-owned fact tables.
           - [x] Materialize root and nested type-reference rows plus scalar text rows for element, type-argument, comptime-value type, return, parameter, and associated-owner children.
           - [x] Materialize callable memory-contract group rows and full comptime value argument payload rows.
-    - [~] Materialize typed interface functions and methods.
+    - [x] Materialize typed interface functions and methods.
       - [x] Parse typed function and method callable facts with owned name/qualified-name/visibility/symbol/kind/resolved-name/overload/inline/ABI/backend/link-name text and compact backend flag/count facts.
       - [x] Parse typed function and method parameter metadata facts with owned parameter names, const/disjoint flags, raw-pointer element-count expressions, and required parameter type-object validation.
       - [x] Materialize callable return and parameter type-reference row links for methods without overloading top-level function payload ordinals.
@@ -1290,6 +1302,29 @@ family lands):
             - [x] Materialize direct/member/function-address and bound-operation common call-signature rows with parameter, type-argument, comptime, parameter-group, dead-on-return, and bound call-argument payload rows.
             - [x] Materialize bound-operation non-call payload rows for receiver/function-pointer/closure/access/source/index/name/text/object/enum/interpolation/query/switch payloads.
     - [~] Port the package-image source bridge for Stage0/Stage1 compatibility.
+      - [x] Establish the focused single-parse bridge module and render effective imports/re-exports, module identity plus effective module `[Backend(Opaque)]`, and type aliases with generic/comptime parameters.
+      - [x] Render fact-preserving source-surface function declarations for the supported header subset, including ABI, opaque-backend, inline/hot/cold, unsafe/varargs/tail, raw-pointer count, and dead-on-return facts.
+      - [x] Render callable type constraints, thread-law predicates, value contracts, and named/bounded disjoint/overlap/same parameter groups; reject count-only placeholder rows instead of dropping semantic, range, or alias facts.
+      - [x] Render immutable and mutable source-surface static globals plus parse-only scalar/text/null/fixed-array global constants; keep the typed constant graph canonical for CTFE/LLVM and reject malformed or unsupported aggregate initializer shapes instead of substituting backend values.
+      - [x] Render simple source-surface struct/record/trait declarations with generics, opaque/layout/pack/align attributes, field offsets, field visibility, and field types.
+      - [x] Render record primary constructors, implemented-trait bases, associated aliases, dyn-trait identity, and type/field thread-safety law attributes without temporary name sets.
+      - [x] Render struct/record constructors and destructors with authored bodies plus struct/record/trait method declarations with ABI, performance, generic, thread-law, value-contract, and alias-region facts; reject enum methods and malformed/count-only member payloads.
+      - [x] Render source-surface enums with generic/comptime parameters, positional and named payloads, `[Ok]`/`[Err]` roles, and `from` error funnels while validating the funnel payload type exactly.
+      - [x] Render doctrine declarations with generic parameters, associated aliases, and law/method headers while preserving dyn-trait object-safety rejection separately.
+      - [~] Reconstruct source declarations and generic-template bodies into a Stage1 loaded source-document model.
+        - [x] Own reconstructed source bytes beside Stage1 compilation-unit syntax tables, reject syntax diagnostics, and preserve `export import` identity in the parsed header. (2026-07-10: added the one-render/one-parse loaded compatibility document and extended the Stage1 header parser with an allocation-free exported-import flag column.)
+        - [~] Connect renderable generic-template bodies to the matching function and method declarations, preferring typed template graphs and using legacy `BodyText` only when no typed body exists.
+          - [x] Match legacy `BodyText` to top-level functions and methods by qualified name plus typed-interface published overload key, with canonical source-parameter fallback; reject duplicate template identities and never use legacy text when `TypedBody` is present. (2026-07-10: added one-parse effective compiler-section lookup, reusable overload-key scratch storage, Stage0-compatible qualifier canonicalization, exact body attachment, and optimized positive/ambiguity coverage.)
+          - [~] Render the structured typed-template operation subset that still requires compatibility source text; keep declaration-only output for typed bodies fully consumed by direct imported-template lowering.
+            - [x] Detect source-required operations through bounded typed statement/expression/pattern traversal and render nested direct calls, field accesses, non-generic member calls, and zero-argument object creations with exact authored `ExpressionText`. Preserve source-name/template-name/resolved-name precedence, member source-name recovery, recursive name/literal arguments, and reusable body scratch; reject duplicate ordinals and unsupported source-required shapes instead of dropping structured facts. (2026-07-10)
+            - [x] Render ordinal-backed enum constructor/call/value expressions; named generic type references with ordered ownership/access/init qualifiers and symbolic/integer comptime arguments; generic/comptime direct and member calls; synthesized constructor, initializer, and arena object creation; and ordered empty/expression/assignment/break/continue/return statements. Direct calls omit pure inferred type arguments unless comptime arguments require explicit syntax, matching Stage0. (2026-07-10)
+            - [x] Render typed local declarations and object-initializer expressions with exact storage, mutability, type, member-name, and initializer ordering. (2026-07-11)
+            - [x] Render bounded typed `if`/`else` statement trees with recursive fact-driven bodies while rejecting unimplemented condition patterns. (2026-07-11)
+            - [x] Render labeled typed `while` loops with loop behavior, ordered loop contracts, bounded recursive bodies, and labeled breaks/continues. (2026-07-11)
+            - [x] Render typed `for`, traversal, block, and switch control flow plus condition/switch patterns from ordered published facts. (2026-07-11)
+            - [x] Render scalar, container, associated, dyn-trait, function-pointer, and closure type references with qualifiers, ABI, bounded-pointer, and callable memory-contract facts. (2026-07-11)
+            - [x] Render the remaining Stage0-compatible array/assignment/conversion/try/operator/conditional/comptime/layout/closure/index/dyn-trait expression forms. (2026-07-11)
+            - [ ] Remove the Stage0 compatibility source bridge after direct imported-template lowering consumes every structured typed-body family.
       - [x] Materialize effective source-surface import and re-export rows for bridge-compatible module import rendering. (2026-07-09: added compact source-surface import summaries that prefer explicit `SourceSurface`, fall back to legacy module imports/re-exports, and fold duplicate re-exports into exported direct-import rows.)
       - [x] Materialize effective source-surface type-alias header and generic-parameter rows for bridge-compatible alias rendering. (2026-07-09: added compact source-surface alias summaries that prefer explicit `SourceSurface`, fall back to legacy module aliases, preserve source target spelling, count/validate comptime parameter rows, and expose ordinary generic parameter names.)
       - [x] Materialize effective source-surface type header and direct child-count rows for bridge-compatible source-only type rendering. (2026-07-09: added compact source-surface type summaries that prefer explicit `SourceSurface`, fall back to legacy module types, preserve source kind/layout spelling, validate generic/comptime generic rows, and expose fields, constructors, variants, methods, associated types, traits, thread-safety attributes, destructor, dyn-trait, and pack/align counts/flags.)
@@ -1448,11 +1483,13 @@ family lands):
 
 - [~] Complete binary package-image generation/loading and `stark inspect-pkg`.
   - [x] Implement the selfhost MIR package-image leaf codec and deterministic summary inspection.
-  - [ ] Implement the full compiler package-image logical section model and binary loader.
+  - [~] Implement the full compiler package-image logical section model and binary loader.
     - [x] Validate and inspect the host logical `STRS`/`PINF`/`MANF` section wrapper in self-host code.
     - [x] Preserve and inspect logical package identity/profile/target facts from `PINF`/`STRS`.
     - [x] Preserve and inspect logical target backend facts from `PINF` without materializing `MANF`.
-    - [ ] Decode `MANF` and materialize logical package-image facts without source reconstruction.
+    - [~] Decode `MANF` and materialize logical package-image facts without source reconstruction.
+      - [x] Decode the uncompressed Brotli stream emitted by Stage1 and preserve exact JSON payload bytes.
+      - [ ] Decode general Stage0 Brotli streams directly in Stage1.
   - [x] Add `stark inspect-pkg` as a top-level compiler command.
   - [x] Update package-image docs and tests after public spelling lands.
   - [x] Add per-fact test progress streaming to `stark test` (2026-07-03): the driver streams runner output line-by-line (never buffers until exit); `--test-progress` passes `--progress` to the generated runner, which prints `run <name>` markers and `ok|FAILED <name> (k/N)` counters via the new `System.Testing.BeginFact`/`RunFactCounted`, and the driver stamps `[elapsed]` prefixes; `--test-timeout <seconds>` kills the process tree and reports the in-flight fact. Default output stays byte-identical.
@@ -1761,7 +1798,7 @@ historical triage.
   recursive-call warning family plus the clean `0 errors, 6 warnings` summary
   instead of requiring empty compiler stderr.
 
-- [ ] Open (2026-07-08): `List<Compiler.Mir.EnumLayout.MirEnumLayoutFact>`
+- [x] Fixed/revalidated (2026-07-10): `List<Compiler.Mir.EnumLayout.MirEnumLayoutFact>`
   lowers to an EMPTY LLVM struct in from-source compiles of the selfhost
   graph (`%System_Collections_List_..._MirEnumLayoutFact_ = type { }`)
   while sibling `List<T>` instantiations are correct
@@ -1785,6 +1822,10 @@ historical triage.
   `dereferenceable(0)`. The full `Compiler.Mir` facade repro remains the only
   unconfirmed failing shape; a focused `EnumReturnProbe` run was stopped after
   `lower-mir` reached 220.3s to avoid a broad/stalling verification pass.
+  The full package-free `Compiler.Mir` facade repro completed on 2026-07-10:
+  `%System_Collections_List_Compiler_Mir_EnumLayout_MirEnumLayoutFact_` emitted
+  as `{ { ptr, i64, i64 } }`, no `dereferenceable(0)` facts remained, and Clang
+  accepted the 14 MiB LLVM module.
 
 - [x] Fixed (2026-07-08): deferred aggregate insert over a branch join emitted
   invalid LLVM (`use of undefined value '%vN'`), breaking every selfhost
