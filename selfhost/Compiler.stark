@@ -9,6 +9,7 @@ export import Compiler.Binding
 export import Compiler.Typing
 export import Compiler.Ir
 export import Compiler.Mir
+export import Compiler.Ssa
 export import Compiler.Llvm
 export import Compiler.AsmFacts
 export import Compiler.TargetFacts

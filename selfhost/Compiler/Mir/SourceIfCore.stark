@@ -1,0 +1,102 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceIfCore
+
+internal fn bool TryValidateMirEnumReturnCarrier(
+    borrow IrTable<MirInstruction> instrs,
+    MirValueId value,
+    u32[0 max] returnOwnerDeclarationIndex)
+{
+    stack mut TypeId returnOwnerType = TypeIdOf(0);
+    if (!TryGetMirEnumValueOwnerType(instrs, value.Index(), returnOwnerType))
+    {
+        return false;
+    }
+
+    stack TypeId declaredOwnerType = TypeIdOf(returnOwnerDeclarationIndex + 1);
+    return returnOwnerType.Equals(declaredOwnerType);
+}
+
+internal fn bool TryLowerEnumReturnExprNodeWithTypesAndLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    u32[0 max] returnOwnerDeclarationIndex,
+    out MirValueId value)
+{
+    value = MirValueIdOf(0);
+    stack mut u32[0 max] expressionOwnerDeclarationIndex = 0;
+    if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, id, localTypes, expressionOwnerDeclarationIndex)
+        || expressionOwnerDeclarationIndex != returnOwnerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack MirValueId loweredValue = LowerExprNodeWithTypesAndLocals(nodes, id, instrs, localTypes, localOverrides);
+    if (!TryValidateMirEnumReturnCarrier(instrs, loweredValue, returnOwnerDeclarationIndex))
+    {
+        return false;
+    }
+
+    value = loweredValue;
+    return true;
+}
+
+internal fn bool TryLowerEnumReturnExprNodeWithCallContext(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] id,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    u32[0 max] returnOwnerDeclarationIndex,
+    out MirValueId value)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    value = MirValueIdOf(0);
+    stack mut u32[0 max] expressionOwnerDeclarationIndex = 0;
+    if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, id, localTypes, expressionOwnerDeclarationIndex)
+        || expressionOwnerDeclarationIndex != returnOwnerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack MirValueId loweredValue = LowerExprNodeWithCallContext(
+        nodes,
+        id,
+        instrs,
+        localTypes,
+        localOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals);
+    if (!TryValidateMirEnumReturnCarrier(instrs, loweredValue, returnOwnerDeclarationIndex))
+    {
+        return false;
+    }
+
+    value = loweredValue;
+    return true;
+}

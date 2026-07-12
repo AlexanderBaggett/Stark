@@ -8251,3 +8251,798 @@ comments explaining which platform is required.
     `../../stark test --filter ImportedTypedTemplateScalarPreambleStatementsFoldWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
     rebuilt/emitted the self-host compiler library/package and test executable,
     exercised normal SSA optimization plus LLVM emission, and passed 1/1.
+
+## 2026-07-11 Direct Imported Template Integer Operator Slice
+
+- Split package-template scalar operator decoding and evaluation into the
+  513-line `Compiler.Mir.ImportedTemplateScalarOperators` module, leaving the
+  graph/type/range orchestration in `ImportedTemplateLowering.stark` and both
+  files below 2,500 lines.
+- Added direct constant evaluation for integer `**`, `+%`, `-%`, `*%`, `+|`,
+  `-|`, `*|`, `&`, `^`, `|`, `<<`, `>>`, and unary `-%`. Power and shift
+  counts are bounded; ordinary/power/shift overflow fails closed before output
+  reservation.
+- Reused MIR's checked, exact wrapping, exact saturation, and shift helpers so
+  package-template folding and ordinary MIR fact recomputation share integer
+  semantics. Signed saturation is additionally clamped to the package graph's
+  published inclusive range before singleton facts are attached.
+- Kept unsigned wrapping and saturation on compatibility fallback while MIR's
+  scalar value/range carrier is signed `i64`; representable unsigned bitwise
+  and shift results lower directly without dropping the caller's unsignedness
+  contract.
+- Added a separate 471-line imported-template operator test helper instead of
+  growing the already oversized `IrTests.stark`. Its package graph evaluates
+  eight discarded constant roots covering the new families, including an exact
+  representable unsigned shift, and consumes an ordered conversion. Its
+  terminal signed saturating multiply emits exactly one `i8 -128` instruction
+  with `[-128, -127)` on the MIR value, function return, and LLVM definition.
+  An oversize `i8 << 8` graph returns nonmutating `UnsupportedBody`.
+- Verification:
+  - focused `ImportedTemplateScalarOperators.stark --check`: passed.
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the ten
+    expected depth-64 bounded-recursion warnings.
+  - full-front-end imported-template operator helper check: passed.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check`: passed.
+  - optimized package-backed project run with
+    `../../stark test --filter ImportedTypedTemplateIntegerOperatorsFoldWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
+    rebuilt and emitted `libStarkCompiler.a`, `libStarkCompiler.starkpkg`, and
+    the test executable; exercised constant propagation, inlining, constant
+    graph CSE, dynamic-storage specialization, constant stdlib specialization,
+    branch pruning, memory optimization, ownership-traffic optimization, SSA,
+    and LLVM emission; and passed the selected fact 1/1.
+  - the cold rebuild again exposed the tracked root-pipeline cost, including
+    several `lower-mir` passes between roughly 214 and 301 seconds; this is
+    verification evidence for TASKS.md's root-module incrementality item, not
+    runtime work in the folded template.
+
+## 2026-07-11 Direct Imported Template Scalar Local Constant Slice
+
+- Added the focused `Compiler.Mir.ImportedTemplateScalarLocals` module with a
+  bounded 64-entry stack environment for scalar local name, exact type,
+  signedness, and constant-value facts. It caches each declared name's stable
+  hash so lookup hashes the query once, then compares package text exactly on
+  hash matches with two reused scratch buffers; no runtime local storage or
+  load is emitted.
+- Extended source-free package-template lowering to ordered immutable
+  initialized local constants followed by later `name` expressions. Every
+  statement must carry canonical `local` storage and `immutable-binding`
+  provenance and pair in source order with one contiguous `const` declaration
+  side row having the exact same published type.
+- Initializers are evaluated before their name becomes visible. Duplicate and
+  unresolved names, side-row/count/type mismatches, mutable or storage-backed
+  declarations, grouped declarators, and bodies beyond the bounded capacity
+  retain nonmutating compatibility fallback rather than losing facts.
+- Added a separate package-backed test helper so the oversized `IrTests.stark`
+  does not grow materially. Three chained constants fold to exactly one
+  `i16 82` MIR instruction, with `[82, 83)` on the value, function return, and
+  LLVM definition; unresolved and duplicate-name templates prove transactional
+  `UnsupportedBody` behavior.
+- Verification:
+  - focused `ImportedTemplateScalarLocals.stark --check`: passed.
+  - focused `ImportedTemplateLowering.stark --check`: passed with only the ten
+    expected depth-64 bounded-recursion warnings.
+  - focused local-constant test helper full-front-end check: passed.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check`: passed against the
+    final cached-name source.
+  - optimized package-backed selected run with
+    `../../stark test --filter ImportedTypedTemplateLocalConstantsFoldWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
+    rebuilt/emitted the self-host compiler library/package and test executable,
+    exercised constant propagation, inlining, constant-graph CSE,
+    dynamic-storage and constant-stdlib specialization, branch pruning, memory
+    and ownership optimization, SSA lowering, and LLVM emission, then passed
+    the selected fact 1/1.
+  - the final cold rebuild after the cached-name optimization again exposed the
+    open root-pipeline incrementality cost: individual `lower-mir` passes
+    reached 689.4, 910.6, and 916.1 seconds; the optimized test-root rebuild's
+    `lower-mir` pass completed in 29.7 seconds.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-11 Direct Imported Template Scalar Variable And Assignment Slice
+
+- Extended the bounded package-template scalar environment with exact
+  mutability state and in-place value updates. Initialized independent scalar
+  locals accept canonical `stack` or `register` storage and pair with ordered
+  `var` declaration side rows; heap/arena, uninitialized, grouped, or
+  storage-capacity-bearing declarations retain compatibility fallback.
+- Added direct-name assignment lowering that consumes the statement name,
+  assignment-operator text, RHS root, and separate ordinal-one target root.
+  The target must be a fact-complete `name` expression matching the statement
+  name exactly and resolve to a mutable local of the same scalar type and
+  signedness.
+- Reused the shared scalar operator evaluator for every grammar-defined
+  compound assignment: checked `+=`, `-=`, `*=`, `/=`, `%=`; wrapping `+%=`,
+  `-%=`, `*%=`; saturating `+|=`, `-|=`, `*|=`; and bitwise `&=`, `|=`, `^=`.
+  Plain `=` is also supported. Saturating results clamp to the declared local
+  range and every result must fit before the environment mutates.
+- The package-backed regression combines an immutable stack seed, mutable
+  register accumulator, plain assignment, and all fourteen compound operators.
+  The entire sequence emits one `i8 7` MIR constant with `[7, 8)` on the value,
+  function return, and LLVM definition. Immutable assignment, mismatched
+  statement/target names, and heap scalar storage return transactional
+  `UnsupportedBody`.
+- Replaced one direct comparison of an `out` enum result with an exhaustive
+  switch after the first optimized build exposed a Stage0 `EmitPairComparison`
+  invariant. The repaired form preserves behavior and builds through Stage0.
+- Verification:
+  - focused operator, local-state, and direct-lowering checks: passed; the
+    direct lowerer reports only its ten existing depth-64 recursion warnings.
+  - expanded local-variable test helper full-front-end check: passed.
+  - optimized package-backed selected run with
+    `../../stark test --filter ImportedTypedTemplateScalarVariablesFoldWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`:
+    rebuilt/emitted the self-host compiler library/package and test executable,
+    exercised constant propagation, inlining, constant-graph CSE,
+    dynamic-storage and constant-stdlib specialization, branch pruning, memory
+    and ownership optimization, SSA lowering, and LLVM emission, then passed
+    1/1. A warm all-operator fixture rebuild also passed 1/1.
+  - the cold rebuild again exposed the root-pipeline incrementality cost;
+    individual `lower-mir` passes reached 747.8, 979.0, and 988.5 seconds.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check`: passed against the
+    final all-operator source.
+  - MIR dependency-layer validation, untracked-file whitespace scan, and
+    `git diff --check`: passed.
+
+## 2026-07-11 Direct Imported Template Scalar Definite-Initialization Slice
+
+- Extended the bounded package-template scalar environment with a definite-
+  initialization bit per local. Initializer-free independent scalar `stack`
+  and `register` declarations now retain their exact published type,
+  signedness, and mutability without inventing a value or materializing
+  storage.
+- Name reads and compound assignments reject an uninitialized local. A mutable
+  local's first plain `=` and the separately published `init =` operator both
+  establish the value; immutable targets still reject. Every accepted write
+  must match the target's exact package type/signedness and fit its published
+  range before the environment changes.
+- Added a focused 389-line package-backed helper rather than growing the
+  already oversized `IrTests.stark`. Its valid graph initializes one stack
+  scalar with `init =`, one register scalar with plain `=`, performs a later
+  compound update, and emits exactly one `i16 43` MIR value with `[43, 44)` on
+  the value, function return, and expected LLVM definition. Read-before-init,
+  compound-before-init, and immutable-init graphs prove nonmutating
+  `UnsupportedBody` fallback.
+- Verification:
+  - focused `ImportedTemplateScalarLocals.stark --check`: passed.
+  - focused `ImportedTemplateLowering.stark --check`: passed with only its ten
+    existing depth-64 bounded-recursion warnings.
+  - focused initialization helper full-front-end check: passed.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check`: passed, including the
+    new helper import and generated fact surface.
+  - optimized selected execution was attempted with
+    `../../stark test --filter ImportedTypedTemplateScalarInitializationFoldsWithoutRuntimeWork --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`; the cold compiler rebuild remained silent for more than 18 minutes, beyond the prior 988.5-second observation, and was interrupted without a pass/fail result. Optimized execution remains pending rather than being recorded as passed.
+  - MIR dependency-layer validation, untracked-file whitespace scan, and
+    `git diff --check`: passed.
+
+## 2026-07-11 Imported Template Specialization Backend-Fact Slice
+
+- Added a focused package-specialization adapter that resolves an imported
+  function template by exact qualified-resolved-name and overload key, then
+  joins its base qualified name to exactly one compiler function-effect row.
+  Missing, ambiguous, and inconsistent identities fail before any MIR or fact
+  table is mutated.
+- Expanded the LLVM function-effect carrier to preserve package facts for
+  memory purity, synchronization/free/unwind behavior, progress, hot/cold,
+  strict-FP, inline preference, opaque optimization mode, and no-recurse.
+  Opaque functions emit `optnone noinline`; explicit package inline modes emit
+  `alwaysinline`, `inlinehint`, or `noinline`.
+- Expanded the calling-convention carrier with package `fastcc` while retaining
+  tail-call precedence. The adapter publishes effect, tail, and calling rows at
+  the same dense function id as the directly folded MIR function and feeds all
+  of them, plus the exact return/value ranges, to numbered LLVM emission.
+- Added a 356-line package-backed helper rather than growing the oversized
+  `IrTests.stark`. It covers a hot `fastcc` specialization and a cold opaque
+  `tailcc` specialization, and checks their complete LLVM definitions. Missing
+  effect rows, backend-mode disagreement, and missing specialization identity
+  prove nonmutating failure.
+- Verification:
+  - focused `LlvmFacts.stark --check`: passed.
+  - focused specialization adapter and package-backed helper full-front-end
+    checks: passed.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I ../../selfhost`:
+    passed, including the new helper import and generated fact surface. The
+    check again exposed root incrementality costs, with reported imported-module
+    type-check stages reaching 237.2 seconds.
+  - optimized selected execution was started with
+    `../../stark test --filter ImportedTypedTemplateScalarSpecializationsPreserveBackendFacts --test-progress --test-timeout 300 --target arm64-apple-macosx26.0.0 --stage stage0`; the cold rebuild remained completely silent through the bounded attempt and was interrupted without a pass/fail result. Optimized execution remains pending rather than being recorded as passed.
+  - MIR dependency-layer validation, workspace Stark whitespace scan, and
+    `git diff --check`: passed.
+
+## 2026-07-11 Source Function Declared Backend-Fact Slice
+
+- Connected explicitly declared source function performance facts to the
+  module-wide function-effect prepass. `hot`, `cold`, `strictfp`, `inline`,
+  `noinline`, and `inlinehint` now survive into LLVM definitions and direct
+  call-site attributes instead of being retained only by typing/package-image
+  models.
+- Added allocation-free adjacent-prelude scanning for `[Backend(Opaque)]`.
+  Opaque source definitions and calls emit the required `optnone noinline`
+  pair and override a conflicting inline preference, matching the imported
+  specialization carrier.
+- Kept inferred `nounwind`, default inline-hint, and internal `fastcc` outside
+  this compatibility-emitter slice. Those defaults are now explicitly tracked
+  for import from typed function-effect and optimized-SSA ABI facts when the
+  open ABI-lowering task owns calling-convention selection, including
+  tail/FFI/export precedence.
+- Added a focused 45-line helper instead of growing the 41k-line aggregate test
+  root. It covers explicit hot/strict/inline, cold opaque, public noinline,
+  exported inlinehint, tail precedence, default behavior, and direct-call fact
+  propagation.
+- Verification:
+  - focused `SourceFunctionContext.stark --check -I selfhost`: passed; only its
+    existing bounded-recursion warnings remain.
+  - focused source backend helper full-front-end check: passed.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir`: passed with the new helper import and fact; the
+    root again reported imported-module type-check stages up to 196.5 seconds.
+  - real clang IR parsing accepted both hot/strict/alwaysinline and opaque
+    `optnone noinline` attribute combinations on definitions and direct calls.
+  - optimized selected test execution and a smaller standalone helper
+    executable were both attempted; each entered the known silent cold backend
+    rebuild and was interrupted after a bounded attempt without a pass/fail
+    result. Executable coverage remains pending rather than being recorded as
+    passed.
+
+## 2026-07-11 Source Function Effect Module Split
+
+- Extracted the allocation-free MIR instruction-range effect scans, block-range
+  adapters, law/finite/norecurse proof-table helpers, fixed-point computations,
+  and source backend-modifier merge from `SourceModuleLowering.stark` into the
+  focused `Compiler.Mir.SourceFunctionEffects` module.
+- Kept module function-table construction and lowering orchestration in
+  `SourceModuleLowering`, avoiding a reverse dependency or callback layer. The
+  split introduces no allocation, dynamic dispatch, or fact conversion, and
+  preserves the exact `FunctionEffectFacts` rows consumed by LLVM definition
+  and direct-call attribute emission.
+- Re-exported the focused module through `Compiler.Mir` so existing internal
+  facade consumers retain the moved helper surface.
+- Reduced `SourceModuleLowering.stark` from 9,632 to 8,790 lines. The remaining
+  file is still above the preferred 5k-line threshold, so a cycle-free follow-up
+  split remains explicitly open in `TASKS.md`.
+- Verification:
+  - `./stark selfhost/Compiler/Mir/SourceFunctionEffects.stark --check -I selfhost`:
+    passed with `Check succeeded.`
+  - `./stark selfhost/Compiler/Mir/SourceModuleLowering.stark --check -I selfhost`:
+    passed with `Check succeeded.` after validating the full imported-module
+    closure.
+  - `scripts/check-selfhost-mir-dependencies.sh`: passed.
+  - `git diff --check`: passed before the ledger update; final hygiene is rerun
+    below with the aggregate test check.
+
+## 2026-07-11 Source Try Lowering Module Split
+
+- Extracted the complete source `try` family from
+  `SourceModuleLowering.stark` into `Compiler.Mir.SourceTryLowering`: shape
+  detection, enum-tag selection, nested binding/storage planning, and MIR
+  control-flow lowering for returned, local, slice-element, scalar-storage,
+  and constructed-object-field propagation paths.
+- Preserved the existing typed enum layout, success/error role compatibility,
+  integer-range, ABI, distinct-storage, slice descriptor, object layout,
+  initialization, and block-range inputs verbatim. The split adds no wrapper,
+  callback, dynamic dispatch, allocation, or fact conversion.
+- Trimmed inherited imports after the move. The focused module depends on the
+  existing if-lowering module only for the shared discard-before-overwrite
+  proof; LLVM emission, package-image, assembly, loop, switch, test-support,
+  and function-effect modules are no longer in its dependency closure.
+- Re-exported `Compiler.Mir.SourceTryLowering` through the `Compiler.Mir`
+  facade. `SourceModuleLowering.stark` now has 4,402 lines and
+  `SourceTryLowering.stark` has 4,437, placing both below the preferred 5k-line
+  maintenance threshold.
+- Verification:
+  - `./stark selfhost/Compiler/Mir/SourceTryLowering.stark --check -I selfhost`:
+    passed after the focused import trim.
+  - `./stark selfhost/Compiler/Mir/SourceModuleLowering.stark --check -I selfhost`:
+    passed against the extracted try APIs.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir`: passed through the `Compiler.Mir` facade and the
+    full existing IR fact surface. The known imported-module incrementality
+    cost remained visible, with reported type-check stages up to 191.6 seconds.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-11 Source Switch Case and Assignment-Arm Module Split
+
+- Extracted two dependency-closed switch families from
+  `SourceSwitchLowering.stark`, reducing the remaining orchestration module
+  from 23,424 to 20,823 lines without adding a forwarding layer.
+- `SourceSwitchCaseParsing.stark` (1,683 lines) owns decision preflight rows,
+  case descriptors, enum variant/tag resolution, descriptor validation, and
+  typed enum case-label parsing. Typed aggregate/list rows, enum layout tags,
+  capture spans, scalar ranges, and nested descriptors remain the exact tables
+  passed to the existing MIR lowering path.
+- `SourceSwitchAssignmentArms.stark` (979 lines) owns assignment-arm parsing,
+  arena dynamic-reserve statements, local-type construction, module-call
+  validation, and direct MIR store lowering. It continues to borrow the
+  existing expression/local/fact tables and writes directly to the caller's
+  MIR instruction table; no callback, dynamic dispatch, fact-copying adapter,
+  carrier conversion, or additional allocation was introduced.
+- Re-exported both modules through `Compiler.Mir` and imported them directly
+  from the remaining switch consumer.
+- Verification:
+  - focused `--check -I selfhost` runs for both extracted modules passed with
+    exit code 0 and `Check succeeded.`
+  - `SourceSwitchLowering.stark --check -I selfhost` passed with exit code 0
+    and `Check succeeded.` against the combined split.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed with exit code 0 and `Check succeeded.`,
+    validating the `Compiler.Mir` facade and aggregate LLVM-facing fact
+    surface. The known imported-module incrementality cost remained visible,
+    with reported type-check stages up to 189.8 seconds.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-11 Typed Source Backend-Default Bridge Slice
+
+- Added an opt-in source-to-MIR bridge from the canonical
+  `TypedFunctionEffectSummaryTable` into the existing LLVM effect and
+  calling-convention carriers. It imports inferred `nounwind`, default
+  `inlinehint`, no-sync/no-free/progress/no-recurse facts, and internal
+  `fastcc` without re-deriving those facts from source spelling.
+- Preserved ABI ownership and precedence: tail-callable functions still emit
+  `tailcc`; FFI conventions still take precedence over `fastcc`; exported
+  functions do not receive the internal convention; ordinary internal and
+  public non-exported functions and their direct calls receive the same
+  `fastcc` fact.
+- Kept `CompileModuleFromAst` byte-stable for the compatibility snapshot
+  surface. `CompileModuleFromAstWithTypedBackendDefaults` constructs the typed
+  declarations, members, and effect summaries only when explicitly selected,
+  so the compatibility path gains neither allocation nor extra front-end
+  work. Dense declaration-order lookup is checked against the exact `fn`
+  keyword token before any fact is applied.
+- Fact construction is outside the reusable lowering core. The core borrows an
+  already-built `SourceModuleLoweringFacts` bundle and typed summary table, so
+  the eventual optimized SSA/ABI owner can hand off its canonical rows without
+  rebuilding or copying them; the standalone opt-in wrapper remains the only
+  convenience path that constructs those tables.
+- Added a focused helper fact covering internal, public, exported, tail, and
+  direct-call cases. The helper asserts the complete emitted LLVM attribute
+  and calling-convention sequences rather than checking the carrier in
+  isolation.
+- The bridge leaves the parent task open: the eventual optimized SSA/ABI
+  pipeline must select this typed-owned path and then retire the opt-in
+  boundary after compatibility snapshots migrate.
+- Verification:
+  - `./stark selfhost/Compiler/Mir/SourceFunctionEffects.stark --check -I selfhost`:
+    passed with `Check succeeded.` after adding the typed-summary adapter.
+  - `./stark selfhost/Compiler/Mir/SourceModuleLowering.stark --check -I selfhost`:
+    passed with exit code 0 and `Check succeeded.` against the final borrowed-
+    fact orchestration path.
+  - focused `SourceBackendFactTests.stark` and full `IrTests.stark` front-end
+    checks both passed with exit code 0 and `Check succeeded.`; the aggregate
+    check again exposed the known expensive imported-module type checks.
+  - Selected test execution and a standalone executable probe were attempted,
+    but their tool sessions yielded before terminal output and the probe did
+    not produce the requested executable. The outstanding compiler processes
+    were terminated cleanly before the final serial verification, so runtime
+    execution is not recorded as passed and no stale check remains active.
+  - MIR dependency-layer validation and `git diff --check`: passed after the
+    final code and ledger updates.
+
+## 2026-07-11 Source Switch Pattern Module Split
+
+- Split three dependency-directed families out of the 31,690-line
+  `SourceSwitchLowering.stark` while preserving the existing typed pattern,
+  range, enum-layout, ABI, alias, capture, and LLVM-facing inputs verbatim.
+  The remaining orchestration/lowering module is 24,269 lines; further splits
+  remain explicitly tracked until it is below the preferred 5k-line limit.
+- `SourceSwitchPatterns.stark` (2,426 lines) owns switch decision nodes and
+  descriptors, row/span validation, bounded descriptor worklists, and typed
+  aggregate/list/member row translation.
+- `SourceSwitchPatternConditions.stark` (1,408 lines) owns scalar label and
+  payload parsing, enum/list/aggregate condition construction, and recursive
+  disjointness/overlap proofs. The condition path remains direct and retains
+  the exact range and enum tag facts consumed by MIR builders.
+- `SourceSwitchAggregatePatterns.stark` (3,678 lines) owns fixed-array/list
+  pattern parsing, typed struct field ordinal/flat-layout resolution, nested
+  capture translation, scrutinee ABI resolution, and value-parameter nested
+  aggregate condition lowering.
+- No callback layer, dynamic dispatch, allocation, fact copying, or carrier
+  conversion was introduced. The new modules are re-exported through
+  `Compiler.Mir`; the consumer imports them directly. The switch-specific
+  bracket matcher was renamed to avoid exporting an ambiguous overload beside
+  the local-lowering bracket matcher.
+- Verification:
+  - focused checks for all three extracted modules passed with exit code 0 and
+    `Check succeeded.`
+  - `SourceSwitchLowering.stark --check -I selfhost` passed with exit code 0
+    and only its pre-existing bounded-recursion warning.
+  - `SourceModuleLowering.stark --check -I selfhost` passed with exit code 0
+    and `Check succeeded.`, validating the downstream lowering and LLVM fact
+    handoff surface.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed with exit code 0 and `Check succeeded.`,
+    validating the `Compiler.Mir` re-export and existing switch fact surface.
+  - MIR dependency-layer validation and `git diff --check`: passed after the
+    final import ordering and ledger update.
+
+## 2026-07-11 Source Switch Storage Pattern Module Split
+
+- Extracted storage-backed struct aggregate and typed fixed-array/list pattern
+  condition lowering into `SourceSwitchStoragePatterns.stark` (877 lines).
+  `SourceSwitchLowering.stark` is now 23,424 lines; switch-arm parsing,
+  assignment CFG construction, and terminal emission remain tracked until the
+  orchestration module is below the preferred 5k-line limit.
+- Preserved the lowering inputs verbatim: struct base byte offsets, typed
+  aggregate/member rows, fixed-array lengths and element strides, scalar range
+  facts, local overrides, parameter ABI facts, and nested capture conditions
+  continue directly into the existing MIR condition builders. No callback,
+  dynamic dispatch, fact-copying adapter, carrier conversion, or additional
+  allocation was introduced.
+- Re-exported the focused module through `Compiler.Mir` and added the direct
+  consumer import. The only module-local diagnostic remains the pre-existing
+  ordinary-recursion warning in the typed fixed-array/list frame drain; this
+  split does not deepen or add recursion.
+- Verification:
+  - `./stark selfhost/Compiler/Mir/SourceSwitchStoragePatterns.stark --check -I
+    selfhost`: passed with exit code 0 and `Check succeeded.`
+  - `./stark selfhost/Compiler/Mir/SourceSwitchLowering.stark --check -I
+    selfhost`: passed with exit code 0 and `Check succeeded.`
+  - `./stark selfhost/Compiler/Mir/SourceModuleLowering.stark --check -I
+    selfhost`: passed with exit code 0 and `Check succeeded.`, validating the
+    downstream source-to-MIR and LLVM-fact handoff boundary.
+  - `./stark tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir`: passed with exit code 0 and `Check succeeded.`,
+    validating the `Compiler.Mir` facade and aggregate IR fact surface.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-11 Source Switch Terminal Parsing and CFG Split
+
+- Extracted 7,448 implementation lines from `SourceSwitchLowering.stark` into
+  two dependency-directed modules. After the two direct imports, the remaining
+  switch orchestration module is 13,377 lines, down from 20,823.
+- `SourceSwitchTerminalParsing.stark` (4,707 lines) owns terminal return-arm
+  and case collection, exhaustiveness and interval-overlap validation, enum
+  tag handling, capture typing, guards, and fixed-array slice descriptor and
+  argument construction. It preserves the existing typed aggregate/list rows,
+  scalar ranges, capture spans, enum layout/tag facts, and local overrides as
+  direct borrowed tables.
+- `SourceSwitchTerminalLowering.stark` (2,805 lines) consumes that surface and
+  owns integer, boolean, enum-payload, fixed-array/list, and struct-aggregate
+  terminal CFG construction. It continues to emit directly into caller-owned
+  MIR instruction, block, and block-range tables, so the LLVM-facing value,
+  layout, alias, ABI, and branch facts are neither copied nor reconstructed.
+- No forwarding wrapper, callback, dynamic dispatch, carrier conversion, or
+  additional allocation was introduced. Both modules remain below the
+  preferred 5k-line maintenance limit and are re-exported through
+  `Compiler.Mir`.
+- Verification:
+  - focused checks for both extracted modules passed with exit code 0 and
+    `Check succeeded.`
+  - `SourceSwitchLowering.stark --check -I selfhost` passed with exit code 0
+    and `Check succeeded.` against the new dependency boundary.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed with exit code 0 and `Check succeeded.`,
+    validating the `Compiler.Mir` facade and aggregate LLVM-facing fact
+    surface. The known imported-module incrementality cost remained visible,
+    with reported type-check stages up to 186.9 seconds.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-11 Source Switch Module Split Completion
+
+- Completed the dependency-directed decomposition of the original 31,690-line
+  source switch lowerer. The remaining `SourceSwitchLowering.stark` facade and
+  emission-entrypoint module is 4,304 lines, and every extracted switch module
+  is below the preferred 5k-line maintenance threshold.
+- `SourceSwitchAssignmentParsing.stark` (2,507 lines) owns assignment-case
+  collection while preserving exact case intervals, typed pattern rows,
+  capture spans, enum tags, storage offsets, and parsed assignment arms.
+- `SourceSwitchAssignmentLowering.stark` (3,672 lines) owns assignment local
+  typing, value/capture lowering, raw-pointer fact updates, and integer,
+  boolean, and field-assignment CFG construction. It mutates the existing
+  caller-owned MIR and fact tables directly.
+- `SourceSwitchFunctionLowering.stark` (2,998 lines) owns constructed-object
+  switch-field lowering and terminal function-to-block orchestration through
+  direct calls into the assignment and terminal layers.
+- No forwarding wrapper, callback, dynamic dispatch, carrier conversion, fact
+  reconstruction, or additional allocation was introduced. Typed range,
+  layout, alias, ABI, capture, pointer, block, and branch facts remain on their
+  original direct path into MIR and LLVM lowering.
+- `SourceModuleLowering.stark` now imports the function-level switch module
+  directly, matching Stark's intentionally non-transitive import semantics.
+- Verification:
+  - focused checks for all three final extracted modules passed with exit code
+    0 and `Check succeeded.`
+  - the 4,304-line `SourceSwitchLowering.stark` consumer passed with exit code
+    0 and `Check succeeded.`
+  - `SourceModuleLowering.stark --check -I selfhost` passed after the direct
+    downstream import was added.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed with exit code 0 and `Check succeeded.`,
+    validating the complete `Compiler.Mir` facade and aggregate LLVM-facing
+    fact surface. The known imported-module cost remained visible, with
+    reported type-check stages up to 201.7 seconds.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-12 Source If Module Split Completion
+
+- Completed the dependency-directed decomposition of the 13,425-line source
+  if lowerer. `SourceIfLowering.stark` is now a 1,396-line emission facade,
+  and every extracted module is below the preferred 5k-line threshold.
+- `SourceIfCore.stark` (102 lines) owns enum-return carrier validation and
+  typed enum-return value lowering; `SourceIfShapes.stark` (229 lines) owns
+  function-body shape detection.
+- `SourceIfParsing.stark` (2,419 lines) owns terminal arms, nested/recursive
+  assignment forms, multi-assignment parsing, and raw-pointer fact resolution.
+- `SourceIfStorageMutation.stark` (2,075 lines) owns storage-mutation parsing,
+  call/condition validation, block counts, stores, and recursive CFG lowering.
+- `SourceIfAssignmentLowering.stark` (2,068 lines) owns arm result typing,
+  source local type codes, call validation, capture/local overrides, phi
+  construction, and nested/recursive assignment CFG lowering.
+- `SourceIfFunctionLowering.stark` (3,337 lines) and
+  `SourceIfReturnLowering.stark` (1,981 lines) own if-expression, local,
+  nested, recursive, and return function-to-block orchestration.
+- Typed ranges, enum layouts, raw-pointer and alias facts, local/capture facts,
+  MIR values, phi inputs, branch structure, and block ranges continue through
+  the original caller-owned tables into LLVM lowering. No forwarding wrapper,
+  callback, dynamic dispatch, carrier conversion, fact reconstruction, or
+  additional allocation was introduced.
+- Added direct imports for non-transitive consumers in source-module, switch,
+  switch-assignment, switch-terminal, and try lowering. These are dependency
+  declarations only and add no runtime work.
+- Verification:
+  - `SourceIfReturnLowering.stark --check -I selfhost` passed with exit code 0
+    and `Check succeeded.`, covering the complete seven-module dependency
+    chain.
+  - the 1,396-line `SourceIfLowering.stark` facade passed with exit code 0 and
+    `Check succeeded.`
+  - `SourceModuleLowering.stark --check -I selfhost` passed after all direct
+    downstream imports were present.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed with exit code 0 and `Check succeeded.`,
+    validating the aggregate MIR and LLVM-facing fact surface. The known
+    imported-module cost remained visible, with reported type-check stages up
+    to 210.1 seconds.
+  - MIR dependency-layer validation and `git diff --check`: passed.
+
+## 2026-07-12 Source Local Module Split Completion
+
+- Completed the dependency-directed decomposition of the 10,278-line source
+  local lowerer. `SourceLocalLowering.stark` is now a 1,777-line lexical,
+  scalar-layout, alignment, and shared-helper core; every extracted module is
+  below the preferred 5k-line threshold.
+- `SourceLocalStorageLayout.stark` (3,419 lines) owns aggregate/enum layout,
+  local storage models, raw-pointer facts, bounds proofs, and declarations;
+  `SourceTryPropagation.stark` (987 lines) owns propagation roles,
+  compatibility, funnels, payload ranges, and enum-payload facts.
+- `SourceLocalExpressionParsing.stark` (1,075 lines) owns enum, aggregate, and
+  raw-pointer expression parsing; `SourceLocalInitialization.stark` (959
+  lines) owns object/scalar/enum/fixed-array/raw-pointer local initialization.
+- `SourceLocalMutation.stark` (1,809 lines) owns scalar, enum, slice,
+  raw-pointer, and constructed-object storage mutation parsing/lowering;
+  `SourceLocalArena.stark` (398 lines) owns arena selectors, target-typed
+  constructor shapes, dynamic locals, and reserve lowering.
+- Relocated the original implementations directly. Typed ranges, enum tags
+  and layouts, raw-pointer mutability/element/nested facts, bounds proofs,
+  alias/distinct-storage facts, alignments, local overrides, call contracts,
+  MIR values/instructions/blocks, and storage mutation ordering continue
+  through the same caller-owned tables into LLVM lowering. No forwarding
+  wrapper, callback, dynamic dispatch, carrier conversion, fact
+  reconstruction, or additional allocation was introduced.
+- Added direct imports for non-transitive source-module, if, switch, try, and
+  function-context consumers. These imports are compile-time dependency
+  declarations and add no runtime work.
+- Verification:
+  - `SourceLocalStorageLayout.stark --check -I selfhost` passed with exit code
+    0 and the existing bounded-recursion warnings.
+  - `SourceLocalInitialization.stark`, `SourceLocalMutation.stark`, and
+    `SourceLocalArena.stark` focused checks passed with exit code 0 and
+    `Check succeeded.`
+  - `SourceModuleLowering.stark --check -I selfhost` passed after all direct
+    consumer imports were present.
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed with exit code 0 and `Check succeeded.`,
+    validating the aggregate MIR and LLVM-facing fact surface. The known
+    imported-module cost remained visible, with reported type-check stages up
+    to 282.5 seconds.
+  - every top-level `selfhost/Compiler/Mir/*.stark` source-lowering module is
+    below 5,000 lines; MIR dependency-layer validation and `git diff --check`
+    passed.
+
+## 2026-07-12 Aggregate Carrier DCE Execution And Cold-Build Baseline
+
+- Closed the pending executable verification for raw O0 aggregate-carrier
+  load elimination. LLVM block/direct-switch emission keeps using the existing
+  allocation-free use-count table and removes only unused `FixedArrayLoad`
+  and `StructValueLoad` producers.
+- The focused executable fact
+  `LlvmBlockEmissionDropsUnusedAggregateCarrierLoadsButKeepsScalarRangeLoads`
+  passed. It verifies that the dead aggregate carrier is absent while the live
+  scalar load and its `!range` metadata remain, preserving the backend fact
+  consumed by LLVM optimization.
+- The cold filtered `selfhost.Ir` build emitted the complete self-host static
+  library, package image, and test executable before running the single fact.
+  Wall time exceeded 65 minutes; reported imported-module `lower-mir` stages
+  reached 1,564.9 seconds. This supersedes the earlier approximate 20-minute
+  root rebuild figure in the performance tracker.
+- The identical unchanged filtered rerun skipped rebuilding and completed in
+  0.2 seconds with the same passing fact. This isolates the dominant cost to
+  cold root/dependency pipeline work rather than fact execution.
+- No runtime wrapper, allocation, metadata reconstruction, or broader load
+  elimination was added while closing the verification item.
+
+## 2026-07-12 Specialized Switch Parenthesis Repair
+
+- A warmed `selfhost.Ir --filter Sibling` execution reached nine facts: the
+  row-level unguarded-sibling overlap preflight passed, while eight source-facing
+  struct, fixed-array, nested, and enum sibling-capture facts rejected before
+  LLVM emission.
+- Traced the shared pre-emission failure to eleven specialized terminal,
+  assignment, and function switch paths that named a `closeParen` but called
+  `MatchingBracketForMirLowering` on the opening `(`. Those paths could never
+  advance to the switch body for parenthesized source syntax.
+- Replaced the eleven calls with the existing
+  `MatchingParenForMirLowering` helper directly. No parser wrapper,
+  allocation, capture-table conversion, MIR carrier change, or LLVM fact
+  reconstruction was introduced.
+- Verification after the repair:
+  - no specialized `closeParen` site still calls the bracket matcher;
+  - `SourceSwitchFunctionLowering.stark --check -I selfhost` passed, covering
+    the repaired terminal and assignment parsing dependency chain;
+  - full `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed;
+  - `git diff --check` passed.
+- The source change invalidates the self-host package image, so rerunning the
+  executable sibling facts would immediately repay the measured >65-minute
+  cold package build. The tracker keeps those execution items open for the
+  next package rebuild rather than claiming runtime closure from compile-only
+  evidence.
+
+## 2026-07-12 Sibling Switch Dispatcher Diagnosis And Repair
+
+- Completed the fresh-package executable rerun deferred by the parenthesis
+  repair. The cold build emitted the self-host static library, package image,
+  generated test runner, and executable; the row-level sibling preflight fact
+  passed, while the same eight source-facing sibling facts still rejected
+  before LLVM text was produced.
+- Test-only staged probes (removed after diagnosis) established that both
+  sibling typed rows, both enum labels, full section parsing, descriptor
+  validation, shared decision preflight, capture-aware call validation, enum
+  identity, MIR block construction, parameter and ABI facts, MIR value facts,
+  and return-range validation all succeed. Calling the exact terminal switch
+  dispatcher with the same source rejected, isolating the defect above those
+  fact-preserving stages.
+- Terminal functions whose first case has a top-level sibling `|` now route
+  directly to the existing generic sibling-aware lowerer. The classifier is a
+  bounded token scan that tracks nested parentheses/braces/brackets, so enum,
+  aggregate property, and list pattern delimiters do not masquerade as the
+  section colon. Single-label switches retain their existing specialized
+  paths and cost model.
+- Corrected the last field-list switch-scrutinee probe that still used the
+  bracket matcher on `switch (`. No wrapper, callback, allocation, capture
+  conversion, MIR carrier change, or backend-fact reconstruction was added.
+- Verification: `SourceSwitchFunctionLowering.stark --check -I selfhost` and
+  `SourceSwitchLowering.stark --check -I selfhost` both passed; MIR dependency
+  validation and `git diff --check` passed. A second cold executable run after
+  the dispatcher and matcher repairs still passed the row-level preflight and
+  failed the same eight source-facing facts. The dispatcher repair is valid but
+  is therefore not sufficient for executable closure.
+- The next shared boundary is public compile orchestration's function-effect
+  prepass, which independently lowers every function body before LLVM emission
+  for both terminal and assignment functions. A temporary conservative-effects
+  fallback was removed rather than weakening LLVM attributes, and a standalone
+  probe was removed after it proved to require a full compiler-graph rebuild;
+  neither interrupted diagnostic is counted as pass/fail evidence.
+- The staged checked-struct probe also showed `SemanticallyValidStream`
+  rejecting typed struct syntax before source lowering. That older token-level
+  semantic-gate limitation is recorded separately from the dispatcher repair
+  rather than being hidden by weakening the executable facts.
+
+## 2026-07-12 Checked Sibling Capture Semantic Scope Repair
+
+- Repaired the preliminary checked-path name pass so it parses real function
+  signatures, seeds typed function and parameter names, recognizes typed-local
+  declaration headers, and starts value-use resolution at the function body.
+  Switch-pattern/type/member syntax is classified outside the value namespace;
+  a bare value use therefore cannot resolve merely because a field has the same
+  spelling. The typed binder still validates exact owners and categories before
+  MIR construction. Arity, function-name uniqueness, and finite-call rows now
+  use the same parsed typed signatures instead of `fn`-adjacent token guesses.
+- Repaired redeclaration analysis so switch pattern captures are scoped by case
+  section and sibling-alternative ordinal. Equal-name captures may merge across
+  sibling alternatives or be reused in distinct sections, while duplicates in
+  one alternative, duplicate parameters, and parameter/local collisions remain
+  rejected. No runtime capture conversion, MIR carrier, range, ABI, alias,
+  alignment, or LLVM attribute behavior changed.
+- Added `SemanticRedeclarationScopesSwitchPatternCapturesPerAlternative` with
+  positive sibling/distinct-section cases, negative same-alternative and typed
+  parameter cases, and exact checked struct/list semantic sources.
+- Verification: `SourceSemanticProbes.stark --check -I selfhost` passed. A
+  temporary narrow executable importing only the semantic-probe module compiled
+  and exited `0` over the same positive and negative cases; the probe source was
+  deleted. The full self-host package/test executable was not rebuilt in this
+  slice, so the six checked source-to-LLVM facts remain open for that audit.
+
+## 2026-07-12 Logical Package-Image Model And Generic-Template Loader Splits
+
+- Split the 15,895-line `Compiler.Mir.PackageImage.Models` carrier into focused
+  core/facade, enum-kind, decoded-MANF-row, generic-template, typed-interface,
+  function semantic/ownership, and backend-fact modules. Every resulting model
+  module is below 4,000 lines; the largest is the 3,902-line generic-template
+  carrier.
+- Kept the compatibility module as an export facade. Existing public and
+  internal declaration names are unchanged, and a sorted declaration-surface
+  comparison against the pre-split file found no missing or duplicate structs,
+  enums, or functions.
+- Preserved the exact `IrTable` and dynamic-byte ownership used by package
+  loading and lowering. Type-reference row identities, ABI and layout facts,
+  function effects, ownership/semantic rows, and generic-template work items
+  cross module boundaries by direct borrow; the split introduces no wrapper,
+  allocation, callback, serialization round-trip, or fact reconstruction.
+- Split the 7,279-line generic-template section loader into a 1,699-line graph
+  builder, 3,602-line call/object/enum/value materializer, and 1,998-line typed
+  expression/pattern/statement tree orchestrator. The package loader now imports
+  its one directly consumed effective-section probe from the value module;
+  public text append and graph entry points retain their facade visibility.
+- Preserved published template ordinals, parent/child row spans, type-reference
+  source tags, bound-operation payloads, and deferred-instantiation facts in
+  their original tables. Materialization still performs a single JSON traversal
+  into the model-owned graph and adds no intermediate graph or conversion.
+- Split the 6,944-line typed-interface loader into a 2,137-line iterative
+  type-reference loader, 3,553-line typed declaration/fact materializer, and
+  1,279-line summary/API orchestrator. Callable ABI, raw-pointer count
+  expressions, parameter-group alias contracts, layout/type metadata, and
+  child/source ordinals still write directly to the original graph tables.
+- Split the 5,070-line compiler-fact loader into a 1,230-line function-effect
+  and ABI loader, 1,651-line layout/native loader, 2,210-line function
+  semantic/ownership loader, and six-line compatibility facade. This mirrors
+  the fact-family boundaries consumed by optimized SSA and LLVM and keeps
+  purity, memory, unwind, progress, calling-convention, layout, linkage,
+  ownership, move, drop, and call facts independently auditable.
+- Split the 7,256-line compatibility source bridge into a 1,234-line lookup and
+  requirement-analysis core, 2,049-line expression/type renderer, 1,369-line
+  statement/pattern renderer, 2,291-line declaration renderer, and 363-line
+  public orchestrator. Reconstructed source remains compatibility-only;
+  structured package facts remain authoritative for specialization, ABI,
+  ownership, effects, layout, and LLVM lowering.
+- Verification:
+  - all seven focused model modules and `PackageImage/Models.stark` passed
+    `--check -I selfhost`;
+  - all three generic-template loader modules passed focused checks, and sorted
+    declaration-surface comparison against the pre-split loader found no missing
+    or duplicate functions;
+  - every typed-interface, compiler-fact, and source-bridge split module passed
+    focused checks; the bridge retains only its pre-existing bounded-recursion
+    warnings;
+  - sorted declaration-surface comparisons against all three pre-split files
+    found no missing or duplicate structs, enums, or functions;
+  - the `Compiler.Mir.PackageImage` compatibility facade, logical package-image
+    loader, and manifest JSON builder passed full-front-end checks;
+  - `SourceModuleLowering.stark --check -I selfhost` passed across the complete
+    compiler-facing consumer closure;
+  - `tests-stark/selfhost.Ir/IrTests.stark --check -I selfhost -I
+    tests-stark/selfhost.Ir` passed, validating the aggregate MIR and
+    LLVM-facing fact surface after all splits. Imported-module type checking
+    remained the dominant cost, with individual reported checks reaching 267.3
+    seconds; this is verification evidence for the open root-incrementality task,
+    not a benchmark comparison;
+  - declaration-surface comparison, MIR dependency validation, and
+    `git diff --check` passed.
+
+## 2026-07-12 Dense MIR-To-SSA Foundation
+
+- Added a focused `Compiler.Ssa` package with flat dense instruction, block,
+  and function artifacts. MIR value/block/function indexes are preserved at
+  this first boundary, so operands, phi predecessor payloads, terminators, and
+  contiguous function ranges need no hash table or remap allocation.
+- Every SSA instruction retains its exact MIR opcode, result type, four operand
+  slots, immediate, and originating MIR value. Blocks retain terminator slots
+  and flags; functions retain entry and owned block/instruction ranges. These
+  are direct table rows rather than generic aggregate wrappers.
+- MIR-to-SSA conversion reserves its four destination tables once, performs a
+  linear append, and publishes outputs only after complete success. It requires
+  a dense `ValueFacts` row for every MIR value and copies alignment, calling
+  ABI, noalias, volatile, integer range, nullability, and text-constant facts
+  exactly instead of rediscovering them before LLVM lowering.
+- Moved the existing MIR structural gate into the 150-line focused
+  `Compiler.Mir.Validation` module. SSA lowering therefore reuses the same
+  operand, terminator, range, loop-flag, and tail-call checks without importing
+  the LLVM/source/package-image MIR facade; focused SSA check time stayed in
+  the low single-digit seconds rather than importing the full compiler graph.
+- Bodyless MIR declaration rows remain bodyless SSA declaration rows. This
+  preserves assembly/external declaration identity without inventing blocks,
+  instructions, or synthetic value-fact rows.
+- Added focused regression helpers for exact artifact/fact preservation,
+  missing-fact rejection with unchanged outputs, malformed-function-range
+  rejection, and bodyless declaration preservation. The helper module, SSA
+  model/lowering modules, SSA facade, MIR validation module, full MIR facade,
+  aggregate `selfhost.Ir` entrypoint, and root `Compiler.stark` facade passed
+  `--check`; the MIR dependency guard and `git diff --check` also passed. The
+  root audit's largest imported type-check reached 277.0 seconds while focused
+  SSA checks remained in the low single-digit seconds, adding evidence to the
+  existing root-incrementality task without treating check time as a benchmark.

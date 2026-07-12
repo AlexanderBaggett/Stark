@@ -1,0 +1,221 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Mir.Validation
+import Compiler.Ssa.Model
+import Compiler.Ssa.Validation
+import System.Memory
+module Compiler.Ssa.Lowering
+
+
+internal fn bool SsaInputCountsFitDenseIds(
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions)
+{
+    stack u64[0 2 ** 63 - 1] maxDenseId = (u64[0 2 ** 63 - 1])(2 ** 32 - 1);
+    return instructions.Count() <= maxDenseId
+        && blocks.Count() <= maxDenseId
+        && functions.Count() <= maxDenseId;
+}
+
+// The initial SSA boundary is intentionally index preserving: MIR value N becomes
+// SSA value N, so operands, phi predecessor payloads, block targets, and function
+// ranges do not need hash maps or temporary remap allocations.
+internal fn SsaInstruction SsaInstructionFromMir(MirInstruction source, u32[0 max] origin)
+{
+    stack mut SsaInstruction built = new();
+    built.Op = source.Opcode();
+    built.AIndex = source.OperandAIndex();
+    built.BIndex = source.OperandBIndex();
+    built.CIndex = source.OperandCIndex();
+    built.DIndex = source.OperandDIndex();
+    built.Imm = source.Immediate();
+    built.ResType = source.ResultType();
+    built.OriginMirValue = origin;
+    return built;
+}
+
+internal fn SsaBlock SsaBlockFromMir(MirBlock source, u32[0 max] origin)
+{
+    stack mut SsaBlock built = new();
+    built.Term = source.Terminator();
+    built.Slot0 = source.Slot0Index();
+    built.Slot1 = source.Slot1Index();
+    built.Slot2 = source.Slot2Index();
+    built.Flags = source.FlagBits();
+    built.OriginMirBlock = origin;
+    return built;
+}
+
+internal fn SsaFunction SsaFunctionFromMir(MirFunction source, u32[0 max] origin)
+{
+    stack mut SsaFunction built = new();
+    built.Entry = source.EntryIndex();
+    built.FirstBlock = source.FirstBlockIndex();
+    built.BlockCount = source.OwnedBlockCount();
+    built.FirstInstr = source.FirstInstrIndex();
+    built.InstrCount = source.OwnedInstrCount();
+    built.OriginMirFunction = origin;
+    return built;
+}
+
+// Validates every function before allocating any result. ValueFacts must be dense and
+// exactly aligned with MIR values: a missing row is not treated as an empty fact row,
+// because doing so could silently discard LLVM alignment/alias/ABI/range metadata.
+public fn bool MirModuleCanLowerToSsa(
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    if (!SsaInputCountsFitDenseIds(instructions, blocks, functions)
+        || valueFacts.Count() != instructions.Count())
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut u32[0 max] functionIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionIndex <= functionCount)
+    {
+        stack MirFunction function = functions.Get(functionIndex);
+        if (!MirFunctionIsDeclaration(function)
+            && !MirFunctionWellFormed(instructions, blocks, function))
+        {
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    return true;
+}
+
+// Transactional MIR-to-SSA lowering. Outputs are assigned only after all reserves and
+// appends succeed, so allocation failure or malformed input cannot expose a partial SSA
+// artifact. The O(n) conversion uses only the four destination tables as storage.
+public fn bool LowerMirModuleToSsaChecked(
+    borrow IrTable<MirInstruction> mirInstructions,
+    borrow IrTable<MirBlock> mirBlocks,
+    borrow IrTable<MirFunction> mirFunctions,
+    borrow IrTable<ValueFacts> mirValueFacts,
+    out SsaValidationStatus validationStatus,
+    out IrTable<SsaInstruction> ssaInstructions,
+    out IrTable<SsaBlock> ssaBlocks,
+    out IrTable<SsaFunction> ssaFunctions,
+    out IrTable<ValueFacts> ssaValueFacts)
+{
+    if (!MirModuleCanLowerToSsa(mirInstructions, mirBlocks, mirFunctions, mirValueFacts))
+    {
+        if (mirValueFacts.Count() != mirInstructions.Count())
+        {
+            validationStatus = SsaValidationStatus.ValueFactCountMismatch;
+        }
+        else
+        {
+            validationStatus = SsaValidationStatus.FunctionRangeInvalid;
+        }
+
+        return false;
+    }
+
+    stack mut IrTable<SsaInstruction> builtInstructions = new();
+    stack mut IrTable<SsaBlock> builtBlocks = new();
+    stack mut IrTable<SsaFunction> builtFunctions = new();
+    stack mut IrTable<ValueFacts> builtValueFacts = new();
+
+    if (builtInstructions.Reserve(mirInstructions.Count()) != MemoryStatus.Ok
+        || builtBlocks.Reserve(mirBlocks.Count()) != MemoryStatus.Ok
+        || builtFunctions.Reserve(mirFunctions.Count()) != MemoryStatus.Ok
+        || builtValueFacts.Reserve(mirValueFacts.Count()) != MemoryStatus.Ok)
+    {
+        validationStatus = SsaValidationStatus.AllocationFailed;
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = mirInstructions.Count();
+    stack mut u32[0 max] valueIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])valueIndex <= instructionCount)
+    {
+        stack MirInstruction mirInstruction = mirInstructions.Get(valueIndex);
+        stack SsaInstruction instruction = SsaInstructionFromMir(mirInstruction, valueIndex);
+        stack ValueFacts valueFacts = mirValueFacts.Get(valueIndex);
+        if (builtInstructions.Add(instruction) != valueIndex
+            || !RecordGeneratedValueFactsForSsaValue(builtValueFacts, SsaValueIdOf(valueIndex), valueFacts))
+        {
+            validationStatus = SsaValidationStatus.AllocationFailed;
+            return false;
+        }
+
+        valueIndex = valueIndex + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] blockCount = mirBlocks.Count();
+    stack mut u32[0 max] blockIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])blockIndex <= blockCount)
+    {
+        stack MirBlock mirBlock = mirBlocks.Get(blockIndex);
+        if (builtBlocks.Add(SsaBlockFromMir(mirBlock, blockIndex)) != blockIndex)
+        {
+            validationStatus = SsaValidationStatus.AllocationFailed;
+            return false;
+        }
+
+        blockIndex = blockIndex + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] functionCount = mirFunctions.Count();
+    stack mut u32[0 max] functionIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionIndex <= functionCount)
+    {
+        stack MirFunction mirFunction = mirFunctions.Get(functionIndex);
+        if (builtFunctions.Add(SsaFunctionFromMir(mirFunction, functionIndex)) != functionIndex)
+        {
+            validationStatus = SsaValidationStatus.AllocationFailed;
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    stack SsaValidationStatus builtStatus = ValidateSsaModule(
+        builtInstructions,
+        builtBlocks,
+        builtFunctions,
+        builtValueFacts);
+    if (builtStatus != SsaValidationStatus.Ok)
+    {
+        validationStatus = builtStatus;
+        return false;
+    }
+
+    validationStatus = SsaValidationStatus.Ok;
+    ssaInstructions = builtInstructions;
+    ssaBlocks = builtBlocks;
+    ssaFunctions = builtFunctions;
+    ssaValueFacts = builtValueFacts;
+    return true;
+}
+
+public fn bool LowerMirModuleToSsa(
+    borrow IrTable<MirInstruction> mirInstructions,
+    borrow IrTable<MirBlock> mirBlocks,
+    borrow IrTable<MirFunction> mirFunctions,
+    borrow IrTable<ValueFacts> mirValueFacts,
+    out IrTable<SsaInstruction> ssaInstructions,
+    out IrTable<SsaBlock> ssaBlocks,
+    out IrTable<SsaFunction> ssaFunctions,
+    out IrTable<ValueFacts> ssaValueFacts)
+{
+    stack mut SsaValidationStatus validationStatus = SsaValidationStatus.Ok;
+    return LowerMirModuleToSsaChecked(
+        mirInstructions,
+        mirBlocks,
+        mirFunctions,
+        mirValueFacts,
+        validationStatus,
+        ssaInstructions,
+        ssaBlocks,
+        ssaFunctions,
+        ssaValueFacts);
+}

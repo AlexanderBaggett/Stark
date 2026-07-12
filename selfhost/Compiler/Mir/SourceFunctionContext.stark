@@ -1,6 +1,7 @@
 import Compiler.Ir
 import Compiler.Lexing
 import Compiler.Parsing
+import Compiler.Binding.FunctionEffects
 import Compiler.TargetFacts
 import Compiler.Mir.Builder
 import Compiler.Mir.Facts
@@ -8,6 +9,7 @@ import Compiler.Mir.LlvmFacts
 import Compiler.Mir.Model
 import Compiler.Mir.SourceExpressions
 import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
 import Compiler.Mir.SourceRangeFacts
 import Compiler.Mir.SourceSemanticProbes
 import Compiler.Mir.SourceSymbols
@@ -1029,6 +1031,140 @@ internal fn bool FunctionTokenHasStorageModifier(borrow TokenStream stream, u32[
     }
 
     return false;
+}
+
+internal fn u32[0 max] FindOpeningAttributeBracketBefore(
+    borrow TokenStream stream,
+    u32[0 max] closeBracket)
+{
+    stack mut u32[0 max] scan = closeBracket;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.RBrack)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            if (depth == 0)
+            {
+                return 4294967295;
+            }
+
+            depth = depth - 1;
+            if (depth == 0)
+            {
+                return scan;
+            }
+        }
+
+        scan = scan - 1;
+    }
+
+    return 4294967295;
+}
+
+internal fn bool SourceFunctionHasOpaqueBackendMode(
+    ascii sourceText,
+    borrow TokenStream stream,
+    u32[0 max] fnKeyword)
+{
+    if (fnKeyword == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnKeyword - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        stack TokenKind kind = stream.KindAt(token);
+        if (kind == TokenKind.RBrack)
+        {
+            stack u32[0 max] open = FindOpeningAttributeBracketBefore(
+                stream,
+                (u32[0 max])scan);
+            if (open == 4294967295)
+            {
+                return false;
+            }
+
+            if (AttributeListContainsBackendOpaque(
+                    sourceText,
+                    stream,
+                    open,
+                    (u32[0 max])scan))
+            {
+                return true;
+            }
+
+            scan = (i64[min max])open - 1;
+            continue;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = FindOpeningParenBefore(
+                stream,
+                (u32[0 max])scan);
+            if (open > 0)
+            {
+                stack TokenKind groupedKind =
+                    stream.KindAt((u64[0 2 ** 63 - 1])(open - 1));
+                if (groupedKind == TokenKind.Ffi || groupedKind == TokenKind.Asm)
+                {
+                    scan = (i64[min max])open - 2;
+                    continue;
+                }
+            }
+
+            return false;
+        }
+
+        if (IsTailContextualToken(stream, token) || IsFunctionStorageModifierKind(kind))
+        {
+            scan = scan - 1;
+            continue;
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+internal fn void ApplySourceFunctionBackendEffectFacts(
+    ascii sourceText,
+    borrow TokenStream stream,
+    u32[0 max] fnKeyword,
+    mut borrow FunctionEffectFacts facts)
+{
+    facts.IsHot = FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Hot);
+    facts.IsCold = FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Cold);
+    facts.IsStrictFp = FunctionTokenHasStorageModifier(
+        stream,
+        fnKeyword,
+        TokenKind.Strictfp);
+    if (FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Inline))
+    {
+        facts.InlinePreference = FunctionInlinePreference.Inline;
+    }
+    else if (FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Noinline))
+    {
+        facts.InlinePreference = FunctionInlinePreference.NoInline;
+    }
+    else if (FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Inlinehint))
+    {
+        facts.InlinePreference = FunctionInlinePreference.InlineHint;
+    }
+
+    if (SourceFunctionHasOpaqueBackendMode(sourceText, stream, fnKeyword))
+    {
+        facts.BackendIsOpaque = true;
+        facts.InlinePreference = FunctionInlinePreference.NoInline;
+    }
 }
 
 internal fn bool TryFindFunctionFfiAbiNameToken(borrow TokenStream stream, u32[0 max] fnKeyword, out u32[0 max] abiNameToken)

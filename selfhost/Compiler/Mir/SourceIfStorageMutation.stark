@@ -1,0 +1,2078 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceLocalExpressionParsing
+import Compiler.Mir.SourceLocalMutation
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceIfParsing
+import Compiler.Typing.TypedEnumLayoutModel
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceIfStorageMutation
+
+internal fn bool BuildIfArmLocalTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] localRootStart,
+    u32[0 max] localRootCount,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+{
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < paramCount)
+    {
+        stack mut u32[0 max] typeCode = 0;
+        stack u32[0 max] typeSlot = (u32[0 max])(paramIndex + 1);
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])localRootCount)
+    {
+        stack u32[0 max] rootSlot = localRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack ExprType localType = TypeOfNodeWithLocals(nodes, localRoot, armLocalTypes);
+        if (localType == ExprType.ErrorType || localType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack u32[0 max] localTypeCode = SourceLocalTypeCodeForNodeWithLocals(nodes, localRoot, armLocalTypes);
+        if (armLocalTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildIfAssignmentArmLocalTypes(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+{
+    return BuildIfArmLocalTypes(
+        nodes,
+        armLocalRoots,
+        arm.LocalRootStart,
+        arm.LocalRootCount,
+        baseLocalTypes,
+        paramCount,
+        armLocalTypes);
+}
+
+internal struct ParsedIfStorageMutationArm
+{
+    u32[0 max] AssignmentStart;
+    u32[0 max] AssignmentCount;
+    u32[0 max] LocalRootStart;
+    u32[0 max] LocalRootCount;
+
+    ParsedIfStorageMutationArm()
+    {
+        self.AssignmentStart = 0;
+        self.AssignmentCount = 0;
+        self.LocalRootStart = 0;
+        self.LocalRootCount = 0;
+    }
+}
+
+internal struct ParsedIfStorageMutationArms
+{
+    ExprParseResult Condition;
+    ParsedIfStorageMutationArm ThenArm;
+    ParsedIfStorageMutationArm ElseArm;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedIfStorageMutationArms()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedNestedIfStorageMutationArm
+{
+    bool IsNested;
+    ParsedIfStorageMutationArm Leaf;
+    ParsedIfStorageMutationArms Nested;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedNestedIfStorageMutationArm()
+    {
+        self.IsNested = false;
+        self.Leaf = new();
+        self.Nested = new();
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedNestedIfStorageMutationArms
+{
+    ExprParseResult Condition;
+    ParsedNestedIfStorageMutationArm ThenArm;
+    ParsedNestedIfStorageMutationArm ElseArm;
+
+    ParsedNestedIfStorageMutationArms()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal struct ParsedRecursiveIfStorageMutationArm
+{
+    bool IsNested;
+    ParsedIfStorageMutationArm Leaf;
+    u32[0 max] NestedNode;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedRecursiveIfStorageMutationArm()
+    {
+        self.IsNested = false;
+        self.Leaf = new();
+        self.NestedNode = 0;
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedRecursiveIfStorageMutationNode
+{
+    ExprParseResult Condition;
+    ParsedRecursiveIfStorageMutationArm ThenArm;
+    ParsedRecursiveIfStorageMutationArm ElseArm;
+
+    ParsedRecursiveIfStorageMutationNode()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal fn bool TryParseIfStorageMutationArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    borrow IrTable<ValueFacts> baseSourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    out ParsedIfStorageMutationArm arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(baseSourceValueFacts)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyParamNamePrefix(baseParams, baseParamCount, armParams))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    stack mut IrTable<ValueFacts> armSourceValueFacts = new();
+    stack mut u64[0 2 ** 63 - 1] baseTypeIndex = 0;
+    while willexit (baseTypeIndex < baseParamCount)
+    {
+        stack u32[0 max] typeSlot = (u32[0 max])(baseTypeIndex + 1);
+        stack mut u32[0 max] typeCode = 0;
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        stack mut ValueFacts baseFacts = new();
+        if (baseSourceValueFacts.Contains(typeSlot))
+        {
+            baseFacts = baseSourceValueFacts.Get(typeSlot);
+        }
+
+        if (armSourceValueFacts.Add(baseFacts) == 0)
+        {
+            return false;
+        }
+
+        baseTypeIndex = baseTypeIndex + 1;
+    }
+
+    stack u32[0 max] localRootStart = (u32[0 max])(armLocalRoots.Count() + 1);
+    stack u32[0 max] assignmentStart = (u32[0 max])(storageMutationStatements.Count() + 1);
+    stack mut u32[0 max] localRootCount = 0;
+    stack mut u32[0 max] assignmentCount = 0;
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] cursor = armStart + 1;
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(cursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+            if (localNameToken == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] localNameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+            stack u64[0 2 ** 63 - 1] localNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+            if (ParamIndexOf(armParams, source, localNameStart, localNameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] localAssignToken = localEnd;
+            if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, localAssignToken))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
+            stack ExprParseResult localRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, armParams, funcNames, constructedObjectLocals, sliceDescriptorLocals, armLocalTypes, armSourceValueFacts, moduleFacts, localAssignToken + 1);
+            if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
+            {
+                return false;
+            }
+
+            stack ExprType localType = TypeOfNodeWithLocals(nodes, localRoot.NodeId, armLocalTypes);
+            if (localType == ExprType.ErrorType || localType == ExprType.PtrType)
+            {
+                return false;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(armParams, source, localNameStart, localNameLength);
+            stack mut ValueFacts localFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, localRoot.NodeId, armSourceValueFacts, localFacts)
+                && localType == ExprType.BoolType)
+            {
+                localFacts.SetIntegerRange(0, 2);
+            }
+
+            if (armLocalRoots.Add(localRoot.NodeId) == 0
+                || armLocalTypes.Add(SourceLocalTypeCodeForNodeWithLocals(nodes, localRoot.NodeId, armLocalTypes)) == 0
+                || armSourceValueFacts.Add(localFacts) == 0)
+            {
+                return false;
+            }
+
+            localRootCount = localRootCount + 1;
+            cursor = localEnd + 1;
+        }
+
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, statementEnd))
+            {
+                return false;
+            }
+
+            if (!TryParseSourceStorageMutationStatement(
+                stream,
+                source,
+                nodes,
+                armParams,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                scalarStorageLocals,
+                enumStorageLocals,
+                armLocalTypes,
+                armSourceValueFacts,
+                moduleFacts,
+                cursor,
+                statementEnd,
+                scalarAssignments,
+                enumAssignments,
+                fieldAssignments,
+                storageMutationStatements))
+            {
+                return false;
+            }
+
+            assignmentCount = assignmentCount + 1;
+            cursor = statementEnd + 1;
+        }
+
+        if (assignmentCount == 0 || cursor != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm.AssignmentStart = assignmentStart;
+        arm.AssignmentCount = assignmentCount;
+        arm.LocalRootStart = localRootStart;
+        arm.LocalRootCount = localRootCount;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] compactEnd = armStart;
+    if (!FindSelfHostedStatementEnd(stream, armStart, stream.Count(), compactEnd))
+    {
+        return false;
+    }
+
+    if (!TryParseSourceStorageMutationStatement(
+        stream,
+        source,
+        nodes,
+        armParams,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        armLocalTypes,
+        armSourceValueFacts,
+        moduleFacts,
+        armStart,
+        compactEnd,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements))
+    {
+        return false;
+    }
+
+    arm.AssignmentStart = assignmentStart;
+    arm.AssignmentCount = 1;
+    arm.LocalRootStart = localRootStart;
+    arm.LocalRootCount = 0;
+    nextToken = compactEnd + 1;
+    return true;
+}
+
+internal fn bool TryParseIfStorageMutationArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] ifIndex,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    out ParsedIfStorageMutationArms arms)
+    where overlap_all(sourceValueFacts)
+{
+    arms = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCondition = params.Count();
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
+    if (params.Count() != beforeCondition)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
+    stack mut ParsedIfStorageMutationArm thenArm = new();
+    if (!TryParseIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        condition.Next,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        thenArm,
+        afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ParsedIfStorageMutationArm elseArm = new();
+    if (!TryParseIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        afterThen + 1,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        elseArm,
+        afterElse))
+    {
+        return false;
+    }
+
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ElseArm = elseArm;
+    arms.Next = afterElse;
+    return true;
+}
+
+internal fn bool TryParseNestedOrLeafIfStorageMutationArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    out ParsedNestedIfStorageMutationArm arm)
+    where overlap_all(sourceValueFacts)
+{
+    arm = new();
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nestedIfIndex = armStart + 1;
+        if (nestedIfIndex < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(nestedIfIndex) == TokenKind.If)
+        {
+            stack mut ParsedIfStorageMutationArms nestedArms = new();
+            if (!TryParseIfStorageMutationArms(
+                stream,
+                source,
+                nodes,
+                params,
+                baseParamCount,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                scalarStorageLocals,
+                enumStorageLocals,
+                localTypes,
+                sourceValueFacts,
+                moduleFacts,
+                nestedIfIndex,
+                armLocalRoots,
+                scalarAssignments,
+                enumAssignments,
+                fieldAssignments,
+                storageMutationStatements,
+                nestedArms))
+            {
+                return false;
+            }
+
+            if (nestedArms.Next != (u64[0 2 ** 63 - 1])closeBrace)
+            {
+                return false;
+            }
+
+            arm.IsNested = true;
+            arm.Nested = nestedArms;
+            arm.Next = (u64[0 2 ** 63 - 1])closeBrace + 1;
+            return true;
+        }
+    }
+
+    stack mut ParsedIfStorageMutationArm leaf = new();
+    stack mut u64[0 2 ** 63 - 1] afterLeaf = armStart;
+    if (!TryParseIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        armStart,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        leaf,
+        afterLeaf))
+    {
+        return false;
+    }
+
+    arm.IsNested = false;
+    arm.Leaf = leaf;
+    arm.Next = afterLeaf;
+    return true;
+}
+
+internal fn bool TryParseNestedIfStorageMutationArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] ifIndex,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    out ParsedNestedIfStorageMutationArms arms)
+    where overlap_all(sourceValueFacts)
+{
+    arms = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCondition = params.Count();
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
+    if (params.Count() != beforeCondition)
+    {
+        return false;
+    }
+
+    stack mut ParsedNestedIfStorageMutationArm thenArm = new();
+    if (!TryParseNestedOrLeafIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        condition.Next,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        thenArm))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut ParsedNestedIfStorageMutationArm elseArm = new();
+    if (!TryParseNestedOrLeafIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        thenArm.Next + 1,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        elseArm))
+    {
+        return false;
+    }
+
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ElseArm = elseArm;
+    return thenArm.IsNested || elseArm.IsNested;
+}
+
+internal fn bool TryParseRecursiveOrLeafIfStorageMutationArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    mut borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    out ParsedRecursiveIfStorageMutationArm arm)
+    where overlap_all(sourceValueFacts)
+{
+    arm = new();
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nestedIfIndex = armStart + 1;
+        if (nestedIfIndex < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(nestedIfIndex) == TokenKind.If)
+        {
+            stack mut u32[0 max] nestedNode = 0;
+            stack mut u64[0 2 ** 63 - 1] afterNested = nestedIfIndex;
+            if (!TryParseRecursiveIfStorageMutationNode(
+                stream,
+                source,
+                nodes,
+                params,
+                baseParamCount,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                scalarStorageLocals,
+                enumStorageLocals,
+                localTypes,
+                sourceValueFacts,
+                moduleFacts,
+                nestedIfIndex,
+                armLocalRoots,
+                scalarAssignments,
+                enumAssignments,
+                fieldAssignments,
+                storageMutationStatements,
+                ifNodes,
+                nestedNode,
+                afterNested))
+            {
+                return false;
+            }
+
+            if (afterNested != (u64[0 2 ** 63 - 1])closeBrace)
+            {
+                return false;
+            }
+
+            arm.IsNested = true;
+            arm.NestedNode = nestedNode;
+            arm.Next = (u64[0 2 ** 63 - 1])closeBrace + 1;
+            return true;
+        }
+    }
+
+    stack mut ParsedIfStorageMutationArm leaf = new();
+    stack mut u64[0 2 ** 63 - 1] afterLeaf = armStart;
+    if (!TryParseIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        armStart,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        leaf,
+        afterLeaf))
+    {
+        return false;
+    }
+
+    arm.IsNested = false;
+    arm.Leaf = leaf;
+    arm.Next = afterLeaf;
+    return true;
+}
+
+internal fn bool TryParseRecursiveIfStorageMutationNode(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    borrow IrTable<EnumStorageLocal> enumStorageLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] ifIndex,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    mut borrow IrTable<EnumStorageAssignment> enumAssignments,
+    mut borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    mut borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    mut borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    out u32[0 max] nodeIndex,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    nodeIndex = 0;
+    nextToken = ifIndex;
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCondition = params.Count();
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
+    if (params.Count() != beforeCondition)
+    {
+        return false;
+    }
+
+    stack mut ParsedRecursiveIfStorageMutationArm thenArm = new();
+    if (!TryParseRecursiveOrLeafIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        condition.Next,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        ifNodes,
+        thenArm))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut ParsedRecursiveIfStorageMutationArm elseArm = new();
+    if (!TryParseRecursiveOrLeafIfStorageMutationArm(
+        stream,
+        source,
+        nodes,
+        params,
+        baseParamCount,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        thenArm.Next + 1,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        ifNodes,
+        elseArm))
+    {
+        return false;
+    }
+
+    stack mut ParsedRecursiveIfStorageMutationNode node = new();
+    node.Condition = condition;
+    node.ThenArm = thenArm;
+    node.ElseArm = elseArm;
+    nodeIndex = ifNodes.Add(node);
+    nextToken = elseArm.Next;
+    return nodeIndex != 0;
+}
+
+internal fn bool RecursiveIfStorageMutationNodeHasNestedArm(
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    u32[0 max] nodeIndex)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfStorageMutationNode node = ifNodes.Get(nodeIndex);
+    return node.ThenArm.IsNested || node.ElseArm.IsNested;
+}
+
+internal fn bool ValidateIfStorageMutationArmModuleCallsWithSlices(
+    borrow IrTable<ExprNode> nodes,
+    ParsedIfStorageMutationArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] baseLocalCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfArmLocalTypes(nodes, armLocalRoots, arm.LocalRootStart, arm.LocalRootCount, baseLocalTypes, baseLocalCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRootWithSlices(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+    while willexit (assignmentIndex < (u64[0 2 ** 63 - 1])arm.AssignmentCount)
+    {
+        stack u32[0 max] assignmentSlot = arm.AssignmentStart + (u32[0 max])assignmentIndex;
+        if (!storageMutationStatements.Contains(assignmentSlot))
+        {
+            return false;
+        }
+
+        stack SourceStorageMutationStatement statement = storageMutationStatements.Get(assignmentSlot);
+        if (statement.Kind == SourceStorageMutationKindScalar())
+        {
+            if (!scalarAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack ScalarStorageAssignment assignment = scalarAssignments.Get(statement.AssignmentIndex);
+            if (assignment.RawPointerRoot != 0
+                && !ValidateModuleCallsForRootWithSlices(nodes, assignment.RawPointerRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindEnum())
+        {
+            if (!enumAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack EnumStorageAssignment assignment = enumAssignments.Get(statement.AssignmentIndex);
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+        }
+        else if (statement.Kind == SourceStorageMutationKindConstructedObjectField())
+        {
+            if (!fieldAssignments.Contains(statement.AssignmentIndex))
+            {
+                return false;
+            }
+
+            stack ConstructedObjectFieldAssignment assignment = fieldAssignments.Get(statement.AssignmentIndex);
+            if (assignment.IndexRoot != 0
+                && !ValidateModuleCallsForRootWithSlices(nodes, assignment.IndexRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (!ValidateModuleCallsForRootWithSlices(nodes, assignment.ExprRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        assignmentIndex = assignmentIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ValidateNestedIfStorageMutationArmModuleCallsWithSlices(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfStorageMutationArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] baseLocalCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!arm.IsNested)
+    {
+        return ValidateIfStorageMutationArmModuleCallsWithSlices(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            baseLocalTypes,
+            baseLocalCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            sliceDescriptorLocals,
+            callerDistinctStorageFacts);
+    }
+
+    return ValidateModuleCallsForRootWithSlices(nodes, arm.Nested.Condition.NodeId, funcParamCounts, functionCallContractFacts, baseLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
+        && ValidateIfStorageMutationArmModuleCallsWithSlices(
+            nodes,
+            arm.Nested.ThenArm,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            baseLocalTypes,
+            baseLocalCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            sliceDescriptorLocals,
+            callerDistinctStorageFacts)
+        && ValidateIfStorageMutationArmModuleCallsWithSlices(
+            nodes,
+            arm.Nested.ElseArm,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            baseLocalTypes,
+            baseLocalCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            sliceDescriptorLocals,
+            callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfStorageMutationArmModuleCallsWithSlices(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    ParsedRecursiveIfStorageMutationArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] baseLocalCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!arm.IsNested)
+    {
+        return ValidateIfStorageMutationArmModuleCallsWithSlices(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            baseLocalTypes,
+            baseLocalCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            sliceDescriptorLocals,
+            callerDistinctStorageFacts);
+    }
+
+    return ValidateRecursiveIfStorageMutationNodeModuleCallsWithSlices(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        baseLocalTypes,
+        baseLocalCount,
+        funcParamCounts,
+        functionCallContractFacts,
+        sliceDescriptorLocals,
+        callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfStorageMutationNodeModuleCallsWithSlices(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] baseLocalCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfStorageMutationNode node = ifNodes.Get(nodeIndex);
+    return ValidateModuleCallsForRootWithSlices(nodes, node.Condition.NodeId, funcParamCounts, functionCallContractFacts, baseLocalTypes, sliceDescriptorLocals, callerDistinctStorageFacts)
+        && ValidateRecursiveIfStorageMutationArmModuleCallsWithSlices(
+            nodes,
+            ifNodes,
+            node.ThenArm,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            baseLocalTypes,
+            baseLocalCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            sliceDescriptorLocals,
+            callerDistinctStorageFacts)
+        && ValidateRecursiveIfStorageMutationArmModuleCallsWithSlices(
+            nodes,
+            ifNodes,
+            node.ElseArm,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            baseLocalTypes,
+            baseLocalCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            sliceDescriptorLocals,
+            callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfStorageMutationArmConditionTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    ParsedRecursiveIfStorageMutationArm arm,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!arm.IsNested)
+    {
+        return true;
+    }
+
+    return ValidateRecursiveIfStorageMutationNodeConditionTypes(nodes, ifNodes, arm.NestedNode, localTypes);
+}
+
+internal fn bool ValidateRecursiveIfStorageMutationNodeConditionTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfStorageMutationNode node = ifNodes.Get(nodeIndex);
+    return TypeOfNodeWithLocals(nodes, node.Condition.NodeId, localTypes) == ExprType.BoolType
+        && ValidateRecursiveIfStorageMutationArmConditionTypes(nodes, ifNodes, node.ThenArm, localTypes)
+        && ValidateRecursiveIfStorageMutationArmConditionTypes(nodes, ifNodes, node.ElseArm, localTypes);
+}
+
+internal fn u32[0 max] RecursiveIfStorageMutationArmBlockCount(
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    ParsedRecursiveIfStorageMutationArm arm)
+{
+    if (!arm.IsNested)
+    {
+        return 1;
+    }
+
+    return RecursiveIfStorageMutationNodeBlockCount(ifNodes, arm.NestedNode);
+}
+
+internal fn u32[0 max] RecursiveIfStorageMutationNodeBlockCount(
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    u32[0 max] nodeIndex)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return 0;
+    }
+
+    stack ParsedRecursiveIfStorageMutationNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenCount = RecursiveIfStorageMutationArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseCount = RecursiveIfStorageMutationArmBlockCount(ifNodes, node.ElseArm);
+    if (thenCount == 0 || elseCount == 0)
+    {
+        return 0;
+    }
+
+    return 2 + thenCount + elseCount;
+}
+
+internal fn bool LowerIfStorageMutationArmStores(
+    borrow IrTable<ExprNode> nodes,
+    ParsedIfStorageMutationArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfArmLocalTypes(nodes, armLocalRoots, arm.LocalRootStart, arm.LocalRootCount, localTypes, (u32[0 max])baseLocalOverrides.Count(), armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] overrideIndex = 0;
+    while willexit (overrideIndex < baseLocalOverrides.Count())
+    {
+        stack u32[0 max] overrideValue = baseLocalOverrides.Get((u32[0 max])(overrideIndex + 1));
+        if (localOverrides.Add(overrideValue) == 0)
+        {
+            return false;
+        }
+
+        overrideIndex = overrideIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithCallContext(nodes, localRoot, instrs, armLocalTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut IrTable<SourceStorageMutationStatement> armStatements = new();
+    stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+    while willexit (assignmentIndex < (u64[0 2 ** 63 - 1])arm.AssignmentCount)
+    {
+        stack u32[0 max] assignmentSlot = arm.AssignmentStart + (u32[0 max])assignmentIndex;
+        if (!storageMutationStatements.Contains(assignmentSlot))
+        {
+            return false;
+        }
+
+        stack SourceStorageMutationStatement statement = storageMutationStatements.Get(assignmentSlot);
+        if (armStatements.Add(statement) == 0)
+        {
+            return false;
+        }
+
+        assignmentIndex = assignmentIndex + 1;
+    }
+
+    return LowerSourceStorageMutationStatementsWithCallContext(
+        armStatements,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        nodes,
+        instrs,
+        armLocalTypes,
+        localOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals);
+}
+
+internal fn bool LowerRecursiveIfStorageMutationArmToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    ParsedRecursiveIfStorageMutationArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] startBlock,
+    u32[0 max] exitBlock,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    out u32[0 max] exitBlockIndex)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    exitBlockIndex = 0;
+    if (startBlock == 0 || exitBlock == 0)
+    {
+        return false;
+    }
+
+    if (!arm.IsNested)
+    {
+        stack u32[0 max] leafFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            storageMutationStatements,
+            localTypes,
+            baseLocalOverrides,
+            instrs,
+            functionCallContractFacts,
+            sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] leafCount = (u32[0 max])instrs.Count() - (leafFirst - 1);
+        stack MirBlockId leafBlock = MirBranchBlock(blocks, MirBlockIdOf(exitBlock));
+        if (leafBlock.Index() != startBlock)
+        {
+            return false;
+        }
+
+        if (recordRanges && ranges.Add(MakeBlockEmit(leafBlock.Index(), leafFirst, leafCount)) == 0)
+        {
+            return false;
+        }
+
+        exitBlockIndex = leafBlock.Index();
+        return true;
+    }
+
+    return LowerRecursiveIfStorageMutationNodeToBranchBlocks(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        localTypes,
+        baseLocalOverrides,
+        startBlock,
+        exitBlock,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        exitBlockIndex);
+}
+
+internal fn bool LowerRecursiveIfStorageMutationNodeToBranchBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] startBlock,
+    u32[0 max] exitBlock,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    out u32[0 max] exitBlockIndex)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    exitBlockIndex = 0;
+    if (!ifNodes.Contains(nodeIndex) || startBlock == 0 || exitBlock == 0)
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfStorageMutationNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenBlockCount = RecursiveIfStorageMutationArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseBlockCount = RecursiveIfStorageMutationArmBlockCount(ifNodes, node.ElseArm);
+    if (thenBlockCount == 0 || elseBlockCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] thenEntryBlock = startBlock + 1;
+    stack u32[0 max] elseEntryBlock = thenEntryBlock + thenBlockCount;
+    stack u32[0 max] mergeBlockIndex = elseEntryBlock + elseBlockCount;
+
+    if ((u32[0 max])blocks.Count() + 1 != startBlock)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId condValue = LowerExprNodeWithCallContext(nodes, node.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack MirBlockId entryBlock = MirCondBlock(blocks, condValue, MirBlockIdOf(thenEntryBlock), MirBlockIdOf(elseEntryBlock));
+    if (entryBlock.Index() != startBlock)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(entryBlock.Index(), entryFirst, entryCount)) == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] thenExitBlock = 0;
+    if (!LowerRecursiveIfStorageMutationArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        localTypes,
+        baseLocalOverrides,
+        thenEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        thenExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != elseEntryBlock)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elseExitBlock = 0;
+    if (!LowerRecursiveIfStorageMutationArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        localTypes,
+        baseLocalOverrides,
+        elseEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        elseExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    stack MirBlockId mergeBlock = MirBranchBlock(blocks, MirBlockIdOf(exitBlock));
+    if (mergeBlock.Index() != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount)) == 0)
+    {
+        return false;
+    }
+
+    exitBlockIndex = mergeBlock.Index();
+    return true;
+}
+
+internal fn bool LowerRecursiveIfStorageMutationNodeToReturnBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfStorageMutationNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    ExprType rootType,
+    bool hasDeclaredReturnType,
+    MirType declaredReturnType,
+    bool usesArenaFrame,
+    out LoweredBody body)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    body = new();
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfStorageMutationNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenBlockCount = RecursiveIfStorageMutationArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseBlockCount = RecursiveIfStorageMutationArmBlockCount(ifNodes, node.ElseArm);
+    if (thenBlockCount == 0 || elseBlockCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] thenEntryBlock = firstBlock + 1;
+    stack u32[0 max] elseEntryBlock = thenEntryBlock + thenBlockCount;
+    stack u32[0 max] mergeBlockIndex = elseEntryBlock + elseBlockCount;
+
+    stack MirValueId condValue = LowerExprNodeWithCallContext(nodes, node.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack MirBlockId entryBlock = MirCondBlock(blocks, condValue, MirBlockIdOf(thenEntryBlock), MirBlockIdOf(elseEntryBlock));
+    if (entryBlock.Index() != firstBlock)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(entryBlock.Index(), entryFirst, entryCount)) == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] thenExitBlock = 0;
+    if (!LowerRecursiveIfStorageMutationArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        localTypes,
+        baseLocalOverrides,
+        thenEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        thenExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != elseEntryBlock)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] elseExitBlock = 0;
+    if (!LowerRecursiveIfStorageMutationArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        storageMutationStatements,
+        localTypes,
+        baseLocalOverrides,
+        elseEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        elseExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId returnValue = LowerScalarReturnExprNodeWithCallContext(
+        nodes,
+        returnRootNode,
+        instrs,
+        localTypes,
+        baseLocalOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        rootType,
+        hasDeclaredReturnType,
+        declaredReturnType);
+    if (usesArenaFrame)
+    {
+        stack MirValueId leave = MirArenaFrameLeave(instrs);
+    }
+
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+    if (mergeBlock.Index() != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount)) == 0)
+    {
+        return false;
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entryBlock.Index();
+    body.ParamCount = paramCount;
+    body.CondValue = condValue.Index();
+    body.ThenValue = returnValue.Index();
+    body.ElseValue = returnValue.Index();
+    return true;
+}
+
+internal fn bool LowerNestedIfStorageMutationArmsToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfStorageMutationArms arms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    ExprType rootType,
+    bool hasDeclaredReturnType,
+    MirType declaredReturnType,
+    bool usesArenaFrame,
+    out LoweredBody body)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    body = new();
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack MirValueId condValue = LowerExprNodeWithCallContext(nodes, arms.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+
+    if (arms.ThenArm.IsNested && arms.ElseArm.IsNested)
+    {
+        stack ParsedIfStorageMutationArms thenNestedArms = arms.ThenArm.Nested;
+        stack ParsedIfStorageMutationArms elseNestedArms = arms.ElseArm.Nested;
+
+        stack u32[0 max] thenInnerEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId thenInnerCondValue = LowerExprNodeWithCallContext(nodes, thenNestedArms.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+        stack u32[0 max] thenInnerEntryCount = (u32[0 max])instrs.Count() - (thenInnerEntryFirst - 1);
+
+        stack u32[0 max] thenInnerThenFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, thenNestedArms.ThenArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] thenInnerThenCount = (u32[0 max])instrs.Count() - (thenInnerThenFirst - 1);
+
+        stack u32[0 max] thenInnerElseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, thenNestedArms.ElseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] thenInnerElseCount = (u32[0 max])instrs.Count() - (thenInnerElseFirst - 1);
+
+        stack u32[0 max] elseInnerEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId elseInnerCondValue = LowerExprNodeWithCallContext(nodes, elseNestedArms.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+        stack u32[0 max] elseInnerEntryCount = (u32[0 max])instrs.Count() - (elseInnerEntryFirst - 1);
+
+        stack u32[0 max] elseInnerThenFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, elseNestedArms.ThenArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] elseInnerThenCount = (u32[0 max])instrs.Count() - (elseInnerThenFirst - 1);
+
+        stack u32[0 max] elseInnerElseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, elseNestedArms.ElseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] elseInnerElseCount = (u32[0 max])instrs.Count() - (elseInnerElseFirst - 1);
+
+        stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId returnValue = LowerScalarReturnExprNodeWithCallContext(
+            nodes,
+            returnRootNode,
+            instrs,
+            localTypes,
+            baseLocalOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals,
+            rootType,
+            hasDeclaredReturnType,
+            declaredReturnType);
+        if (usesArenaFrame)
+        {
+            stack MirValueId leave = MirArenaFrameLeave(instrs);
+        }
+
+        stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 5));
+        stack MirBlockId thenInnerEntry = MirCondBlock(blocks, thenInnerCondValue, MirBlockIdOf(firstBlock + 2), MirBlockIdOf(firstBlock + 3));
+        stack MirBlockId thenInnerThenBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 4));
+        stack MirBlockId thenInnerElseBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 4));
+        stack MirBlockId thenInnerMergeBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 9));
+        stack MirBlockId elseInnerEntry = MirCondBlock(blocks, elseInnerCondValue, MirBlockIdOf(firstBlock + 6), MirBlockIdOf(firstBlock + 7));
+        stack MirBlockId elseInnerThenBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 8));
+        stack MirBlockId elseInnerElseBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 8));
+        stack MirBlockId elseInnerMergeBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 9));
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+
+        if (recordRanges)
+        {
+            stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+            stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(thenInnerEntry.Index(), thenInnerEntryFirst, thenInnerEntryCount));
+            stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(thenInnerThenBlock.Index(), thenInnerThenFirst, thenInnerThenCount));
+            stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(thenInnerElseBlock.Index(), thenInnerElseFirst, thenInnerElseCount));
+            stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(thenInnerMergeBlock.Index(), mergeFirst, 0));
+            stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(elseInnerEntry.Index(), elseInnerEntryFirst, elseInnerEntryCount));
+            stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(elseInnerThenBlock.Index(), elseInnerThenFirst, elseInnerThenCount));
+            stack u32[0 max] r8 = ranges.Add(MakeBlockEmit(elseInnerElseBlock.Index(), elseInnerElseFirst, elseInnerElseCount));
+            stack u32[0 max] r9 = ranges.Add(MakeBlockEmit(elseInnerMergeBlock.Index(), mergeFirst, 0));
+            stack u32[0 max] r10 = ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount));
+        }
+
+        body.Ok = true;
+        body.EntryBlock = entry.Index();
+        body.ParamCount = paramCount;
+        body.CondValue = condValue.Index();
+        body.ThenValue = returnValue.Index();
+        body.ElseValue = returnValue.Index();
+        return true;
+    }
+
+    if (arms.ThenArm.IsNested)
+    {
+        stack ParsedIfStorageMutationArms nestedArms = arms.ThenArm.Nested;
+
+        stack u32[0 max] innerEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId innerCondValue = LowerExprNodeWithCallContext(nodes, nestedArms.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+        stack u32[0 max] innerEntryCount = (u32[0 max])instrs.Count() - (innerEntryFirst - 1);
+
+        stack u32[0 max] innerThenFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, nestedArms.ThenArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] innerThenCount = (u32[0 max])instrs.Count() - (innerThenFirst - 1);
+
+        stack u32[0 max] innerElseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, nestedArms.ElseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] innerElseCount = (u32[0 max])instrs.Count() - (innerElseFirst - 1);
+
+        stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, arms.ElseArm.Leaf, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
+
+        stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId returnValue = LowerScalarReturnExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals, rootType, hasDeclaredReturnType, declaredReturnType);
+        if (usesArenaFrame)
+        {
+            stack MirValueId leave = MirArenaFrameLeave(instrs);
+        }
+
+        stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 5));
+        stack MirBlockId innerEntry = MirCondBlock(blocks, innerCondValue, MirBlockIdOf(firstBlock + 2), MirBlockIdOf(firstBlock + 3));
+        stack MirBlockId innerThenBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 4));
+        stack MirBlockId innerElseBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 4));
+        stack MirBlockId innerMergeBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 6));
+        stack MirBlockId elseBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 6));
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+
+        if (recordRanges)
+        {
+            stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+            stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(innerEntry.Index(), innerEntryFirst, innerEntryCount));
+            stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(innerThenBlock.Index(), innerThenFirst, innerThenCount));
+            stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(innerElseBlock.Index(), innerElseFirst, innerElseCount));
+            stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(innerMergeBlock.Index(), mergeFirst, 0));
+            stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(elseBlock.Index(), elseFirst, elseCount));
+            stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount));
+        }
+
+        body.Ok = true;
+        body.EntryBlock = entry.Index();
+        body.ParamCount = paramCount;
+        body.CondValue = condValue.Index();
+        body.ThenValue = returnValue.Index();
+        body.ElseValue = returnValue.Index();
+        return true;
+    }
+
+    if (arms.ElseArm.IsNested)
+    {
+        stack ParsedIfStorageMutationArms nestedArms = arms.ElseArm.Nested;
+
+        stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, arms.ThenArm.Leaf, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
+
+        stack u32[0 max] innerEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId innerCondValue = LowerExprNodeWithCallContext(nodes, nestedArms.Condition.NodeId, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+        stack u32[0 max] innerEntryCount = (u32[0 max])instrs.Count() - (innerEntryFirst - 1);
+
+        stack u32[0 max] innerThenFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, nestedArms.ThenArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] innerThenCount = (u32[0 max])instrs.Count() - (innerThenFirst - 1);
+
+        stack u32[0 max] innerElseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfStorageMutationArmStores(nodes, nestedArms.ElseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] innerElseCount = (u32[0 max])instrs.Count() - (innerElseFirst - 1);
+
+        stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId returnValue = LowerScalarReturnExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals, rootType, hasDeclaredReturnType, declaredReturnType);
+        if (usesArenaFrame)
+        {
+            stack MirValueId leave = MirArenaFrameLeave(instrs);
+        }
+
+        stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 2));
+        stack MirBlockId thenBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 6));
+        stack MirBlockId innerEntry = MirCondBlock(blocks, innerCondValue, MirBlockIdOf(firstBlock + 3), MirBlockIdOf(firstBlock + 4));
+        stack MirBlockId innerThenBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 5));
+        stack MirBlockId innerElseBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 5));
+        stack MirBlockId innerMergeBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 6));
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+
+        if (recordRanges)
+        {
+            stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+            stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(thenBlock.Index(), thenFirst, thenCount));
+            stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(innerEntry.Index(), innerEntryFirst, innerEntryCount));
+            stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(innerThenBlock.Index(), innerThenFirst, innerThenCount));
+            stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(innerElseBlock.Index(), innerElseFirst, innerElseCount));
+            stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(innerMergeBlock.Index(), mergeFirst, 0));
+            stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount));
+        }
+
+        body.Ok = true;
+        body.EntryBlock = entry.Index();
+        body.ParamCount = paramCount;
+        body.CondValue = condValue.Index();
+        body.ThenValue = returnValue.Index();
+        body.ElseValue = returnValue.Index();
+        return true;
+    }
+
+    stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
+    if (!LowerIfStorageMutationArmStores(nodes, arms.ThenArm.Leaf, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
+
+    stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
+    if (!LowerIfStorageMutationArmStores(nodes, arms.ElseArm.Leaf, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId returnValue = LowerScalarReturnExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals, rootType, hasDeclaredReturnType, declaredReturnType);
+    if (usesArenaFrame)
+    {
+        stack MirValueId leave = MirArenaFrameLeave(instrs);
+    }
+
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+    stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 2));
+    stack MirBlockId thenBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 3));
+    stack MirBlockId elseBlock = MirBranchBlock(blocks, MirBlockIdOf(firstBlock + 3));
+    stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+
+    if (recordRanges)
+    {
+        stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), entryFirst, entryCount));
+        stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(thenBlock.Index(), thenFirst, thenCount));
+        stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(elseBlock.Index(), elseFirst, elseCount));
+        stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount));
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = paramCount;
+    body.CondValue = condValue.Index();
+    body.ThenValue = returnValue.Index();
+    body.ElseValue = returnValue.Index();
+    return true;
+}

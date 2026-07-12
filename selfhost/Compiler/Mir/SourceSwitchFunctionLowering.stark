@@ -1,0 +1,3066 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceIfParsing
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceLocalExpressionParsing
+import Compiler.Mir.SourceLocalInitialization
+import Compiler.Mir.SourceLocalArena
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Mir.SourceSwitchPatternConditions
+import Compiler.Mir.SourceSwitchAggregatePatterns
+import Compiler.Mir.SourceSwitchStoragePatterns
+import Compiler.Mir.SourceSwitchCaseParsing
+import Compiler.Mir.SourceSwitchAssignmentArms
+import Compiler.Mir.SourceSwitchTerminalParsing
+import Compiler.Mir.SourceSwitchTerminalLowering
+import Compiler.Mir.SourceSwitchAssignmentParsing
+import Compiler.Mir.SourceSwitchAssignmentLowering
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchFunctionLowering
+
+internal fn bool TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out u32[0 max] ownerDeclarationIndex)
+{
+    ownerDeclarationIndex = 0;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstCase = (u64[0 2 ** 63 - 1])closeParen + 2;
+    if (stream.KindAt(firstCase) != TokenKind.Case
+        || stream.KindAt(firstCase + 1) != TokenKind.Identifier
+        || stream.KindAt(firstCase + 2) != TokenKind.Dot)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = moduleFacts.Declarations.Count();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < count)
+    {
+        stack DeclItem item = moduleFacts.Declarations.ItemAt(index);
+        if (item.Kind == DeclarationKind.Enum
+            && item.NameToken != 0
+            && TokenTextEqualsToken(stream, source, (u32[0 max])(firstCase + 1), item.NameToken))
+        {
+            ownerDeclarationIndex = (u32[0 max])index;
+            return true;
+        }
+
+        index = index + 1;
+    }
+
+    return false;
+}
+
+
+
+
+internal fn bool FunctionBodyStartsWithTerminalSwitch(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0 && braceIndex >= nextFnIndex)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] bodyStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    return stream.KindAt(bodyStart) == TokenKind.Switch;
+}
+
+internal fn bool FunctionTerminalSwitchFirstCaseHasSiblingAlternatives(
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchIndex = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 2) != TokenKind.Case)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])closeParen + 3;
+    while willexit (cursor < stream.Count())
+    {
+        stack TokenKind kind = stream.KindAt(cursor);
+        if (depth == 0)
+        {
+            if (kind == TokenKind.Or)
+            {
+                return true;
+            }
+
+            if (kind == TokenKind.Colon || kind == TokenKind.When)
+            {
+                return false;
+            }
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrace || kind == TokenKind.LBrack)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrace || kind == TokenKind.RBrack)
+        {
+            if (depth == 0)
+            {
+                return false;
+            }
+
+            depth = depth - 1;
+        }
+
+        cursor = cursor + 1;
+    }
+
+    return false;
+}
+
+internal fn bool StatementStartsArenaDynamicReserveStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] limit)
+{
+    if (start + 6 > limit
+        || stream.KindAt(start) != TokenKind.Identifier
+        || stream.KindAt(start + 1) != TokenKind.Dot
+        || stream.KindAt(start + 2) != TokenKind.Identifier
+        || stream.KindAt(start + 3) != TokenKind.LParen
+        || stream.KindAt(start + 5) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] methodToken = (u32[0 max])(start + 2);
+    return TokenTextIsArenaDynamicReserveMethod(stream, source, methodToken);
+}
+
+internal fn bool FunctionBodyStartsWithConstructedObjectSwitchFieldAssignment(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut bool sawStorageBackedLocal = false;
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    while willexit (cursor < limit && TokenStartsSelfHostedLocal(stream.KindAt(cursor)))
+    {
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, statementEnd))
+        {
+            return false;
+        }
+
+        stack TokenKind localStorage = stream.KindAt(cursor);
+        stack mut u64[0 2 ** 63 - 1] assignToken = statementEnd;
+        stack bool hasAssign = FindSelfHostedStatementAssign(stream, cursor, statementEnd, assignToken);
+        stack u32[0 max] typeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+        stack mut u32[0 max] bodyOpen = 0;
+        stack mut u32[0 max] bodyClose = 0;
+        stack mut u32[0 max] argsOpen = 0;
+        stack mut u32[0 max] argsClose = 0;
+        stack mut u32[0 max] dynamicCapacity = 0;
+        stack mut u32[0 max] dynamicAlignment = 0;
+        if (FindSelfHostedDynamicElementTypeToken(stream, cursor, statementEnd) != 0
+            && TryParseArenaSelectorCapacity(stream, source, cursor, statementEnd, dynamicCapacity, dynamicAlignment))
+        {
+            sawStorageBackedLocal = true;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && typeToken != 0)
+        {
+            stack mut MirType scalarProbeType = MirType.I64;
+            if (MirTypeForKnownSourceScalarType(stream, source, typeToken, scalarProbeType))
+            {
+                sawStorageBackedLocal = hasAssign || SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            }
+            else if (hasAssign)
+            {
+                sawStorageBackedLocal = true;
+            }
+        }
+
+        if ((localStorage == TokenKind.Stack || localStorage == TokenKind.Heap)
+            && hasAssign
+            && typeToken != 0
+            && (TryParseTargetTypedObjectConstructorShape(stream, source, typeToken, assignToken, statementEnd, bodyOpen, bodyClose)
+                || TryParseTargetTypedPositionalRecordConstructorShape(stream, source, typeToken, assignToken, statementEnd, argsOpen, argsClose)))
+        {
+            sawStorageBackedLocal = true;
+        }
+
+        cursor = statementEnd + 1;
+    }
+
+    if (cursor >= limit || stream.KindAt(cursor) != TokenKind.Switch)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(cursor + 1));
+    if (closeParen == (u32[0 max])(cursor + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] firstCase = (u64[0 2 ** 63 - 1])closeParen + 2;
+    if (stream.KindAt(firstCase) != TokenKind.Case)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterLabel = firstCase + 1;
+    while willexit (afterLabel < limit && stream.KindAt(afterLabel) != TokenKind.Colon)
+    {
+        afterLabel = afterLabel + 1;
+    }
+
+    if (afterLabel >= limit || stream.KindAt(afterLabel) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] armStart = afterLabel + 1;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] armCursor = armStart + 1;
+        while willexit (armCursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(armCursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = armCursor;
+            if (!FindSelfHostedStatementEnd(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            armCursor = localEnd + 1;
+        }
+
+            return armCursor < (u64[0 2 ** 63 - 1])closeBrace
+                && (StatementStartsRawPointerDerefAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                    || (sawStorageBackedLocal
+                        && (StatementStartsConstructedObjectFieldAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                            || StatementStartsScalarStorageAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                            || StatementStartsSourceSliceElementAssignment(stream, armCursor, (u64[0 2 ** 63 - 1])closeBrace)
+                            || StatementStartsArenaDynamicReserveStatement(stream, source, armCursor, (u64[0 2 ** 63 - 1])closeBrace))));
+    }
+
+    return StatementStartsRawPointerDerefAssignment(stream, armStart, limit)
+        || (sawStorageBackedLocal
+            && (StatementStartsConstructedObjectFieldAssignment(stream, armStart, limit)
+                || StatementStartsScalarStorageAssignment(stream, armStart, limit)
+                || StatementStartsSourceSliceElementAssignment(stream, armStart, limit)
+                || StatementStartsArenaDynamicReserveStatement(stream, source, armStart, limit)));
+}
+
+internal fn bool LowerModuleConstructedObjectSwitchFieldAssignmentFunctionToBlocks(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+    where overlap(sourceText, source)
+{
+    body = new();
+    if (!FunctionBodyStartsWithConstructedObjectSwitchFieldAssignment(stream, source, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut IrTable<u32[0 max]> localRoots = new();
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    stack mut IrTable<StackObjectFieldInitializer> stackObjectFieldInitializers = new();
+    stack mut IrTable<FixedArrayStorageLocal> fixedArrayStorageLocals = new();
+    stack mut IrTable<FixedArrayStorageInitializer> fixedArrayStorageInitializers = new();
+    stack mut IrTable<ScalarStorageLocal> scalarStorageLocals = new();
+    stack mut IrTable<ScalarStorageInitializer> scalarStorageInitializers = new();
+    stack mut IrTable<ScalarStorageAssignment> scalarAssignments = new();
+    stack mut IrTable<EnumStorageLocal> enumStorageLocals = new();
+    stack mut IrTable<EnumStorageInitializer> enumStorageInitializers = new();
+    stack mut IrTable<EnumStorageAssignment> enumAssignments = new();
+    stack mut IrTable<ArenaDynamicLocal> arenaDynamicLocals = new();
+    stack mut IrTable<ConstructedObjectLocal> constructedObjectLocals = new();
+    stack mut IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals = new();
+    stack mut IrTable<SwitchArenaDynamicReserveStatement> arenaDynamicReserveStatements = new();
+    stack mut IrTable<SourceStorageMutationStatement> storageMutationStatements = new();
+    stack mut IrTable<u32[0 max]> localOverrideValues = new();
+    stack mut bool usesArenaFrame = false;
+    stack mut DeclarationList declarations = new();
+    stack mut TypedEnumLayoutTable enumLayouts = new();
+    if (AsciiLength(sourceText) == 0 || !TryParseMirSourceDeclarations(stream, declarations))
+    {
+        return false;
+    }
+
+    switch (BuildTypedEnumLayouts(sourceText, stream, declarations))
+    {
+        case ParseResult<TypedEnumLayoutTable>.Err(var layoutError):
+            return false;
+        case ParseResult<TypedEnumLayoutTable>.Ok(var builtLayouts):
+            enumLayouts = builtLayouts;
+    }
+
+    stack mut IrTable<u32[0 max]> memberFactRowsByToken = new();
+    stack mut IrTable<SourceMemberPathFact> memberPathFacts = new();
+    if (!BuildSourceMemberPathFacts(sourceText, stream, source, declarations, memberFactRowsByToken, memberPathFacts))
+    {
+        return false;
+    }
+
+    stack mut SourceModuleLoweringFacts moduleFacts = new();
+    moduleFacts.Declarations = declarations;
+    moduleFacts.EnumLayouts = enumLayouts;
+    moduleFacts.MemberFactRowsByToken = memberFactRowsByToken;
+    moduleFacts.MemberPathFacts = memberPathFacts;
+
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    if (!AddSignatureSliceParamDescriptors(stream, source, signature, paramAbiFacts, sliceDescriptorLocals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> sourceValueFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    while willexit (cursor < limit && TokenStartsSelfHostedLocal(stream.KindAt(cursor)))
+    {
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, statementEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, statementEnd);
+        if (localNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+        if (ParamIndexOf(params, source, nameStart, nameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack TokenKind localStorage = stream.KindAt(cursor);
+        stack mut u64[0 2 ** 63 - 1] assignToken = statementEnd;
+        stack bool hasAssign = FindSelfHostedStatementAssign(stream, cursor, statementEnd, assignToken);
+        if (localStorage == TokenKind.Var)
+        {
+            if (!hasAssign)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+            stack ExprParseResult varExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
+            if (varExpr.Next != statementEnd || params.Count() != beforeInit)
+            {
+                return false;
+            }
+
+            stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
+            stack mut bool rawPointerAliasMutable = false;
+            stack mut u32[0 max] rawPointerAliasFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] rawPointerAliasElementSize = 0;
+            stack mut u32[0 max] rawPointerAliasElementAlignment = 0;
+            stack mut bool rawPointerAliasNestedMutable = false;
+            stack mut u32[0 max] rawPointerAliasNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            stack mut u32[0 max] rawPointerAliasNestedElementSize = 0;
+            stack mut u32[0 max] rawPointerAliasNestedElementAlignment = 0;
+            stack mut bool rawPointerAliasHasElementCount = false;
+            stack mut bool rawPointerAliasElementCountIsParam = false;
+            stack mut u32[0 max] rawPointerAliasElementCountLiteral = 0;
+            stack mut u32[0 max] rawPointerAliasElementCountParamIndex = 0;
+            stack bool rawPointerAlias = varType == ExprType.PtrType
+                && TryGetRawPointerFactsForNodeWithNested(
+                    nodes,
+                    params,
+                    varExpr.NodeId,
+                    rawPointerAliasMutable,
+                    rawPointerAliasFieldTypeCode,
+                    rawPointerAliasElementSize,
+                    rawPointerAliasElementAlignment,
+                    rawPointerAliasNestedMutable,
+                    rawPointerAliasNestedFieldTypeCode,
+                    rawPointerAliasNestedElementSize,
+                    rawPointerAliasNestedElementAlignment);
+            if (varType == ExprType.ErrorType || (varType == ExprType.PtrType && !rawPointerAlias))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] localIndex = 0;
+            if (rawPointerAlias)
+            {
+                if (!TryGetRawPointerElementCountFactsForNameNode(
+                    nodes,
+                    params,
+                    varExpr.NodeId,
+                    rawPointerAliasHasElementCount,
+                    rawPointerAliasElementCountIsParam,
+                    rawPointerAliasElementCountLiteral,
+                    rawPointerAliasElementCountParamIndex))
+                {
+                    rawPointerAliasHasElementCount = false;
+                }
+
+                localIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+                    params,
+                    source,
+                    nameStart,
+                    nameLength,
+                    rawPointerAliasMutable,
+                    rawPointerAliasFieldTypeCode,
+                    rawPointerAliasElementSize,
+                    rawPointerAliasElementAlignment,
+                    rawPointerAliasHasElementCount,
+                    rawPointerAliasElementCountIsParam,
+                    rawPointerAliasElementCountLiteral,
+                    rawPointerAliasElementCountParamIndex,
+                    rawPointerAliasNestedMutable,
+                    rawPointerAliasNestedFieldTypeCode,
+                    rawPointerAliasNestedElementSize,
+                    rawPointerAliasNestedElementAlignment);
+            }
+            else
+            {
+                localIndex = ResolveParam(params, source, nameStart, nameLength);
+            }
+
+            if (localRoots.Add(varExpr.NodeId) == 0 || localOverrideValues.Add(0) == 0)
+            {
+                return false;
+            }
+
+            stack mut ValueFacts localFacts = new();
+            if (!TryBuildSourceValueFactsForNode(nodes, varExpr.NodeId, sourceValueFacts, localFacts)
+                && varType == ExprType.BoolType)
+            {
+                localFacts.SetIntegerRange(0, 2);
+            }
+
+            if (localTypes.Add(SourceLocalTypeCodeForNodeWithLocals(nodes, varExpr.NodeId, localTypes)) == 0
+                || sourceValueFacts.Add(localFacts) == 0)
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        stack u32[0 max] scalarTypeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+        stack mut u32[0 max] dynamicCapacity = 0;
+        stack mut u32[0 max] dynamicAlignment = 0;
+        stack u32[0 max] dynamicElementTypeToken = FindSelfHostedDynamicElementTypeToken(stream, cursor, statementEnd);
+        if (dynamicElementTypeToken != 0 && TryParseArenaSelectorCapacity(stream, source, cursor, statementEnd, dynamicCapacity, dynamicAlignment))
+        {
+            if (signature.LawKind() || localStorage == TokenKind.Heap || localStorage == TokenKind.Static || localStorage == TokenKind.Register || localStorage == TokenKind.Arena)
+            {
+                return false;
+            }
+
+            stack u32[0 max] elementSize = TypeKnownByteExtentForLocal(stream, source, dynamicElementTypeToken);
+            stack u32[0 max] elementAlign = TypeKnownByteAlignment(stream, source, dynamicElementTypeToken);
+            if (elementSize == 0 || elementAlign == 0)
+            {
+                return false;
+            }
+
+            if (dynamicAlignment == 0)
+            {
+                dynamicAlignment = elementAlign;
+            }
+
+            if (dynamicAlignment < elementAlign || !IsPowerOfTwoU32(dynamicAlignment))
+            {
+                return false;
+            }
+
+            if (!usesArenaFrame)
+            {
+                stack MirValueId frame = MirArenaFrameEnter(instrs);
+                usesArenaFrame = true;
+            }
+
+            stack MirValueId storage = MirArenaDynamicStorageInit(instrs, dynamicCapacity, elementSize, dynamicAlignment);
+            stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+            if (localRoots.Add(0) == 0
+                || localTypes.Add(SourceLocalTypeCodeNonValue()) == 0
+                || localOverrideValues.Add(0) == 0
+                || sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
+
+            stack mut ArenaDynamicLocal dynamicLocal = new();
+            dynamicLocal.Start = nameStart;
+            dynamicLocal.Length = nameLength;
+            dynamicLocal.StorageValue = storage.Index();
+            dynamicLocal.ElementSize = elementSize;
+            dynamicLocal.Alignment = dynamicAlignment;
+            if (arenaDynamicLocals.Add(dynamicLocal) == 0)
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && hasAssign
+            && scalarTypeToken != 0
+            && TryReadSliceSuffix(stream, scalarTypeToken))
+        {
+            stack mut SourceSliceDescriptorLocal sliceDescriptor = new();
+            stack mut bool resolvedSliceDescriptor = TryResolveSliceDescriptorFromConstructedObjectFixedArray(
+                stream,
+                source,
+                moduleFacts,
+                constructedObjectLocals,
+                scalarTypeToken,
+                assignToken + 1,
+                statementEnd,
+                sliceDescriptor);
+            if (!resolvedSliceDescriptor)
+            {
+                resolvedSliceDescriptor = TryResolveSliceDescriptorFromFixedArrayStorageLocal(
+                    stream,
+                    source,
+                    fixedArrayStorageLocals,
+                    scalarTypeToken,
+                    assignToken + 1,
+                    statementEnd,
+                    sliceDescriptor);
+            }
+
+            if (!resolvedSliceDescriptor)
+            {
+                resolvedSliceDescriptor = TryResolveSliceDescriptorFromSourceSliceDescriptorLocal(
+                    stream,
+                    source,
+                    sliceDescriptorLocals,
+                    scalarTypeToken,
+                    assignToken + 1,
+                    statementEnd,
+                    sliceDescriptor);
+            }
+
+            if (!resolvedSliceDescriptor)
+            {
+                return false;
+            }
+
+            stack u32[0 max] sliceLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] sliceLocalRoot = localRoots.Add(0);
+            stack u32[0 max] sliceLocalType = localTypes.Add(SourceLocalTypeCodeNonValue());
+            stack u32[0 max] sliceOverrideValue = localOverrideValues.Add(0);
+            if (sliceLocalRoot == 0
+                || sliceLocalType == 0
+                || sliceOverrideValue == 0
+                || sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
+
+            sliceDescriptor.Start = nameStart;
+            sliceDescriptor.Length = nameLength;
+            sliceDescriptor.Mutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            sliceDescriptor.ParamIndex = sliceLocalIndex;
+            if (sliceDescriptorLocals.Add(sliceDescriptor) == 0)
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        stack mut u32[0 max] fixedArrayLength = 0;
+        if (localStorage == TokenKind.Stack
+            && scalarTypeToken != 0
+            && TryReadFixedArrayLengthSuffix(stream, source, scalarTypeToken, fixedArrayLength))
+        {
+            stack mut MirType elementType = MirType.I64;
+            if (!MirTypeForKnownSourceScalarTypeHead(stream, source, scalarTypeToken, elementType))
+            {
+                return false;
+            }
+
+            stack u32[0 max] elementSize = ScalarTypeKnownByteExtent(stream, source, scalarTypeToken);
+            stack u32[0 max] elementAlignment = NaturalAlignmentForByteExtent(elementSize);
+            stack u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+            stack u32[0 max] arrayAllocationSize = TypeKnownByteExtentForLocal(stream, source, scalarTypeToken);
+            stack u32[0 max] arrayAllocationAlign = TypeKnownByteAlignment(stream, source, scalarTypeToken);
+            if (fixedArrayLength == 0
+                || elementSize == 0
+                || elementAlignment == 0
+                || fieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+                || arrayAllocationSize == 0
+                || arrayAllocationAlign == 0)
+            {
+                return false;
+            }
+
+            stack mut IrTable<u32[0 max]> initializerRoots = new();
+            if (hasAssign)
+            {
+                if (stream.KindAt(assignToken + 1) != TokenKind.LBrace)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] initializerClose = MatchingBraceForMirLowering(stream, (u32[0 max])(assignToken + 1));
+                if (initializerClose == (u32[0 max])(assignToken + 1)
+                    || (u64[0 2 ** 63 - 1])initializerClose + 1 != statementEnd)
+                {
+                    return false;
+                }
+
+                stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+                if (!TryParseFixedArrayStorageInitializerRoots(
+                    stream,
+                    source,
+                    nodes,
+                    params,
+                    funcNames,
+                    constructedObjectLocals,
+                    sliceDescriptorLocals,
+                    localTypes,
+                    sourceValueFacts,
+                    moduleFacts,
+                    fixedArrayLength,
+                    fieldTypeCode,
+                    assignToken + 1,
+                    (u64[0 2 ** 63 - 1])initializerClose,
+                    initializerRoots)
+                    || params.Count() != beforeInit)
+                {
+                    return false;
+                }
+            }
+            else if (!SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd))
+            {
+                return false;
+            }
+
+            stack MirValueId arrayStorage = MirStackAlloc(instrs, arrayAllocationSize, arrayAllocationAlign);
+            stack u32[0 max] arrayLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] arrayLocalOrdinal = localRoots.Add(0);
+            stack u32[0 max] arrayLocalType = localTypes.Add(SourceLocalTypeCodeNonValue());
+            stack u32[0 max] arrayOverrideValue = localOverrideValues.Add(arrayStorage.Index());
+            if (arrayLocalOrdinal == 0
+                || arrayLocalType == 0
+                || arrayOverrideValue == 0
+                || sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
+
+            stack mut FixedArrayStorageLocal fixedArrayLocal = new();
+            fixedArrayLocal.Start = nameStart;
+            fixedArrayLocal.Length = nameLength;
+            fixedArrayLocal.Mutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            fixedArrayLocal.ParamIndex = arrayLocalIndex;
+            fixedArrayLocal.StorageValue = arrayStorage.Index();
+            fixedArrayLocal.ElementSize = elementSize;
+            fixedArrayLocal.Alignment = elementAlignment;
+            fixedArrayLocal.ArrayLength = fixedArrayLength;
+            fixedArrayLocal.ElementType = elementType;
+            fixedArrayLocal.FieldTypeCode = fieldTypeCode;
+            if (fixedArrayStorageLocals.Add(fixedArrayLocal) == 0)
+            {
+                return false;
+            }
+
+            stack SourceSliceDescriptorLocal fixedArrayDescriptor = SourceSliceDescriptorFromFixedArrayStorageLocal(fixedArrayLocal);
+            if (sliceDescriptorLocals.Add(fixedArrayDescriptor) == 0)
+            {
+                return false;
+            }
+
+            if (hasAssign)
+            {
+                stack mut u32[0 max] elementIndex = 0;
+                while willexit (elementIndex < fixedArrayLength)
+                {
+                    stack mut FixedArrayStorageInitializer initializer = new();
+                    initializer.LocalOrdinal = arrayLocalOrdinal;
+                    initializer.ParamIndex = arrayLocalIndex;
+                    initializer.ElementIndex = elementIndex;
+                    initializer.ElementSize = elementSize;
+                    initializer.Alignment = elementAlignment;
+                    initializer.ElementType = elementType;
+                    if (initializerRoots.Contains(elementIndex + 1))
+                    {
+                        initializer.ExprRoot = initializerRoots.Get(elementIndex + 1);
+                    }
+
+                    if (fixedArrayStorageInitializers.Add(initializer) == 0)
+                    {
+                        return false;
+                    }
+
+                    elementIndex = elementIndex + 1;
+                }
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && hasAssign
+            && scalarTypeToken != 0
+            && TryDeclareInitializedRawPointerStorageLocal(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                sliceDescriptorLocals,
+                localTypes,
+                localRoots,
+                localOverrideValues,
+                sourceValueFacts,
+                moduleFacts,
+                cursor,
+                statementEnd,
+                nameStart,
+                nameLength,
+                scalarTypeToken,
+                assignToken + 1,
+                instrs,
+                scalarStorageLocals,
+                scalarStorageInitializers))
+        {
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        stack mut MirType scalarFieldType = MirType.I64;
+        if (localStorage == TokenKind.Stack
+            && hasAssign
+            && scalarTypeToken != 0
+            && MirTypeForKnownSourceScalarType(stream, source, scalarTypeToken, scalarFieldType))
+        {
+            stack u32[0 max] scalarAllocationSize = TypeKnownByteExtentForLocal(stream, source, scalarTypeToken);
+            stack u32[0 max] scalarAllocationAlign = TypeKnownByteAlignment(stream, source, scalarTypeToken);
+            stack u32[0 max] scalarLocalTypeCode = SourceLocalStoredScalarTypeCodeForMirType(scalarFieldType);
+            if (scalarAllocationSize == 0
+                || scalarAllocationAlign == 0
+                || !SourceLocalTypeCodeIsStoredScalar(scalarLocalTypeCode))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+            stack ExprParseResult scalarExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
+            if (params.Count() != beforeInit || scalarExpr.NodeId == 0 || scalarExpr.Next != statementEnd)
+            {
+                return false;
+            }
+
+            stack ExprType scalarExprType = TypeOfNodeWithLocals(nodes, scalarExpr.NodeId, localTypes);
+            if (!FieldInitializerTypeMatches(scalarFieldType, scalarExprType))
+            {
+                return false;
+            }
+
+            stack MirValueId scalarStorage = MirStackAlloc(instrs, scalarAllocationSize, scalarAllocationAlign);
+            stack bool scalarMutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            stack u32[0 max] scalarLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] scalarLocalOrdinal = localRoots.Add(0);
+            if (scalarLocalOrdinal == 0
+                || localTypes.Add(scalarLocalTypeCode) == 0
+                || localOverrideValues.Add(scalarStorage.Index()) == 0)
+            {
+                return false;
+            }
+
+            stack mut ValueFacts scalarFacts = new();
+            if (!scalarMutable)
+            {
+                stack mut ValueFacts parsedFacts = new();
+                if (TryBuildSourceValueFactsForNode(nodes, scalarExpr.NodeId, sourceValueFacts, parsedFacts))
+                {
+                    scalarFacts = parsedFacts;
+                }
+            }
+
+            if (sourceValueFacts.Add(scalarFacts) == 0)
+            {
+                return false;
+            }
+
+            stack mut ScalarStorageLocal scalarLocal = new();
+            scalarLocal.Start = nameStart;
+            scalarLocal.Length = nameLength;
+            scalarLocal.ParamIndex = scalarLocalIndex;
+            scalarLocal.StorageValue = scalarStorage.Index();
+            scalarLocal.FieldAlignment = scalarAllocationAlign;
+            scalarLocal.FieldType = scalarFieldType;
+            scalarLocal.Mutable = scalarMutable;
+            if (scalarStorageLocals.Add(scalarLocal) == 0)
+            {
+                return false;
+            }
+
+            stack mut ScalarStorageInitializer scalarInitializer = new();
+            scalarInitializer.LocalOrdinal = scalarLocalOrdinal;
+            scalarInitializer.ParamIndex = scalarLocalIndex;
+            scalarInitializer.FieldAlignment = scalarAllocationAlign;
+            scalarInitializer.FieldType = scalarFieldType;
+            scalarInitializer.ExprRoot = scalarExpr.NodeId;
+            if (scalarStorageInitializers.Add(scalarInitializer) == 0)
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && !hasAssign
+            && scalarTypeToken != 0
+            && TryDeclareUninitializedRawPointerStorageLocal(
+                stream,
+                source,
+                cursor,
+                statementEnd,
+                nameStart,
+                nameLength,
+                scalarTypeToken,
+                params,
+                instrs,
+                localRoots,
+                localTypes,
+                localOverrideValues,
+                sourceValueFacts,
+                scalarStorageLocals))
+        {
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        if (localStorage == TokenKind.Stack
+            && !hasAssign
+            && scalarTypeToken != 0
+            && MirTypeForKnownSourceScalarType(stream, source, scalarTypeToken, scalarFieldType))
+        {
+            if (!TryDeclareUninitializedScalarStorageLocal(
+                stream,
+                source,
+                cursor,
+                statementEnd,
+                nameStart,
+                nameLength,
+                scalarTypeToken,
+                scalarFieldType,
+                params,
+                instrs,
+                localRoots,
+                localTypes,
+                localOverrideValues,
+                sourceValueFacts,
+                scalarStorageLocals))
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        stack mut u32[0 max] enumOwnerDeclarationIndex = 0;
+        stack mut Compiler.Parsing.DeclItem enumItem = new();
+        if (localStorage == TokenKind.Stack
+            && hasAssign
+            && scalarTypeToken != 0
+            && TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, scalarTypeToken, enumOwnerDeclarationIndex, enumItem))
+        {
+            stack mut u32[0 max] enumAllocationSize = 0;
+            stack mut u32[0 max] enumAllocationAlign = 1;
+            if (!TryGetSourceEnumStorageLayout(moduleFacts, enumOwnerDeclarationIndex, enumAllocationSize, enumAllocationAlign))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+            stack ExprParseResult enumExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, assignToken + 1);
+            if (params.Count() != beforeInit || enumExpr.NodeId == 0 || enumExpr.Next != statementEnd)
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] enumExprOwnerTypeIndex = 0;
+            stack u32[0 max] enumOwnerTypeIndex = enumOwnerDeclarationIndex + 1;
+            if (TypeOfNodeWithLocals(nodes, enumExpr.NodeId, localTypes) != ExprType.EnumType
+                || !TryGetSourceExpressionEnumOwnerTypeIndexForNode(nodes, enumExpr.NodeId, localTypes, enumExprOwnerTypeIndex)
+                || enumExprOwnerTypeIndex != enumOwnerTypeIndex)
+            {
+                return false;
+            }
+
+            stack MirValueId enumStorage = MirStackAlloc(instrs, enumAllocationSize, enumAllocationAlign);
+            stack bool enumMutable = SelfHostedLocalDeclarationHasMut(stream, cursor, statementEnd);
+            stack u32[0 max] enumLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] enumLocalOrdinal = localRoots.Add(0);
+            if (enumLocalOrdinal == 0
+                || localTypes.Add(SourceLocalTypeCodeForStoredEnumOwnerDeclarationIndex(enumOwnerDeclarationIndex)) == 0
+                || localOverrideValues.Add(enumStorage.Index()) == 0
+                || sourceValueFacts.Add(new ValueFacts()) == 0)
+            {
+                return false;
+            }
+
+            stack mut EnumStorageLocal enumLocal = new();
+            enumLocal.Start = nameStart;
+            enumLocal.Length = nameLength;
+            enumLocal.ParamIndex = enumLocalIndex;
+            enumLocal.StorageValue = enumStorage.Index();
+            enumLocal.FieldAlignment = enumAllocationAlign;
+            enumLocal.OwnerTypeIndex = enumOwnerTypeIndex;
+            enumLocal.Mutable = enumMutable;
+            if (enumStorageLocals.Add(enumLocal) == 0)
+            {
+                return false;
+            }
+
+            stack mut EnumStorageInitializer enumInitializer = new();
+            enumInitializer.LocalOrdinal = enumLocalOrdinal;
+            enumInitializer.ParamIndex = enumLocalIndex;
+            enumInitializer.FieldAlignment = enumAllocationAlign;
+            enumInitializer.OwnerTypeIndex = enumOwnerTypeIndex;
+            enumInitializer.ExprRoot = enumExpr.NodeId;
+            if (enumStorageInitializers.Add(enumInitializer) == 0)
+            {
+                return false;
+            }
+
+            cursor = statementEnd + 1;
+            continue;
+        }
+
+        stack u32[0 max] objectTypeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+        stack mut u32[0 max] bodyOpen = 0;
+        stack mut u32[0 max] bodyClose = 0;
+        stack mut u32[0 max] argsOpen = 0;
+        stack mut u32[0 max] argsClose = 0;
+        stack bool objectStorageLocal = localStorage == TokenKind.Stack || localStorage == TokenKind.Heap;
+        stack mut bool objectConstructor = false;
+        stack mut bool positionalRecordConstructor = false;
+        if (objectStorageLocal
+            && hasAssign
+            && objectTypeToken != 0
+            && TryParseTargetTypedObjectConstructorShape(stream, source, objectTypeToken, assignToken, statementEnd, bodyOpen, bodyClose))
+        {
+            objectConstructor = true;
+        }
+        else if (objectStorageLocal
+            && hasAssign
+            && objectTypeToken != 0
+            && TryParseTargetTypedPositionalRecordConstructorShape(stream, source, objectTypeToken, assignToken, statementEnd, argsOpen, argsClose))
+        {
+            objectConstructor = true;
+            positionalRecordConstructor = true;
+        }
+
+        if (!objectConstructor || (localStorage == TokenKind.Heap && signature.LawKind()))
+        {
+            return false;
+        }
+
+        stack u32[0 max] objectAllocationSize = TypeKnownByteExtentForLocalWithEnums(stream, source, moduleFacts, objectTypeToken);
+        stack u32[0 max] objectAllocationAlign = TypeKnownByteAlignmentWithEnums(stream, source, moduleFacts, objectTypeToken);
+        if (objectAllocationSize == 0 || objectAllocationAlign == 0)
+        {
+            return false;
+        }
+
+        stack mut MirValueId objectAllocation = new();
+        if (localStorage == TokenKind.Heap)
+        {
+            objectAllocation = MirHeapAlloc(instrs, objectAllocationSize, objectAllocationAlign);
+        }
+        else
+        {
+            objectAllocation = MirStackAlloc(instrs, objectAllocationSize, objectAllocationAlign);
+        }
+
+        stack u32[0 max] objectLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+        stack u32[0 max] objectNonValueRoot = localRoots.Add(0);
+        if (objectNonValueRoot == 0
+            || localTypes.Add(SourceLocalTypeCodeNonValue()) == 0
+            || localOverrideValues.Add(objectAllocation.Index()) == 0
+            || sourceValueFacts.Add(new ValueFacts()) == 0)
+        {
+            return false;
+        }
+
+        if (positionalRecordConstructor)
+        {
+            if (!TryParseStackObjectPositionalRecordConstructorInitializers(
+                stream,
+                source,
+                moduleFacts,
+                objectTypeToken,
+                argsOpen,
+                argsClose,
+                objectNonValueRoot,
+                objectLocalIndex,
+                objectAllocation,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                localTypes,
+                sourceValueFacts,
+                stackObjectFieldInitializers))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (!TryParseStackObjectFieldInitializers(
+                stream,
+                source,
+                moduleFacts,
+                objectTypeToken,
+                bodyOpen,
+                bodyClose,
+                objectNonValueRoot,
+                objectLocalIndex,
+                objectAllocation,
+                nodes,
+                params,
+                funcNames,
+                constructedObjectLocals,
+                localTypes,
+                sourceValueFacts,
+                stackObjectFieldInitializers))
+            {
+                return false;
+            }
+        }
+
+        stack mut ConstructedObjectLocal constructedObjectLocal = new();
+        constructedObjectLocal.Start = nameStart;
+        constructedObjectLocal.Length = nameLength;
+        constructedObjectLocal.ParamIndex = objectLocalIndex;
+        constructedObjectLocal.TypeToken = objectTypeToken;
+        if (constructedObjectLocals.Add(constructedObjectLocal) == 0)
+        {
+            return false;
+        }
+
+        cursor = statementEnd + 1;
+    }
+
+    if ((constructedObjectLocals.Count() == 0
+        && fixedArrayStorageLocals.Count() == 0
+        && sliceDescriptorLocals.Count() == 0
+        && scalarStorageLocals.Count() == 0
+        && enumStorageLocals.Count() == 0
+        && arenaDynamicLocals.Count() == 0)
+        || cursor >= limit
+        || stream.KindAt(cursor) != TokenKind.Switch)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] baseParamCount = params.Count();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
+    stack mut IrTable<u32[0 max]> booleanCaseValues = new();
+    stack bool switchCasesAreBoolean = SwitchFirstCaseLabelIsBoolean(stream, cursor);
+    stack bool switchCasesAreEnum = !switchCasesAreBoolean && SwitchFirstCaseLabelLooksQualifiedName(stream, cursor);
+    stack mut u32[0 max] caseOwnerDeclarationIndex = 0;
+    if (switchCasesAreEnum)
+    {
+        if (!TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+                stream,
+                source,
+                moduleFacts,
+                cursor,
+                caseOwnerDeclarationIndex))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<ParsedSwitchFieldAssignmentArm> caseArms = new();
+    stack mut IrTable<u32[0 max]> armLocalRoots = new();
+    stack mut IrTable<ConstructedObjectFieldAssignment> fieldAssignments = new();
+    stack mut ParsedSwitchFieldAssignmentArm defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (switchCasesAreBoolean)
+    {
+        if (!TryParseBooleanSwitchFieldAssignmentCases(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            constructedObjectLocals,
+            sliceDescriptorLocals,
+            scalarStorageLocals,
+            enumStorageLocals,
+            arenaDynamicLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            cursor,
+            baseParamCount,
+            scrutinee,
+            booleanCaseValues,
+            caseArms,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            arenaDynamicReserveStatements,
+            storageMutationStatements,
+            defaultArm,
+            nextToken))
+        {
+            return false;
+        }
+    }
+    else if (switchCasesAreEnum)
+    {
+        if (!TryParseEnumSwitchFieldAssignmentCases(
+            stream,
+            source,
+            moduleFacts,
+            caseOwnerDeclarationIndex,
+            nodes,
+            params,
+            funcNames,
+            constructedObjectLocals,
+            sliceDescriptorLocals,
+            scalarStorageLocals,
+            enumStorageLocals,
+            arenaDynamicLocals,
+            localTypes,
+            sourceValueFacts,
+            cursor,
+            baseParamCount,
+            scrutinee,
+            caseValues,
+            caseArms,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            arenaDynamicReserveStatements,
+            storageMutationStatements,
+            defaultArm,
+            nextToken))
+        {
+            return false;
+        }
+
+        if (!CopyCaseValuesToCaseMaxValues(caseValues, caseMaxValues))
+        {
+            return false;
+        }
+    }
+    else if (!TryParseIntegerSwitchFieldAssignmentCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        scalarStorageLocals,
+        enumStorageLocals,
+        arenaDynamicLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        cursor,
+        baseParamCount,
+        scrutinee,
+        caseValues,
+        caseMaxValues,
+        caseArms,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        arenaDynamicReserveStatements,
+        storageMutationStatements,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] switchCaseCount = caseValues.Count();
+    if (switchCasesAreBoolean)
+    {
+        switchCaseCount = booleanCaseValues.Count();
+    }
+
+    stack mut IrTable<u32[0 max]> postLocalRoots = new();
+    stack mut u64[0 2 ** 63 - 1] returnIndex = nextToken;
+    stack mut u64[0 2 ** 63 - 1] expectedParamCount = params.Count();
+    while willexit (returnIndex < limit && stream.KindAt(returnIndex) == TokenKind.Var)
+    {
+        stack mut u64[0 2 ** 63 - 1] postLocalEnd = returnIndex;
+        if (!FindSelfHostedStatementEnd(stream, returnIndex, limit, postLocalEnd))
+        {
+            return false;
+        }
+
+        stack u32[0 max] postLocalNameToken = FindSelfHostedLocalNameToken(stream, returnIndex, postLocalEnd);
+        if (postLocalNameToken == 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] postNameStart = stream.StartAt((u64[0 2 ** 63 - 1])postLocalNameToken);
+        stack u64[0 2 ** 63 - 1] postNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])postLocalNameToken);
+        if (ParamIndexOf(params, source, postNameStart, postNameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] postAssignToken = postLocalEnd;
+        if (!FindSelfHostedStatementAssign(stream, returnIndex, postLocalEnd, postAssignToken))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforePostLocal = params.Count();
+        stack ExprParseResult postLocalRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, postAssignToken + 1);
+        if (postLocalRoot.Next != postLocalEnd || params.Count() != beforePostLocal)
+        {
+            return false;
+        }
+
+        if (ResolveParam(params, source, postNameStart, postNameLength) != (u32[0 max])expectedParamCount)
+        {
+            return false;
+        }
+
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRoot.NodeId, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack mut ValueFacts postLocalFacts = new();
+        if (!TryBuildSourceValueFactsForNode(nodes, postLocalRoot.NodeId, sourceValueFacts, postLocalFacts)
+            && postLocalType == ExprType.BoolType)
+        {
+            postLocalFacts.SetIntegerRange(0, 2);
+        }
+
+        if (postLocalRoots.Add(postLocalRoot.NodeId) == 0
+            || localTypes.Add(SourceLocalTypeCodeForNodeWithLocals(nodes, postLocalRoot.NodeId, localTypes)) == 0
+            || sourceValueFacts.Add(postLocalFacts) == 0)
+        {
+            return false;
+        }
+
+        returnIndex = postLocalEnd + 1;
+        expectedParamCount = expectedParamCount + 1;
+    }
+
+    stack mut bool hasTerminalIf = false;
+    stack mut ParsedIfReturnArms terminalIfArms = new();
+    stack mut ExprParseResult returnRoot = new();
+    if (returnIndex >= limit)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(returnIndex) == TokenKind.Return)
+    {
+        returnRoot = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, returnIndex + 1);
+        stack mut u64[0 2 ** 63 - 1] afterReturn = returnRoot.Next;
+        if (stream.KindAt(afterReturn) == TokenKind.Semi)
+        {
+            afterReturn = afterReturn + 1;
+        }
+
+        if (stream.KindAt(afterReturn) != TokenKind.RBrace || params.Count() != expectedParamCount)
+        {
+            return false;
+        }
+    }
+    else if (stream.KindAt(returnIndex) == TokenKind.If)
+    {
+        hasTerminalIf = true;
+        if (!TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, returnIndex, terminalIfArms)
+            || terminalIfArms.ThenBecome
+            || terminalIfArms.ElseBecome)
+        {
+            return false;
+        }
+
+        if (stream.KindAt(terminalIfArms.ElseArm.Next) != TokenKind.RBrace || params.Count() != expectedParamCount)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSliceArgumentLocal> sliceArgumentLocals = new();
+    if (!BuildSourceSliceArgumentLocals(sliceDescriptorLocals, sliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> loweringLocalTypes = new();
+    if (!BuildLoweringLocalTypesWithAddressableScalarParams(stream, source, signature, nodes, localTypes, loweringLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localCallIndex = 0;
+    while willexit (localCallIndex < localRoots.Count())
+    {
+        stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(localCallIndex + 1));
+        if (localRoot != 0
+            && !ValidateModuleCallsForRootWithSlices(nodes, localRoot, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
+        {
+            return false;
+        }
+
+        localCallIndex = localCallIndex + 1;
+    }
+
+    if (!ValidateModuleCallsForRootWithSlices(nodes, scrutinee.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts)
+        || !ValidateSwitchFieldAssignmentArmModuleCalls(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, loweringLocalTypes, (u32[0 max])baseParamCount, funcParamCounts, functionCallContractFacts, sliceDescriptorLocals, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] callArmIndex = 0;
+    while willexit (callArmIndex < switchCaseCount)
+    {
+        stack ParsedSwitchFieldAssignmentArm caseArmForCalls = caseArms.Get((u32[0 max])(callArmIndex + 1));
+        if (!ValidateSwitchFieldAssignmentArmModuleCalls(nodes, caseArmForCalls, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, loweringLocalTypes, (u32[0 max])baseParamCount, funcParamCounts, functionCallContractFacts, sliceDescriptorLocals, distinctStorageFacts))
+        {
+            return false;
+        }
+
+        callArmIndex = callArmIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postCallIndex = 0;
+    while willexit (postCallIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalCallRoot = postLocalRoots.Get((u32[0 max])(postCallIndex + 1));
+        if (!ValidateModuleCallsForRootWithSlices(nodes, postLocalCallRoot, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
+        {
+            return false;
+        }
+
+        postCallIndex = postCallIndex + 1;
+    }
+
+    if (hasTerminalIf)
+    {
+        if (!ValidateModuleCallsForRootWithSlices(nodes, terminalIfArms.Condition.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts)
+            || !ValidateModuleCallsForRootWithSlices(nodes, terminalIfArms.ThenArm.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts)
+            || !ValidateModuleCallsForRootWithSlices(nodes, terminalIfArms.ElseArm.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
+        {
+            return false;
+        }
+    }
+    else if (!ValidateModuleCallsForRootWithSlices(nodes, returnRoot.NodeId, funcParamCounts, functionCallContractFacts, loweringLocalTypes, sliceDescriptorLocals, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    if (!SeedSignatureParamOverridesForLowering(stream, source, signature, paramAbiFacts, instrs, loweringLocalTypes, localOverrides))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] localCount = localRoots.Count();
+    stack mut u64[0 2 ** 63 - 1] v = 0;
+    stack mut u32[0 max] nextStackObjectInitializer = 1;
+    stack mut u32[0 max] nextScalarStorageInitializer = 1;
+    stack mut u32[0 max] nextFixedArrayStorageInitializer = 1;
+    stack mut u32[0 max] nextEnumStorageInitializer = 1;
+    while willexit (v < localCount)
+    {
+        stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(v + 1));
+        if (localRoot == 0)
+        {
+            stack mut u32[0 max] storageOverride = 0;
+            if (localOverrideValues.Contains((u32[0 max])(v + 1)))
+            {
+                storageOverride = localOverrideValues.Get((u32[0 max])(v + 1));
+            }
+
+            if (localOverrides.Add(storageOverride) == 0)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack MirValueId varValue = LowerExprNodeWithCallContext(nodes, localRoot, instrs, loweringLocalTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+            if (localOverrides.Add(varValue.Index()) == 0)
+            {
+                return false;
+            }
+        }
+
+        nextScalarStorageInitializer = LowerScalarStorageInitializersForLocalWithCallContext(
+            scalarStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextScalarStorageInitializer,
+            nodes,
+            instrs,
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+
+        nextFixedArrayStorageInitializer = LowerFixedArrayStorageInitializersForLocalWithCallContext(
+            fixedArrayStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextFixedArrayStorageInitializer,
+            nodes,
+            instrs,
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+
+        nextEnumStorageInitializer = LowerEnumStorageInitializersForLocalWithCallContext(
+            enumStorageInitializers,
+            (u32[0 max])(v + 1),
+            nextEnumStorageInitializer,
+            nodes,
+            instrs,
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+
+        nextStackObjectInitializer = LowerStackObjectFieldInitializersForLocalWithCallContext(
+            stackObjectFieldInitializers,
+            (u32[0 max])(v + 1),
+            nextStackObjectInitializer,
+            nodes,
+            instrs,
+            loweringLocalTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals);
+        v = v + 1;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextScalarStorageInitializer - 1) != scalarStorageInitializers.Count())
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextEnumStorageInitializer - 1) != enumStorageInitializers.Count())
+    {
+        return false;
+    }
+
+    if ((u64[0 2 ** 63 - 1])(nextFixedArrayStorageInitializer - 1) != fixedArrayStorageInitializers.Count())
+    {
+        return false;
+    }
+
+    if (switchCasesAreBoolean)
+    {
+        return LowerBooleanSwitchFieldAssignmentCasesToBlocks(
+            nodes,
+            scrutinee.NodeId,
+            booleanCaseValues,
+            caseArms,
+            armLocalRoots,
+            scalarAssignments,
+            enumAssignments,
+            fieldAssignments,
+            arenaDynamicReserveStatements,
+            storageMutationStatements,
+            defaultArm,
+            postLocalRoots,
+            hasTerminalIf,
+            terminalIfArms,
+            returnRoot.NodeId,
+            loweringLocalTypes,
+            localOverrides,
+            (u32[0 max])signatureParamCount,
+            entryFirst,
+            instrs,
+            blocks,
+            ranges,
+            recordRanges,
+            usesArenaFrame,
+            functionCallContractFacts,
+            sliceArgumentLocals,
+            body);
+    }
+
+    return LowerIntegerSwitchFieldAssignmentCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseMaxValues,
+        caseArms,
+        armLocalRoots,
+        scalarAssignments,
+        enumAssignments,
+        fieldAssignments,
+        arenaDynamicReserveStatements,
+        storageMutationStatements,
+        defaultArm,
+        postLocalRoots,
+        hasTerminalIf,
+        terminalIfArms,
+        returnRoot.NodeId,
+        loweringLocalTypes,
+        localOverrides,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        usesArenaFrame,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        body);
+}
+
+internal fn bool LowerModuleTerminalIntegerSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut u32[0 max] enumReturnOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumReturnItem = new();
+    if (TryGetSourceEnumOwnerDeclarationForToken(
+        stream,
+        source,
+        moduleFacts,
+        signature.ReturnTypeTokenAt(),
+        enumReturnOwnerDeclarationIndex,
+        enumReturnItem))
+    {
+        stack mut IrTable<u32[0 max]> enumLocalTypes = new();
+        if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, enumLocalTypes))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ValueFacts> sourceValueFacts = new();
+        if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ExprNode> enumNodes = new();
+        stack mut ExprParseResult enumScrutinee = new();
+        stack mut IrTable<i64[min max]> enumCaseValues = new();
+        stack mut IrTable<i64[min max]> enumCaseMaxValues = new();
+        stack mut IrTable<ExprParseResult> enumCaseArms = new();
+        stack mut ExprParseResult enumDefaultArm = new();
+        stack mut u64[0 2 ** 63 - 1] enumNextToken = 0;
+        if (!TryParseTerminalIntegerSwitchReturnCasesWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            enumNodes,
+            params,
+            funcNames,
+            enumLocalTypes,
+            sourceValueFacts,
+            (u64[0 2 ** 63 - 1])braceIndex + 1,
+            enumScrutinee,
+            enumCaseValues,
+            enumCaseMaxValues,
+            enumCaseArms,
+            enumDefaultArm,
+            enumNextToken))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(enumNextToken) != TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        if (params.Count() != signatureParamCount)
+        {
+            return false;
+        }
+
+        stack mut IrTable<DistinctStoragePair> enumDistinctStorageFacts = new();
+        if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        if (!ValidateModuleCalls(enumNodes, funcParamCounts, functionCallContractFacts, enumLocalTypes, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<u32[0 max]> enumNoOverrides = new();
+        stack u32[0 max] enumEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirType ignoredDeclaredReturnType = MirType.I64;
+        stack bool ignoredHasDeclaredReturnType = false;
+        return LowerTerminalIntegerSwitchCasesToBlocks(
+            enumNodes,
+            enumScrutinee.NodeId,
+            enumCaseValues,
+            enumCaseMaxValues,
+            enumCaseArms,
+            enumDefaultArm,
+            enumLocalTypes,
+            enumNoOverrides,
+            false,
+            0,
+            MirType.I64,
+            (u32[0 max])signatureParamCount,
+            enumEntryFirst,
+            instrs,
+            blocks,
+            ranges,
+            recordRanges,
+            ignoredHasDeclaredReturnType,
+            ignoredDeclaredReturnType,
+            true,
+            enumReturnOwnerDeclarationIndex,
+            false,
+            body);
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalIntegerSwitchReturnCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        caseValues,
+        caseMaxValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
+    return LowerTerminalIntegerSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseMaxValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        false,
+        0,
+        MirType.I64,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
+        false,
+        0,
+        false,
+        body);
+}
+
+internal fn bool LowerModuleTerminalBooleanSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut u32[0 max] enumReturnOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumReturnItem = new();
+    if (TryGetSourceEnumOwnerDeclarationForToken(
+        stream,
+        source,
+        moduleFacts,
+        signature.ReturnTypeTokenAt(),
+        enumReturnOwnerDeclarationIndex,
+        enumReturnItem))
+    {
+        stack mut IrTable<u32[0 max]> enumLocalTypes = new();
+        if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, enumLocalTypes))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ValueFacts> sourceValueFacts = new();
+        if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ExprNode> enumNodes = new();
+        stack mut ExprParseResult enumScrutinee = new();
+        stack mut IrTable<u32[0 max]> enumCaseValues = new();
+        stack mut IrTable<ExprParseResult> enumCaseArms = new();
+        stack mut ExprParseResult enumDefaultArm = new();
+        stack mut u64[0 2 ** 63 - 1] enumNextToken = 0;
+        if (!TryParseTerminalBooleanSwitchReturnCasesWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            enumNodes,
+            params,
+            funcNames,
+            enumLocalTypes,
+            sourceValueFacts,
+            (u64[0 2 ** 63 - 1])braceIndex + 1,
+            enumScrutinee,
+            enumCaseValues,
+            enumCaseArms,
+            enumDefaultArm,
+            enumNextToken))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(enumNextToken) != TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        if (params.Count() != signatureParamCount)
+        {
+            return false;
+        }
+
+        stack mut IrTable<DistinctStoragePair> enumDistinctStorageFacts = new();
+        if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        if (!ValidateModuleCalls(enumNodes, funcParamCounts, functionCallContractFacts, enumLocalTypes, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<u32[0 max]> enumNoOverrides = new();
+        stack u32[0 max] enumEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirType ignoredDeclaredReturnType = MirType.I64;
+        stack bool ignoredHasDeclaredReturnType = false;
+        return LowerTerminalBooleanSwitchCasesToBlocks(
+            enumNodes,
+            enumScrutinee.NodeId,
+            enumCaseValues,
+            enumCaseArms,
+            enumDefaultArm,
+            enumLocalTypes,
+            enumNoOverrides,
+            (u32[0 max])signatureParamCount,
+            enumEntryFirst,
+            instrs,
+            blocks,
+            ranges,
+            recordRanges,
+            ignoredHasDeclaredReturnType,
+            ignoredDeclaredReturnType,
+            true,
+            enumReturnOwnerDeclarationIndex,
+            false,
+            body);
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<u32[0 max]> caseValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalBooleanSwitchReturnCases(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        caseValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
+    return LowerTerminalBooleanSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
+        false,
+        0,
+        false,
+        body);
+}
+
+internal fn bool LowerModuleTerminalEnumSwitchFunctionToBlocks(
+    ascii sourceText,
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+    where overlap(sourceText, source)
+{
+    body = new();
+    if (AsciiLength(sourceText) == 0 || !FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut u32[0 max] caseOwnerDeclarationIndex = 0;
+    if (!TryGetSwitchFirstEnumCaseOwnerDeclarationIndex(
+        stream,
+        source,
+        moduleFacts,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        caseOwnerDeclarationIndex))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] enumReturnOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumReturnItem = new();
+    if (TryGetSourceEnumOwnerDeclarationForToken(
+        stream,
+        source,
+        moduleFacts,
+        signature.ReturnTypeTokenAt(),
+        enumReturnOwnerDeclarationIndex,
+        enumReturnItem))
+    {
+        stack mut IrTable<u32[0 max]> enumLocalTypes = new();
+        if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, enumLocalTypes))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ValueFacts> sourceValueFacts = new();
+        if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ExprNode> enumNodes = new();
+        stack mut ExprParseResult enumScrutinee = new();
+        stack mut IrTable<i64[min max]> enumCaseValues = new();
+        stack mut IrTable<i64[min max]> enumCaseMaxValues = new();
+        stack mut IrTable<ExprParseResult> enumCaseArms = new();
+        stack mut IrTable<u32[0 max]> enumCasePayloadPatternStarts = new();
+        stack mut IrTable<u32[0 max]> enumCasePayloadPatternCounts = new();
+        stack mut IrTable<u32[0 max]> enumCasePayloadNestedStarts = new();
+        stack mut IrTable<u32[0 max]> enumCasePayloadNestedCounts = new();
+        stack mut IrTable<u32[0 max]> enumCasePayloadCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> enumCasePayloadCaptureCounts = new();
+        stack mut IrTable<u32[0 max]> enumPayloadPatternVariantOrdinals = new();
+        stack mut IrTable<u32[0 max]> enumPayloadPatternOrdinals = new();
+        stack mut IrTable<u32[0 max]> enumPayloadPatternTypeCodes = new();
+        stack mut IrTable<u32[0 max]> enumPayloadPatternKinds = new();
+        stack mut IrTable<i64[min max]> enumPayloadPatternMinValues = new();
+        stack mut IrTable<i64[min max]> enumPayloadPatternMaxValues = new();
+        stack mut IrTable<u32[0 max]> enumPayloadCaptureVariantOrdinals = new();
+        stack mut IrTable<u32[0 max]> enumPayloadCaptureOrdinals = new();
+        stack mut IrTable<u32[0 max]> enumPayloadCaptureTypeCodes = new();
+        stack mut IrTable<u32[0 max]> enumPayloadCaptureNameTokens = new();
+        stack mut IrTable<u32[0 max]> enumNestedVariantOrdinals = new();
+        stack mut IrTable<u32[0 max]> enumNestedPayloadOrdinals = new();
+        stack mut IrTable<u32[0 max]> enumNestedKinds = new();
+        stack mut IrTable<u32[0 max]> enumNestedAggregateDescriptorRows = new();
+        stack mut IrTable<u32[0 max]> enumNestedListDescriptorRows = new();
+        stack mut ExprParseResult enumDefaultArm = new();
+        stack mut u64[0 2 ** 63 - 1] enumNextToken = 0;
+        if (!TryParseTerminalEnumSwitchReturnCasesWithEnumsAndPayloadPatterns(
+            stream,
+            source,
+            moduleFacts,
+            caseOwnerDeclarationIndex,
+            enumNodes,
+            params,
+            funcNames,
+            enumLocalTypes,
+            sourceValueFacts,
+            (u64[0 2 ** 63 - 1])braceIndex + 1,
+            enumScrutinee,
+            enumCaseValues,
+            enumCaseArms,
+            enumCasePayloadPatternStarts,
+            enumCasePayloadPatternCounts,
+            enumCasePayloadNestedStarts,
+            enumCasePayloadNestedCounts,
+            enumCasePayloadCaptureStarts,
+            enumCasePayloadCaptureCounts,
+            enumPayloadPatternVariantOrdinals,
+            enumPayloadPatternOrdinals,
+            enumPayloadPatternTypeCodes,
+            enumPayloadPatternKinds,
+            enumPayloadPatternMinValues,
+            enumPayloadPatternMaxValues,
+            enumPayloadCaptureVariantOrdinals,
+            enumPayloadCaptureOrdinals,
+            enumPayloadCaptureTypeCodes,
+            enumPayloadCaptureNameTokens,
+            enumNestedVariantOrdinals,
+            enumNestedPayloadOrdinals,
+            enumNestedKinds,
+            enumNestedAggregateDescriptorRows,
+            enumNestedListDescriptorRows,
+            enumDefaultArm,
+            enumNextToken))
+        {
+            return false;
+        }
+
+        if (!AnnotateCallExpressionResultTypesFromContracts(enumNodes, functionCallContractFacts))
+        {
+            return false;
+        }
+
+        if (!CopyCaseValuesToCaseMaxValues(enumCaseValues, enumCaseMaxValues))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(enumNextToken) != TokenKind.RBrace)
+        {
+            return false;
+        }
+
+        if (params.Count() != signatureParamCount)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] enumScrutineeOwnerDeclarationIndex = 0;
+        if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(enumNodes, enumScrutinee.NodeId, enumLocalTypes, enumScrutineeOwnerDeclarationIndex)
+            || enumScrutineeOwnerDeclarationIndex != caseOwnerDeclarationIndex)
+        {
+            return false;
+        }
+
+        stack mut IrTable<DistinctStoragePair> enumDistinctStorageFacts = new();
+        if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        if (enumPayloadCaptureOrdinals.Count() != 0)
+        {
+            if (!ValidateModuleCallsForRoot(
+                    enumNodes,
+                    enumScrutinee.NodeId,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    enumLocalTypes,
+                    enumDistinctStorageFacts)
+                || !ValidateModuleCallsForRoot(
+                    enumNodes,
+                    enumDefaultArm.NodeId,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    enumLocalTypes,
+                    enumDistinctStorageFacts)
+                || enumCasePayloadCaptureStarts.Count() != enumCaseArms.Count()
+                || enumCasePayloadCaptureCounts.Count() != enumCaseArms.Count())
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] enumCaseCallIndex = 0;
+            while willexit (enumCaseCallIndex < enumCaseArms.Count())
+            {
+                stack ExprParseResult enumCaseArm = enumCaseArms.Get((u32[0 max])(enumCaseCallIndex + 1));
+                stack u32[0 max] enumCaptureStart = enumCasePayloadCaptureStarts.Get((u32[0 max])(enumCaseCallIndex + 1));
+                stack u32[0 max] enumCaptureCount = enumCasePayloadCaptureCounts.Get((u32[0 max])(enumCaseCallIndex + 1));
+                stack mut IrTable<u32[0 max]> enumArmLocalTypes = new();
+                if (!BuildTerminalSwitchCaptureLocalTypes(
+                        enumPayloadCaptureTypeCodes,
+                        enumCaptureStart,
+                        enumCaptureCount,
+                        enumLocalTypes,
+                        enumArmLocalTypes)
+                    || !ValidateModuleCallsForRoot(
+                        enumNodes,
+                        enumCaseArm.NodeId,
+                        funcParamCounts,
+                        functionCallContractFacts,
+                        enumArmLocalTypes,
+                        enumDistinctStorageFacts))
+                {
+                    return false;
+                }
+
+                enumCaseCallIndex = enumCaseCallIndex + 1;
+            }
+        }
+        else if (!ValidateModuleCalls(enumNodes, funcParamCounts, functionCallContractFacts, enumLocalTypes, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<u32[0 max]> enumNoOverrides = new();
+        stack u32[0 max] enumEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirType ignoredDeclaredReturnType = MirType.I64;
+        stack bool ignoredHasDeclaredReturnType = false;
+        if (enumPayloadPatternOrdinals.Count() != 0
+            || enumPayloadCaptureOrdinals.Count() != 0
+            || enumNestedPayloadOrdinals.Count() != 0)
+        {
+            return LowerTerminalEnumSwitchCasesWithPayloadPatternsToBlocks(
+                stream,
+                source,
+                enumNodes,
+                enumScrutinee.NodeId,
+                caseOwnerDeclarationIndex,
+                moduleFacts,
+                enumCaseValues,
+                enumCaseArms,
+                enumCasePayloadPatternStarts,
+                enumCasePayloadPatternCounts,
+                enumCasePayloadNestedStarts,
+                enumCasePayloadNestedCounts,
+                enumCasePayloadCaptureStarts,
+                enumCasePayloadCaptureCounts,
+                enumPayloadPatternVariantOrdinals,
+                enumPayloadPatternOrdinals,
+                enumPayloadPatternTypeCodes,
+                enumPayloadPatternKinds,
+                enumPayloadPatternMinValues,
+                enumPayloadPatternMaxValues,
+                enumPayloadCaptureVariantOrdinals,
+                enumPayloadCaptureOrdinals,
+                enumPayloadCaptureTypeCodes,
+                enumNestedVariantOrdinals,
+                enumNestedPayloadOrdinals,
+                enumNestedKinds,
+                enumNestedAggregateDescriptorRows,
+                enumNestedListDescriptorRows,
+                enumDefaultArm,
+                enumLocalTypes,
+                enumNoOverrides,
+                (u32[0 max])signatureParamCount,
+                enumEntryFirst,
+                instrs,
+                blocks,
+                ranges,
+                recordRanges,
+                ignoredHasDeclaredReturnType,
+                ignoredDeclaredReturnType,
+                true,
+                enumReturnOwnerDeclarationIndex,
+                false,
+                body);
+        }
+
+        stack mut MirType enumScrutineeTagType = MirType.I8;
+        if (!TryGetSourceSwitchEnumTagType(moduleFacts, caseOwnerDeclarationIndex, enumScrutineeTagType))
+        {
+            return false;
+        }
+
+        return LowerTerminalIntegerSwitchCasesToBlocks(
+            enumNodes,
+            enumScrutinee.NodeId,
+            enumCaseValues,
+            enumCaseMaxValues,
+            enumCaseArms,
+            enumDefaultArm,
+            enumLocalTypes,
+            enumNoOverrides,
+            true,
+            caseOwnerDeclarationIndex,
+            enumScrutineeTagType,
+            (u32[0 max])signatureParamCount,
+            enumEntryFirst,
+            instrs,
+            blocks,
+            ranges,
+            recordRanges,
+            ignoredHasDeclaredReturnType,
+            ignoredDeclaredReturnType,
+            true,
+            enumReturnOwnerDeclarationIndex,
+            false,
+            body);
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut IrTable<i64[min max]> caseValues = new();
+    stack mut IrTable<i64[min max]> caseMaxValues = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    if (!TryParseTerminalEnumSwitchReturnCases(
+        stream,
+        source,
+        moduleFacts,
+        caseOwnerDeclarationIndex,
+        nodes,
+        params,
+        funcNames,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        caseValues,
+        caseArms,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (!AnnotateCallExpressionResultTypesFromContracts(nodes, functionCallContractFacts))
+    {
+        return false;
+    }
+
+    if (!CopyCaseValuesToCaseMaxValues(caseValues, caseMaxValues))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scrutineeOwnerDeclarationIndex = 0;
+    if (!TryGetSourceLocalEnumOwnerDeclarationIndexForNode(nodes, scrutinee.NodeId, localTypes, scrutineeOwnerDeclarationIndex)
+        || scrutineeOwnerDeclarationIndex != caseOwnerDeclarationIndex)
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (!ValidateModuleCalls(nodes, funcParamCounts, functionCallContractFacts, localTypes, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
+    stack mut MirType enumScrutineeTagType = MirType.I8;
+    if (!TryGetSourceSwitchEnumTagType(moduleFacts, caseOwnerDeclarationIndex, enumScrutineeTagType))
+    {
+        return false;
+    }
+
+    return LowerTerminalIntegerSwitchCasesToBlocks(
+        nodes,
+        scrutinee.NodeId,
+        caseValues,
+        caseMaxValues,
+        caseArms,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        true,
+        caseOwnerDeclarationIndex,
+        enumScrutineeTagType,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
+        false,
+        0,
+        false,
+        body);
+}
+
+internal fn bool LowerModuleTerminalFixedArrayListSwitchFunctionToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!FunctionBodyStartsWithTerminalSwitch(stream, fnIndex))
+    {
+        return false;
+    }
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0 || !SwitchFirstCaseLabelIsListPattern(stream, (u64[0 2 ** 63 - 1])braceIndex + 1))
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFactsWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut u32[0 max] enumReturnOwnerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumReturnItem = new();
+    if (TryGetSourceEnumOwnerDeclarationForToken(
+        stream,
+        source,
+        moduleFacts,
+        signature.ReturnTypeTokenAt(),
+        enumReturnOwnerDeclarationIndex,
+        enumReturnItem))
+    {
+        stack mut IrTable<u32[0 max]> enumLocalTypes = new();
+        if (!SeedParamLocalTypesFromSignatureWithDeclarations(stream, source, moduleFacts, signature, paramAbiFacts, signatureParamCount, enumLocalTypes))
+        {
+            return false;
+        }
+
+        stack mut IrTable<ValueFacts> sourceValueFacts = new();
+        if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<SourceSliceDescriptorLocal> enumSliceDescriptorLocals = new();
+        if (!AddSignatureSliceParamDescriptors(stream, source, signature, paramAbiFacts, enumSliceDescriptorLocals))
+
+        {
+            return false;
+        }
+
+        stack mut IrTable<ExprNode> enumNodes = new();
+        stack mut ExprParseResult enumScrutinee = new();
+        stack mut u32[0 max] enumFixedArrayParamIndex = 0;
+        stack mut ParamAbiFacts enumFixedArrayFacts = new();
+        stack mut IrTable<ExprParseResult> enumCaseArms = new();
+        stack mut IrTable<u32[0 max]> enumCasePatternStarts = new();
+        stack mut IrTable<u32[0 max]> enumCasePatternCounts = new();
+        stack mut IrTable<u32[0 max]> enumCaseGuardNodes = new();
+        stack mut IrTable<u32[0 max]> enumElementPatternIndices = new();
+        stack mut IrTable<u32[0 max]> enumElementPatternTypeCodes = new();
+        stack mut IrTable<u32[0 max]> enumElementPatternKinds = new();
+        stack mut IrTable<i64[min max]> enumElementPatternMinValues = new();
+        stack mut IrTable<i64[min max]> enumElementPatternMaxValues = new();
+        stack mut IrTable<u32[0 max]> enumCaseElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> enumCaseElementCaptureCounts = new();
+        stack mut IrTable<u32[0 max]> enumElementCaptureIndices = new();
+        stack mut IrTable<u32[0 max]> enumElementCaptureTypeCodes = new();
+        stack mut IrTable<u32[0 max]> enumElementCaptureNameTokens = new();
+        stack mut ExprParseResult enumDefaultArm = new();
+        stack mut u64[0 2 ** 63 - 1] enumNextToken = 0;
+        if (!TryParseTerminalFixedArrayListSwitchReturnCasesWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            paramAbiFacts,
+            enumNodes,
+            params,
+            funcNames,
+            enumLocalTypes,
+            sourceValueFacts,
+            enumSliceDescriptorLocals,
+            (u64[0 2 ** 63 - 1])braceIndex + 1,
+            enumScrutinee,
+            enumFixedArrayParamIndex,
+            enumFixedArrayFacts,
+            enumCaseArms,
+            enumCasePatternStarts,
+            enumCasePatternCounts,
+            enumCaseGuardNodes,
+            enumElementPatternIndices,
+            enumElementPatternTypeCodes,
+            enumElementPatternKinds,
+            enumElementPatternMinValues,
+            enumElementPatternMaxValues,
+            enumCaseElementCaptureStarts,
+            enumCaseElementCaptureCounts,
+            enumElementCaptureIndices,
+            enumElementCaptureTypeCodes,
+            enumElementCaptureNameTokens,
+            enumDefaultArm,
+            enumNextToken))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(enumNextToken) != TokenKind.RBrace || params.Count() != signatureParamCount)
+        {
+            return false;
+        }
+
+        stack mut IrTable<DistinctStoragePair> enumDistinctStorageFacts = new();
+        if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<SourceSliceArgumentLocal> enumSliceArgumentLocals = new();
+        if (!BuildSourceSliceArgumentLocals(enumSliceDescriptorLocals, enumSliceArgumentLocals))
+        {
+            return false;
+        }
+
+        if (enumElementCaptureIndices.Count() != 0)
+        {
+            if (!ValidateModuleCallsForRootWithSlices(
+                    enumNodes,
+                    enumScrutinee.NodeId,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    enumLocalTypes,
+                    enumSliceDescriptorLocals,
+                    enumDistinctStorageFacts)
+                || !ValidateModuleCallsForRootWithSlices(
+                    enumNodes,
+                    enumDefaultArm.NodeId,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    enumLocalTypes,
+                    enumSliceDescriptorLocals,
+                    enumDistinctStorageFacts)
+                || enumCaseElementCaptureStarts.Count() != enumCaseArms.Count()
+                || enumCaseElementCaptureCounts.Count() != enumCaseArms.Count())
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] enumCaseCallIndex = 0;
+            while willexit (enumCaseCallIndex < enumCaseArms.Count())
+            {
+                stack mut u32[0 max] guardNode = 0;
+                if (enumCaseGuardNodes.Count() != 0)
+                {
+                    guardNode = enumCaseGuardNodes.Get((u32[0 max])(enumCaseCallIndex + 1));
+                }
+
+                stack ExprParseResult enumCaseArm = enumCaseArms.Get((u32[0 max])(enumCaseCallIndex + 1));
+                stack u32[0 max] enumCaptureStart = enumCaseElementCaptureStarts.Get((u32[0 max])(enumCaseCallIndex + 1));
+                stack u32[0 max] enumCaptureCount = enumCaseElementCaptureCounts.Get((u32[0 max])(enumCaseCallIndex + 1));
+                stack mut IrTable<u32[0 max]> enumArmLocalTypes = new();
+                stack mut IrTable<SourceSliceDescriptorLocal> enumArmSliceDescriptorLocals = new();
+                if (!BuildTerminalSwitchCaptureLocalTypes(
+                        enumElementCaptureTypeCodes,
+                        enumCaptureStart,
+                        enumCaptureCount,
+                        enumLocalTypes,
+                        enumArmLocalTypes)
+                    || !BuildTerminalFixedArraySwitchCaptureSliceDescriptorLocals(
+                        enumFixedArrayParamIndex,
+                        enumFixedArrayFacts,
+                        false,
+                        enumElementCaptureIndices,
+                        enumElementCaptureTypeCodes,
+                        enumCaptureStart,
+                        enumCaptureCount,
+                        enumLocalTypes,
+                        enumSliceDescriptorLocals,
+                        enumArmSliceDescriptorLocals))
+                {
+                    return false;
+                }
+
+                if (guardNode != 0
+                    && !ValidateModuleCallsForRootWithSlices(
+                        enumNodes,
+                        guardNode,
+                        funcParamCounts,
+                        functionCallContractFacts,
+                        enumArmLocalTypes,
+                        enumArmSliceDescriptorLocals,
+                        enumDistinctStorageFacts))
+                {
+                    return false;
+                }
+
+                if (!ValidateModuleCallsForRootWithSlices(
+                        enumNodes,
+                        enumCaseArm.NodeId,
+                        funcParamCounts,
+                        functionCallContractFacts,
+                        enumArmLocalTypes,
+                        enumArmSliceDescriptorLocals,
+                        enumDistinctStorageFacts))
+                {
+                    return false;
+                }
+
+                enumCaseCallIndex = enumCaseCallIndex + 1;
+            }
+        }
+        else if (!ValidateModuleCallsWithSlices(
+            enumNodes,
+            funcParamCounts,
+            functionCallContractFacts,
+            enumLocalTypes,
+            enumSliceDescriptorLocals,
+            enumDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        stack mut IrTable<u32[0 max]> enumNoOverrides = new();
+        stack u32[0 max] enumEntryFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut MirType ignoredDeclaredReturnType = MirType.I64;
+        stack bool ignoredHasDeclaredReturnType = false;
+        stack mut FixedArrayStorageLocal noEnumFixedArrayStorageLocal = new();
+        return LowerTerminalFixedArrayListSwitchCasesToBlocks(
+            enumNodes,
+            enumFixedArrayParamIndex,
+            enumFixedArrayFacts,
+            false,
+            noEnumFixedArrayStorageLocal,
+            enumCaseArms,
+            enumCasePatternStarts,
+            enumCasePatternCounts,
+            enumCaseGuardNodes,
+            enumElementPatternIndices,
+            enumElementPatternTypeCodes,
+            enumElementPatternKinds,
+            enumElementPatternMinValues,
+            enumElementPatternMaxValues,
+            enumCaseElementCaptureStarts,
+            enumCaseElementCaptureCounts,
+            enumElementCaptureIndices,
+            enumElementCaptureTypeCodes,
+            enumDefaultArm,
+            enumLocalTypes,
+            enumNoOverrides,
+            functionCallContractFacts,
+            enumSliceArgumentLocals,
+            (u32[0 max])signatureParamCount,
+            enumEntryFirst,
+            instrs,
+            blocks,
+            ranges,
+            recordRanges,
+            ignoredHasDeclaredReturnType,
+            ignoredDeclaredReturnType,
+            true,
+            enumReturnOwnerDeclarationIndex,
+            false,
+            body);
+    }
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut ExprParseResult scrutinee = new();
+    stack mut u32[0 max] fixedArrayParamIndex = 0;
+    stack mut ParamAbiFacts fixedArrayFacts = new();
+    stack mut IrTable<ExprParseResult> caseArms = new();
+    stack mut IrTable<u32[0 max]> casePatternStarts = new();
+    stack mut IrTable<u32[0 max]> casePatternCounts = new();
+    stack mut IrTable<u32[0 max]> caseGuardNodes = new();
+    stack mut IrTable<u32[0 max]> elementPatternIndices = new();
+    stack mut IrTable<u32[0 max]> elementPatternTypeCodes = new();
+    stack mut IrTable<u32[0 max]> elementPatternKinds = new();
+    stack mut IrTable<i64[min max]> elementPatternMinValues = new();
+    stack mut IrTable<i64[min max]> elementPatternMaxValues = new();
+    stack mut IrTable<u32[0 max]> caseElementCaptureStarts = new();
+    stack mut IrTable<u32[0 max]> caseElementCaptureCounts = new();
+    stack mut IrTable<u32[0 max]> elementCaptureIndices = new();
+    stack mut IrTable<u32[0 max]> elementCaptureTypeCodes = new();
+    stack mut IrTable<u32[0 max]> elementCaptureNameTokens = new();
+    stack mut ExprParseResult defaultArm = new();
+    stack mut u64[0 2 ** 63 - 1] nextToken = 0;
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    if (!SeedParamLocalTypesFromSignature(stream, source, signature, paramAbiFacts, signatureParamCount, localTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> sourceValueFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, sourceValueFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals = new();
+    if (!AddSignatureSliceParamDescriptors(stream, source, signature, paramAbiFacts, sliceDescriptorLocals))
+    {
+        return false;
+    }
+
+    if (!TryParseTerminalFixedArrayListSwitchReturnCases(
+        stream,
+        source,
+        moduleFacts,
+        paramAbiFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        sliceDescriptorLocals,
+        (u64[0 2 ** 63 - 1])braceIndex + 1,
+        scrutinee,
+        fixedArrayParamIndex,
+        fixedArrayFacts,
+        caseArms,
+        casePatternStarts,
+        casePatternCounts,
+        caseGuardNodes,
+        elementPatternIndices,
+        elementPatternTypeCodes,
+        elementPatternKinds,
+        elementPatternMinValues,
+        elementPatternMaxValues,
+        caseElementCaptureStarts,
+        caseElementCaptureCounts,
+        elementCaptureIndices,
+        elementCaptureTypeCodes,
+        elementCaptureNameTokens,
+        defaultArm,
+        nextToken))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(nextToken) != TokenKind.RBrace || params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSliceArgumentLocal> sliceArgumentLocals = new();
+    if (!BuildSourceSliceArgumentLocals(sliceDescriptorLocals, sliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
+    if (elementCaptureIndices.Count() != 0)
+    {
+        if (!ValidateModuleCallsForRootWithSlices(
+                nodes,
+                scrutinee.NodeId,
+                funcParamCounts,
+                functionCallContractFacts,
+                localTypes,
+                sliceDescriptorLocals,
+                distinctStorageFacts)
+            || !ValidateModuleCallsForRootWithSlices(
+                nodes,
+                defaultArm.NodeId,
+                funcParamCounts,
+                functionCallContractFacts,
+                localTypes,
+                sliceDescriptorLocals,
+                distinctStorageFacts)
+            || caseElementCaptureStarts.Count() != caseArms.Count()
+            || caseElementCaptureCounts.Count() != caseArms.Count())
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] caseCallIndex = 0;
+        while willexit (caseCallIndex < caseArms.Count())
+        {
+            stack mut u32[0 max] guardNode = 0;
+            if (caseGuardNodes.Count() != 0)
+            {
+                guardNode = caseGuardNodes.Get((u32[0 max])(caseCallIndex + 1));
+            }
+
+            stack ExprParseResult caseArm = caseArms.Get((u32[0 max])(caseCallIndex + 1));
+            stack u32[0 max] captureStart = caseElementCaptureStarts.Get((u32[0 max])(caseCallIndex + 1));
+            stack u32[0 max] captureCount = caseElementCaptureCounts.Get((u32[0 max])(caseCallIndex + 1));
+            stack mut IrTable<u32[0 max]> armLocalTypes = new();
+            stack mut IrTable<SourceSliceDescriptorLocal> armSliceDescriptorLocals = new();
+            if (!BuildTerminalSwitchCaptureLocalTypes(
+                    elementCaptureTypeCodes,
+                    captureStart,
+                    captureCount,
+                    localTypes,
+                    armLocalTypes)
+                || !BuildTerminalFixedArraySwitchCaptureSliceDescriptorLocals(
+                    fixedArrayParamIndex,
+                    fixedArrayFacts,
+                    false,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    captureStart,
+                    captureCount,
+                    localTypes,
+                    sliceDescriptorLocals,
+                    armSliceDescriptorLocals))
+            {
+                return false;
+            }
+
+            if (guardNode != 0
+                && !ValidateModuleCallsForRootWithSlices(
+                    nodes,
+                    guardNode,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    armLocalTypes,
+                    armSliceDescriptorLocals,
+                    distinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (!ValidateModuleCallsForRootWithSlices(
+                    nodes,
+                    caseArm.NodeId,
+                    funcParamCounts,
+                    functionCallContractFacts,
+                    armLocalTypes,
+                    armSliceDescriptorLocals,
+                    distinctStorageFacts))
+            {
+                return false;
+            }
+
+            caseCallIndex = caseCallIndex + 1;
+        }
+    }
+    else if (!ValidateModuleCallsWithSlices(
+        nodes,
+        funcParamCounts,
+        functionCallContractFacts,
+        localTypes,
+        sliceDescriptorLocals,
+        distinctStorageFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirType declaredReturnType = MirType.I64;
+    stack bool hasDeclaredReturnType = MirTypeForKnownSourceScalarType(stream, source, signature.ReturnTypeTokenAt(), declaredReturnType);
+    stack mut FixedArrayStorageLocal noFixedArrayStorageLocal = new();
+    return LowerTerminalFixedArrayListSwitchCasesToBlocks(
+        nodes,
+        fixedArrayParamIndex,
+        fixedArrayFacts,
+        false,
+        noFixedArrayStorageLocal,
+        caseArms,
+        casePatternStarts,
+        casePatternCounts,
+        caseGuardNodes,
+        elementPatternIndices,
+        elementPatternTypeCodes,
+        elementPatternKinds,
+        elementPatternMinValues,
+        elementPatternMaxValues,
+        caseElementCaptureStarts,
+        caseElementCaptureCounts,
+        elementCaptureIndices,
+        elementCaptureTypeCodes,
+        defaultArm,
+        localTypes,
+        noOverrides,
+        functionCallContractFacts,
+        sliceArgumentLocals,
+        (u32[0 max])signatureParamCount,
+        entryFirst,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        hasDeclaredReturnType,
+        declaredReturnType,
+        false,
+        0,
+        false,
+        body);
+}

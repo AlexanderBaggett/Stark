@@ -1,0 +1,4709 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceLocalExpressionParsing
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Mir.SourceSwitchPatternConditions
+import Compiler.Mir.SourceSwitchAggregatePatterns
+import Compiler.Mir.SourceSwitchStoragePatterns
+import Compiler.Mir.SourceSwitchCaseParsing
+import Compiler.Mir.SourceSwitchAssignmentArms
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchTerminalParsing
+
+internal fn bool SourceSwitchCaptureSignaturesMatch(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] leftCaptureStart,
+    u32[0 max] leftCaptureCount,
+    u32[0 max] rightCaptureStart,
+    u32[0 max] rightCaptureCount)
+{
+    if (leftCaptureCount != rightCaptureCount)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] captureOffset = 0;
+    while willexit (captureOffset < leftCaptureCount)
+    {
+        stack u32[0 max] leftRow = leftCaptureStart + captureOffset;
+        stack u32[0 max] rightRow = rightCaptureStart + captureOffset;
+        if (!captureNameTokens.Contains(leftRow)
+            || !captureNameTokens.Contains(rightRow)
+            || !captureTypeCodes.Contains(leftRow)
+            || !captureTypeCodes.Contains(rightRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] leftNameToken = captureNameTokens.Get(leftRow);
+        stack u32[0 max] rightNameToken = captureNameTokens.Get(rightRow);
+        if (!TokenTextEqualsToken(stream, source, leftNameToken, rightNameToken)
+            || captureTypeCodes.Get(leftRow) != captureTypeCodes.Get(rightRow))
+        {
+            return false;
+        }
+
+        captureOffset = captureOffset + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchReturnArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    nextToken = armStart;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart || stream.KindAt(armStart + 1) != TokenKind.Return)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, params, funcNames, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, params, funcNames, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchReturnArmWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    arm = new();
+    nextToken = armStart;
+    stack mut IrTable<ConstructedObjectLocal> noConstructedObjectLocals = new();
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart || stream.KindAt(armStart + 1) != TokenKind.Return)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            noConstructedObjectLocals,
+            noSliceDescriptorLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        noConstructedObjectLocals,
+        noSliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool CopyTerminalSwitchCaptureParams(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    mut borrow IrTable<ParamName> armParams)
+{
+    if (!CopyParamNamePrefix(baseParams, baseParamCount, armParams))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] captureOffset = 0;
+    while willexit (captureOffset < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureOffset;
+        if (!captureNameTokens.Contains(captureRow) || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureTypeCode = captureTypeCodes.Get(captureRow);
+        stack mut u32[0 max] localTypeCode = SourceLocalTypeCodeNonValue();
+        if (!TrySourceSwitchCaptureLocalTypeCode(captureTypeCode, localTypeCode))
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureNameToken = captureNameTokens.Get(captureRow);
+        stack u64[0 2 ** 63 - 1] captureNameStart = stream.StartAt((u64[0 2 ** 63 - 1])captureNameToken);
+        stack u64[0 2 ** 63 - 1] captureNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])captureNameToken);
+        if (ParamIndexOf(armParams, source, captureNameStart, captureNameLength) >= 0)
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureLocalIndex = ResolveParam(armParams, source, captureNameStart, captureNameLength);
+        if (captureLocalIndex != (u32[0 max])(baseParamCount + (u64[0 2 ** 63 - 1])captureOffset))
+        {
+            return false;
+        }
+
+        captureOffset = captureOffset + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TrySourceSwitchCaptureLocalTypeCode(u32[0 max] captureTypeCode, out u32[0 max] localTypeCode)
+{
+    localTypeCode = SourceLocalTypeCodeNonValue();
+    if (captureTypeCode == SourceLocalTypeCodeFixedArrayParam() || SourceLocalTypeCodeIsStructValue(captureTypeCode))
+    {
+        localTypeCode = captureTypeCode;
+        return true;
+    }
+
+    localTypeCode = SourceLocalTypeCodeForResolvedScalarValue(captureTypeCode);
+    return localTypeCode != SourceLocalTypeCodeNonValue();
+}
+
+internal inline finite law bool SourceSwitchCaptureTypeCodeIsAggregateLocal(u32[0 max] captureTypeCode)
+{
+    return captureTypeCode == SourceLocalTypeCodeFixedArrayParam() || SourceLocalTypeCodeIsStructValue(captureTypeCode);
+}
+
+internal inline finite law bool SourceSwitchCaptureIsFixedArrayWholeParam(
+    u32[0 max] elementIndex,
+    u32[0 max] captureTypeCode,
+    ParamAbiFacts fixedArrayFacts)
+{
+    return fixedArrayFacts.IsFixedArray
+        && elementIndex == fixedArrayFacts.FixedArrayLength
+        && captureTypeCode == SourceLocalTypeCodeFixedArrayParam();
+}
+
+internal inline finite law bool SourceSwitchCaptureIsStructWholeParam(
+    u32[0 max] fieldIndex,
+    u32[0 max] captureTypeCode,
+    ParamAbiFacts structValueFacts)
+{
+    return structValueFacts.IsStructValue
+        && structValueFacts.StructValueTypeToken != 0
+        && fieldIndex == structValueFacts.StructValueFieldCount
+        && SourceLocalTypeCodeIsStructValue(captureTypeCode)
+        && SourceLocalTypeCodeStructValueTypeToken(captureTypeCode) == structValueFacts.StructValueTypeToken;
+}
+
+internal fn bool TryParseSwitchGuardWithCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u64[0 2 ** 63 - 1] guardStart,
+    out ExprParseResult guard,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    guard = new();
+    nextToken = guardStart;
+
+    stack mut IrTable<ParamName> guardParams = new();
+    if (!CopyTerminalSwitchCaptureParams(
+            stream,
+            source,
+            baseParams,
+            baseParamCount,
+            captureNameTokens,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            guardParams))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedParamCount = baseParamCount + (u64[0 2 ** 63 - 1])captureCount;
+    stack ExprParseResult parsedGuard = ParseExprIn(stream, source, nodes, guardParams, funcNames, guardStart);
+    if (parsedGuard.NodeId == 0
+        || parsedGuard.Next == guardStart
+        || guardParams.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    guard = parsedGuard;
+    nextToken = parsedGuard.Next;
+    return true;
+}
+
+internal fn bool BuildTerminalSwitchCaptureLocalTypes(
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+    where overlap(captureTypeCodes, baseLocalTypes)
+{
+    stack u64[0 2 ** 63 - 1] baseLocalTypeCount = baseLocalTypes.Count();
+    stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
+    while willexit (typeIndex < baseLocalTypeCount)
+    {
+        stack u32[0 max] typeSlot = (u32[0 max])(typeIndex + 1);
+        stack mut u32[0 max] typeCode = 0;
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        typeIndex = typeIndex + 1;
+    }
+
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureIndex;
+        if (!captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureTypeCode = captureTypeCodes.Get(captureRow);
+        stack mut u32[0 max] localTypeCode = SourceLocalTypeCodeNonValue();
+        if (!TrySourceSwitchCaptureLocalTypeCode(captureTypeCode, localTypeCode))
+        {
+            return false;
+        }
+
+        if (armLocalTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildTerminalSwitchCaptureLocalTypesAndFacts(
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    borrow IrTable<ValueFacts> baseSourceValueFacts,
+    mut borrow IrTable<u32[0 max]> armLocalTypes,
+    mut borrow IrTable<ValueFacts> armSourceValueFacts)
+    where overlap(captureTypeCodes, baseLocalTypes), overlap_all(baseSourceValueFacts)
+{
+    if (!BuildTerminalSwitchCaptureLocalTypes(
+        captureTypeCodes,
+        captureStart,
+        captureCount,
+        baseLocalTypes,
+        armLocalTypes))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] baseLocalTypeCount = baseLocalTypes.Count();
+    stack mut u64[0 2 ** 63 - 1] factsIndex = 0;
+    while willexit (factsIndex < baseLocalTypeCount)
+    {
+        stack u32[0 max] factsSlot = (u32[0 max])(factsIndex + 1);
+        stack mut ValueFacts facts = new();
+        if (baseSourceValueFacts.Contains(factsSlot))
+        {
+            facts = baseSourceValueFacts.Get(factsSlot);
+        }
+
+        if (armSourceValueFacts.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        factsIndex = factsIndex + 1;
+    }
+
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureIndex;
+        if (!captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack mut ValueFacts captureFacts = new();
+        stack u32[0 max] captureTypeCode = captureTypeCodes.Get(captureRow);
+        if (!SourceSwitchCaptureTypeCodeIsAggregateLocal(captureTypeCode))
+        {
+            stack MirType payloadType = MirTypeForResolvedFieldTypeCode(captureTypeCode);
+            stack bool ignored = TrySetFullIntegerRangeForMirType(captureFacts, payloadType);
+        }
+
+        if (armSourceValueFacts.Add(captureFacts) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchReturnArmWithCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyTerminalSwitchCaptureParams(
+            stream,
+            source,
+            baseParams,
+            baseParamCount,
+            captureNameTokens,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            armParams))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedParamCount = baseParamCount + (u64[0 2 ** 63 - 1])captureCount;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart || stream.KindAt(armStart + 1) != TokenKind.Return)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, armParams, funcNames, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace || armParams.Count() != expectedParamCount)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, armParams, funcNames, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    if (armParams.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchReturnArmWithEnumsAndCaptures(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack mut IrTable<ParamName> armParams = new();
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    stack mut IrTable<ValueFacts> armSourceValueFacts = new();
+    if (!CopyTerminalSwitchCaptureParams(
+            stream,
+            source,
+            baseParams,
+            baseParamCount,
+            captureNameTokens,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            armParams)
+        || !BuildTerminalSwitchCaptureLocalTypesAndFacts(
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            localTypes,
+            sourceValueFacts,
+            armLocalTypes,
+            armSourceValueFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedParamCount = baseParamCount + (u64[0 2 ** 63 - 1])captureCount;
+    if (armLocalTypes.Count() != expectedParamCount || armSourceValueFacts.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ConstructedObjectLocal> noConstructedObjectLocals = new();
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart || stream.KindAt(armStart + 1) != TokenKind.Return)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+            stream,
+            source,
+            nodes,
+            armParams,
+            funcNames,
+            noConstructedObjectLocals,
+            noSliceDescriptorLocals,
+            armLocalTypes,
+            armSourceValueFacts,
+            moduleFacts,
+            armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace || armParams.Count() != expectedParamCount)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        armParams,
+        funcNames,
+        noConstructedObjectLocals,
+        noSliceDescriptorLocals,
+        armLocalTypes,
+        armSourceValueFacts,
+        moduleFacts,
+        armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    if (armParams.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    borrow IrTable<u32[0 max]> captureElementIndices,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u64[0 2 ** 63 - 1] guardStart,
+    out ExprParseResult guard,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(captureTypeCodes, localTypes), overlap_all(sourceValueFacts)
+{
+    guard = new();
+    nextToken = guardStart;
+
+    stack mut IrTable<ParamName> guardParams = new();
+    stack mut IrTable<u32[0 max]> guardLocalTypes = new();
+    stack mut IrTable<ValueFacts> guardSourceValueFacts = new();
+    stack mut IrTable<SourceSliceDescriptorLocal> guardSliceDescriptorLocals = new();
+    if (!CopyTerminalSwitchCaptureParams(
+            stream,
+            source,
+            baseParams,
+            baseParamCount,
+            captureNameTokens,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            guardParams)
+        || !BuildTerminalSwitchCaptureLocalTypesAndFacts(
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            localTypes,
+            sourceValueFacts,
+            guardLocalTypes,
+            guardSourceValueFacts)
+        || !BuildTerminalFixedArraySwitchCaptureSliceDescriptorLocals(
+            fixedArrayParamIndex,
+            fixedArrayFacts,
+            useFixedArrayStorageLocal,
+            captureElementIndices,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            localTypes,
+            sliceDescriptorLocals,
+            guardSliceDescriptorLocals))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedParamCount = baseParamCount + (u64[0 2 ** 63 - 1])captureCount;
+    if (guardParams.Count() != expectedParamCount
+        || guardLocalTypes.Count() != expectedParamCount
+        || guardSourceValueFacts.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ConstructedObjectLocal> noConstructedObjectLocals = new();
+    stack ExprParseResult parsedGuard = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        guardParams,
+        funcNames,
+        noConstructedObjectLocals,
+        guardSliceDescriptorLocals,
+        guardLocalTypes,
+        guardSourceValueFacts,
+        moduleFacts,
+        guardStart);
+    if (parsedGuard.NodeId == 0
+        || parsedGuard.Next == guardStart
+        || guardParams.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    guard = parsedGuard;
+    nextToken = parsedGuard.Next;
+    return true;
+}
+
+internal fn bool TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] baseParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    borrow IrTable<u32[0 max]> captureElementIndices,
+    borrow IrTable<u32[0 max]> captureNameTokens,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(captureTypeCodes, localTypes), overlap_all(sourceValueFacts)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack mut IrTable<ParamName> armParams = new();
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    stack mut IrTable<ValueFacts> armSourceValueFacts = new();
+    stack mut IrTable<SourceSliceDescriptorLocal> armSliceDescriptorLocals = new();
+    if (!CopyTerminalSwitchCaptureParams(
+            stream,
+            source,
+            baseParams,
+            baseParamCount,
+            captureNameTokens,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            armParams)
+        || !BuildTerminalSwitchCaptureLocalTypesAndFacts(
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            localTypes,
+            sourceValueFacts,
+            armLocalTypes,
+            armSourceValueFacts)
+        || !BuildTerminalFixedArraySwitchCaptureSliceDescriptorLocals(
+            fixedArrayParamIndex,
+            fixedArrayFacts,
+            useFixedArrayStorageLocal,
+            captureElementIndices,
+            captureTypeCodes,
+            captureStart,
+            captureCount,
+            localTypes,
+            sliceDescriptorLocals,
+            armSliceDescriptorLocals))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedParamCount = baseParamCount + (u64[0 2 ** 63 - 1])captureCount;
+    if (armParams.Count() != expectedParamCount
+        || armLocalTypes.Count() != expectedParamCount
+        || armSourceValueFacts.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ConstructedObjectLocal> noConstructedObjectLocals = new();
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart || stream.KindAt(armStart + 1) != TokenKind.Return)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+            stream,
+            source,
+            nodes,
+            armParams,
+            funcNames,
+            noConstructedObjectLocals,
+            armSliceDescriptorLocals,
+            armLocalTypes,
+            armSourceValueFacts,
+            moduleFacts,
+            armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (parsedArm.NodeId == 0
+            || afterExpr != (u64[0 2 ** 63 - 1])closeBrace
+            || armParams.Count() != expectedParamCount)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        armParams,
+        funcNames,
+        noConstructedObjectLocals,
+        armSliceDescriptorLocals,
+        armLocalTypes,
+        armSourceValueFacts,
+        moduleFacts,
+        armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    if (parsedArm.NodeId == 0 || armParams.Count() != expectedParamCount)
+    {
+        return false;
+    }
+
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TerminalSwitchCaseValueExists(borrow IrTable<i64[min max]> caseValues, i64[min max] value)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    while willexit (i < count)
+    {
+        stack i64[min max] current = caseValues.Get((u32[0 max])(i + 1));
+        if (current == value)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+
+internal fn bool SourceSwitchPayloadPatternRangesAreProvablyDisjoint(
+    u32[0 max] leftStart,
+    u32[0 max] leftCount,
+    u32[0 max] rightStart,
+    u32[0 max] rightCount,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    borrow IrTable<u32[0 max]> payloadPatternKinds,
+    borrow IrTable<i64[min max]> payloadPatternMinValues,
+    borrow IrTable<i64[min max]> payloadPatternMaxValues)
+{
+    if (leftCount == 0 || rightCount == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] leftOffset = 0;
+    while willexit (leftOffset < leftCount)
+    {
+        stack u32[0 max] leftRow = leftStart + leftOffset;
+        if (!payloadPatternVariantOrdinals.Contains(leftRow)
+            || !payloadPatternOrdinals.Contains(leftRow)
+            || !payloadPatternTypeCodes.Contains(leftRow)
+            || !payloadPatternKinds.Contains(leftRow)
+            || !payloadPatternMinValues.Contains(leftRow)
+            || !payloadPatternMaxValues.Contains(leftRow)
+            || payloadPatternKinds.Get(leftRow) != SourceSwitchEnumPayloadPatternKindScalarInterval())
+        {
+            return false;
+        }
+
+        stack u32[0 max] leftVariantOrdinal = payloadPatternVariantOrdinals.Get(leftRow);
+        stack u32[0 max] leftPayloadOrdinal = payloadPatternOrdinals.Get(leftRow);
+        stack u32[0 max] leftTypeCode = payloadPatternTypeCodes.Get(leftRow);
+        stack i64[min max] leftMin = payloadPatternMinValues.Get(leftRow);
+        stack i64[min max] leftMax = payloadPatternMaxValues.Get(leftRow);
+
+        stack mut u32[0 max] rightOffset = 0;
+        while willexit (rightOffset < rightCount)
+        {
+            stack u32[0 max] rightRow = rightStart + rightOffset;
+            if (!payloadPatternVariantOrdinals.Contains(rightRow)
+                || !payloadPatternOrdinals.Contains(rightRow)
+                || !payloadPatternTypeCodes.Contains(rightRow)
+                || !payloadPatternKinds.Contains(rightRow)
+                || !payloadPatternMinValues.Contains(rightRow)
+                || !payloadPatternMaxValues.Contains(rightRow)
+                || payloadPatternKinds.Get(rightRow) != SourceSwitchEnumPayloadPatternKindScalarInterval())
+            {
+                return false;
+            }
+
+            stack u32[0 max] rightVariantOrdinal = payloadPatternVariantOrdinals.Get(rightRow);
+            stack u32[0 max] rightPayloadOrdinal = payloadPatternOrdinals.Get(rightRow);
+            stack u32[0 max] rightTypeCode = payloadPatternTypeCodes.Get(rightRow);
+            if (leftVariantOrdinal == rightVariantOrdinal
+                && leftPayloadOrdinal == rightPayloadOrdinal
+                && leftTypeCode == rightTypeCode)
+            {
+                stack i64[min max] rightMin = payloadPatternMinValues.Get(rightRow);
+                stack i64[min max] rightMax = payloadPatternMaxValues.Get(rightRow);
+                if (SourceSwitchScalarIntervalsAreDisjoint(leftMin, leftMax, rightMin, rightMax))
+                {
+                    return true;
+                }
+            }
+
+            rightOffset = rightOffset + 1;
+        }
+
+        leftOffset = leftOffset + 1;
+    }
+
+    return false;
+}
+
+internal fn bool SourceSwitchPayloadCaseOverlapsPreviousCase(
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<u32[0 max]> casePayloadPatternStarts,
+    borrow IrTable<u32[0 max]> casePayloadPatternCounts,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    borrow IrTable<u32[0 max]> payloadPatternKinds,
+    borrow IrTable<i64[min max]> payloadPatternMinValues,
+    borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    i64[min max] caseValue,
+    u32[0 max] payloadPatternStart,
+    u32[0 max] payloadPatternCount)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    if (casePayloadPatternStarts.Count() != count || casePayloadPatternCounts.Count() != count)
+    {
+        return true;
+    }
+
+    while willexit (i < count)
+    {
+        stack u32[0 max] caseSlot = (u32[0 max])(i + 1);
+        if (caseValues.Get(caseSlot) == caseValue)
+        {
+            stack u32[0 max] previousStart = casePayloadPatternStarts.Get(caseSlot);
+            stack u32[0 max] previousCount = casePayloadPatternCounts.Get(caseSlot);
+            if (!SourceSwitchPayloadPatternRangesAreProvablyDisjoint(
+                    previousStart,
+                    previousCount,
+                    payloadPatternStart,
+                    payloadPatternCount,
+                    payloadPatternVariantOrdinals,
+                    payloadPatternOrdinals,
+                    payloadPatternTypeCodes,
+                    payloadPatternKinds,
+                    payloadPatternMinValues,
+                    payloadPatternMaxValues))
+            {
+                return true;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TerminalBooleanSwitchCaseValueExists(borrow IrTable<u32[0 max]> caseValues, u32[0 max] value)
+{
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    stack u64[0 2 ** 63 - 1] count = caseValues.Count();
+    while willexit (i < count)
+    {
+        stack u32[0 max] current = caseValues.Get((u32[0 max])(i + 1));
+        if (current == value)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseTerminalIntegerSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<i64[min max]> caseMaxValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut i64[min max] caseMaxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchIntegerCaseInterval(stream, source, cursor + 1, caseValue, caseMaxValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseIntervalOverlaps(caseValues, caseMaxValues, caseValue, caseMaxValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, afterCaseLabel + 1, caseArm, afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0
+            || caseMaxValues.Add(caseMaxValue) == 0
+            || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalIntegerSwitchReturnCasesWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<i64[min max]> caseMaxValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut i64[min max] caseMaxValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchIntegerCaseInterval(stream, source, cursor + 1, caseValue, caseMaxValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseIntervalOverlaps(caseValues, caseMaxValues, caseValue, caseMaxValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArmWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            afterCaseLabel + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0
+            || caseMaxValues.Add(caseMaxValue) == 0
+            || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalBooleanSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<u32[0 max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut u32[0 max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchBooleanCaseLabel(stream, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalBooleanSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, afterCaseLabel + 1, caseArm, afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalBooleanSwitchReturnCasesWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<u32[0 max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut u32[0 max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchBooleanCaseLabel(stream, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalBooleanSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArmWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            afterCaseLabel + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalEnumSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, moduleFacts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, afterCaseLabel + 1, caseArm, afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalEnumSwitchReturnCasesWithPayloadPatterns(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePayloadPatternStarts,
+    mut borrow IrTable<u32[0 max]> casePayloadPatternCounts,
+    mut borrow IrTable<u32[0 max]> casePayloadNestedStarts,
+    mut borrow IrTable<u32[0 max]> casePayloadNestedCounts,
+    mut borrow IrTable<u32[0 max]> casePayloadCaptureStarts,
+    mut borrow IrTable<u32[0 max]> casePayloadCaptureCounts,
+    mut borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadPatternKinds,
+    mut borrow IrTable<i64[min max]> payloadPatternMinValues,
+    mut borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> payloadCaptureVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadCaptureNameTokens,
+    mut borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedKinds,
+    mut borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    mut borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut u32[0 max] firstPayloadCaptureStart = 0;
+        stack mut u32[0 max] firstPayloadCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut i64[min max] caseValue = 0;
+            stack mut u32[0 max] payloadPatternStart = 0;
+            stack mut u32[0 max] payloadPatternCount = 0;
+            stack mut u32[0 max] payloadCaptureStart = 0;
+            stack mut u32[0 max] payloadCaptureCount = 0;
+            stack mut u32[0 max] nestedStart = 0;
+            stack mut u32[0 max] nestedCount = 0;
+            if (!TryParseTerminalSwitchEnumCaseLabelWithPayloadPatternsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    ownerDeclarationIndex,
+                    afterCaseLabel,
+                    payloadPatternVariantOrdinals,
+                    payloadPatternOrdinals,
+                    payloadPatternTypeCodes,
+                    payloadPatternKinds,
+                    payloadPatternMinValues,
+                    payloadPatternMaxValues,
+                    payloadCaptureVariantOrdinals,
+                    payloadCaptureOrdinals,
+                    payloadCaptureTypeCodes,
+                    payloadCaptureNameTokens,
+                    nestedVariantOrdinals,
+                    nestedPayloadOrdinals,
+                    nestedKinds,
+                    nestedAggregateDescriptorRows,
+                    nestedListDescriptorRows,
+                    caseValue,
+                    payloadPatternStart,
+                    payloadPatternCount,
+                    payloadCaptureStart,
+                    payloadCaptureCount,
+                    nestedStart,
+                    nestedCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstPayloadCaptureStart = payloadCaptureStart;
+                firstPayloadCaptureCount = payloadCaptureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    payloadCaptureNameTokens,
+                    payloadCaptureTypeCodes,
+                    firstPayloadCaptureStart,
+                    firstPayloadCaptureCount,
+                    payloadCaptureStart,
+                    payloadCaptureCount))
+            {
+                return false;
+            }
+
+            if (caseValues.Add(caseValue) == 0
+                || casePayloadPatternStarts.Add(payloadPatternStart) == 0
+                || casePayloadPatternCounts.Add(payloadPatternCount) == 0
+                || casePayloadNestedStarts.Add(nestedStart) == 0
+                || casePayloadNestedCounts.Add(nestedCount) == 0
+                || casePayloadCaptureStarts.Add(payloadCaptureStart) == 0
+                || casePayloadCaptureCounts.Add(payloadCaptureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        if (stream.KindAt(afterCaseLabel) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArmWithCaptures(
+            stream,
+            source,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            payloadCaptureNameTokens,
+            payloadCaptureTypeCodes,
+            firstPayloadCaptureStart,
+            firstPayloadCaptureCount,
+            afterCaseLabel + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingArmOffset = 0;
+        while willexit (siblingArmOffset < siblingLabelCount)
+        {
+            if (caseArms.Add(caseArm) == 0)
+            {
+                return false;
+            }
+
+            siblingArmOffset = siblingArmOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalEnumSwitchReturnCasesWithEnumsAndPayloadPatterns(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePayloadPatternStarts,
+    mut borrow IrTable<u32[0 max]> casePayloadPatternCounts,
+    mut borrow IrTable<u32[0 max]> casePayloadNestedStarts,
+    mut borrow IrTable<u32[0 max]> casePayloadNestedCounts,
+    mut borrow IrTable<u32[0 max]> casePayloadCaptureStarts,
+    mut borrow IrTable<u32[0 max]> casePayloadCaptureCounts,
+    mut borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadPatternKinds,
+    mut borrow IrTable<i64[min max]> payloadPatternMinValues,
+    mut borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> payloadCaptureVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureOrdinals,
+    mut borrow IrTable<u32[0 max]> payloadCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> payloadCaptureNameTokens,
+    mut borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    mut borrow IrTable<u32[0 max]> nestedKinds,
+    mut borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    mut borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut u32[0 max] firstPayloadCaptureStart = 0;
+        stack mut u32[0 max] firstPayloadCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut i64[min max] caseValue = 0;
+            stack mut u32[0 max] payloadPatternStart = 0;
+            stack mut u32[0 max] payloadPatternCount = 0;
+            stack mut u32[0 max] payloadCaptureStart = 0;
+            stack mut u32[0 max] payloadCaptureCount = 0;
+            stack mut u32[0 max] nestedStart = 0;
+            stack mut u32[0 max] nestedCount = 0;
+            if (!TryParseTerminalSwitchEnumCaseLabelWithPayloadPatternsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    ownerDeclarationIndex,
+                    afterCaseLabel,
+                    payloadPatternVariantOrdinals,
+                    payloadPatternOrdinals,
+                    payloadPatternTypeCodes,
+                    payloadPatternKinds,
+                    payloadPatternMinValues,
+                    payloadPatternMaxValues,
+                    payloadCaptureVariantOrdinals,
+                    payloadCaptureOrdinals,
+                    payloadCaptureTypeCodes,
+                    payloadCaptureNameTokens,
+                    nestedVariantOrdinals,
+                    nestedPayloadOrdinals,
+                    nestedKinds,
+                    nestedAggregateDescriptorRows,
+                    nestedListDescriptorRows,
+                    caseValue,
+                    payloadPatternStart,
+                    payloadPatternCount,
+                    payloadCaptureStart,
+                    payloadCaptureCount,
+                    nestedStart,
+                    nestedCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstPayloadCaptureStart = payloadCaptureStart;
+                firstPayloadCaptureCount = payloadCaptureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    payloadCaptureNameTokens,
+                    payloadCaptureTypeCodes,
+                    firstPayloadCaptureStart,
+                    firstPayloadCaptureCount,
+                    payloadCaptureStart,
+                    payloadCaptureCount))
+            {
+                return false;
+            }
+
+            if (caseValues.Add(caseValue) == 0
+                || casePayloadPatternStarts.Add(payloadPatternStart) == 0
+                || casePayloadPatternCounts.Add(payloadPatternCount) == 0
+                || casePayloadNestedStarts.Add(nestedStart) == 0
+                || casePayloadNestedCounts.Add(nestedCount) == 0
+                || casePayloadCaptureStarts.Add(payloadCaptureStart) == 0
+                || casePayloadCaptureCounts.Add(payloadCaptureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        if (stream.KindAt(afterCaseLabel) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArmWithEnumsAndCaptures(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            payloadCaptureNameTokens,
+            payloadCaptureTypeCodes,
+            firstPayloadCaptureStart,
+            firstPayloadCaptureCount,
+            afterCaseLabel + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingArmOffset = 0;
+        while willexit (siblingArmOffset < siblingLabelCount)
+        {
+            if (caseArms.Add(caseArm) == 0)
+            {
+                return false;
+            }
+
+            siblingArmOffset = siblingArmOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalEnumSwitchReturnCasesWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] ownerDeclarationIndex,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    mut borrow IrTable<i64[min max]> caseValues,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut i64[min max] caseValue = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+        if (!TryParseTerminalSwitchEnumCaseLabel(stream, source, moduleFacts, ownerDeclarationIndex, cursor + 1, caseValue, afterCaseLabel)
+            || stream.KindAt(afterCaseLabel) != TokenKind.Colon
+            || TerminalSwitchCaseValueExists(caseValues, caseValue))
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArmWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            afterCaseLabel + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        if (caseValues.Add(caseValue) == 0 || caseArms.Add(caseArm) == 0)
+        {
+            return false;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseValues.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalFixedArrayListSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(elementCaptureTypeCodes, localTypes), overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    stack mut u32[0 max] resolvedFixedArrayParamIndex = 0;
+    stack mut ParamAbiFacts resolvedFixedArrayFacts = new();
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace
+        || !TryResolveFixedArraySwitchScrutineeFacts(nodes, parsedScrutinee.NodeId, paramAbiFacts, resolvedFixedArrayParamIndex, resolvedFixedArrayFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            if (!TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedFixedArrayFacts,
+                    afterCaseLabel,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    elementCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    elementCaptureNameTokens,
+                    elementCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingElementCaptureStarts.Add(captureStart) == 0
+                || siblingElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+                        stream,
+                        source,
+                        moduleFacts,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        localTypes,
+                        sourceValueFacts,
+                        sliceDescriptorLocals,
+                        resolvedFixedArrayParamIndex,
+                        resolvedFixedArrayFacts,
+                        false,
+                        elementCaptureIndices,
+                        elementCaptureNameTokens,
+                        elementCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = colonToken + 1;
+        if (!TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            sliceDescriptorLocals,
+            resolvedFixedArrayParamIndex,
+            resolvedFixedArrayFacts,
+            false,
+            elementCaptureIndices,
+            elementCaptureNameTokens,
+            elementCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingElementCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingElementCaptureCounts.Get(siblingOffset + 1);
+            if (SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+                    nodes,
+                    casePatternStarts,
+                    casePatternCounts,
+                    caseGuardNodes,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternStart,
+                    patternCount)
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0
+                || caseElementCaptureStarts.Add(captureStart) == 0
+                || caseElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    fixedArrayParamIndex = resolvedFixedArrayParamIndex;
+    fixedArrayFacts = resolvedFixedArrayFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalFixedArrayStorageListSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<FixedArrayStorageLocal> fixedArrayStorageLocals,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out FixedArrayStorageLocal fixedArrayLocal,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(elementCaptureTypeCodes, localTypes), overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    fixedArrayLocal = new();
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    stack mut FixedArrayStorageLocal resolvedFixedArrayLocal = new();
+    stack mut ParamAbiFacts resolvedFixedArrayFacts = new();
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace
+        || !TryResolveFixedArrayStorageSwitchScrutineeFacts(nodes, parsedScrutinee.NodeId, fixedArrayStorageLocals, resolvedFixedArrayLocal, resolvedFixedArrayFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            if (!TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedFixedArrayFacts,
+                    afterCaseLabel,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    elementCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    elementCaptureNameTokens,
+                    elementCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingElementCaptureStarts.Add(captureStart) == 0
+                || siblingElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+                        stream,
+                        source,
+                        moduleFacts,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        localTypes,
+                        sourceValueFacts,
+                        sliceDescriptorLocals,
+                        resolvedFixedArrayLocal.ParamIndex,
+                        resolvedFixedArrayFacts,
+                        true,
+                        elementCaptureIndices,
+                        elementCaptureNameTokens,
+                        elementCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = colonToken + 1;
+        if (!TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            sliceDescriptorLocals,
+            resolvedFixedArrayLocal.ParamIndex,
+            resolvedFixedArrayFacts,
+            true,
+            elementCaptureIndices,
+            elementCaptureNameTokens,
+            elementCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingElementCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingElementCaptureCounts.Get(siblingOffset + 1);
+            if (SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+                    nodes,
+                    casePatternStarts,
+                    casePatternCounts,
+                    caseGuardNodes,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternStart,
+                    patternCount)
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0
+                || caseElementCaptureStarts.Add(captureStart) == 0
+                || caseElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    fixedArrayLocal = resolvedFixedArrayLocal;
+    fixedArrayParamIndex = resolvedFixedArrayLocal.ParamIndex;
+    fixedArrayFacts = resolvedFixedArrayFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalFixedArrayStorageListSwitchReturnCasesWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<FixedArrayStorageLocal> fixedArrayStorageLocals,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out FixedArrayStorageLocal fixedArrayLocal,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    fixedArrayLocal = new();
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    stack mut FixedArrayStorageLocal resolvedFixedArrayLocal = new();
+    stack mut ParamAbiFacts resolvedFixedArrayFacts = new();
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace
+        || !TryResolveFixedArrayStorageSwitchScrutineeFacts(nodes, parsedScrutinee.NodeId, fixedArrayStorageLocals, resolvedFixedArrayLocal, resolvedFixedArrayFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            if (!TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedFixedArrayFacts,
+                    afterCaseLabel,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    elementCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    elementCaptureNameTokens,
+                    elementCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingElementCaptureStarts.Add(captureStart) == 0
+                || siblingElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+                        stream,
+                        source,
+                        moduleFacts,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        localTypes,
+                        sourceValueFacts,
+                        sliceDescriptorLocals,
+                        resolvedFixedArrayLocal.ParamIndex,
+                        resolvedFixedArrayFacts,
+                        true,
+                        elementCaptureIndices,
+                        elementCaptureNameTokens,
+                        elementCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = colonToken + 1;
+        if (!TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            sliceDescriptorLocals,
+            resolvedFixedArrayLocal.ParamIndex,
+            resolvedFixedArrayFacts,
+            true,
+            elementCaptureIndices,
+            elementCaptureNameTokens,
+            elementCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingElementCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingElementCaptureCounts.Get(siblingOffset + 1);
+            if (SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+                    nodes,
+                    casePatternStarts,
+                    casePatternCounts,
+                    caseGuardNodes,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternStart,
+                    patternCount)
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0
+                || caseElementCaptureStarts.Add(captureStart) == 0
+                || caseElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    fixedArrayLocal = resolvedFixedArrayLocal;
+    fixedArrayParamIndex = resolvedFixedArrayLocal.ParamIndex;
+    fixedArrayFacts = resolvedFixedArrayFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalFixedArrayFieldListSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out FixedArrayStorageLocal fixedArrayLocal,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(elementCaptureTypeCodes, localTypes), overlap_all(sourceValueFacts), overlap(constructedObjectLocals, source)
+{
+    scrutinee = new();
+    fixedArrayLocal = new();
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    stack mut ExprParseResult resolvedScrutinee = new();
+    stack mut FixedArrayStorageLocal resolvedFixedArrayLocal = new();
+    stack mut ParamAbiFacts resolvedFixedArrayFacts = new();
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace
+        || !TryResolveFixedArrayFieldSwitchScrutineeFacts(
+            stream,
+            source,
+            moduleFacts,
+            constructedObjectLocals,
+            nodes,
+            switchIndex + 2,
+            (u64[0 2 ** 63 - 1])closeParen,
+            resolvedScrutinee,
+            resolvedFixedArrayLocal,
+            resolvedFixedArrayFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = (u64[0 2 ** 63 - 1])closeParen + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            if (!TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedFixedArrayFacts,
+                    afterCaseLabel,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    elementCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    elementCaptureNameTokens,
+                    elementCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingElementCaptureStarts.Add(captureStart) == 0
+                || siblingElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+                        stream,
+                        source,
+                        moduleFacts,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        localTypes,
+                        sourceValueFacts,
+                        sliceDescriptorLocals,
+                        resolvedFixedArrayLocal.ParamIndex,
+                        resolvedFixedArrayFacts,
+                        true,
+                        elementCaptureIndices,
+                        elementCaptureNameTokens,
+                        elementCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = colonToken + 1;
+        if (!TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            sliceDescriptorLocals,
+            resolvedFixedArrayLocal.ParamIndex,
+            resolvedFixedArrayFacts,
+            true,
+            elementCaptureIndices,
+            elementCaptureNameTokens,
+            elementCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingElementCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingElementCaptureCounts.Get(siblingOffset + 1);
+            if (SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+                    nodes,
+                    casePatternStarts,
+                    casePatternCounts,
+                    caseGuardNodes,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternStart,
+                    patternCount)
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0
+                || caseElementCaptureStarts.Add(captureStart) == 0
+                || caseElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = resolvedScrutinee;
+    fixedArrayLocal = resolvedFixedArrayLocal;
+    fixedArrayParamIndex = resolvedFixedArrayLocal.ParamIndex;
+    fixedArrayFacts = resolvedFixedArrayFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalFixedArrayFieldListSwitchReturnCasesWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out FixedArrayStorageLocal fixedArrayLocal,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(elementCaptureTypeCodes, localTypes), overlap_all(sourceValueFacts), overlap(constructedObjectLocals, source)
+{
+    scrutinee = new();
+    fixedArrayLocal = new();
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    stack mut ExprParseResult resolvedScrutinee = new();
+    stack mut FixedArrayStorageLocal resolvedFixedArrayLocal = new();
+    stack mut ParamAbiFacts resolvedFixedArrayFacts = new();
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace
+        || !TryResolveFixedArrayFieldSwitchScrutineeFacts(
+            stream,
+            source,
+            moduleFacts,
+            constructedObjectLocals,
+            nodes,
+            switchIndex + 2,
+            (u64[0 2 ** 63 - 1])closeParen,
+            resolvedScrutinee,
+            resolvedFixedArrayLocal,
+            resolvedFixedArrayFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = (u64[0 2 ** 63 - 1])closeParen + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            if (!TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedFixedArrayFacts,
+                    afterCaseLabel,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    elementCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    elementCaptureNameTokens,
+                    elementCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingElementCaptureStarts.Add(captureStart) == 0
+                || siblingElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+                        stream,
+                        source,
+                        moduleFacts,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        localTypes,
+                        sourceValueFacts,
+                        sliceDescriptorLocals,
+                        resolvedFixedArrayLocal.ParamIndex,
+                        resolvedFixedArrayFacts,
+                        true,
+                        elementCaptureIndices,
+                        elementCaptureNameTokens,
+                        elementCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = colonToken + 1;
+        if (!TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            sliceDescriptorLocals,
+            resolvedFixedArrayLocal.ParamIndex,
+            resolvedFixedArrayFacts,
+            true,
+            elementCaptureIndices,
+            elementCaptureNameTokens,
+            elementCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingElementCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingElementCaptureCounts.Get(siblingOffset + 1);
+            if (SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+                    nodes,
+                    casePatternStarts,
+                    casePatternCounts,
+                    caseGuardNodes,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternStart,
+                    patternCount)
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0
+                || caseElementCaptureStarts.Add(captureStart) == 0
+                || caseElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = resolvedScrutinee;
+    fixedArrayLocal = resolvedFixedArrayLocal;
+    fixedArrayParamIndex = resolvedFixedArrayLocal.ParamIndex;
+    fixedArrayFacts = resolvedFixedArrayFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalFixedArrayListSwitchReturnCasesWithEnums(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out u32[0 max] fixedArrayParamIndex,
+    out ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> elementPatternIndices,
+    mut borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementPatternKinds,
+    mut borrow IrTable<i64[min max]> elementPatternMinValues,
+    mut borrow IrTable<i64[min max]> elementPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    mut borrow IrTable<u32[0 max]> elementCaptureIndices,
+    mut borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> elementCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap(elementCaptureTypeCodes, localTypes), overlap_all(sourceValueFacts)
+{
+    scrutinee = new();
+    fixedArrayParamIndex = 0;
+    fixedArrayFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedScrutinee = ParseExprIn(stream, source, nodes, params, funcNames, switchIndex + 2);
+    stack mut u32[0 max] resolvedFixedArrayParamIndex = 0;
+    stack mut ParamAbiFacts resolvedFixedArrayFacts = new();
+    if (stream.KindAt(parsedScrutinee.Next) != TokenKind.RParen
+        || stream.KindAt(parsedScrutinee.Next + 1) != TokenKind.LBrace
+        || !TryResolveFixedArraySwitchScrutineeFacts(nodes, parsedScrutinee.NodeId, paramAbiFacts, resolvedFixedArrayParamIndex, resolvedFixedArrayFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = parsedScrutinee.Next + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingElementCaptureCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            if (!TryParseTerminalSwitchFixedArrayListCaseLabelWithTypedRowsAndCaptures(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedFixedArrayFacts,
+                    afterCaseLabel,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    elementCaptureIndices,
+                    elementCaptureTypeCodes,
+                    elementCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    elementCaptureNameTokens,
+                    elementCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingElementCaptureStarts.Add(captureStart) == 0
+                || siblingElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithFixedArrayCapturesAndSlices(
+                        stream,
+                        source,
+                        moduleFacts,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        localTypes,
+                        sourceValueFacts,
+                        sliceDescriptorLocals,
+                        resolvedFixedArrayParamIndex,
+                        resolvedFixedArrayFacts,
+                        false,
+                        elementCaptureIndices,
+                        elementCaptureNameTokens,
+                        elementCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = afterCaseLabel + 1;
+        if (!TryParseTerminalSwitchReturnArmWithFixedArrayCapturesAndSlices(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            sliceDescriptorLocals,
+            resolvedFixedArrayParamIndex,
+            resolvedFixedArrayFacts,
+            false,
+            elementCaptureIndices,
+            elementCaptureNameTokens,
+            elementCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingElementCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingElementCaptureCounts.Get(siblingOffset + 1);
+            if (SourceSwitchListPatternCaseOverlapsPreviousUnguardedCase(
+                    nodes,
+                    casePatternStarts,
+                    casePatternCounts,
+                    caseGuardNodes,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    patternStart,
+                    patternCount)
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0
+                || caseElementCaptureStarts.Add(captureStart) == 0
+                || caseElementCaptureCounts.Add(captureCount) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (!TryParseTerminalSwitchReturnArmWithEnums(
+        stream,
+        source,
+        moduleFacts,
+        nodes,
+        params,
+        funcNames,
+        localTypes,
+        sourceValueFacts,
+        cursor + 2,
+        parsedDefault,
+        afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = parsedScrutinee;
+    fixedArrayParamIndex = resolvedFixedArrayParamIndex;
+    fixedArrayFacts = resolvedFixedArrayFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool TryParseTerminalStructAggregateSwitchReturnCases(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    bool parseEnumReturnArms,
+    u64[0 2 ** 63 - 1] switchIndex,
+    out ExprParseResult scrutinee,
+    out u32[0 max] structParamIndex,
+    out u32[0 max] structTypeToken,
+    out u32[0 max] structBaseByteOffset,
+    out bool useStructValueParam,
+    out ParamAbiFacts structValueFacts,
+    mut borrow IrTable<ExprParseResult> caseArms,
+    mut borrow IrTable<u32[0 max]> casePatternStarts,
+    mut borrow IrTable<u32[0 max]> casePatternCounts,
+    mut borrow IrTable<u32[0 max]> caseFieldCaptureStarts,
+    mut borrow IrTable<u32[0 max]> caseFieldCaptureCounts,
+    mut borrow IrTable<u32[0 max]> caseNestedStarts,
+    mut borrow IrTable<u32[0 max]> caseNestedCounts,
+    mut borrow IrTable<u32[0 max]> caseGuardNodes,
+    mut borrow IrTable<u32[0 max]> fieldPatternIndices,
+    mut borrow IrTable<u32[0 max]> fieldPatternOffsets,
+    mut borrow IrTable<u32[0 max]> fieldPatternAlignments,
+    mut borrow IrTable<u32[0 max]> fieldPatternTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldPatternMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldPatternKinds,
+    mut borrow IrTable<i64[min max]> fieldPatternMinValues,
+    mut borrow IrTable<i64[min max]> fieldPatternMaxValues,
+    mut borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    mut borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    mut borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    mut borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    mut borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    mut borrow IrTable<u32[0 max]> fieldCaptureNameTokens,
+    out ExprParseResult defaultArm,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts), overlap(constructedObjectLocals, source)
+{
+    scrutinee = new();
+    structParamIndex = 0;
+    structTypeToken = 0;
+    structBaseByteOffset = 0;
+    useStructValueParam = false;
+    structValueFacts = new();
+    defaultArm = new();
+    nextToken = switchIndex;
+    if (stream.KindAt(switchIndex) != TokenKind.Switch
+        || stream.KindAt(switchIndex + 1) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(switchIndex + 1));
+    stack mut ExprParseResult resolvedScrutinee = new();
+    stack mut u32[0 max] resolvedStructParamIndex = 0;
+    stack mut u32[0 max] resolvedStructTypeToken = 0;
+    stack mut u32[0 max] resolvedStructBaseByteOffset = 0;
+    stack mut bool resolvedUseStructValueParam = false;
+    stack mut ParamAbiFacts resolvedStructValueFacts = new();
+    if (closeParen == (u32[0 max])(switchIndex + 1)
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.LBrace
+        || !TryResolveStructAggregateSwitchScrutineeFacts(
+            stream,
+            source,
+            moduleFacts,
+            constructedObjectLocals,
+            nodes,
+            params,
+            paramAbiFacts,
+            switchIndex + 2,
+            (u64[0 2 ** 63 - 1])closeParen,
+            resolvedScrutinee,
+            resolvedStructParamIndex,
+            resolvedStructTypeToken,
+            resolvedStructBaseByteOffset,
+            resolvedUseStructValueParam,
+            resolvedStructValueFacts))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] switchBodyOpen = (u64[0 2 ** 63 - 1])closeParen + 1;
+    stack u32[0 max] switchBodyClose = MatchingBraceForMirLowering(stream, (u32[0 max])switchBodyOpen);
+    if (switchBodyClose == (u32[0 max])switchBodyOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = switchBodyOpen + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Case)
+    {
+        stack mut IrTable<u32[0 max]> siblingPatternStarts = new();
+        stack mut IrTable<u32[0 max]> siblingPatternCounts = new();
+        stack mut IrTable<u32[0 max]> siblingFieldCaptureStarts = new();
+        stack mut IrTable<u32[0 max]> siblingFieldCaptureCounts = new();
+        stack mut IrTable<u32[0 max]> siblingNestedStarts = new();
+        stack mut IrTable<u32[0 max]> siblingNestedCounts = new();
+        stack mut u32[0 max] firstCaptureStart = 0;
+        stack mut u32[0 max] firstCaptureCount = 0;
+        stack mut u32[0 max] siblingLabelCount = 0;
+        stack mut u64[0 2 ** 63 - 1] afterCaseLabel = cursor + 1;
+
+        while willexit (true)
+        {
+            stack mut u32[0 max] patternStart = 0;
+            stack mut u32[0 max] patternCount = 0;
+            stack mut u32[0 max] captureStart = 0;
+            stack mut u32[0 max] captureCount = 0;
+            stack mut u32[0 max] nestedStart = 0;
+            stack mut u32[0 max] nestedCount = 0;
+            if (!TryParseTerminalSwitchStructAggregateCaseLabel(
+                    stream,
+                    source,
+                    moduleFacts,
+                    resolvedStructTypeToken,
+                    afterCaseLabel,
+                    fieldPatternIndices,
+                    fieldPatternOffsets,
+                    fieldPatternAlignments,
+                    fieldPatternTypeCodes,
+                    fieldPatternMemberFactRows,
+                    fieldPatternKinds,
+                    fieldPatternMinValues,
+                    fieldPatternMaxValues,
+                    fieldCaptureIndices,
+                    fieldCaptureOffsets,
+                    fieldCaptureAlignments,
+                    fieldCaptureTypeCodes,
+                    fieldCaptureMemberFactRows,
+                    fieldCaptureNameTokens,
+                    patternStart,
+                    patternCount,
+                    captureStart,
+                    captureCount,
+                    nestedStart,
+                    nestedCount,
+                    afterCaseLabel))
+            {
+                return false;
+            }
+
+            if (siblingLabelCount == 0)
+            {
+                firstCaptureStart = captureStart;
+                firstCaptureCount = captureCount;
+            }
+            else if (!SourceSwitchCaptureSignaturesMatch(
+                    stream,
+                    source,
+                    fieldCaptureNameTokens,
+                    fieldCaptureTypeCodes,
+                    firstCaptureStart,
+                    firstCaptureCount,
+                    captureStart,
+                    captureCount))
+            {
+                return false;
+            }
+
+            if (siblingPatternStarts.Add(patternStart) == 0
+                || siblingPatternCounts.Add(patternCount) == 0
+                || siblingFieldCaptureStarts.Add(captureStart) == 0
+                || siblingFieldCaptureCounts.Add(captureCount) == 0
+                || siblingNestedStarts.Add(nestedStart) == 0
+                || siblingNestedCounts.Add(nestedCount) == 0)
+            {
+                return false;
+            }
+
+            siblingLabelCount = siblingLabelCount + 1;
+            if (stream.KindAt(afterCaseLabel) != TokenKind.Or)
+            {
+                break;
+            }
+
+            afterCaseLabel = afterCaseLabel + 1;
+        }
+
+        stack mut u32[0 max] guardNode = 0;
+        stack mut u64[0 2 ** 63 - 1] colonToken = afterCaseLabel;
+        if (stream.KindAt(afterCaseLabel) == TokenKind.When)
+        {
+            stack mut ExprParseResult parsedGuard = new();
+            if (firstCaptureCount != 0)
+            {
+                if (!TryParseSwitchGuardWithCaptures(
+                        stream,
+                        source,
+                        nodes,
+                        params,
+                        params.Count(),
+                        funcNames,
+                        fieldCaptureNameTokens,
+                        fieldCaptureTypeCodes,
+                        firstCaptureStart,
+                        firstCaptureCount,
+                        afterCaseLabel + 1,
+                        parsedGuard,
+                        colonToken))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] beforeGuardParamCount = params.Count();
+                parsedGuard = ParseExprIn(stream, source, nodes, params, funcNames, afterCaseLabel + 1);
+                if (parsedGuard.NodeId == 0
+                    || parsedGuard.Next == afterCaseLabel + 1
+                    || params.Count() != beforeGuardParamCount
+                    || TypeOfNodeWithLocals(nodes, parsedGuard.NodeId, localTypes) != ExprType.BoolType)
+                {
+                    return false;
+                }
+
+                colonToken = parsedGuard.Next;
+            }
+
+            guardNode = parsedGuard.NodeId;
+        }
+
+        if (stream.KindAt(colonToken) != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        stack mut ExprParseResult caseArm = new();
+        stack mut u64[0 2 ** 63 - 1] afterCase = colonToken + 1;
+        if (parseEnumReturnArms)
+        {
+            if (!TryParseTerminalSwitchReturnArmWithEnumsAndCaptures(
+                stream,
+                source,
+                moduleFacts,
+                nodes,
+                params,
+                params.Count(),
+                funcNames,
+                localTypes,
+                sourceValueFacts,
+                fieldCaptureNameTokens,
+                fieldCaptureTypeCodes,
+                firstCaptureStart,
+                firstCaptureCount,
+                colonToken + 1,
+                caseArm,
+                afterCase))
+            {
+                return false;
+            }
+        }
+        else if (!TryParseTerminalSwitchReturnArmWithCaptures(
+            stream,
+            source,
+            nodes,
+            params,
+            params.Count(),
+            funcNames,
+            fieldCaptureNameTokens,
+            fieldCaptureTypeCodes,
+            firstCaptureStart,
+            firstCaptureCount,
+            colonToken + 1,
+            caseArm,
+            afterCase))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] siblingOffset = 0;
+        while willexit (siblingOffset < siblingLabelCount)
+        {
+            stack u32[0 max] patternStart = siblingPatternStarts.Get(siblingOffset + 1);
+            stack u32[0 max] patternCount = siblingPatternCounts.Get(siblingOffset + 1);
+            stack u32[0 max] captureStart = siblingFieldCaptureStarts.Get(siblingOffset + 1);
+            stack u32[0 max] captureCount = siblingFieldCaptureCounts.Get(siblingOffset + 1);
+            stack u32[0 max] nestedStart = siblingNestedStarts.Get(siblingOffset + 1);
+            stack u32[0 max] nestedCount = siblingNestedCounts.Get(siblingOffset + 1);
+            if ((SourceSwitchStructPatternCanUseFlatOverlapPreflight(caseNestedCounts, nestedCount)
+                    && SourceSwitchStructPatternCaseOverlapsPreviousUnguardedCase(
+                        nodes,
+                        casePatternStarts,
+                        casePatternCounts,
+                        caseGuardNodes,
+                        fieldPatternIndices,
+                        fieldPatternTypeCodes,
+                        fieldPatternKinds,
+                        fieldPatternMinValues,
+                        fieldPatternMaxValues,
+                        patternStart,
+                        patternCount))
+                || caseArms.Add(caseArm) == 0
+                || casePatternStarts.Add(patternStart) == 0
+                || casePatternCounts.Add(patternCount) == 0
+                || caseFieldCaptureStarts.Add(captureStart) == 0
+                || caseFieldCaptureCounts.Add(captureCount) == 0
+                || caseNestedStarts.Add(nestedStart) == 0
+                || caseNestedCounts.Add(nestedCount) == 0
+                || caseGuardNodes.Add(guardNode) == 0)
+            {
+                return false;
+            }
+
+            siblingOffset = siblingOffset + 1;
+        }
+
+        cursor = afterCase;
+    }
+
+    if (caseArms.Count() == 0)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(cursor) != TokenKind.Default
+        || stream.KindAt(cursor + 1) != TokenKind.Colon)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult parsedDefault = new();
+    stack mut u64[0 2 ** 63 - 1] afterDefault = cursor + 2;
+    if (parseEnumReturnArms)
+    {
+        if (!TryParseTerminalSwitchReturnArmWithEnums(
+            stream,
+            source,
+            moduleFacts,
+            nodes,
+            params,
+            funcNames,
+            localTypes,
+            sourceValueFacts,
+            cursor + 2,
+            parsedDefault,
+            afterDefault))
+        {
+            return false;
+        }
+    }
+    else if (!TryParseTerminalSwitchReturnArm(stream, source, nodes, params, funcNames, cursor + 2, parsedDefault, afterDefault))
+    {
+        return false;
+    }
+
+    if (afterDefault != (u64[0 2 ** 63 - 1])switchBodyClose)
+    {
+        return false;
+    }
+
+    scrutinee = resolvedScrutinee;
+    structParamIndex = resolvedStructParamIndex;
+    structTypeToken = resolvedStructTypeToken;
+    structBaseByteOffset = resolvedStructBaseByteOffset;
+    useStructValueParam = resolvedUseStructValueParam;
+    structValueFacts = resolvedStructValueFacts;
+    defaultArm = parsedDefault;
+    nextToken = (u64[0 2 ** 63 - 1])switchBodyClose + 1;
+    return true;
+}
+
+internal fn bool BuildTerminalSwitchCaptureLocalOverrides(
+    MirValueId enumValue,
+    u32[0 max] ownerDeclarationIndex,
+    borrow IrTable<u32[0 max]> captureVariantOrdinals,
+    borrow IrTable<u32[0 max]> capturePayloadOrdinals,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> armLocalOverrides)
+{
+    stack u64[0 2 ** 63 - 1] baseLocalCount = baseLocalTypes.Count();
+    stack mut u64[0 2 ** 63 - 1] baseIndex = 0;
+    while willexit (baseIndex < baseLocalCount)
+    {
+        stack u32[0 max] localSlot = (u32[0 max])(baseIndex + 1);
+        stack mut u32[0 max] overrideValue = 0;
+        if (baseLocalOverrides.Contains(localSlot))
+        {
+            overrideValue = baseLocalOverrides.Get(localSlot);
+        }
+
+        if (armLocalOverrides.Add(overrideValue) == 0)
+        {
+            return false;
+        }
+
+        baseIndex = baseIndex + 1;
+    }
+
+    stack TypeId ownerType = TypeIdOf(ownerDeclarationIndex + 1);
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureIndex;
+        if (!captureVariantOrdinals.Contains(captureRow)
+            || !capturePayloadOrdinals.Contains(captureRow)
+            || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] payloadTypeCode = captureTypeCodes.Get(captureRow);
+        stack MirType payloadType = MirTypeForResolvedFieldTypeCode(payloadTypeCode);
+        stack u32[0 max] variantOrdinal = captureVariantOrdinals.Get(captureRow);
+        stack u32[0 max] payloadOrdinal = capturePayloadOrdinals.Get(captureRow);
+        stack MirValueId captureValue = MirEnumPayloadExtract(
+            instrs,
+            ownerType,
+            variantOrdinal,
+            payloadOrdinal,
+            enumValue,
+            payloadType);
+        if (armLocalOverrides.Add(captureValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool CopySwitchSliceDescriptorLocals(
+    borrow IrTable<SourceSliceDescriptorLocal> source,
+    mut borrow IrTable<SourceSliceDescriptorLocal> destination)
+{
+    stack u64[0 2 ** 63 - 1] count = source.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        if (destination.Add(source.Get(i)) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool CopySwitchSliceArgumentLocals(
+    borrow IrTable<SourceSliceArgumentLocal> source,
+    mut borrow IrTable<SourceSliceArgumentLocal> destination)
+{
+    stack u64[0 2 ** 63 - 1] count = source.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        if (destination.Add(source.Get(i)) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool AddTerminalFixedArrayWholeCaptureSliceDescriptor(
+    u32[0 max] captureParamIndex,
+    u32[0 max] receiverParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals)
+{
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayElementSize == 0
+        || fixedArrayFacts.FixedArrayAlignment == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut SourceSliceDescriptorLocal descriptor = new();
+    descriptor.ParamIndex = captureParamIndex;
+    descriptor.ReceiverParamIndex = receiverParamIndex;
+    descriptor.BaseByteOffset = 0;
+    descriptor.ElementSize = fixedArrayFacts.FixedArrayElementSize;
+    descriptor.Alignment = fixedArrayFacts.FixedArrayAlignment;
+    descriptor.SliceLength = fixedArrayFacts.FixedArrayLength;
+    descriptor.ElementType = fixedArrayFacts.FixedArrayElementType;
+    descriptor.FieldTypeCode = fixedArrayFacts.FixedArrayFieldTypeCode;
+    descriptor.IsFixedArrayParam = true;
+    return sliceDescriptorLocals.Add(descriptor) != 0;
+}
+
+internal fn bool AddTerminalFixedArrayWholeCaptureValueOverrideSliceDescriptor(
+    u32[0 max] captureParamIndex,
+    u32[0 max] receiverParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals)
+{
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayElementSize == 0
+        || fixedArrayFacts.FixedArrayAlignment == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut SourceSliceDescriptorLocal descriptor = new();
+    descriptor.ParamIndex = captureParamIndex;
+    descriptor.ReceiverParamIndex = receiverParamIndex;
+    descriptor.BaseByteOffset = 0;
+    descriptor.ElementSize = fixedArrayFacts.FixedArrayElementSize;
+    descriptor.Alignment = fixedArrayFacts.FixedArrayAlignment;
+    descriptor.SliceLength = fixedArrayFacts.FixedArrayLength;
+    descriptor.ElementType = fixedArrayFacts.FixedArrayElementType;
+    descriptor.FieldTypeCode = fixedArrayFacts.FixedArrayFieldTypeCode;
+    descriptor.IsFixedArrayValueOverride = true;
+    return sliceDescriptorLocals.Add(descriptor) != 0;
+}
+
+internal fn bool AddTerminalFixedArrayWholeCaptureCopyStorageSliceDescriptor(
+    u32[0 max] captureParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals)
+{
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayElementSize == 0
+        || fixedArrayFacts.FixedArrayAlignment == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut SourceSliceDescriptorLocal descriptor = new();
+    descriptor.ParamIndex = captureParamIndex;
+    descriptor.ReceiverParamIndex = captureParamIndex;
+    descriptor.BaseByteOffset = 0;
+    descriptor.ElementSize = fixedArrayFacts.FixedArrayElementSize;
+    descriptor.Alignment = fixedArrayFacts.FixedArrayAlignment;
+    descriptor.SliceLength = fixedArrayFacts.FixedArrayLength;
+    descriptor.ElementType = fixedArrayFacts.FixedArrayElementType;
+    descriptor.FieldTypeCode = fixedArrayFacts.FixedArrayFieldTypeCode;
+    return sliceDescriptorLocals.Add(descriptor) != 0;
+}
+
+internal fn bool AddTerminalFixedArrayWholeCaptureSliceArgument(
+    u32[0 max] captureParamIndex,
+    u32[0 max] receiverParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+{
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayElementSize == 0
+        || fixedArrayFacts.FixedArrayAlignment == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut SourceSliceArgumentLocal local = new();
+    local.ParamIndex = captureParamIndex;
+    local.ReceiverParamIndex = receiverParamIndex;
+    local.BaseByteOffset = 0;
+    local.ElementSize = fixedArrayFacts.FixedArrayElementSize;
+    local.Alignment = fixedArrayFacts.FixedArrayAlignment;
+    local.SliceLength = fixedArrayFacts.FixedArrayLength;
+    local.ElementType = fixedArrayFacts.FixedArrayElementType;
+    local.FieldTypeCode = fixedArrayFacts.FixedArrayFieldTypeCode;
+    local.IsFixedArrayParam = true;
+    return sliceArgumentLocals.Add(local) != 0;
+}
+
+internal fn bool AddTerminalFixedArrayWholeCaptureValueOverrideSliceArgument(
+    u32[0 max] captureParamIndex,
+    u32[0 max] receiverParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+{
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayElementSize == 0
+        || fixedArrayFacts.FixedArrayAlignment == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut SourceSliceArgumentLocal local = new();
+    local.ParamIndex = captureParamIndex;
+    local.ReceiverParamIndex = receiverParamIndex;
+    local.BaseByteOffset = 0;
+    local.ElementSize = fixedArrayFacts.FixedArrayElementSize;
+    local.Alignment = fixedArrayFacts.FixedArrayAlignment;
+    local.SliceLength = fixedArrayFacts.FixedArrayLength;
+    local.ElementType = fixedArrayFacts.FixedArrayElementType;
+    local.FieldTypeCode = fixedArrayFacts.FixedArrayFieldTypeCode;
+    local.IsFixedArrayValueOverride = true;
+    return sliceArgumentLocals.Add(local) != 0;
+}
+
+internal fn bool AddTerminalFixedArrayWholeCaptureCopyStorageSliceArgument(
+    u32[0 max] captureParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    mut borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+{
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayElementSize == 0
+        || fixedArrayFacts.FixedArrayAlignment == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut SourceSliceArgumentLocal local = new();
+    local.ParamIndex = captureParamIndex;
+    local.ReceiverParamIndex = captureParamIndex;
+    local.BaseByteOffset = 0;
+    local.ElementSize = fixedArrayFacts.FixedArrayElementSize;
+    local.Alignment = fixedArrayFacts.FixedArrayAlignment;
+    local.SliceLength = fixedArrayFacts.FixedArrayLength;
+    local.ElementType = fixedArrayFacts.FixedArrayElementType;
+    local.FieldTypeCode = fixedArrayFacts.FixedArrayFieldTypeCode;
+    return sliceArgumentLocals.Add(local) != 0;
+}
+
+internal fn bool BuildTerminalFixedArraySwitchCaptureSliceDescriptorLocals(
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    borrow IrTable<u32[0 max]> captureElementIndices,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    borrow IrTable<SourceSliceDescriptorLocal> baseSliceDescriptorLocals,
+    mut borrow IrTable<SourceSliceDescriptorLocal> armSliceDescriptorLocals)
+    where overlap(captureTypeCodes, baseLocalTypes)
+{
+    if (!CopySwitchSliceDescriptorLocals(baseSliceDescriptorLocals, armSliceDescriptorLocals))
+    {
+        return false;
+    }
+
+    stack u32[0 max] baseLocalCount = (u32[0 max])baseLocalTypes.Count();
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureIndex;
+        if (!captureElementIndices.Contains(captureRow)
+            || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementIndex = captureElementIndices.Get(captureRow);
+        stack u32[0 max] captureTypeCode = captureTypeCodes.Get(captureRow);
+        if (SourceSwitchCaptureIsFixedArrayWholeParam(elementIndex, captureTypeCode, fixedArrayFacts))
+        {
+            stack u32[0 max] captureParamIndex = baseLocalCount + captureIndex;
+            if (useFixedArrayStorageLocal)
+            {
+                if (!AddTerminalFixedArrayWholeCaptureCopyStorageSliceDescriptor(
+                    captureParamIndex,
+                    fixedArrayFacts,
+                    armSliceDescriptorLocals))
+                {
+                    return false;
+                }
+            }
+            else if (!AddTerminalFixedArrayWholeCaptureSliceDescriptor(
+                captureParamIndex,
+                fixedArrayParamIndex,
+                fixedArrayFacts,
+                armSliceDescriptorLocals))
+            {
+                return false;
+            }
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildTerminalFixedArraySwitchCaptureSliceArgumentLocals(
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    borrow IrTable<u32[0 max]> captureElementIndices,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    borrow IrTable<SourceSliceArgumentLocal> baseSliceArgumentLocals,
+    mut borrow IrTable<SourceSliceArgumentLocal> armSliceArgumentLocals)
+    where overlap(captureTypeCodes, baseLocalTypes)
+{
+    if (!CopySwitchSliceArgumentLocals(baseSliceArgumentLocals, armSliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack u32[0 max] baseLocalCount = (u32[0 max])baseLocalTypes.Count();
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureIndex;
+        if (!captureElementIndices.Contains(captureRow)
+            || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementIndex = captureElementIndices.Get(captureRow);
+        stack u32[0 max] captureTypeCode = captureTypeCodes.Get(captureRow);
+        if (SourceSwitchCaptureIsFixedArrayWholeParam(elementIndex, captureTypeCode, fixedArrayFacts))
+        {
+            stack u32[0 max] captureParamIndex = baseLocalCount + captureIndex;
+            if (useFixedArrayStorageLocal)
+            {
+                if (!AddTerminalFixedArrayWholeCaptureCopyStorageSliceArgument(
+                    captureParamIndex,
+                    fixedArrayFacts,
+                    armSliceArgumentLocals))
+                {
+                    return false;
+                }
+            }
+            else if (!AddTerminalFixedArrayWholeCaptureSliceArgument(
+                captureParamIndex,
+                fixedArrayParamIndex,
+                fixedArrayFacts,
+                armSliceArgumentLocals))
+            {
+                return false;
+            }
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    return true;
+}

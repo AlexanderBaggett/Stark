@@ -1,0 +1,2210 @@
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Memory
+import System.Text
+import Compiler.Mir.PackageImage.Loader.CompilerEffectAbiFactsLoader
+module Compiler.Mir.PackageImage.Loader.CompilerFunctionFactsLoader
+
+// Function semantic, memory-effect, call, initialization, ownership, move,
+// projection, root, and drop fact materialization.
+
+internal fn MemoryStatus LogicalPackageFunctionSemanticFactGraphAppendText(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddTextRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    LogicalPackageFunctionSemanticFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageFunctionSemanticFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageFunctionSemanticFactTextRow row =
+                new LogicalPackageFunctionSemanticFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddFunctionSemanticRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] qualifiedResolvedNameTextRow,
+    u32[0 max] declaredKindTextRow,
+    u32[0 max] effectiveKindTextRow,
+    bool hasMemoryEffects,
+    LogicalPackageFunctionMemoryEffectFacts memoryEffects,
+    bool hasExplicitHasOpaqueCall,
+    bool hasOpaqueCall,
+    out u32[0 max] functionSemanticRow)
+{
+    functionSemanticRow = 0;
+    if (!graph.TextRows.Contains(qualifiedResolvedNameTextRow)
+        || !graph.TextRows.Contains(declaredKindTextRow)
+        || !graph.TextRows.Contains(effectiveKindTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionSemanticRow row = new LogicalPackageFunctionSemanticRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
+        DeclaredKindTextRowValue = declaredKindTextRow,
+        EffectiveKindTextRowValue = effectiveKindTextRow,
+        MemoryEffectsValue = memoryEffects,
+        HasMemoryEffectsValue = hasMemoryEffects,
+        HasExplicitHasOpaqueCallValue = hasExplicitHasOpaqueCall,
+        HasOpaqueCallValue = hasOpaqueCall
+    };
+    functionSemanticRow = graph.FunctionSemanticRows.Add(row);
+    return functionSemanticRow != 0;
+}
+
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddCalledFunctionRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    u32[0 max] functionSemanticRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] calledFunctionOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.FunctionSemanticRows.Contains(functionSemanticRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionSemanticCalledFunctionRow row =
+        new LogicalPackageFunctionSemanticCalledFunctionRow()
+    {
+        FunctionSemanticRowValue = functionSemanticRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        CalledFunctionOrdinalValue = calledFunctionOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    stack u32[0 max] addedRow = graph.CalledFunctionRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionSemanticRow parent =
+        graph.FunctionSemanticRows.Get(functionSemanticRow);
+    if (parent.CalledFunctionRowCountValue == 0)
+    {
+        parent.FirstCalledFunctionRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstCalledFunctionRowValue + parent.CalledFunctionRowCountValue)
+    {
+        return false;
+    }
+
+    parent.CalledFunctionRowCountValue = parent.CalledFunctionRowCountValue + 1;
+    return graph.FunctionSemanticRows.Replace(functionSemanticRow, parent);
+}
+
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddParameterRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    u32[0 max] functionSemanticRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeTextRow,
+    u32[0 max] captureKindTextRow,
+    bool isMemoryBacked,
+    bool guaranteedNonNull,
+    bool guaranteedReadOnly,
+    bool guaranteedWriteOnly,
+    bool guaranteedNoAlias,
+    bool hasDereferenceableBytes,
+    u32[0 max] dereferenceableBytes,
+    bool hasAlignmentBytes,
+    u32[0 max] alignmentBytes,
+    bool reads,
+    bool writes,
+    bool pointeeDeadOnReturn,
+    out u32[0 max] parameterRow)
+{
+    parameterRow = 0;
+    if (!graph.FunctionSemanticRows.Contains(functionSemanticRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || !graph.TextRows.Contains(typeTextRow)
+        || !graph.TextRows.Contains(captureKindTextRow)
+        || (!hasDereferenceableBytes && dereferenceableBytes != 0)
+        || (!hasAlignmentBytes && alignmentBytes != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionSemanticParameterRow row =
+        new LogicalPackageFunctionSemanticParameterRow()
+    {
+        FunctionSemanticRowValue = functionSemanticRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeTextRowValue = typeTextRow,
+        CaptureKindTextRowValue = captureKindTextRow,
+        DereferenceableBytesValue = dereferenceableBytes,
+        AlignmentBytesValue = alignmentBytes,
+        IsMemoryBackedValue = isMemoryBacked,
+        GuaranteedNonNullValue = guaranteedNonNull,
+        GuaranteedReadOnlyValue = guaranteedReadOnly,
+        GuaranteedWriteOnlyValue = guaranteedWriteOnly,
+        GuaranteedNoAliasValue = guaranteedNoAlias,
+        HasDereferenceableBytesValue = hasDereferenceableBytes,
+        HasAlignmentBytesValue = hasAlignmentBytes,
+        ReadsValue = reads,
+        WritesValue = writes,
+        PointeeDeadOnReturnValue = pointeeDeadOnReturn
+    };
+    stack u32[0 max] addedRow = graph.ParameterRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionSemanticRow parent =
+        graph.FunctionSemanticRows.Get(functionSemanticRow);
+    if (parent.ParameterRowCountValue == 0)
+    {
+        parent.FirstParameterRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstParameterRowValue + parent.ParameterRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ParameterRowCountValue = parent.ParameterRowCountValue + 1;
+    if (!graph.FunctionSemanticRows.Replace(functionSemanticRow, parent))
+    {
+        return false;
+    }
+
+    parameterRow = addedRow;
+    return true;
+}
+
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddInitializationRangeRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    u32[0 max] parameterRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] rangeOrdinal,
+    i64[min max] startByte,
+    i64[min max] endByte)
+{
+    if (!graph.ParameterRows.Contains(parameterRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionSemanticInitializationRangeRow row =
+        new LogicalPackageFunctionSemanticInitializationRangeRow()
+    {
+        ParameterRowValue = parameterRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        ParameterOrdinalValue = parameterOrdinal,
+        RangeOrdinalValue = rangeOrdinal,
+        StartByteValue = startByte,
+        EndByteValue = endByte
+    };
+    stack u32[0 max] addedRow = graph.InitializationRangeRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionSemanticParameterRow parent = graph.ParameterRows.Get(parameterRow);
+    if (parent.InitializationRangeRowCountValue == 0)
+    {
+        parent.FirstInitializationRangeRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstInitializationRangeRowValue + parent.InitializationRangeRowCountValue)
+    {
+        return false;
+    }
+
+    parent.InitializationRangeRowCountValue = parent.InitializationRangeRowCountValue + 1;
+    return graph.ParameterRows.Replace(parameterRow, parent);
+}
+
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddCallRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    u32[0 max] functionSemanticRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] callOrdinal,
+    u32[0 max] calleeNameTextRow,
+    LogicalPackageFunctionMemoryEffectFacts memoryEffects,
+    out u32[0 max] callRow)
+{
+    callRow = 0;
+    if (!graph.FunctionSemanticRows.Contains(functionSemanticRow)
+        || !graph.TextRows.Contains(calleeNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionSemanticCallRow row = new LogicalPackageFunctionSemanticCallRow()
+    {
+        FunctionSemanticRowValue = functionSemanticRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        CallOrdinalValue = callOrdinal,
+        CalleeNameTextRowValue = calleeNameTextRow,
+        MemoryEffectsValue = memoryEffects
+    };
+    stack u32[0 max] addedRow = graph.CallRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionSemanticRow parent =
+        graph.FunctionSemanticRows.Get(functionSemanticRow);
+    if (parent.CallRowCountValue == 0)
+    {
+        parent.FirstCallRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstCallRowValue + parent.CallRowCountValue)
+    {
+        return false;
+    }
+
+    parent.CallRowCountValue = parent.CallRowCountValue + 1;
+    if (!graph.FunctionSemanticRows.Replace(functionSemanticRow, parent))
+    {
+        return false;
+    }
+
+    callRow = addedRow;
+    return true;
+}
+
+internal fn bool LogicalPackageFunctionSemanticFactGraphAddCallArgumentRow(
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    u32[0 max] callRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] callOrdinal,
+    u32[0 max] callArgumentOrdinal,
+    u32[0 max] argumentIndex,
+    bool hasCallerParameterName,
+    u32[0 max] callerParameterNameTextRow,
+    bool hasCalleeParameterName,
+    u32[0 max] calleeParameterNameTextRow,
+    u32[0 max] captureKindTextRow,
+    bool reads,
+    bool writes)
+{
+    if (!graph.CallRows.Contains(callRow)
+        || (hasCallerParameterName && !graph.TextRows.Contains(callerParameterNameTextRow))
+        || (!hasCallerParameterName && callerParameterNameTextRow != 0)
+        || (hasCalleeParameterName && !graph.TextRows.Contains(calleeParameterNameTextRow))
+        || (!hasCalleeParameterName && calleeParameterNameTextRow != 0)
+        || !graph.TextRows.Contains(captureKindTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionSemanticCallArgumentRow row =
+        new LogicalPackageFunctionSemanticCallArgumentRow()
+    {
+        CallRowValue = callRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        CallOrdinalValue = callOrdinal,
+        CallArgumentOrdinalValue = callArgumentOrdinal,
+        ArgumentIndexValue = argumentIndex,
+        CallerParameterNameTextRowValue = callerParameterNameTextRow,
+        CalleeParameterNameTextRowValue = calleeParameterNameTextRow,
+        CaptureKindTextRowValue = captureKindTextRow,
+        HasCallerParameterNameValue = hasCallerParameterName,
+        HasCalleeParameterNameValue = hasCalleeParameterName,
+        ReadsValue = reads,
+        WritesValue = writes
+    };
+    stack u32[0 max] addedRow = graph.CallArgumentRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionSemanticCallRow parent = graph.CallRows.Get(callRow);
+    if (parent.ArgumentRowCountValue == 0)
+    {
+        parent.FirstArgumentRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstArgumentRowValue + parent.ArgumentRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ArgumentRowCountValue = parent.ArgumentRowCountValue + 1;
+    return graph.CallRows.Replace(callRow, parent);
+}
+
+internal fn MemoryStatus LogicalPackageFunctionOwnershipFactGraphAppendText(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddTextRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    LogicalPackageFunctionOwnershipFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageFunctionOwnershipFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageFunctionOwnershipFactTextRow row =
+                new LogicalPackageFunctionOwnershipFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddFunctionOwnershipRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] qualifiedResolvedNameTextRow,
+    bool ownershipValid,
+    out u32[0 max] functionOwnershipRow)
+{
+    functionOwnershipRow = 0;
+    if (!graph.TextRows.Contains(qualifiedResolvedNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionOwnershipRow row = new LogicalPackageFunctionOwnershipRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
+        OwnershipValidValue = ownershipValid
+    };
+    functionOwnershipRow = graph.FunctionOwnershipRows.Add(row);
+    return functionOwnershipRow != 0;
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddImplicitDropRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    u32[0 max] functionOwnershipRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] nameOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.FunctionOwnershipRows.Contains(functionOwnershipRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionOwnershipNameRow row = new LogicalPackageFunctionOwnershipNameRow()
+    {
+        FunctionOwnershipRowValue = functionOwnershipRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        NameOrdinalValue = nameOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    stack u32[0 max] addedRow = graph.ImplicitDropRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionOwnershipRow parent =
+        graph.FunctionOwnershipRows.Get(functionOwnershipRow);
+    if (parent.ImplicitDropRowCountValue == 0)
+    {
+        parent.FirstImplicitDropRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstImplicitDropRowValue + parent.ImplicitDropRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ImplicitDropRowCountValue = parent.ImplicitDropRowCountValue + 1;
+    return graph.FunctionOwnershipRows.Replace(functionOwnershipRow, parent);
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddMoveRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    u32[0 max] functionOwnershipRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] nameOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.FunctionOwnershipRows.Contains(functionOwnershipRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionOwnershipNameRow row = new LogicalPackageFunctionOwnershipNameRow()
+    {
+        FunctionOwnershipRowValue = functionOwnershipRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        NameOrdinalValue = nameOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    stack u32[0 max] addedRow = graph.MoveRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionOwnershipRow parent =
+        graph.FunctionOwnershipRows.Get(functionOwnershipRow);
+    if (parent.MoveRowCountValue == 0)
+    {
+        parent.FirstMoveRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstMoveRowValue + parent.MoveRowCountValue)
+    {
+        return false;
+    }
+
+    parent.MoveRowCountValue = parent.MoveRowCountValue + 1;
+    return graph.FunctionOwnershipRows.Replace(functionOwnershipRow, parent);
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddEventRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    u32[0 max] functionOwnershipRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] eventOrdinal,
+    u32[0 max] kindTextRow,
+    u32[0 max] rootNameTextRow,
+    u32[0 max] placeTypeReferenceRow,
+    bool hasIndexProjection,
+    bool hasLocation,
+    bool hasLocationFilePath,
+    u32[0 max] locationFilePathTextRow,
+    i64[min max] locationLine,
+    i64[min max] locationColumn,
+    out u32[0 max] eventRow)
+{
+    eventRow = 0;
+    if (!graph.FunctionOwnershipRows.Contains(functionOwnershipRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || !graph.TextRows.Contains(rootNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(placeTypeReferenceRow)
+        || (hasLocationFilePath && !graph.TextRows.Contains(locationFilePathTextRow))
+        || (!hasLocationFilePath && locationFilePathTextRow != 0)
+        || (!hasLocation && (hasLocationFilePath || locationLine != 0 || locationColumn != 0)))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionOwnershipEventRow row = new LogicalPackageFunctionOwnershipEventRow()
+    {
+        FunctionOwnershipRowValue = functionOwnershipRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        EventOrdinalValue = eventOrdinal,
+        KindTextRowValue = kindTextRow,
+        RootNameTextRowValue = rootNameTextRow,
+        PlaceTypeReferenceRowValue = placeTypeReferenceRow,
+        LocationFilePathTextRowValue = locationFilePathTextRow,
+        LocationLineValue = locationLine,
+        LocationColumnValue = locationColumn,
+        HasIndexProjectionValue = hasIndexProjection,
+        HasLocationValue = hasLocation,
+        HasLocationFilePathValue = hasLocationFilePath
+    };
+    stack u32[0 max] addedRow = graph.EventRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionOwnershipRow parent =
+        graph.FunctionOwnershipRows.Get(functionOwnershipRow);
+    if (parent.EventRowCountValue == 0)
+    {
+        parent.FirstEventRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstEventRowValue + parent.EventRowCountValue)
+    {
+        return false;
+    }
+
+    parent.EventRowCountValue = parent.EventRowCountValue + 1;
+    if (!graph.FunctionOwnershipRows.Replace(functionOwnershipRow, parent))
+    {
+        return false;
+    }
+
+    eventRow = addedRow;
+    return true;
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddProjectionRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    u32[0 max] eventRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] eventOrdinal,
+    u32[0 max] projectionOrdinal,
+    u32[0 max] projectionTextRow)
+{
+    if (!graph.EventRows.Contains(eventRow)
+        || !graph.TextRows.Contains(projectionTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionOwnershipProjectionRow row =
+        new LogicalPackageFunctionOwnershipProjectionRow()
+    {
+        EventRowValue = eventRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        EventOrdinalValue = eventOrdinal,
+        ProjectionOrdinalValue = projectionOrdinal,
+        ProjectionTextRowValue = projectionTextRow
+    };
+    stack u32[0 max] addedRow = graph.ProjectionRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionOwnershipEventRow parent = graph.EventRows.Get(eventRow);
+    if (parent.ProjectionRowCountValue == 0)
+    {
+        parent.FirstProjectionRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstProjectionRowValue + parent.ProjectionRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ProjectionRowCountValue = parent.ProjectionRowCountValue + 1;
+    return graph.EventRows.Replace(eventRow, parent);
+}
+
+internal fn bool LogicalPackageFunctionOwnershipFactGraphAddRootRow(
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    u32[0 max] functionOwnershipRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] rootOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] rootKindTextRow,
+    u32[0 max] finalAvailabilityTextRow,
+    bool isMutable,
+    bool isConstant,
+    bool isAddressTaken,
+    bool hasRawPointerEscape,
+    bool hasMove,
+    bool hasPartialMove,
+    bool hasImplicitDrop,
+    bool hasAssignmentDrop,
+    bool hasReinitialization,
+    bool requiresDrop)
+{
+    if (!graph.FunctionOwnershipRows.Contains(functionOwnershipRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || !graph.TextRows.Contains(rootKindTextRow)
+        || !graph.TextRows.Contains(finalAvailabilityTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionOwnershipRootRow row =
+        new LogicalPackageFunctionOwnershipRootRow()
+    {
+        FunctionOwnershipRowValue = functionOwnershipRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        FunctionSemanticOrdinalValue = functionSemanticOrdinal,
+        RootOrdinalValue = rootOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        RootKindTextRowValue = rootKindTextRow,
+        FinalAvailabilityTextRowValue = finalAvailabilityTextRow,
+        IsMutableValue = isMutable,
+        IsConstantValue = isConstant,
+        IsAddressTakenValue = isAddressTaken,
+        HasRawPointerEscapeValue = hasRawPointerEscape,
+        HasMoveValue = hasMove,
+        HasPartialMoveValue = hasPartialMove,
+        HasImplicitDropValue = hasImplicitDrop,
+        HasAssignmentDropValue = hasAssignmentDrop,
+        HasReinitializationValue = hasReinitialization,
+        RequiresDropValue = requiresDrop
+    };
+    stack u32[0 max] addedRow = graph.RootRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageFunctionOwnershipRow parent =
+        graph.FunctionOwnershipRows.Get(functionOwnershipRow);
+    if (parent.RootRowCountValue == 0)
+    {
+        parent.FirstRootRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstRootRowValue + parent.RootRowCountValue)
+    {
+        return false;
+    }
+
+    parent.RootRowCountValue = parent.RootRowCountValue + 1;
+    return graph.FunctionOwnershipRows.Replace(functionOwnershipRow, parent);
+}
+
+public fn MemoryStatus AppendLogicalPackageFunctionSemanticFactText(
+    borrow LogicalPackageFunctionSemanticFactGraph graph,
+    LogicalPackageFunctionSemanticFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AppendLogicalPackageFunctionOwnershipFactText(
+    borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    LogicalPackageFunctionOwnershipFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageFunctionSemanticFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageFunctionSemanticFactGraphAddTextRow(
+        graph,
+        textKind,
+        textOrdinal,
+        value,
+        textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalFunctionSemanticFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageFunctionSemanticFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageFunctionSemanticFactGraphAddTextRow(
+        graph,
+        textKind,
+        textOrdinal,
+        value,
+        textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionMemoryEffectFacts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] memoryEffectsNode,
+    out LogicalPackageFunctionMemoryEffectFacts facts)
+{
+    facts = new();
+    stack mut bool readsArgumentMemory = false;
+    stack mut bool writesArgumentMemory = false;
+    stack mut bool capturesArgumentMemory = false;
+    stack mut bool readsOtherMemory = false;
+    stack mut bool writesOtherMemory = false;
+    stack mut bool initializesArgumentMemory = false;
+    stack mut bool hasPointeeDeadOnReturnArgument = false;
+    if (!LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "ReadsArgumentMemory",
+            readsArgumentMemory)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "WritesArgumentMemory",
+            writesArgumentMemory)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "CapturesArgumentMemory",
+            capturesArgumentMemory)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "ReadsOtherMemory",
+            readsOtherMemory)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "WritesOtherMemory",
+            writesOtherMemory)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "InitializesArgumentMemory",
+            initializesArgumentMemory)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            memoryEffectsNode,
+            "HasPointeeDeadOnReturnArgument",
+            hasPointeeDeadOnReturnArgument))
+    {
+        return false;
+    }
+
+    facts = new LogicalPackageFunctionMemoryEffectFacts()
+    {
+        ReadsArgumentMemoryValue = readsArgumentMemory,
+        WritesArgumentMemoryValue = writesArgumentMemory,
+        CapturesArgumentMemoryValue = capturesArgumentMemory,
+        ReadsOtherMemoryValue = readsOtherMemory,
+        WritesOtherMemoryValue = writesOtherMemory,
+        InitializesArgumentMemoryValue = initializesArgumentMemory,
+        HasPointeeDeadOnReturnArgumentValue = hasPointeeDeadOnReturnArgument
+    };
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticCalledFunctionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] functionSemanticNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] functionSemanticRow,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] calledFunctionCount)
+{
+    calledFunctionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        functionSemanticNode,
+        "CalledFunctions",
+        arrayNode,
+        calledFunctionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < calledFunctionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] calledFunctionNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, calledFunctionNode)
+            || document.KindAt(calledFunctionNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii name = document.TextAt(calledFunctionNode);
+        if (System.Text.AsciiLength(name) <= 0
+            || !LogicalPackageFunctionSemanticFactGraphAddTextRow(
+                graph,
+                LogicalPackageFunctionSemanticFactTextKind.CalledFunctionName,
+                index,
+                name,
+                nameTextRow)
+            || !LogicalPackageFunctionSemanticFactGraphAddCalledFunctionRow(
+                graph,
+                functionSemanticRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticInitializationRangeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parameterNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] parameterRow,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] rangeCount)
+{
+    rangeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        parameterNode,
+        "InitializationRanges",
+        arrayNode,
+        rangeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < rangeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] rangeNode = 0;
+        stack mut i64[min max] startByte = 0;
+        stack mut i64[min max] endByte = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, rangeNode)
+            || document.KindAt(rangeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredI64MemberValue(
+                document,
+                rangeNode,
+                "StartByte",
+                startByte)
+            || !LogicalPackageImageJsonRequiredI64MemberValue(
+                document,
+                rangeNode,
+                "EndByte",
+                endByte)
+            || !LogicalPackageFunctionSemanticFactGraphAddInitializationRangeRow(
+                graph,
+                parameterRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                parameterOrdinal,
+                index,
+                startByte,
+                endByte))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] functionSemanticNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] functionSemanticRow,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] parameterCount)
+{
+    parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        functionSemanticNode,
+        "Parameters",
+        arrayNode,
+        parameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] typeTextRow = 0;
+        stack mut u32[0 max] captureKindTextRow = 0;
+        stack mut bool isMemoryBacked = false;
+        stack mut bool guaranteedNonNull = false;
+        stack mut bool guaranteedReadOnly = false;
+        stack mut bool guaranteedWriteOnly = false;
+        stack mut bool guaranteedNoAlias = false;
+        stack mut bool hasDereferenceableBytes = false;
+        stack mut bool hasAlignmentBytes = false;
+        stack mut bool reads = false;
+        stack mut bool writes = false;
+        stack mut bool pointeeDeadOnReturn = false;
+        stack mut u32[0 max] dereferenceableBytes = 0;
+        stack mut u32[0 max] alignmentBytes = 0;
+        stack mut u32[0 max] parameterRow = 0;
+        stack mut u32[0 max] rangeCount = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                parameterNode,
+                "Name",
+                LogicalPackageFunctionSemanticFactTextKind.ParameterName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                parameterNode,
+                "Type",
+                LogicalPackageFunctionSemanticFactTextKind.ParameterType,
+                index,
+                graph,
+                typeTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                parameterNode,
+                "CaptureKind",
+                LogicalPackageFunctionSemanticFactTextKind.ParameterCaptureKind,
+                index,
+                graph,
+                captureKindTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                parameterNode,
+                "IsMemoryBacked",
+                isMemoryBacked)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                parameterNode,
+                "GuaranteedNonNull",
+                guaranteedNonNull)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                parameterNode,
+                "GuaranteedReadOnly",
+                guaranteedReadOnly)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                parameterNode,
+                "GuaranteedWriteOnly",
+                guaranteedWriteOnly)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                parameterNode,
+                "GuaranteedNoAlias",
+                guaranteedNoAlias)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                parameterNode,
+                "DereferenceableBytes",
+                hasDereferenceableBytes,
+                dereferenceableBytes)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                parameterNode,
+                "AlignmentBytes",
+                hasAlignmentBytes,
+                alignmentBytes)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, parameterNode, "Reads", reads)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, parameterNode, "Writes", writes)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                parameterNode,
+                "PointeeDeadOnReturn",
+                pointeeDeadOnReturn)
+            || !LogicalPackageFunctionSemanticFactGraphAddParameterRow(
+                graph,
+                functionSemanticRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                nameTextRow,
+                typeTextRow,
+                captureKindTextRow,
+                isMemoryBacked,
+                guaranteedNonNull,
+                guaranteedReadOnly,
+                guaranteedWriteOnly,
+                guaranteedNoAlias,
+                hasDereferenceableBytes,
+                dereferenceableBytes,
+                hasAlignmentBytes,
+                alignmentBytes,
+                reads,
+                writes,
+                pointeeDeadOnReturn,
+                parameterRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticInitializationRangeRows(
+                document,
+                parameterNode,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                parameterRow,
+                graph,
+                rangeCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticCallArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] callOrdinal,
+    u32[0 max] callRow,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] argumentCount)
+{
+    argumentCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, callNode, "Arguments", arrayNode, argumentCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        stack mut u32[0 max] argumentIndex = 0;
+        stack mut u32[0 max] callerParameterNameTextRow = 0;
+        stack mut u32[0 max] calleeParameterNameTextRow = 0;
+        stack mut u32[0 max] captureKindTextRow = 0;
+        stack mut bool hasCallerParameterName = false;
+        stack mut bool hasCalleeParameterName = false;
+        stack mut bool reads = false;
+        stack mut bool writes = false;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                argumentNode,
+                "ArgumentIndex",
+                argumentIndex)
+            || !LogicalPackageImageJsonMaterializeOptionalFunctionSemanticFactTextMemberRow(
+                document,
+                argumentNode,
+                "CallerParameterName",
+                LogicalPackageFunctionSemanticFactTextKind.CallArgumentCallerParameterName,
+                index,
+                graph,
+                hasCallerParameterName,
+                callerParameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalFunctionSemanticFactTextMemberRow(
+                document,
+                argumentNode,
+                "CalleeParameterName",
+                LogicalPackageFunctionSemanticFactTextKind.CallArgumentCalleeParameterName,
+                index,
+                graph,
+                hasCalleeParameterName,
+                calleeParameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                argumentNode,
+                "CaptureKind",
+                LogicalPackageFunctionSemanticFactTextKind.CallArgumentCaptureKind,
+                index,
+                graph,
+                captureKindTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, argumentNode, "Reads", reads)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, argumentNode, "Writes", writes)
+            || !LogicalPackageFunctionSemanticFactGraphAddCallArgumentRow(
+                graph,
+                callRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                callOrdinal,
+                index,
+                argumentIndex,
+                hasCallerParameterName,
+                callerParameterNameTextRow,
+                hasCalleeParameterName,
+                calleeParameterNameTextRow,
+                captureKindTextRow,
+                reads,
+                writes))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticCallRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] functionSemanticNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] functionSemanticRow,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] callCount)
+{
+    callCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        functionSemanticNode,
+        "Calls",
+        arrayNode,
+        callCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < callCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] callNode = 0;
+        stack mut u64[0 2 ** 63 - 1] memoryEffectsNode = 0;
+        stack mut u32[0 max] calleeNameTextRow = 0;
+        stack mut u32[0 max] callRow = 0;
+        stack mut u32[0 max] argumentCount = 0;
+        stack mut LogicalPackageFunctionMemoryEffectFacts memoryEffects = new();
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, callNode)
+            || document.KindAt(callNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                callNode,
+                "CalleeName",
+                LogicalPackageFunctionSemanticFactTextKind.CallCalleeName,
+                index,
+                graph,
+                calleeNameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                callNode,
+                "MemoryEffects",
+                memoryEffectsNode)
+            || !LogicalPackageImageJsonMaterializeFunctionMemoryEffectFacts(
+                document,
+                memoryEffectsNode,
+                memoryEffects)
+            || !LogicalPackageFunctionSemanticFactGraphAddCallRow(
+                graph,
+                functionSemanticRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                calleeNameTextRow,
+                memoryEffects,
+                callRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticCallArgumentRows(
+                document,
+                callNode,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                callRow,
+                graph,
+                argumentCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionSemanticFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph,
+    out u32[0 max] functionSemanticCount)
+{
+    functionSemanticCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        compilerFactsNode,
+        "FunctionSemantics",
+        arrayNode,
+        functionSemanticCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < functionSemanticCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] functionSemanticNode = 0;
+        stack mut u64[0 2 ** 63 - 1] memoryEffectsNode = 0;
+        stack mut bool hasMemoryEffects = false;
+        stack mut bool hasExplicitHasOpaqueCall = false;
+        stack mut bool hasOpaqueCall = true;
+        stack mut u32[0 max] qualifiedResolvedNameTextRow = 0;
+        stack mut u32[0 max] declaredKindTextRow = 0;
+        stack mut u32[0 max] effectiveKindTextRow = 0;
+        stack mut u32[0 max] functionSemanticRow = 0;
+        stack mut u32[0 max] calledFunctionCount = 0;
+        stack mut u32[0 max] parameterCount = 0;
+        stack mut u32[0 max] callCount = 0;
+        stack mut LogicalPackageFunctionMemoryEffectFacts memoryEffects = new();
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, functionSemanticNode)
+            || document.KindAt(functionSemanticNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                functionSemanticNode,
+                "QualifiedResolvedName",
+                LogicalPackageFunctionSemanticFactTextKind.QualifiedResolvedName,
+                index,
+                graph,
+                qualifiedResolvedNameTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                functionSemanticNode,
+                "DeclaredKind",
+                LogicalPackageFunctionSemanticFactTextKind.DeclaredKind,
+                index,
+                graph,
+                declaredKindTextRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticFactTextMemberRow(
+                document,
+                functionSemanticNode,
+                "EffectiveKind",
+                LogicalPackageFunctionSemanticFactTextKind.EffectiveKind,
+                index,
+                graph,
+                effectiveKindTextRow)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                functionSemanticNode,
+                "MemoryEffects",
+                memoryEffectsNode,
+                hasMemoryEffects)
+            || !LogicalPackageImageJsonOptionalBoolMemberPresenceValueWithDefault(
+                document,
+                functionSemanticNode,
+                "HasOpaqueCall",
+                true,
+                hasExplicitHasOpaqueCall,
+                hasOpaqueCall))
+        {
+            return false;
+        }
+
+        if (hasMemoryEffects
+            && !LogicalPackageImageJsonMaterializeFunctionMemoryEffectFacts(
+                document,
+                memoryEffectsNode,
+                memoryEffects))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageFunctionSemanticFactGraphAddFunctionSemanticRow(
+                graph,
+                moduleOrdinal,
+                index,
+                qualifiedResolvedNameTextRow,
+                declaredKindTextRow,
+                effectiveKindTextRow,
+                hasMemoryEffects,
+                memoryEffects,
+                hasExplicitHasOpaqueCall,
+                hasOpaqueCall,
+                functionSemanticRow)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticCalledFunctionRows(
+                document,
+                functionSemanticNode,
+                moduleOrdinal,
+                index,
+                functionSemanticRow,
+                graph,
+                calledFunctionCount)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticParameterRows(
+                document,
+                functionSemanticNode,
+                moduleOrdinal,
+                index,
+                functionSemanticRow,
+                graph,
+                parameterCount)
+            || !LogicalPackageImageJsonMaterializeFunctionSemanticCallRows(
+                document,
+                functionSemanticNode,
+                moduleOrdinal,
+                index,
+                functionSemanticRow,
+                graph,
+                callCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageFunctionOwnershipFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageFunctionOwnershipFactGraphAddTextRow(
+        graph,
+        textKind,
+        textOrdinal,
+        value,
+        textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalFunctionOwnershipFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageFunctionOwnershipFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageFunctionOwnershipFactGraphAddTextRow(
+        graph,
+        textKind,
+        textOrdinal,
+        value,
+        textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionOwnershipNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownershipNode,
+    ascii memberName,
+    LogicalPackageFunctionOwnershipFactTextKind textKind,
+    bool isImplicitDrop,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] functionOwnershipRow,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out u32[0 max] nameCount)
+{
+    nameCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, ownershipNode, memberName, arrayNode, nameCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < nameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii name = document.TextAt(nameNode);
+        if (System.Text.AsciiLength(name) <= 0
+            || !LogicalPackageFunctionOwnershipFactGraphAddTextRow(
+                graph,
+                textKind,
+                index,
+                name,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        if (isImplicitDrop)
+        {
+            if (!LogicalPackageFunctionOwnershipFactGraphAddImplicitDropRow(
+                graph,
+                functionOwnershipRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                nameTextRow))
+            {
+                return false;
+            }
+        }
+        else if (!LogicalPackageFunctionOwnershipFactGraphAddMoveRow(
+            graph,
+            functionOwnershipRow,
+            moduleOrdinal,
+            functionSemanticOrdinal,
+            index,
+            nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionOwnershipProjectionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] placeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] eventOrdinal,
+    u32[0 max] eventRow,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out u32[0 max] projectionCount)
+{
+    projectionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        placeNode,
+        "ProjectionPath",
+        arrayNode,
+        projectionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < projectionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] projectionNode = 0;
+        stack mut u32[0 max] projectionTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, projectionNode)
+            || document.KindAt(projectionNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii projection = document.TextAt(projectionNode);
+        if (System.Text.AsciiLength(projection) <= 0
+            || !LogicalPackageFunctionOwnershipFactGraphAddTextRow(
+                graph,
+                LogicalPackageFunctionOwnershipFactTextKind.EventProjectionPath,
+                index,
+                projection,
+                projectionTextRow)
+            || !LogicalPackageFunctionOwnershipFactGraphAddProjectionRow(
+                graph,
+                eventRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                eventOrdinal,
+                index,
+                projectionTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionOwnershipEventRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownershipNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] functionOwnershipRow,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out u32[0 max] eventCount)
+{
+    eventCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, ownershipNode, "Events", arrayNode, eventCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < eventCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] eventNode = 0;
+        stack mut u64[0 2 ** 63 - 1] placeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] locationNode = 0;
+        stack mut bool hasIndexProjection = false;
+        stack mut bool hasLocation = false;
+        stack mut bool hasLocationFilePath = false;
+        stack mut i64[min max] locationLine = 0;
+        stack mut i64[min max] locationColumn = 0;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] rootNameTextRow = 0;
+        stack mut u32[0 max] locationFilePathTextRow = 0;
+        stack mut u32[0 max] placeTypeReferenceRow = 0;
+        stack mut u32[0 max] eventRow = 0;
+        stack mut u32[0 max] projectionCount = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, eventNode)
+            || document.KindAt(eventNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+                document,
+                eventNode,
+                "Kind",
+                LogicalPackageFunctionOwnershipFactTextKind.EventKind,
+                index,
+                graph,
+                kindTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, eventNode, "Place", placeNode)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+                document,
+                placeNode,
+                "RootName",
+                LogicalPackageFunctionOwnershipFactTextKind.EventRootName,
+                index,
+                graph,
+                rootNameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, placeNode, "Type", typeNode)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                placeNode,
+                "HasIndexProjection",
+                hasIndexProjection)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                eventNode,
+                "Location",
+                locationNode,
+                hasLocation))
+        {
+            return false;
+        }
+
+        if (hasLocation
+            && (!LogicalPackageImageJsonMaterializeOptionalFunctionOwnershipFactTextMemberRow(
+                    document,
+                    locationNode,
+                    "FilePath",
+                    LogicalPackageFunctionOwnershipFactTextKind.EventLocationFilePath,
+                    index,
+                    graph,
+                    hasLocationFilePath,
+                    locationFilePathTextRow)
+                || !LogicalPackageImageJsonRequiredI64MemberValue(
+                    document,
+                    locationNode,
+                    "Line",
+                    locationLine)
+                || !LogicalPackageImageJsonRequiredI64MemberValue(
+                    document,
+                    locationNode,
+                    "Column",
+                    locationColumn)))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Function,
+                functionSemanticOrdinal,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.FunctionOwnershipEventPlaceType,
+                index,
+                graph.TypeReferences,
+                placeTypeReferenceRow)
+            || !LogicalPackageFunctionOwnershipFactGraphAddEventRow(
+                graph,
+                functionOwnershipRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                kindTextRow,
+                rootNameTextRow,
+                placeTypeReferenceRow,
+                hasIndexProjection,
+                hasLocation,
+                hasLocationFilePath,
+                locationFilePathTextRow,
+                locationLine,
+                locationColumn,
+                eventRow)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipProjectionRows(
+                document,
+                placeNode,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                eventRow,
+                graph,
+                projectionCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionOwnershipRootRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] ownershipNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] functionSemanticOrdinal,
+    u32[0 max] functionOwnershipRow,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out u32[0 max] rootCount)
+{
+    rootCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, ownershipNode, "Roots", arrayNode, rootCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < rootCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] rootNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] rootKindTextRow = 0;
+        stack mut u32[0 max] finalAvailabilityTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut bool isMutable = false;
+        stack mut bool isConstant = false;
+        stack mut bool isAddressTaken = false;
+        stack mut bool hasRawPointerEscape = false;
+        stack mut bool hasMove = false;
+        stack mut bool hasPartialMove = false;
+        stack mut bool hasImplicitDrop = false;
+        stack mut bool hasAssignmentDrop = false;
+        stack mut bool hasReinitialization = false;
+        stack mut bool requiresDrop = false;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, rootNode)
+            || document.KindAt(rootNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+                document,
+                rootNode,
+                "Name",
+                LogicalPackageFunctionOwnershipFactTextKind.RootName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, rootNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+                document,
+                rootNode,
+                "RootKind",
+                LogicalPackageFunctionOwnershipFactTextKind.RootKind,
+                index,
+                graph,
+                rootKindTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, rootNode, "IsMutable", isMutable)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, rootNode, "IsConstant", isConstant)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "IsAddressTaken",
+                isAddressTaken)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "HasRawPointerEscape",
+                hasRawPointerEscape)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, rootNode, "HasMove", hasMove)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "HasPartialMove",
+                hasPartialMove)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "HasImplicitDrop",
+                hasImplicitDrop)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "HasAssignmentDrop",
+                hasAssignmentDrop)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "HasReinitialization",
+                hasReinitialization)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                rootNode,
+                "RequiresDrop",
+                requiresDrop)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+                document,
+                rootNode,
+                "FinalAvailability",
+                LogicalPackageFunctionOwnershipFactTextKind.RootFinalAvailability,
+                index,
+                graph,
+                finalAvailabilityTextRow)
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Function,
+                functionSemanticOrdinal,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.FunctionOwnershipRootType,
+                index,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageFunctionOwnershipFactGraphAddRootRow(
+                graph,
+                functionOwnershipRow,
+                moduleOrdinal,
+                functionSemanticOrdinal,
+                index,
+                nameTextRow,
+                typeReferenceRow,
+                rootKindTextRow,
+                finalAvailabilityTextRow,
+                isMutable,
+                isConstant,
+                isAddressTaken,
+                hasRawPointerEscape,
+                hasMove,
+                hasPartialMove,
+                hasImplicitDrop,
+                hasAssignmentDrop,
+                hasReinitialization,
+                requiresDrop))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeFunctionOwnershipFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph,
+    out u32[0 max] functionOwnershipCount)
+{
+    functionOwnershipCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    stack mut u32[0 max] functionSemanticCount = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        compilerFactsNode,
+        "FunctionSemantics",
+        arrayNode,
+        functionSemanticCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < functionSemanticCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] functionSemanticNode = 0;
+        stack mut u64[0 2 ** 63 - 1] ownershipNode = 0;
+        stack mut bool hasOwnership = false;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, functionSemanticNode)
+            || document.KindAt(functionSemanticNode) != JsonKind.Object
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                functionSemanticNode,
+                "Ownership",
+                ownershipNode,
+                hasOwnership))
+        {
+            return false;
+        }
+
+        if (!hasOwnership)
+        {
+            index = index + 1;
+            continue;
+        }
+
+        stack mut bool ownershipValid = false;
+        stack mut u32[0 max] qualifiedResolvedNameTextRow = 0;
+        stack mut u32[0 max] functionOwnershipRow = 0;
+        stack mut u32[0 max] implicitDropCount = 0;
+        stack mut u32[0 max] moveCount = 0;
+        stack mut u32[0 max] eventCount = 0;
+        stack mut u32[0 max] rootCount = 0;
+        if (!LogicalPackageImageJsonMaterializeFunctionOwnershipFactTextMemberRow(
+                document,
+                functionSemanticNode,
+                "QualifiedResolvedName",
+                LogicalPackageFunctionOwnershipFactTextKind.QualifiedResolvedName,
+                index,
+                graph,
+                qualifiedResolvedNameTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                ownershipNode,
+                "OwnershipValid",
+                ownershipValid)
+            || !LogicalPackageFunctionOwnershipFactGraphAddFunctionOwnershipRow(
+                graph,
+                moduleOrdinal,
+                index,
+                qualifiedResolvedNameTextRow,
+                ownershipValid,
+                functionOwnershipRow)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipNameRows(
+                document,
+                ownershipNode,
+                "ImplicitDrops",
+                LogicalPackageFunctionOwnershipFactTextKind.ImplicitDropName,
+                true,
+                moduleOrdinal,
+                index,
+                functionOwnershipRow,
+                graph,
+                implicitDropCount)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipNameRows(
+                document,
+                ownershipNode,
+                "Moves",
+                LogicalPackageFunctionOwnershipFactTextKind.MoveName,
+                false,
+                moduleOrdinal,
+                index,
+                functionOwnershipRow,
+                graph,
+                moveCount)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipEventRows(
+                document,
+                ownershipNode,
+                moduleOrdinal,
+                index,
+                functionOwnershipRow,
+                graph,
+                eventCount)
+            || !LogicalPackageImageJsonMaterializeFunctionOwnershipRootRows(
+                document,
+                ownershipNode,
+                moduleOrdinal,
+                index,
+                functionOwnershipRow,
+                graph,
+                rootCount))
+        {
+            return false;
+        }
+
+        functionOwnershipCount = functionOwnershipCount + 1;
+        index = index + 1;
+    }
+
+    return true;
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageFunctionSemanticFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageFunctionSemanticFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut bool usesCompilerSections = false;
+            stack mut u32[0 max] functionSemanticCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    usesCompilerSections))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeFunctionSemanticFactRows(
+                document,
+                compilerFactsNode,
+                moduleOrdinal,
+                graph,
+                functionSemanticCount);
+    }
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageFunctionOwnershipFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageFunctionOwnershipFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut bool usesCompilerSections = false;
+            stack mut u32[0 max] functionOwnershipCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    usesCompilerSections))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeFunctionOwnershipFactRows(
+                document,
+                compilerFactsNode,
+                moduleOrdinal,
+                graph,
+                functionOwnershipCount);
+    }
+}

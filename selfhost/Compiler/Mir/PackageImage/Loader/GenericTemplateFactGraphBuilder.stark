@@ -1,0 +1,1699 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Models
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Loader.GenericTemplateFactGraphBuilder
+
+// Allocation-conscious generic-template graph mutation and text ownership.
+// Rows retain their stable manifest ordinals and direct table identities.
+
+internal fn MemoryStatus LogicalPackageGenericTemplateFactGraphAppendText(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTextRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageGenericTemplateFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageGenericTemplateFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageGenericTemplateFactTextRow row =
+                new LogicalPackageGenericTemplateFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddFunctionTemplateRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] templateOrdinal,
+    u32[0 max] qualifiedResolvedNameTextRow,
+    u32[0 max] qualifiedNameTextRow,
+    u32[0 max] overloadKeyTextRow,
+    bool hasBodyText,
+    u32[0 max] bodyTextRow,
+    bool hasBackendOptimizationMode,
+    u32[0 max] backendOptimizationModeTextRow,
+    bool hasTopLevelStatementCount,
+    u32[0 max] topLevelStatementCount,
+    bool hasEstimatedBodyCost,
+    u32[0 max] estimatedBodyCost,
+    bool hasSemantics,
+    bool hasTypedBody,
+    u32[0 max] deferredFunctionInstantiationCount,
+    u32[0 max] deferredTypeInstantiationCount,
+    u32[0 max] objectCreationCount,
+    u32[0 max] enumConstructorCount,
+    u32[0 max] enumCallCount,
+    u32[0 max] enumValueCount,
+    u32[0 max] enumPatternCount,
+    u32[0 max] aggregatePatternCount,
+    u32[0 max] localDeclarationCount,
+    u32[0 max] conversionCount,
+    u32[0 max] directCallCount,
+    u32[0 max] fieldAccessCount,
+    u32[0 max] memberCallCount,
+    u32[0 max] functionAddressCount,
+    u32[0 max] boundOperationCount,
+    u32[0 max] tryPropagationCount,
+    out u32[0 max] templateRow)
+{
+    templateRow = 0;
+    if (!graph.TextRows.Contains(qualifiedResolvedNameTextRow)
+        || !graph.TextRows.Contains(qualifiedNameTextRow)
+        || !graph.TextRows.Contains(overloadKeyTextRow)
+        || (hasBodyText && !graph.TextRows.Contains(bodyTextRow))
+        || (!hasBodyText && bodyTextRow != 0)
+        || (hasBackendOptimizationMode && !graph.TextRows.Contains(backendOptimizationModeTextRow))
+        || (!hasBackendOptimizationMode && backendOptimizationModeTextRow != 0)
+        || (!hasTopLevelStatementCount && topLevelStatementCount != 0)
+        || (!hasEstimatedBodyCost && estimatedBodyCost != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionTemplateRow row = new LogicalPackageFunctionTemplateRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TemplateOrdinalValue = templateOrdinal,
+        QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
+        QualifiedNameTextRowValue = qualifiedNameTextRow,
+        OverloadKeyTextRowValue = overloadKeyTextRow,
+        BodyTextRowValue = bodyTextRow,
+        BackendOptimizationModeTextRowValue = backendOptimizationModeTextRow,
+        TopLevelStatementCountValue = topLevelStatementCount,
+        EstimatedBodyCostValue = estimatedBodyCost,
+        HasBodyTextValue = hasBodyText,
+        HasTopLevelStatementCountValue = hasTopLevelStatementCount,
+        HasEstimatedBodyCostValue = hasEstimatedBodyCost,
+        HasSemanticsValue = hasSemantics,
+        HasTypedBodyValue = hasTypedBody,
+        HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+        DeferredFunctionInstantiationCountValue = deferredFunctionInstantiationCount,
+        DeferredTypeInstantiationCountValue = deferredTypeInstantiationCount,
+        ObjectCreationCountValue = objectCreationCount,
+        EnumConstructorCountValue = enumConstructorCount,
+        EnumCallCountValue = enumCallCount,
+        EnumValueCountValue = enumValueCount,
+        EnumPatternCountValue = enumPatternCount,
+        AggregatePatternCountValue = aggregatePatternCount,
+        LocalDeclarationCountValue = localDeclarationCount,
+        ConversionCountValue = conversionCount,
+        DirectCallCountValue = directCallCount,
+        FieldAccessCountValue = fieldAccessCount,
+        MemberCallCountValue = memberCallCount,
+        FunctionAddressCountValue = functionAddressCount,
+        BoundOperationCountValue = boundOperationCount,
+        TryPropagationCountValue = tryPropagationCount
+    };
+    templateRow = graph.FunctionTemplateRows.Add(row);
+    return templateRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] parentExpressionRow,
+    LogicalPackageTypedTemplateExpressionParentKind parentKind,
+    u32[0 max] expressionOrdinal,
+    u32[0 max] kindTextRow,
+    bool hasName,
+    u32[0 max] nameTextRow,
+    bool hasAssignmentOperator,
+    u32[0 max] assignmentOperatorTextRow,
+    bool hasLiteralText,
+    u32[0 max] literalTextRow,
+    bool hasOrdinal,
+    u32[0 max] ordinal,
+    bool hasType,
+    u32[0 max] typeReferenceRow,
+    bool hasTargetExpression,
+    u32[0 max] argumentCount,
+    u32[0 max] memberNameCount,
+    u32[0 max] operatorNameCount,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeValueArgumentCount,
+    out u32[0 max] expressionRow)
+{
+    expressionRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || (parentExpressionRow == 0
+            && parentKind != LogicalPackageTypedTemplateExpressionParentKind.Root)
+        || (parentExpressionRow != 0
+            && parentKind == LogicalPackageTypedTemplateExpressionParentKind.Root)
+        || (parentExpressionRow != 0 && !graph.TypedTemplateExpressionRows.Contains(parentExpressionRow))
+        || (hasName && !graph.TextRows.Contains(nameTextRow))
+        || (!hasName && nameTextRow != 0)
+        || (hasAssignmentOperator && !graph.TextRows.Contains(assignmentOperatorTextRow))
+        || (!hasAssignmentOperator && assignmentOperatorTextRow != 0)
+        || (hasLiteralText && !graph.TextRows.Contains(literalTextRow))
+        || (!hasLiteralText && literalTextRow != 0)
+        || (!hasOrdinal && ordinal != 0)
+        || (hasType && !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+        || (!hasType && typeReferenceRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionRow row =
+        new LogicalPackageTypedTemplateExpressionRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        ParentExpressionRowValue = parentExpressionRow,
+        ParentKindValue = parentKind,
+        ExpressionOrdinalValue = expressionOrdinal,
+        KindTextRowValue = kindTextRow,
+        NameTextRowValue = nameTextRow,
+        AssignmentOperatorTextRowValue = assignmentOperatorTextRow,
+        LiteralTextRowValue = literalTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        HasNameValue = hasName,
+        HasAssignmentOperatorValue = hasAssignmentOperator,
+        HasLiteralTextValue = hasLiteralText,
+        HasOrdinalValue = hasOrdinal,
+        OrdinalValue = ordinal,
+        HasTypeValue = hasType,
+        HasTargetExpressionValue = hasTargetExpression,
+        ArgumentCountValue = argumentCount,
+        MemberNameCountValue = memberNameCount,
+        OperatorNameCountValue = operatorNameCount,
+        TypeArgumentCountValue = typeArgumentCount,
+        ComptimeValueArgumentCountValue = comptimeValueArgumentCount
+    };
+    expressionRow = graph.TypedTemplateExpressionRows.Add(row);
+    return expressionRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateStatementRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] parentStatementRow,
+    u32[0 max] parentSwitchCaseRow,
+    LogicalPackageTypedTemplateStatementParentKind parentKind,
+    u32[0 max] statementOrdinal,
+    u32[0 max] kindTextRow,
+    bool hasExpression,
+    u32[0 max] expressionRow,
+    bool hasTargetExpression,
+    u32[0 max] targetExpressionRow,
+    bool hasTraversalSourceExpression,
+    u32[0 max] traversalSourceExpressionRow,
+    bool hasName,
+    u32[0 max] nameTextRow,
+    bool hasAssignmentOperator,
+    u32[0 max] assignmentOperatorTextRow,
+    bool hasStorageClass,
+    u32[0 max] storageClassTextRow,
+    bool hasLoopBehavior,
+    u32[0 max] loopBehaviorTextRow,
+    bool hasConstProvenance,
+    u32[0 max] constProvenanceTextRow,
+    bool hasTraversalIndexName,
+    u32[0 max] traversalIndexNameTextRow,
+    bool hasTraversalIndexStorageClass,
+    u32[0 max] traversalIndexStorageClassTextRow,
+    bool hasTraversalElementName,
+    u32[0 max] traversalElementNameTextRow,
+    bool isMutable,
+    bool isConstant,
+    bool hasType,
+    u32[0 max] typeReferenceRow,
+    bool hasStorageCapacity,
+    u32[0 max] storageCapacity,
+    bool hasTraversalIndexType,
+    u32[0 max] traversalIndexTypeReferenceRow,
+    bool hasTraversalElementType,
+    u32[0 max] traversalElementTypeReferenceRow,
+    bool hasConditionPattern,
+    u32[0 max] switchCaseCount,
+    u32[0 max] initializerStatementCount,
+    u32[0 max] iteratorStatementCount,
+    u32[0 max] bodyStatementCount,
+    u32[0 max] thenStatementCount,
+    u32[0 max] elseStatementCount,
+    u32[0 max] loopContractCount,
+    out u32[0 max] statementRow)
+{
+    statementRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || (parentStatementRow == 0
+            && parentKind != LogicalPackageTypedTemplateStatementParentKind.TopLevel)
+        || (parentStatementRow != 0
+            && parentKind == LogicalPackageTypedTemplateStatementParentKind.TopLevel)
+        || (parentStatementRow != 0 && !graph.TypedTemplateStatementRows.Contains(parentStatementRow))
+        || (parentKind == LogicalPackageTypedTemplateStatementParentKind.SwitchCase
+            && !graph.TypedTemplateSwitchCaseRows.Contains(parentSwitchCaseRow))
+        || (parentKind != LogicalPackageTypedTemplateStatementParentKind.SwitchCase
+            && parentSwitchCaseRow != 0)
+        || (hasExpression && !graph.TypedTemplateExpressionRows.Contains(expressionRow))
+        || (!hasExpression && expressionRow != 0)
+        || (hasTargetExpression && !graph.TypedTemplateExpressionRows.Contains(targetExpressionRow))
+        || (!hasTargetExpression && targetExpressionRow != 0)
+        || (hasTraversalSourceExpression
+            && !graph.TypedTemplateExpressionRows.Contains(traversalSourceExpressionRow))
+        || (!hasTraversalSourceExpression && traversalSourceExpressionRow != 0)
+        || (hasName && !graph.TextRows.Contains(nameTextRow))
+        || (!hasName && nameTextRow != 0)
+        || (hasAssignmentOperator && !graph.TextRows.Contains(assignmentOperatorTextRow))
+        || (!hasAssignmentOperator && assignmentOperatorTextRow != 0)
+        || (hasStorageClass && !graph.TextRows.Contains(storageClassTextRow))
+        || (!hasStorageClass && storageClassTextRow != 0)
+        || (hasLoopBehavior && !graph.TextRows.Contains(loopBehaviorTextRow))
+        || (!hasLoopBehavior && loopBehaviorTextRow != 0)
+        || (hasConstProvenance && !graph.TextRows.Contains(constProvenanceTextRow))
+        || (!hasConstProvenance && constProvenanceTextRow != 0)
+        || (hasTraversalIndexName && !graph.TextRows.Contains(traversalIndexNameTextRow))
+        || (!hasTraversalIndexName && traversalIndexNameTextRow != 0)
+        || (hasTraversalIndexStorageClass
+            && !graph.TextRows.Contains(traversalIndexStorageClassTextRow))
+        || (!hasTraversalIndexStorageClass && traversalIndexStorageClassTextRow != 0)
+        || (hasTraversalElementName && !graph.TextRows.Contains(traversalElementNameTextRow))
+        || (!hasTraversalElementName && traversalElementNameTextRow != 0)
+        || (hasType && !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+        || (!hasType && typeReferenceRow != 0)
+        || (!hasStorageCapacity && storageCapacity != 0))
+    {
+        return false;
+    }
+
+    if ((hasTraversalIndexType
+            && !graph.TypeReferences.ContainsTypeReference(traversalIndexTypeReferenceRow))
+        || (!hasTraversalIndexType && traversalIndexTypeReferenceRow != 0)
+        || (hasTraversalElementType
+            && !graph.TypeReferences.ContainsTypeReference(traversalElementTypeReferenceRow))
+        || (!hasTraversalElementType && traversalElementTypeReferenceRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateStatementRow row =
+        new LogicalPackageTypedTemplateStatementRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        ParentStatementRowValue = parentStatementRow,
+        ParentSwitchCaseRowValue = parentSwitchCaseRow,
+        ParentKindValue = parentKind,
+        StatementOrdinalValue = statementOrdinal,
+        KindTextRowValue = kindTextRow,
+        ExpressionRowValue = expressionRow,
+        TargetExpressionRowValue = targetExpressionRow,
+        TraversalSourceExpressionRowValue = traversalSourceExpressionRow,
+        NameTextRowValue = nameTextRow,
+        AssignmentOperatorTextRowValue = assignmentOperatorTextRow,
+        StorageClassTextRowValue = storageClassTextRow,
+        LoopBehaviorTextRowValue = loopBehaviorTextRow,
+        ConstProvenanceTextRowValue = constProvenanceTextRow,
+        TraversalIndexNameTextRowValue = traversalIndexNameTextRow,
+        TraversalIndexStorageClassTextRowValue = traversalIndexStorageClassTextRow,
+        TraversalElementNameTextRowValue = traversalElementNameTextRow,
+        HasExpressionValue = hasExpression,
+        HasTargetExpressionValue = hasTargetExpression,
+        HasTraversalSourceExpressionValue = hasTraversalSourceExpression,
+        HasNameValue = hasName,
+        HasAssignmentOperatorValue = hasAssignmentOperator,
+        HasStorageClassValue = hasStorageClass,
+        HasLoopBehaviorValue = hasLoopBehavior,
+        HasConstProvenanceValue = hasConstProvenance,
+        HasTraversalIndexNameValue = hasTraversalIndexName,
+        HasTraversalIndexStorageClassValue = hasTraversalIndexStorageClass,
+        HasTraversalElementNameValue = hasTraversalElementName,
+        IsMutableValue = isMutable,
+        IsConstantValue = isConstant,
+        HasTypeValue = hasType,
+        TypeReferenceRowValue = typeReferenceRow,
+        HasStorageCapacityValue = hasStorageCapacity,
+        StorageCapacityValue = storageCapacity,
+        HasTraversalIndexTypeValue = hasTraversalIndexType,
+        TraversalIndexTypeReferenceRowValue = traversalIndexTypeReferenceRow,
+        HasTraversalElementTypeValue = hasTraversalElementType,
+        TraversalElementTypeReferenceRowValue = traversalElementTypeReferenceRow,
+        HasConditionPatternValue = hasConditionPattern,
+        SwitchCaseCountValue = switchCaseCount,
+        InitializerStatementCountValue = initializerStatementCount,
+        IteratorStatementCountValue = iteratorStatementCount,
+        BodyStatementCountValue = bodyStatementCount,
+        ThenStatementCountValue = thenStatementCount,
+        ElseStatementCountValue = elseStatementCount,
+        LoopContractCountValue = loopContractCount
+    };
+    statementRow = graph.TypedTemplateStatementRows.Add(row);
+    return statementRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateStatementLoopContractRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] statementRow,
+    u32[0 max] contractOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TypedTemplateStatementRows.Contains(statementRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateStatementLoopContractRow row =
+        new LogicalPackageTypedTemplateStatementLoopContractRow()
+    {
+        StatementRowValue = statementRow,
+        ContractOrdinalValue = contractOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.TypedTemplateStatementLoopContractRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionMemberNameRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] expressionRow,
+    u32[0 max] memberOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TypedTemplateExpressionRows.Contains(expressionRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionMemberNameRow row =
+        new LogicalPackageTypedTemplateExpressionMemberNameRow()
+    {
+        ExpressionRowValue = expressionRow,
+        MemberOrdinalValue = memberOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.TypedTemplateExpressionMemberNameRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionOperatorNameRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] expressionRow,
+    u32[0 max] operatorOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TypedTemplateExpressionRows.Contains(expressionRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionOperatorNameRow row =
+        new LogicalPackageTypedTemplateExpressionOperatorNameRow()
+    {
+        ExpressionRowValue = expressionRow,
+        OperatorOrdinalValue = operatorOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.TypedTemplateExpressionOperatorNameRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionTypeArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] expressionRow,
+    u32[0 max] typeArgumentOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TypedTemplateExpressionRows.Contains(expressionRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionTypeArgumentRow row =
+        new LogicalPackageTypedTemplateExpressionTypeArgumentRow()
+    {
+        ExpressionRowValue = expressionRow,
+        TypeArgumentOrdinalValue = typeArgumentOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.TypedTemplateExpressionTypeArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionComptimeValueArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] expressionRow,
+    u32[0 max] argumentOrdinal,
+    u32[0 max] parameterNameTextRow,
+    u32[0 max] integerValueTextRow,
+    u32[0 max] typeReferenceRow,
+    bool isSymbolic,
+    bool hasSymbolicSourceName,
+    u32[0 max] symbolicSourceNameTextRow)
+{
+    if (!graph.TypedTemplateExpressionRows.Contains(expressionRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || !graph.TextRows.Contains(integerValueTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || (hasSymbolicSourceName && !graph.TextRows.Contains(symbolicSourceNameTextRow))
+        || (!hasSymbolicSourceName && symbolicSourceNameTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateExpressionComptimeValueArgumentRow row =
+        new LogicalPackageTypedTemplateExpressionComptimeValueArgumentRow()
+    {
+        ExpressionRowValue = expressionRow,
+        ArgumentOrdinalValue = argumentOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        IntegerValueTextRowValue = integerValueTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        SymbolicSourceNameTextRowValue = symbolicSourceNameTextRow,
+        IsSymbolicValue = isSymbolic,
+        HasSymbolicSourceNameValue = hasSymbolicSourceName
+    };
+    return graph.TypedTemplateExpressionComptimeValueArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplateSwitchCaseRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] statementRow,
+    u32[0 max] caseOrdinal,
+    u32[0 max] kindTextRow,
+    bool hasName,
+    u32[0 max] nameTextRow,
+    bool hasOrdinal,
+    u32[0 max] ordinal,
+    bool hasExpression,
+    u32[0 max] expressionRow,
+    bool hasGuardExpression,
+    u32[0 max] guardExpressionRow,
+    bool hasEndExpression,
+    u32[0 max] endExpressionRow,
+    u32[0 max] memberPatternCount,
+    u32[0 max] statementCount,
+    out u32[0 max] switchCaseRow)
+{
+    switchCaseRow = 0;
+    if (!graph.TypedTemplateStatementRows.Contains(statementRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || (hasName && !graph.TextRows.Contains(nameTextRow))
+        || (!hasName && nameTextRow != 0)
+        || (!hasOrdinal && ordinal != 0)
+        || (hasExpression && !graph.TypedTemplateExpressionRows.Contains(expressionRow))
+        || (!hasExpression && expressionRow != 0)
+        || (hasGuardExpression && !graph.TypedTemplateExpressionRows.Contains(guardExpressionRow))
+        || (!hasGuardExpression && guardExpressionRow != 0)
+        || (hasEndExpression && !graph.TypedTemplateExpressionRows.Contains(endExpressionRow))
+        || (!hasEndExpression && endExpressionRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplateSwitchCaseRow row =
+        new LogicalPackageTypedTemplateSwitchCaseRow()
+    {
+        StatementRowValue = statementRow,
+        CaseOrdinalValue = caseOrdinal,
+        KindTextRowValue = kindTextRow,
+        NameTextRowValue = nameTextRow,
+        ExpressionRowValue = expressionRow,
+        GuardExpressionRowValue = guardExpressionRow,
+        EndExpressionRowValue = endExpressionRow,
+        HasNameValue = hasName,
+        HasOrdinalValue = hasOrdinal,
+        OrdinalValue = ordinal,
+        HasExpressionValue = hasExpression,
+        HasGuardExpressionValue = hasGuardExpression,
+        HasEndExpressionValue = hasEndExpression,
+        MemberPatternCountValue = memberPatternCount,
+        StatementCountValue = statementCount
+    };
+    switchCaseRow = graph.TypedTemplateSwitchCaseRows.Add(row);
+    return switchCaseRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTypedTemplatePatternRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] statementRow,
+    u32[0 max] switchCaseRow,
+    u32[0 max] parentPatternRow,
+    LogicalPackageTypedTemplatePatternParentKind parentKind,
+    u32[0 max] patternOrdinal,
+    u32[0 max] kindTextRow,
+    bool hasName,
+    u32[0 max] nameTextRow,
+    bool hasOrdinal,
+    u32[0 max] ordinal,
+    bool hasExpression,
+    u32[0 max] expressionRow,
+    bool hasEndExpression,
+    u32[0 max] endExpressionRow,
+    u32[0 max] memberPatternCount,
+    out u32[0 max] patternRow)
+{
+    patternRow = 0;
+    stack mut bool validParent = false;
+    if (parentKind == LogicalPackageTypedTemplatePatternParentKind.StatementCondition)
+    {
+        validParent = graph.TypedTemplateStatementRows.Contains(statementRow)
+            && switchCaseRow == 0
+            && parentPatternRow == 0;
+    }
+    else if (parentKind == LogicalPackageTypedTemplatePatternParentKind.SwitchCaseMember)
+    {
+        validParent = statementRow == 0
+            && graph.TypedTemplateSwitchCaseRows.Contains(switchCaseRow)
+            && parentPatternRow == 0;
+    }
+    else
+    {
+        validParent = statementRow == 0
+            && switchCaseRow == 0
+            && graph.TypedTemplatePatternRows.Contains(parentPatternRow);
+    }
+
+    if (!validParent
+        || !graph.TextRows.Contains(kindTextRow)
+        || (hasName && !graph.TextRows.Contains(nameTextRow))
+        || (!hasName && nameTextRow != 0)
+        || (!hasOrdinal && ordinal != 0)
+        || (hasExpression && !graph.TypedTemplateExpressionRows.Contains(expressionRow))
+        || (!hasExpression && expressionRow != 0)
+        || (hasEndExpression && !graph.TypedTemplateExpressionRows.Contains(endExpressionRow))
+        || (!hasEndExpression && endExpressionRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTemplatePatternRow row =
+        new LogicalPackageTypedTemplatePatternRow()
+    {
+        StatementRowValue = statementRow,
+        SwitchCaseRowValue = switchCaseRow,
+        ParentPatternRowValue = parentPatternRow,
+        ParentKindValue = parentKind,
+        PatternOrdinalValue = patternOrdinal,
+        KindTextRowValue = kindTextRow,
+        NameTextRowValue = nameTextRow,
+        ExpressionRowValue = expressionRow,
+        EndExpressionRowValue = endExpressionRow,
+        HasNameValue = hasName,
+        HasOrdinalValue = hasOrdinal,
+        OrdinalValue = ordinal,
+        HasExpressionValue = hasExpression,
+        HasEndExpressionValue = hasEndExpression,
+        MemberPatternCountValue = memberPatternCount
+    };
+    patternRow = graph.TypedTemplatePatternRows.Add(row);
+    return patternRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddDeferredFunctionInstantiationRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] instantiationOrdinal,
+    u32[0 max] calleeTemplateNameTextRow,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeValueArgumentCount,
+    out u32[0 max] instantiationRow)
+{
+    instantiationRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TextRows.Contains(calleeTemplateNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageDeferredFunctionInstantiationRow row =
+        new LogicalPackageDeferredFunctionInstantiationRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        InstantiationOrdinalValue = instantiationOrdinal,
+        CalleeTemplateNameTextRowValue = calleeTemplateNameTextRow,
+        TypeArgumentCountValue = typeArgumentCount,
+        ComptimeValueArgumentCountValue = comptimeValueArgumentCount
+    };
+    instantiationRow = graph.DeferredFunctionInstantiationRows.Add(row);
+    return instantiationRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddDeferredFunctionInstantiationTypeArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] instantiationRow,
+    u32[0 max] typeArgumentOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.DeferredFunctionInstantiationRows.Contains(instantiationRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageDeferredFunctionInstantiationTypeArgumentRow row =
+        new LogicalPackageDeferredFunctionInstantiationTypeArgumentRow()
+    {
+        InstantiationRowValue = instantiationRow,
+        TypeArgumentOrdinalValue = typeArgumentOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.DeferredFunctionInstantiationTypeArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddDeferredFunctionInstantiationComptimeValueArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] instantiationRow,
+    u32[0 max] argumentOrdinal,
+    u32[0 max] parameterNameTextRow,
+    u32[0 max] integerValueTextRow,
+    u32[0 max] typeReferenceRow,
+    bool isSymbolic,
+    bool hasSymbolicSourceName,
+    u32[0 max] symbolicSourceNameTextRow)
+{
+    if (!graph.DeferredFunctionInstantiationRows.Contains(instantiationRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || !graph.TextRows.Contains(integerValueTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || (hasSymbolicSourceName && !graph.TextRows.Contains(symbolicSourceNameTextRow))
+        || (!hasSymbolicSourceName && symbolicSourceNameTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageDeferredFunctionInstantiationComptimeValueArgumentRow row =
+        new LogicalPackageDeferredFunctionInstantiationComptimeValueArgumentRow()
+    {
+        InstantiationRowValue = instantiationRow,
+        ArgumentOrdinalValue = argumentOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        IntegerValueTextRowValue = integerValueTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        SymbolicSourceNameTextRowValue = symbolicSourceNameTextRow,
+        IsSymbolicValue = isSymbolic,
+        HasSymbolicSourceNameValue = hasSymbolicSourceName
+    };
+    return graph.DeferredFunctionInstantiationComptimeValueArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddDeferredTypeInstantiationRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] instantiationOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageDeferredTypeInstantiationRow row =
+        new LogicalPackageDeferredTypeInstantiationRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        InstantiationOrdinalValue = instantiationOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.DeferredTypeInstantiationRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateLocalDeclarationRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] kindTextRow,
+    u32[0 max] line,
+    u32[0 max] column,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateLocalDeclarationRow row =
+        new LogicalPackageTemplateLocalDeclarationRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        DeclarationOrdinalValue = declarationOrdinal,
+        KindTextRowValue = kindTextRow,
+        LineValue = line,
+        ColumnValue = column,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.TemplateLocalDeclarationRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateConversionRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] conversionOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] targetTypeReferenceRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(targetTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateConversionRow row =
+        new LogicalPackageTemplateConversionRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        ConversionOrdinalValue = conversionOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        TargetTypeReferenceRowValue = targetTypeReferenceRow
+    };
+    return graph.TemplateConversionRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateFieldAccessRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] accessOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] fieldNameTextRow,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldTypeReferenceRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TextRows.Contains(fieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(fieldTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateFieldAccessRow row =
+        new LogicalPackageTemplateFieldAccessRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        AccessOrdinalValue = accessOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        FieldNameTextRowValue = fieldNameTextRow,
+        FieldIndexValue = fieldIndex,
+        FieldTypeReferenceRowValue = fieldTypeReferenceRow
+    };
+    return graph.TemplateFieldAccessRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateTryPropagationRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] tryPropagationOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] operandTypeReferenceRow,
+    u32[0 max] operandOkVariantNameTextRow,
+    u32[0 max] operandErrVariantNameTextRow,
+    u32[0 max] returnTypeReferenceRow,
+    u32[0 max] enclosingErrVariantNameTextRow,
+    bool hasSuccessPayloadType,
+    u32[0 max] successPayloadTypeReferenceRow,
+    bool hasOperandFailurePayloadType,
+    u32[0 max] operandFailurePayloadTypeReferenceRow,
+    bool hasEnclosingFailurePayloadType,
+    u32[0 max] enclosingFailurePayloadTypeReferenceRow,
+    bool hasConversionFunnelVariant,
+    u32[0 max] conversionFunnelVariantTextRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(operandTypeReferenceRow)
+        || !graph.TextRows.Contains(operandOkVariantNameTextRow)
+        || !graph.TextRows.Contains(operandErrVariantNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(returnTypeReferenceRow)
+        || !graph.TextRows.Contains(enclosingErrVariantNameTextRow)
+        || (hasSuccessPayloadType
+            && !graph.TypeReferences.ContainsTypeReference(successPayloadTypeReferenceRow))
+        || (!hasSuccessPayloadType && successPayloadTypeReferenceRow != 0)
+        || (hasOperandFailurePayloadType
+            && !graph.TypeReferences.ContainsTypeReference(operandFailurePayloadTypeReferenceRow))
+        || (!hasOperandFailurePayloadType && operandFailurePayloadTypeReferenceRow != 0)
+        || (hasEnclosingFailurePayloadType
+            && !graph.TypeReferences.ContainsTypeReference(enclosingFailurePayloadTypeReferenceRow))
+        || (!hasEnclosingFailurePayloadType && enclosingFailurePayloadTypeReferenceRow != 0)
+        || (hasConversionFunnelVariant && !graph.TextRows.Contains(conversionFunnelVariantTextRow))
+        || (!hasConversionFunnelVariant && conversionFunnelVariantTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateTryPropagationRow row =
+        new LogicalPackageTemplateTryPropagationRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        TryPropagationOrdinalValue = tryPropagationOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        OperandTypeReferenceRowValue = operandTypeReferenceRow,
+        OperandOkVariantNameTextRowValue = operandOkVariantNameTextRow,
+        OperandErrVariantNameTextRowValue = operandErrVariantNameTextRow,
+        ReturnTypeReferenceRowValue = returnTypeReferenceRow,
+        EnclosingErrVariantNameTextRowValue = enclosingErrVariantNameTextRow,
+        SuccessPayloadTypeReferenceRowValue = successPayloadTypeReferenceRow,
+        OperandFailurePayloadTypeReferenceRowValue = operandFailurePayloadTypeReferenceRow,
+        EnclosingFailurePayloadTypeReferenceRowValue = enclosingFailurePayloadTypeReferenceRow,
+        ConversionFunnelVariantTextRowValue = conversionFunnelVariantTextRow,
+        HasSuccessPayloadTypeValue = hasSuccessPayloadType,
+        HasOperandFailurePayloadTypeValue = hasOperandFailurePayloadType,
+        HasEnclosingFailurePayloadTypeValue = hasEnclosingFailurePayloadType,
+        HasConversionFunnelVariantValue = hasConversionFunnelVariant
+    };
+    return graph.TemplateTryPropagationRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateObjectCreationRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] creationOrdinal,
+    u32[0 max] createdTypeReferenceRow,
+    bool hasConstructor,
+    u32[0 max] constructorTypeNameTextRow,
+    u32[0 max] constructorParameterCount,
+    bool constructorIsPrimaryShape,
+    u32[0 max] storageSelector,
+    bool hasExpressionText,
+    u32[0 max] expressionTextRow,
+    u32[0 max] initializerMemberCount,
+    out u32[0 max] objectCreationRow)
+{
+    objectCreationRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(createdTypeReferenceRow)
+        || (hasConstructor && !graph.TextRows.Contains(constructorTypeNameTextRow))
+        || (!hasConstructor && constructorTypeNameTextRow != 0)
+        || (!hasConstructor && constructorParameterCount != 0)
+        || (!hasConstructor && constructorIsPrimaryShape)
+        || (hasExpressionText && !graph.TextRows.Contains(expressionTextRow))
+        || (!hasExpressionText && expressionTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateObjectCreationRow row =
+        new LogicalPackageTemplateObjectCreationRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        CreationOrdinalValue = creationOrdinal,
+        CreatedTypeReferenceRowValue = createdTypeReferenceRow,
+        ConstructorTypeNameTextRowValue = constructorTypeNameTextRow,
+        ConstructorParameterCountValue = constructorParameterCount,
+        StorageSelectorValue = storageSelector,
+        ExpressionTextRowValue = expressionTextRow,
+        InitializerMemberCountValue = initializerMemberCount,
+        HasConstructorValue = hasConstructor,
+        ConstructorIsPrimaryShapeValue = constructorIsPrimaryShape,
+        HasExpressionTextValue = hasExpressionText
+    };
+    objectCreationRow = graph.TemplateObjectCreationRows.Add(row);
+    return objectCreationRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateObjectInitializerMemberRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] objectCreationRow,
+    u32[0 max] memberOrdinal,
+    u32[0 max] fieldNameTextRow,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldTypeReferenceRow)
+{
+    if (!graph.TemplateObjectCreationRows.Contains(objectCreationRow)
+        || !graph.TextRows.Contains(fieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(fieldTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateObjectInitializerMemberRow row =
+        new LogicalPackageTemplateObjectInitializerMemberRow()
+    {
+        ObjectCreationRowValue = objectCreationRow,
+        MemberOrdinalValue = memberOrdinal,
+        FieldNameTextRowValue = fieldNameTextRow,
+        FieldIndexValue = fieldIndex,
+        FieldTypeReferenceRowValue = fieldTypeReferenceRow
+    };
+    return graph.TemplateObjectInitializerMemberRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateEnumConstructorRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] constructorOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] enumTypeReferenceRow,
+    u32[0 max] variantNameTextRow,
+    u32[0 max] memberCount,
+    out u32[0 max] enumConstructorRow)
+{
+    enumConstructorRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(enumTypeReferenceRow)
+        || !graph.TextRows.Contains(variantNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateEnumConstructorRow row =
+        new LogicalPackageTemplateEnumConstructorRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        ConstructorOrdinalValue = constructorOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        EnumTypeReferenceRowValue = enumTypeReferenceRow,
+        VariantNameTextRowValue = variantNameTextRow,
+        MemberCountValue = memberCount
+    };
+    enumConstructorRow = graph.TemplateEnumConstructorRows.Add(row);
+    return enumConstructorRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateEnumConstructorMemberRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] enumConstructorRow,
+    u32[0 max] memberOrdinal,
+    u32[0 max] fieldNameTextRow,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldTypeReferenceRow)
+{
+    if (!graph.TemplateEnumConstructorRows.Contains(enumConstructorRow)
+        || !graph.TextRows.Contains(fieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(fieldTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateEnumConstructorMemberRow row =
+        new LogicalPackageTemplateEnumConstructorMemberRow()
+    {
+        EnumConstructorRowValue = enumConstructorRow,
+        MemberOrdinalValue = memberOrdinal,
+        FieldNameTextRowValue = fieldNameTextRow,
+        FieldIndexValue = fieldIndex,
+        FieldTypeReferenceRowValue = fieldTypeReferenceRow
+    };
+    return graph.TemplateEnumConstructorMemberRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateEnumCallRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] callOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] enumTypeReferenceRow,
+    u32[0 max] variantNameTextRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(enumTypeReferenceRow)
+        || !graph.TextRows.Contains(variantNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateEnumCallRow row =
+        new LogicalPackageTemplateEnumCallRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        CallOrdinalValue = callOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        EnumTypeReferenceRowValue = enumTypeReferenceRow,
+        VariantNameTextRowValue = variantNameTextRow
+    };
+    return graph.TemplateEnumCallRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateEnumValueRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] valueOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] enumTypeReferenceRow,
+    u32[0 max] variantNameTextRow)
+{
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(enumTypeReferenceRow)
+        || !graph.TextRows.Contains(variantNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateEnumValueRow row =
+        new LogicalPackageTemplateEnumValueRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        ValueOrdinalValue = valueOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        EnumTypeReferenceRowValue = enumTypeReferenceRow,
+        VariantNameTextRowValue = variantNameTextRow
+    };
+    return graph.TemplateEnumValueRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateEnumPatternRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] patternOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] enumTypeReferenceRow,
+    u32[0 max] variantNameTextRow,
+    u32[0 max] memberCount,
+    out u32[0 max] enumPatternRow)
+{
+    enumPatternRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(enumTypeReferenceRow)
+        || !graph.TextRows.Contains(variantNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateEnumPatternRow row =
+        new LogicalPackageTemplateEnumPatternRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        PatternOrdinalValue = patternOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        EnumTypeReferenceRowValue = enumTypeReferenceRow,
+        VariantNameTextRowValue = variantNameTextRow,
+        MemberCountValue = memberCount
+    };
+    enumPatternRow = graph.TemplateEnumPatternRows.Add(row);
+    return enumPatternRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateEnumPatternMemberRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] enumPatternRow,
+    u32[0 max] memberOrdinal,
+    u32[0 max] fieldNameTextRow,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldTypeReferenceRow)
+{
+    if (!graph.TemplateEnumPatternRows.Contains(enumPatternRow)
+        || !graph.TextRows.Contains(fieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(fieldTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateEnumPatternMemberRow row =
+        new LogicalPackageTemplateEnumPatternMemberRow()
+    {
+        EnumPatternRowValue = enumPatternRow,
+        MemberOrdinalValue = memberOrdinal,
+        FieldNameTextRowValue = fieldNameTextRow,
+        FieldIndexValue = fieldIndex,
+        FieldTypeReferenceRowValue = fieldTypeReferenceRow
+    };
+    return graph.TemplateEnumPatternMemberRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateAggregatePatternRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] patternOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] memberCount,
+    out u32[0 max] aggregatePatternRow)
+{
+    aggregatePatternRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateAggregatePatternRow row =
+        new LogicalPackageTemplateAggregatePatternRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        PatternOrdinalValue = patternOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        TypeReferenceRowValue = typeReferenceRow,
+        MemberCountValue = memberCount
+    };
+    aggregatePatternRow = graph.TemplateAggregatePatternRows.Add(row);
+    return aggregatePatternRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateAggregatePatternMemberRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] aggregatePatternRow,
+    u32[0 max] memberOrdinal,
+    u32[0 max] fieldNameTextRow,
+    u32[0 max] fieldIndex,
+    u32[0 max] fieldTypeReferenceRow)
+{
+    if (!graph.TemplateAggregatePatternRows.Contains(aggregatePatternRow)
+        || !graph.TextRows.Contains(fieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(fieldTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateAggregatePatternMemberRow row =
+        new LogicalPackageTemplateAggregatePatternMemberRow()
+    {
+        AggregatePatternRowValue = aggregatePatternRow,
+        MemberOrdinalValue = memberOrdinal,
+        FieldNameTextRowValue = fieldNameTextRow,
+        FieldIndexValue = fieldIndex,
+        FieldTypeReferenceRowValue = fieldTypeReferenceRow
+    };
+    return graph.TemplateAggregatePatternMemberRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallSignatureRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageTemplateCallParentKind parentKind,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] parentOrdinal,
+    bool hasPublishedOrdinal,
+    u32[0 max] publishedOrdinal,
+    u32[0 max] qualifiedResolvedNameTextRow,
+    u32[0 max] returnTypeReferenceRow,
+    bool hasQualifiedSourceName,
+    u32[0 max] qualifiedSourceNameTextRow,
+    bool hasQualifiedTemplateName,
+    u32[0 max] qualifiedTemplateNameTextRow,
+    bool hasTargetType,
+    u32[0 max] targetTypeReferenceRow,
+    u32[0 max] parameterCount,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] comptimeValueArgumentCount,
+    u32[0 max] disjointParameterGroupCount,
+    u32[0 max] overlapParameterGroupCount,
+    u32[0 max] sameParameterGroupCount,
+    u32[0 max] pointeeDeadOnReturnParameterNameCount,
+    out u32[0 max] callSignatureRow)
+{
+    callSignatureRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || (!hasPublishedOrdinal && publishedOrdinal != 0)
+        || !graph.TextRows.Contains(qualifiedResolvedNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(returnTypeReferenceRow)
+        || (hasQualifiedSourceName && !graph.TextRows.Contains(qualifiedSourceNameTextRow))
+        || (!hasQualifiedSourceName && qualifiedSourceNameTextRow != 0)
+        || (hasQualifiedTemplateName && !graph.TextRows.Contains(qualifiedTemplateNameTextRow))
+        || (!hasQualifiedTemplateName && qualifiedTemplateNameTextRow != 0)
+        || (hasTargetType && !graph.TypeReferences.ContainsTypeReference(targetTypeReferenceRow))
+        || (!hasTargetType && targetTypeReferenceRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallSignatureRow row =
+        new LogicalPackageTemplateCallSignatureRow()
+    {
+        ParentKindValue = parentKind,
+        FunctionTemplateRowValue = functionTemplateRow,
+        ParentOrdinalValue = parentOrdinal,
+        PublishedOrdinalValue = publishedOrdinal,
+        QualifiedResolvedNameTextRowValue = qualifiedResolvedNameTextRow,
+        ReturnTypeReferenceRowValue = returnTypeReferenceRow,
+        QualifiedSourceNameTextRowValue = qualifiedSourceNameTextRow,
+        QualifiedTemplateNameTextRowValue = qualifiedTemplateNameTextRow,
+        TargetTypeReferenceRowValue = targetTypeReferenceRow,
+        ParameterCountValue = parameterCount,
+        TypeArgumentCountValue = typeArgumentCount,
+        ComptimeValueArgumentCountValue = comptimeValueArgumentCount,
+        DisjointParameterGroupCountValue = disjointParameterGroupCount,
+        OverlapParameterGroupCountValue = overlapParameterGroupCount,
+        SameParameterGroupCountValue = sameParameterGroupCount,
+        PointeeDeadOnReturnParameterNameCountValue = pointeeDeadOnReturnParameterNameCount,
+        HasPublishedOrdinalValue = hasPublishedOrdinal,
+        HasQualifiedSourceNameValue = hasQualifiedSourceName,
+        HasQualifiedTemplateNameValue = hasQualifiedTemplateName,
+        HasTargetTypeValue = hasTargetType
+    };
+    callSignatureRow = graph.TemplateCallSignatureRows.Add(row);
+    return callSignatureRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] callSignatureRow,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeReferenceRow,
+    bool isDisjoint,
+    bool isConst,
+    bool hasRawPointerElementCountExpression,
+    u32[0 max] rawPointerElementCountExpressionTextRow)
+{
+    if (!graph.TemplateCallSignatureRows.Contains(callSignatureRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || (hasRawPointerElementCountExpression
+            && !graph.TextRows.Contains(rawPointerElementCountExpressionTextRow))
+        || (!hasRawPointerElementCountExpression && rawPointerElementCountExpressionTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallParameterRow row =
+        new LogicalPackageTemplateCallParameterRow()
+    {
+        CallSignatureRowValue = callSignatureRow,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        RawPointerElementCountExpressionTextRowValue = rawPointerElementCountExpressionTextRow,
+        IsDisjointValue = isDisjoint,
+        IsConstValue = isConst,
+        HasRawPointerElementCountExpressionValue = hasRawPointerElementCountExpression
+    };
+    return graph.TemplateCallParameterRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallTypeArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] callSignatureRow,
+    u32[0 max] typeArgumentOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TemplateCallSignatureRows.Contains(callSignatureRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallTypeArgumentRow row =
+        new LogicalPackageTemplateCallTypeArgumentRow()
+    {
+        CallSignatureRowValue = callSignatureRow,
+        TypeArgumentOrdinalValue = typeArgumentOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.TemplateCallTypeArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallComptimeValueArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] callSignatureRow,
+    u32[0 max] argumentOrdinal,
+    u32[0 max] parameterNameTextRow,
+    u32[0 max] integerValueTextRow,
+    u32[0 max] typeReferenceRow,
+    bool isSymbolic,
+    bool hasSymbolicSourceName,
+    u32[0 max] symbolicSourceNameTextRow)
+{
+    if (!graph.TemplateCallSignatureRows.Contains(callSignatureRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || !graph.TextRows.Contains(integerValueTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || (hasSymbolicSourceName && !graph.TextRows.Contains(symbolicSourceNameTextRow))
+        || (!hasSymbolicSourceName && symbolicSourceNameTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallComptimeValueArgumentRow row =
+        new LogicalPackageTemplateCallComptimeValueArgumentRow()
+    {
+        CallSignatureRowValue = callSignatureRow,
+        ArgumentOrdinalValue = argumentOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        IntegerValueTextRowValue = integerValueTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        SymbolicSourceNameTextRowValue = symbolicSourceNameTextRow,
+        IsSymbolicValue = isSymbolic,
+        HasSymbolicSourceNameValue = hasSymbolicSourceName
+    };
+    return graph.TemplateCallComptimeValueArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterGroupRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] callSignatureRow,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] groupOrdinal,
+    u32[0 max] parameterNameCount,
+    u32[0 max] regionCount,
+    out u32[0 max] groupRow)
+{
+    groupRow = 0;
+    if (!graph.TemplateCallSignatureRows.Contains(callSignatureRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallParameterGroupRow row =
+        new LogicalPackageTemplateCallParameterGroupRow()
+    {
+        CallSignatureRowValue = callSignatureRow,
+        GroupKindValue = groupKind,
+        GroupOrdinalValue = groupOrdinal,
+        ParameterNameCountValue = parameterNameCount,
+        RegionCountValue = regionCount
+    };
+    groupRow = graph.TemplateCallParameterGroupRows.Add(row);
+    return groupRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterGroupNameRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] parameterGroupRow,
+    u32[0 max] nameOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TemplateCallParameterGroupRows.Contains(parameterGroupRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallParameterGroupNameRow row =
+        new LogicalPackageTemplateCallParameterGroupNameRow()
+    {
+        ParameterGroupRowValue = parameterGroupRow,
+        NameOrdinalValue = nameOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.TemplateCallParameterGroupNameRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterGroupRegionRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] parameterGroupRow,
+    u32[0 max] regionOrdinal,
+    u32[0 max] parameterNameTextRow,
+    bool hasStartExpression,
+    u32[0 max] startExpressionTextRow,
+    bool hasCountExpression,
+    u32[0 max] countExpressionTextRow)
+{
+    if (!graph.TemplateCallParameterGroupRows.Contains(parameterGroupRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || (hasStartExpression && !graph.TextRows.Contains(startExpressionTextRow))
+        || (!hasStartExpression && startExpressionTextRow != 0)
+        || (hasCountExpression && !graph.TextRows.Contains(countExpressionTextRow))
+        || (!hasCountExpression && countExpressionTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallParameterGroupRegionRow row =
+        new LogicalPackageTemplateCallParameterGroupRegionRow()
+    {
+        ParameterGroupRowValue = parameterGroupRow,
+        RegionOrdinalValue = regionOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        StartExpressionTextRowValue = startExpressionTextRow,
+        CountExpressionTextRowValue = countExpressionTextRow,
+        HasStartExpressionValue = hasStartExpression,
+        HasCountExpressionValue = hasCountExpression
+    };
+    return graph.TemplateCallParameterGroupRegionRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateCallDeadOnReturnParameterNameRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] callSignatureRow,
+    u32[0 max] nameOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TemplateCallSignatureRows.Contains(callSignatureRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateCallDeadOnReturnParameterNameRow row =
+        new LogicalPackageTemplateCallDeadOnReturnParameterNameRow()
+    {
+        CallSignatureRowValue = callSignatureRow,
+        NameOrdinalValue = nameOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.TemplateCallDeadOnReturnParameterNameRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] operationOrdinal,
+    u32[0 max] kindTextRow,
+    u32[0 max] line,
+    u32[0 max] column,
+    u32[0 max] resultTypeReferenceRow,
+    bool hasPublishedOrdinal,
+    u32[0 max] publishedOrdinal,
+    bool hasEnclosingFunctionName,
+    u32[0 max] enclosingFunctionNameTextRow,
+    u32[0 max] callArgumentCount,
+    out u32[0 max] boundOperationRow)
+{
+    boundOperationRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(resultTypeReferenceRow)
+        || (!hasPublishedOrdinal && publishedOrdinal != 0)
+        || (hasEnclosingFunctionName && !graph.TextRows.Contains(enclosingFunctionNameTextRow))
+        || (!hasEnclosingFunctionName && enclosingFunctionNameTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateBoundOperationRow row =
+        new LogicalPackageTemplateBoundOperationRow()
+    {
+        FunctionTemplateRowValue = functionTemplateRow,
+        OperationOrdinalValue = operationOrdinal,
+        KindTextRowValue = kindTextRow,
+        LineValue = line,
+        ColumnValue = column,
+        ResultTypeReferenceRowValue = resultTypeReferenceRow,
+        PublishedOrdinalValue = publishedOrdinal,
+        EnclosingFunctionNameTextRowValue = enclosingFunctionNameTextRow,
+        CallArgumentCountValue = callArgumentCount,
+        HasPublishedOrdinalValue = hasPublishedOrdinal,
+        HasEnclosingFunctionNameValue = hasEnclosingFunctionName
+    };
+    boundOperationRow = graph.TemplateBoundOperationRows.Add(row);
+    return boundOperationRow != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphSetTemplateBoundOperationCallSignature(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] boundOperationRow,
+    u32[0 max] callSignatureRow)
+{
+    if (!graph.TemplateBoundOperationRows.Contains(boundOperationRow)
+        || !graph.TemplateCallSignatureRows.Contains(callSignatureRow))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTemplateBoundOperationRow row =
+        graph.TemplateBoundOperationRows.Get(boundOperationRow);
+    row.CallSignatureRowValue = callSignatureRow;
+    row.HasCallSignatureValue = true;
+    return graph.TemplateBoundOperationRows.Replace(boundOperationRow, row);
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationCallArgumentRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] boundOperationRow,
+    u32[0 max] argumentOrdinal,
+    u32[0 max] parameterIndex,
+    u32[0 max] sourceArgumentIndex,
+    u32[0 max] parameterTypeReferenceRow,
+    u32[0 max] argumentTypeReferenceRow,
+    bool isReceiver,
+    bool requiresAddressable,
+    bool requiresMutable,
+    bool requiresConstProvenance,
+    bool argumentIsAddressable,
+    bool argumentIsMutable,
+    bool argumentHasConstProvenance)
+{
+    if (!graph.TemplateBoundOperationRows.Contains(boundOperationRow)
+        || !graph.TypeReferences.ContainsTypeReference(parameterTypeReferenceRow)
+        || !graph.TypeReferences.ContainsTypeReference(argumentTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateBoundOperationCallArgumentRow row =
+        new LogicalPackageTemplateBoundOperationCallArgumentRow()
+    {
+        BoundOperationRowValue = boundOperationRow,
+        ArgumentOrdinalValue = argumentOrdinal,
+        ParameterIndexValue = parameterIndex,
+        SourceArgumentIndexValue = sourceArgumentIndex,
+        ParameterTypeReferenceRowValue = parameterTypeReferenceRow,
+        ArgumentTypeReferenceRowValue = argumentTypeReferenceRow,
+        IsReceiverValue = isReceiver,
+        RequiresAddressableValue = requiresAddressable,
+        RequiresMutableValue = requiresMutable,
+        RequiresConstProvenanceValue = requiresConstProvenance,
+        ArgumentIsAddressableValue = argumentIsAddressable,
+        ArgumentIsMutableValue = argumentIsMutable,
+        ArgumentHasConstProvenanceValue = argumentHasConstProvenance
+    };
+    return graph.TemplateBoundOperationCallArgumentRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationTypePayloadRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationTypePayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TemplateBoundOperationRows.Contains(boundOperationRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateBoundOperationTypePayloadRow row =
+        new LogicalPackageTemplateBoundOperationTypePayloadRow()
+    {
+        BoundOperationRowValue = boundOperationRow,
+        PayloadKindValue = payloadKind,
+        PayloadOrdinalValue = payloadOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.TemplateBoundOperationTypePayloadRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationTextPayloadRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] boundOperationRow,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] textRow)
+{
+    if (!graph.TemplateBoundOperationRows.Contains(boundOperationRow)
+        || !graph.TextRows.Contains(textRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateBoundOperationTextPayloadRow row =
+        new LogicalPackageTemplateBoundOperationTextPayloadRow()
+    {
+        BoundOperationRowValue = boundOperationRow,
+        PayloadOrdinalValue = payloadOrdinal,
+        TextRowValue = textRow
+    };
+    return graph.TemplateBoundOperationTextPayloadRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationU32PayloadRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationU32PayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] value)
+{
+    if (!graph.TemplateBoundOperationRows.Contains(boundOperationRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateBoundOperationU32PayloadRow row =
+        new LogicalPackageTemplateBoundOperationU32PayloadRow()
+    {
+        BoundOperationRowValue = boundOperationRow,
+        PayloadKindValue = payloadKind,
+        PayloadOrdinalValue = payloadOrdinal,
+        ValueValue = value
+    };
+    return graph.TemplateBoundOperationU32PayloadRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationBoolPayloadRow(
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationBoolPayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    bool value)
+{
+    if (!graph.TemplateBoundOperationRows.Contains(boundOperationRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTemplateBoundOperationBoolPayloadRow row =
+        new LogicalPackageTemplateBoundOperationBoolPayloadRow()
+    {
+        BoundOperationRowValue = boundOperationRow,
+        PayloadKindValue = payloadKind,
+        PayloadOrdinalValue = payloadOrdinal,
+        ValueValue = value
+    };
+    return graph.TemplateBoundOperationBoolPayloadRows.Add(row) != 0;
+}
+
+public fn MemoryStatus AppendLogicalPackageGenericTemplateFactText(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    LogicalPackageGenericTemplateFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}

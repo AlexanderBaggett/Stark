@@ -8,6 +8,12 @@ import Compiler.Typing.TypedEnumPayloadModel
 import Compiler.Typing.TypedLiterals
 import Compiler.Typing.TypedPipeline
 import Compiler.Typing.TypedSwitchPatternModel
+import ImportedTemplateInitializationTests
+import ImportedTemplateLocalConstantTests
+import ImportedTemplateOperatorTests
+import ImportedTemplateSpecializationTests
+import SourceBackendFactTests
+import SsaFoundationTests
 import System.Memory
 import System.Text
 import System.Json
@@ -17,6 +23,62 @@ import System.IO
 import System.Console
 [Collection("ir")]
 module IrTests
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaFoundationPreservesDenseArtifactsAndBackendFacts()
+{
+    return DenseMirToSsaLoweringPreservesArtifactsAndEveryValueFact();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaFoundationRejectsMissingBackendFactRowsTransactionally()
+{
+    return MirToSsaRejectsMissingValueFactRowsBeforeProducingArtifacts();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaFoundationRejectsMalformedFunctionRanges()
+{
+    return MirToSsaRejectsMalformedFunctionRanges();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaFoundationPreservesBodylessDeclarations()
+{
+    return MirToSsaPreservesBodylessDeclarationRows();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaValidationRejectsTypedBinaryMismatchTransactionally()
+{
+    return MirToSsaReportsTypedBinaryMismatchBeforePublishingOutputs();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaValidationRejectsUnshapedMultiBlockFunctionsTransactionally()
+{
+    return MirToSsaReportsMissingBlockInstructionRangesBeforePublishingOutputs();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaValidationRejectsInvalidBackendFactsAndBranchConditions()
+{
+    return MirToSsaRejectsInvalidBackendFactsAndConditionTypes();
+}
+
+[Collection("ssa")]
+[Fact]
+fn bool MirToSsaValidationPreservesZeroInstructionReturnVoidBodies()
+{
+    return MirToSsaPreservesZeroInstructionReturnVoidBody();
+}
 
 [Fact]
 fn bool TypedHandleRoundTripsIndex()
@@ -20379,6 +20441,48 @@ fn bool ImportedTypedTemplateScalarPreambleStatementsFoldWithoutRuntimeWork()
 }
 
 [Fact]
+fn bool ImportedTypedTemplateIntegerOperatorsFoldWithoutRuntimeWork()
+{
+    return ImportedTemplateIntegerOperatorsFoldDirectlyWithExactLlvmFacts();
+}
+
+[Fact]
+fn bool ImportedTypedTemplateLocalConstantsFoldWithoutRuntimeWork()
+{
+    return ImportedTemplateLocalConstantsFoldDirectlyWithExactLlvmFacts();
+}
+
+[Fact]
+fn bool ImportedTypedTemplateScalarVariablesFoldWithoutRuntimeWork()
+{
+    return ImportedTemplateScalarVariablesFoldDirectlyWithExactLlvmFacts();
+}
+
+[Fact]
+fn bool ImportedTypedTemplateScalarInitializationFoldsWithoutRuntimeWork()
+{
+    return ImportedTemplateScalarInitializationFoldsDirectlyWithExactLlvmFacts();
+}
+
+[Fact]
+fn bool ImportedTypedTemplateScalarSpecializationsPreserveBackendFacts()
+{
+    return ImportedTemplateScalarSpecializationsPreserveBackendFactsToLlvm();
+}
+
+[Fact]
+fn bool SourceFunctionBackendFactsReachDefinitionsAndCalls()
+{
+    return SourceFunctionsPreserveBackendFactsToLlvm();
+}
+
+[Fact]
+fn bool TypedSourceFunctionBackendDefaultsReachDefinitionsAndCalls()
+{
+    return TypedSourceFunctionBackendDefaultsReachLlvm();
+}
+
+[Fact]
 fn bool LogicalPackageImageMaterializesTypedGlobalFactGraphRows()
 {
     stack ascii manifestJson = raw"""
@@ -35376,6 +35480,22 @@ fn bool CompileStructAggregateSwitchValueParamCaptureGuardReturnUsesDirectFieldE
         && !System.Text.Contains(sink.View(), "load i64")
         && !System.Text.Contains(sink.View(), "switch %")
         && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool SemanticRedeclarationScopesSwitchPatternCapturesPerAlternative()
+{
+    return ProgramDeclarationsUnique("fn main(values) { switch (values) { case [var value, _] | [_, var value]: return value; default: return 0; } }")
+        && ProgramDeclarationsUnique("fn main(values) { switch (values) { case [var value, _]: return value; case [_, var value]: return value; default: return 0; } }")
+        && !ProgramDeclarationsUnique("fn main(values) { switch (values) { case [var value, var value]: return value; default: return 0; } }")
+        && !ProgramDeclarationsUnique("fn main(value) { var value = 1; return value; }")
+        && !ProgramDeclarationsUnique("fn main(i64[min max] value) { var value = 1; return value; }")
+        && !ProgramDeclarationsUnique("fn main(i64[min max] value, i64[min max] value) { return value; }")
+        && ProgramNamesResolve("fn i64[min max] main() { stack i64[min max] value = 1; return value; }")
+        && !ProgramNamesResolve("struct Box { i64[min max] value; } fn i64[min max] main() { return value; }")
+        && ProgramSemanticallyValid("struct Box { i64[0 20] left; i64[0 20] right; bool flag; } fn i64[min max] classify(Box box) { switch (box) { case Box { left: var value, right: _, flag: true } | Box { left: _, right: var value, flag: false }: return value + 1; default: return 30; } }")
+        && ProgramSemanticallyValid("fn i64[min max] classify(i64[min max][3] values) { switch (values) { case [var value, 1, _] | [_, 2, var value]: return value + 1; default: return 30; } } fn i64[min max] main() { stack i64[min max][3] values = { 5, 1, 9 }; return classify(values); }")
+        && ProgramSemanticallyValid("struct Box { i64[0 20] left; i64[0 20] right; } fn i64[min max] classify(Box box) { switch (box) { case Box { left: var value, right: 1 }: return value; case Box { left: 2, right: var value }: return value; default: return 30; } }");
 }
 
 [Fact]

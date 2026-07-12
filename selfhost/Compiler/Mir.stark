@@ -31,6 +31,7 @@ import System.Memory
 import System.Text
 export import Compiler.Mir.Model
 export import Compiler.Mir.Builder
+export import Compiler.Mir.Validation
 export import Compiler.Mir.AssemblyMetadata
 export import Compiler.Mir.LlvmText
 export import Compiler.Mir.LlvmFacts
@@ -44,6 +45,7 @@ export import Compiler.Mir.TextRendering
 export import Compiler.Mir.PackageCodec
 export import Compiler.Mir.PackageImage
 export import Compiler.Mir.ImportedTemplateLowering
+export import Compiler.Mir.ImportedTemplateSpecialization
 export import Compiler.Mir.Facts
 export import Compiler.Mir.SourceRangeFacts
 export import Compiler.Mir.SourceSemanticProbes
@@ -53,10 +55,36 @@ export import Compiler.Mir.SourceMemberFacts
 export import Compiler.Mir.SourceModuleFacts
 export import Compiler.Mir.SourceExpressionLowering
 export import Compiler.Mir.SourceLocalLowering
+export import Compiler.Mir.SourceLocalStorageLayout
+export import Compiler.Mir.SourceTryPropagation
+export import Compiler.Mir.SourceLocalExpressionParsing
+export import Compiler.Mir.SourceLocalInitialization
+export import Compiler.Mir.SourceLocalMutation
+export import Compiler.Mir.SourceLocalArena
 export import Compiler.Mir.SourceFunctionContext
+export import Compiler.Mir.SourceFunctionEffects
+export import Compiler.Mir.SourceIfCore
+export import Compiler.Mir.SourceIfShapes
+export import Compiler.Mir.SourceIfParsing
+export import Compiler.Mir.SourceIfStorageMutation
+export import Compiler.Mir.SourceIfAssignmentLowering
+export import Compiler.Mir.SourceIfFunctionLowering
+export import Compiler.Mir.SourceIfReturnLowering
 export import Compiler.Mir.SourceIfLowering
+export import Compiler.Mir.SourceSwitchPatterns
+export import Compiler.Mir.SourceSwitchPatternConditions
+export import Compiler.Mir.SourceSwitchAggregatePatterns
+export import Compiler.Mir.SourceSwitchStoragePatterns
+export import Compiler.Mir.SourceSwitchCaseParsing
+export import Compiler.Mir.SourceSwitchAssignmentArms
+export import Compiler.Mir.SourceSwitchTerminalParsing
+export import Compiler.Mir.SourceSwitchTerminalLowering
+export import Compiler.Mir.SourceSwitchAssignmentParsing
+export import Compiler.Mir.SourceSwitchAssignmentLowering
+export import Compiler.Mir.SourceSwitchFunctionLowering
 export import Compiler.Mir.SourceSwitchLowering
 export import Compiler.Mir.SourceLoopLowering
+export import Compiler.Mir.SourceTryLowering
 export import Compiler.Mir.SourceModuleLowering
 export import Compiler.Mir.TestSupport
 module Compiler.Mir
@@ -71,147 +99,6 @@ module Compiler.Mir
 // boundary, independent of the emitter — the kind of invariant a real compiler asserts
 // between passes. (Operand 0 is the "unused" sentinel and is allowed; a phi's forward
 // back-edge reference is in-range by construction, so the bound is the value table size.)
-internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow MirFunction func)
-{
-    stack u32[0 max] instrTotal = (u32[0 max])instrs.Count();
-    stack u32[0 max] blockTotal = (u32[0 max])blocks.Count();
-
-    // (1) The block range lies within the block table.
-    if (func.OwnedBlockCount() == 0 || func.FirstBlockIndex() == 0 || func.FirstBlockIndex() + func.OwnedBlockCount() - 1 > blockTotal)
-    {
-        return false;
-    }
-
-    // (2) The entry block is one the function owns.
-    if (func.EntryIndex() < func.FirstBlockIndex() || func.EntryIndex() > func.FirstBlockIndex() + func.OwnedBlockCount() - 1)
-    {
-        return false;
-    }
-
-    // (3) The instruction range lies within the value table (a function may own none).
-    if (func.OwnedInstrCount() > 0 && (func.FirstInstrIndex() == 0 || func.FirstInstrIndex() + func.OwnedInstrCount() - 1 > instrTotal))
-    {
-        return false;
-    }
-
-    // (4) Every owned instruction names existing values (operand 0 = unused is fine).
-    stack mut u32[0 max] vi = func.FirstInstrIndex();
-    stack mut u32[0 max] viRemaining = func.OwnedInstrCount();
-    while willexit (viRemaining > 0)
-    {
-        stack MirInstruction instr = instrs.Get(vi);
-        if (instr.Opcode() == MirOp.TextConstantValue)
-        {
-            // Text constant fields name constant-storage rows and payload facts,
-            // not MIR value operands.
-        }
-        else if (instr.Opcode() == MirOp.ArenaAlloc || instr.Opcode() == MirOp.StackAlloc || instr.Opcode() == MirOp.HeapAlloc)
-        {
-            if (instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
-            {
-                return false;
-            }
-        }
-        else if (instr.Opcode() == MirOp.PtrIndexOffset)
-        {
-            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandBIndex() == 0 || instr.OperandBIndex() > instrTotal)
-            {
-                return false;
-            }
-        }
-        else if (instr.Opcode() == MirOp.PtrOffset || instr.Opcode() == MirOp.LoadPtr)
-        {
-            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
-            {
-                return false;
-            }
-        }
-        else if (instr.Opcode() == MirOp.StorePtr)
-        {
-            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandBIndex() == 0 || instr.OperandBIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
-            {
-                return false;
-            }
-        }
-        else if (instr.Opcode() == MirOp.ArenaDynamicStorageInit)
-        {
-            if (instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
-            {
-                return false;
-            }
-        }
-        else if (instr.Opcode() == MirOp.ArenaDynamicStorageReserve
-            || instr.Opcode() == MirOp.ArenaDynamicStorageTryReserve
-            || instr.Opcode() == MirOp.ArenaDynamicStorageTryReserveCapacity)
-        {
-            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
-            {
-                return false;
-            }
-        }
-        else if (instr.OperandAIndex() > instrTotal || instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
-        {
-            return false;
-        }
-
-        vi = vi + 1;
-        viRemaining = viRemaining - 1;
-    }
-
-    // (5) Every owned block is terminated and names in-range values/blocks.
-    stack mut u32[0 max] bi = func.FirstBlockIndex();
-    stack mut u32[0 max] biRemaining = func.OwnedBlockCount();
-    while willexit (biRemaining > 0)
-    {
-        stack MirBlock blk = blocks.Get(bi);
-        if (!MirBlockFlagsAreValid(blk.Terminator(), blk.FlagBits()))
-        {
-            return false;
-        }
-
-        switch (blk.Terminator())
-        {
-            case MirTermKind.Unterminated:
-                return false;
-            case MirTermKind.Return:
-                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal)
-                {
-                    return false;
-                }
-            case MirTermKind.ReturnVoid:
-                if (blk.Slot0Index() != 0 || blk.Slot1Index() != 0 || blk.Slot2Index() != 0)
-                {
-                    return false;
-                }
-            case MirTermKind.Branch:
-                if (blk.Slot0Index() == 0 || blk.Slot0Index() > blockTotal)
-                {
-                    return false;
-                }
-            case MirTermKind.CondBranch:
-                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal || blk.Slot1Index() == 0 || blk.Slot1Index() > blockTotal || blk.Slot2Index() == 0 || blk.Slot2Index() > blockTotal)
-                {
-                    return false;
-                }
-            case MirTermKind.TailCall:
-                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal)
-                {
-                    return false;
-                }
-
-                stack MirInstruction payload = instrs.Get(blk.Slot0Index());
-                if (!MirOpIsTailCall(payload.Opcode()))
-                {
-                    return false;
-                }
-        }
-
-        bi = bi + 1;
-        biRemaining = biRemaining - 1;
-    }
-
-    return true;
-}
 
 // Verify-then-emit: a phase-boundary gate that runs `MirFunctionWellFormed` over EVERY
 // function in the module and emits the LLVM ONLY if all are structurally well-formed. A

@@ -1,0 +1,471 @@
+import Compiler.Ir
+import Compiler.Mir
+import System.Memory
+import System.Text
+module ImportedTemplateOperatorTests
+
+public fn bool ImportedTemplateIntegerOperatorsFoldDirectlyWithExactLlvmFacts()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.IntegerOperators#0",
+                      "QualifiedName": "Demo.IntegerOperators",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 9,
+                      "Conversions": [
+                        {
+                          "Ordinal": 0,
+                          "TargetType": { "Kind": "integer", "BitWidth": 8 }
+                        }
+                      ],
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+|",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "90",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "100"
+                                  }
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "20",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "RangeMin": "0",
+                                    "RangeMax": "100"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "<<",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "IsUnsigned": true,
+                                "RangeMin": "60",
+                                "RangeMax": "60"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "15",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "IsUnsigned": true,
+                                    "RangeMin": "0",
+                                    "RangeMax": "100"
+                                  }
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "2",
+                                  "Type": {
+                                    "Kind": "integer",
+                                    "BitWidth": 16,
+                                    "IsUnsigned": true,
+                                    "RangeMin": "0",
+                                    "RangeMax": "100"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "+%",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 8,
+                                "RangeMin": "-116",
+                                "RangeMax": "-116"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "120",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "20",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "*%",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 8,
+                                "RangeMin": "-112",
+                                "RangeMax": "-112"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "20",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "20",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "unary",
+                              "Name": "-%",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 8,
+                                "RangeMin": "-128",
+                                "RangeMax": "-128"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "conversion",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "128",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "|",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "14",
+                                "RangeMax": "14"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "binary",
+                                  "Name": "&",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "12",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    },
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "10",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "Kind": "binary",
+                                  "Name": "^",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "5",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    },
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "3",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": ">>",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "12",
+                                "RangeMax": "12"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "binary",
+                                  "Name": "<<",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "3",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    },
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "4",
+                                      "Type": { "Kind": "integer", "BitWidth": 16 }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "2",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "expression",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "**",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "81",
+                                "RangeMax": "81"
+                              },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "3",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 }
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "4",
+                                  "Type": { "Kind": "integer", "BitWidth": 16 }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "*|",
+                              "Type": { "Kind": "integer", "BitWidth": 8 },
+                              "Arguments": [
+                                {
+                                  "Kind": "unary",
+                                  "Name": "-",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 },
+                                  "Arguments": [
+                                    {
+                                      "Kind": "literal",
+                                      "LiteralText": "100",
+                                      "Type": { "Kind": "integer", "BitWidth": 8 }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "2",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.InvalidShift#0",
+                      "QualifiedName": "Demo.InvalidShift",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "binary",
+                              "Name": "<<",
+                              "Type": { "Kind": "integer", "BitWidth": 8 },
+                              "Arguments": [
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "1",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                },
+                                {
+                                  "Kind": "literal",
+                                  "LiteralText": "8",
+                                  "Type": { "Kind": "integer", "BitWidth": 8 }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph graph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+                manifestJson,
+                0,
+                graph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts expectedReturnFacts = new();
+    expectedReturnFacts.SetIntegerRange(-128, 128);
+    stack mut MirFuncId function = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            1,
+            MirType.I8,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            function) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut ValueFacts invalidExpectedFacts = new();
+    invalidExpectedFacts.SetIntegerRange(-128, 128);
+    stack mut MirFuncId invalidFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarReturnToMir(
+            graph,
+            2,
+            MirType.I8,
+            false,
+            invalidExpectedFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            invalidFunction) != ImportedTemplateMirLoweringStatus.UnsupportedBody
+        || invalidFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    stack MirInstruction literal = instructions.Get(1);
+    stack ValueFacts literalFacts = ValueFactsForMirValue(
+        valueFacts,
+        MirValueIdOf(1));
+    stack ValueFacts returnFacts = ValueFactsAtIndex(
+        functionReturnFacts,
+        function.Index());
+    stack MirFunction lowered = functions.Get(function.Index());
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut OwnedAscii llvm = new();
+    if (EmitLlvmDefinitionWithRangeFacts(
+            instructions,
+            blocks,
+            "imported_integer_operators",
+            returnFacts,
+            noParameterFacts,
+            valueFacts,
+            noGlobalFacts,
+            functionReturnFacts,
+            0,
+            lowered.EntryIndex(),
+            lowered.FirstInstrIndex(),
+            lowered.OwnedInstrCount(),
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return function.Index() == 1
+        && instructions.Count() == 1
+        && blocks.Count() == 1
+        && functions.Count() == 1
+        && literal.Opcode() == MirOp.ConstInt
+        && literal.ResultType() == MirType.I8
+        && literal.Immediate() == -128
+        && literalFacts.HasIntegerRange()
+        && literalFacts.IntegerRangeLower() == -128
+        && literalFacts.IntegerRangeUpperExclusive() == -127
+        && returnFacts.HasIntegerRange()
+        && returnFacts.IntegerRangeLower() == -128
+        && returnFacts.IntegerRangeUpperExclusive() == -127
+        && System.Text.OwnedAsciiEqualsAscii(
+            llvm,
+            "define range(i8 -128, -127) i8 @imported_integer_operators() {\nb1:\n  %v1 = add i8 0, -128\n  ret i8 %v1\n}\n");
+}

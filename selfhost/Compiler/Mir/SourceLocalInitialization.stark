@@ -1,0 +1,959 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedTypeResolution
+import System.Text
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceTryPropagation
+import Compiler.Mir.SourceLocalExpressionParsing
+module Compiler.Mir.SourceLocalInitialization
+
+internal fn bool TryParseStackObjectFieldInitializers(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u32[0 max] bodyOpen,
+    u32[0 max] bodyClose,
+    u32[0 max] localOrdinal,
+    u32[0 max] paramIndex,
+    MirValueId objectPointer,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<StackObjectFieldInitializer> initializers)
+    where overlap_all(sourceValueFacts)
+{
+    if (bodyOpen == 0)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])bodyOpen + 1;
+    stack u64[0 2 ** 63 - 1] close = (u64[0 2 ** 63 - 1])bodyClose;
+    while willexit (cursor < close)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Comma)
+        {
+            cursor = cursor + 1;
+            continue;
+        }
+
+        if (stream.KindAt(cursor) != TokenKind.Identifier || stream.KindAt(cursor + 1) != TokenKind.Assign)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] valueStart = cursor + 2;
+        stack u64[0 2 ** 63 - 1] valueEnd = FindObjectInitializerEntryEnd(stream, valueStart, close);
+        if (valueStart >= valueEnd)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut MirType fieldType = MirType.I64;
+        stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryFindStructFieldLayout(stream, source, moduleFacts, typeToken, (u32[0 max])cursor, fieldOffset, fieldAlignment, fieldType, fieldTypeCode))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+        stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, moduleFacts, valueStart);
+        if (params.Count() != beforeExpr || expr.NodeId == 0 || expr.Next != valueEnd)
+        {
+            return false;
+        }
+
+        if (!FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, expr.NodeId, localTypes))
+        {
+            return false;
+        }
+
+        stack mut StackObjectFieldInitializer initializer = new();
+        initializer.LocalOrdinal = localOrdinal;
+        initializer.ParamIndex = paramIndex;
+        initializer.ObjectPointerValue = objectPointer.Index();
+        initializer.FieldOffset = fieldOffset;
+        initializer.FieldAlignment = fieldAlignment;
+        initializer.FieldType = fieldType;
+        initializer.FieldTypeCode = fieldTypeCode;
+        initializer.ExprRoot = expr.NodeId;
+        stack u32[0 max] added = initializers.Add(initializer);
+        if (added == 0)
+        {
+            return false;
+        }
+
+        cursor = valueEnd;
+    }
+
+    return true;
+}
+
+internal fn bool TryFindSelfHostedDefaultConstructorBody(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] typeToken,
+    out u32[0 max] constructorBodyOpen,
+    out u32[0 max] constructorBodyClose)
+{
+    constructorBodyOpen = 0;
+    constructorBodyClose = 0;
+    if (typeToken == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (TokenKindIsSelfHostedAggregateDeclaration(stream.KindAt(scan))
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack i64[min max] bodyOpenSigned = FirstTokenOfKindAfter(stream, TokenKind.LBrace, scan + 1);
+            if (bodyOpenSigned < 0)
+            {
+                return false;
+            }
+
+            stack u32[0 max] bodyOpen = (u32[0 max])bodyOpenSigned;
+            stack u32[0 max] bodyClose = MatchingBraceForMirLowering(stream, bodyOpen);
+            if (bodyClose == bodyOpen)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])bodyOpen + 1;
+            stack u64[0 2 ** 63 - 1] close = (u64[0 2 ** 63 - 1])bodyClose;
+            while willexit (cursor < close)
+            {
+                if (stream.KindAt(cursor) == TokenKind.Identifier
+                    && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])cursor, typeToken)
+                    && stream.KindAt(cursor + 1) == TokenKind.LParen)
+                {
+                    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])(cursor + 1));
+                    if (closeParen == (u32[0 max])(cursor + 2)
+                        && stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) == TokenKind.LBrace)
+                    {
+                        stack u32[0 max] candidateOpen = closeParen + 1;
+                        stack u32[0 max] candidateClose = MatchingBraceForMirLowering(stream, candidateOpen);
+                        if (candidateClose == candidateOpen)
+                        {
+                            return false;
+                        }
+
+                        constructorBodyOpen = candidateOpen;
+                        constructorBodyClose = candidateClose;
+                        return true;
+                    }
+                }
+
+                if (stream.KindAt(cursor) == TokenKind.LBrace)
+                {
+                    stack u32[0 max] nestedClose = MatchingBraceForMirLowering(stream, (u32[0 max])cursor);
+                    if (nestedClose == (u32[0 max])cursor)
+                    {
+                        return false;
+                    }
+
+                    cursor = (u64[0 2 ** 63 - 1])nestedClose + 1;
+                    continue;
+                }
+
+                cursor = cursor + 1;
+            }
+
+            return false;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseStackObjectDefaultConstructorInitializers(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u32[0 max] localOrdinal,
+    u32[0 max] paramIndex,
+    MirValueId objectPointer,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<StackObjectFieldInitializer> initializers)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut u32[0 max] constructorBodyOpen = 0;
+    stack mut u32[0 max] constructorBodyClose = 0;
+    if (!TryFindSelfHostedDefaultConstructorBody(stream, source, typeToken, constructorBodyOpen, constructorBodyClose))
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])constructorBodyOpen + 1;
+    stack u64[0 2 ** 63 - 1] close = (u64[0 2 ** 63 - 1])constructorBodyClose;
+    while willexit (cursor < close)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Semi)
+        {
+            cursor = cursor + 1;
+            continue;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, close, statementEnd))
+        {
+            return false;
+        }
+
+        if (stream.KindAt(cursor) != TokenKind.Identifier
+            || !SpanEquals(source, stream.StartAt(cursor), stream.LengthAt(cursor), "self")
+            || stream.KindAt(cursor + 1) != TokenKind.Dot)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] nextToken = cursor;
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut u32[0 max] fieldTypeToken = 0;
+        if (!TryResolveConstructedObjectMemberChainStorageFieldFromDeclarations(
+            stream,
+            source,
+            moduleFacts,
+            typeToken,
+            cursor + 2,
+            nextToken,
+            fieldOffset,
+            fieldAlignment,
+            fieldTypeToken)
+            || stream.KindAt(nextToken) != TokenKind.Assign)
+        {
+            return false;
+        }
+
+        stack mut MirType fieldType = MirType.I64;
+        stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, fieldTypeToken, fieldType, fieldTypeCode))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+        stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            constructedObjectLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            nextToken + 1);
+        if (params.Count() != beforeExpr || expr.NodeId == 0 || expr.Next != statementEnd)
+        {
+            return false;
+        }
+
+        if (!SourceStoredValueSatisfiesDeclaredFieldTypeRange(stream, source, nodes, expr.NodeId, sourceValueFacts, fieldTypeToken)
+            || !FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, expr.NodeId, localTypes))
+        {
+            return false;
+        }
+
+        stack mut StackObjectFieldInitializer initializer = new();
+        initializer.LocalOrdinal = localOrdinal;
+        initializer.ParamIndex = paramIndex;
+        initializer.ObjectPointerValue = objectPointer.Index();
+        initializer.FieldOffset = fieldOffset;
+        initializer.FieldAlignment = fieldAlignment;
+        initializer.FieldType = fieldType;
+        initializer.FieldTypeCode = fieldTypeCode;
+        initializer.ExprRoot = expr.NodeId;
+        stack u32[0 max] added = initializers.Add(initializer);
+        if (added == 0)
+        {
+            return false;
+        }
+
+        cursor = statementEnd + 1;
+    }
+
+    return true;
+}
+
+internal fn bool TryParseStackObjectPositionalRecordConstructorInitializers(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] typeToken,
+    u32[0 max] argsOpen,
+    u32[0 max] argsClose,
+    u32[0 max] localOrdinal,
+    u32[0 max] paramIndex,
+    MirValueId objectPointer,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    mut borrow IrTable<StackObjectFieldInitializer> initializers)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut RecordHeaderFieldLayoutCursor fieldCursor = new();
+    if (!TryStartRecordHeaderFieldLayoutCursor(stream, source, typeToken, fieldCursor))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])argsOpen + 1;
+    stack u64[0 2 ** 63 - 1] close = (u64[0 2 ** 63 - 1])argsClose;
+    while willexit (cursor < close)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Comma)
+        {
+            cursor = cursor + 1;
+            continue;
+        }
+
+        stack u64[0 2 ** 63 - 1] valueEnd = FindObjectInitializerEntryEnd(stream, cursor, close);
+        if (cursor >= valueEnd)
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] fieldOffset = 0;
+        stack mut u32[0 max] fieldAlignment = 0;
+        stack mut MirType fieldType = MirType.I64;
+        stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryReadNextRecordHeaderFieldLayout(stream, source, moduleFacts, fieldCursor, fieldOffset, fieldAlignment, fieldType, fieldTypeCode))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeExpr = params.Count();
+        stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+        if (params.Count() != beforeExpr || expr.NodeId == 0 || expr.Next != valueEnd)
+        {
+            return false;
+        }
+
+        if (!FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, expr.NodeId, localTypes))
+        {
+            return false;
+        }
+
+        stack mut StackObjectFieldInitializer initializer = new();
+        initializer.LocalOrdinal = localOrdinal;
+        initializer.ParamIndex = paramIndex;
+        initializer.ObjectPointerValue = objectPointer.Index();
+        initializer.FieldOffset = fieldOffset;
+        initializer.FieldAlignment = fieldAlignment;
+        initializer.FieldType = fieldType;
+        initializer.FieldTypeCode = fieldTypeCode;
+        initializer.ExprRoot = expr.NodeId;
+        stack u32[0 max] added = initializers.Add(initializer);
+        if (added == 0)
+        {
+            return false;
+        }
+
+        cursor = valueEnd;
+    }
+
+    stack mut u32[0 max] trailingFieldOffset = 0;
+    stack mut u32[0 max] trailingFieldAlignment = 0;
+    stack mut MirType trailingFieldType = MirType.I64;
+    stack mut u32[0 max] trailingFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    return !TryReadNextRecordHeaderFieldLayout(stream, source, moduleFacts, fieldCursor, trailingFieldOffset, trailingFieldAlignment, trailingFieldType, trailingFieldTypeCode);
+}
+
+internal fn u32[0 max] LowerStackObjectFieldInitializersForLocalWithCallContext(
+    borrow IrTable<StackObjectFieldInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    stack mut u32[0 max] cursor = nextInitializer;
+    while willexit (initializers.Contains(cursor))
+    {
+        stack StackObjectFieldInitializer initializer = initializers.Get(cursor);
+        if (initializer.LocalOrdinal != localOrdinal)
+        {
+            return cursor;
+        }
+
+        stack mut u32[0 max] objectPointerValue = initializer.ObjectPointerValue;
+        if (objectPointerValue == 0)
+        {
+            if (!localOverrides.Contains(initializer.ParamIndex + 1))
+            {
+                return cursor;
+            }
+
+            objectPointerValue = localOverrides.Get(initializer.ParamIndex + 1);
+        }
+
+        if (objectPointerValue == 0)
+        {
+            return cursor;
+        }
+
+        stack MirValueId basePointer = MirValueIdOf(objectPointerValue);
+        stack MirValueId fieldPointer = MirPtrOffset(instrs, basePointer, initializer.FieldOffset, initializer.FieldAlignment);
+        if (SourceResolvedFieldTypeCodeIsEnum(initializer.FieldTypeCode))
+        {
+            stack u32[0 max] ownerTypeIndex = SourceResolvedFieldTypeCodeEnumOwnerDeclarationIndex(initializer.FieldTypeCode) + 1;
+            stack MirValueId value = LowerExprNodeWithCallContext(nodes, initializer.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals);
+            stack MirValueId store = MirStoreEnumPtrAligned(instrs, TypeIdOf(ownerTypeIndex), fieldPointer, value, initializer.FieldAlignment);
+        }
+        else
+        {
+            stack MirValueId value = LowerExprNodeAsTypeWithCallContext(nodes, initializer.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, initializer.FieldType);
+            stack MirValueId store = MirStorePtrAlignedTyped(instrs, initializer.FieldType, fieldPointer, value, initializer.FieldAlignment);
+        }
+
+        cursor = cursor + 1;
+    }
+
+    return cursor;
+}
+
+internal fn u32[0 max] LowerStackObjectFieldInitializersForLocal(
+    borrow IrTable<StackObjectFieldInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<SourceSliceArgumentLocal> noSliceArgumentLocals = new();
+    return LowerStackObjectFieldInitializersForLocalWithCallContext(
+        initializers,
+        localOrdinal,
+        nextInitializer,
+        nodes,
+        instrs,
+        localTypes,
+        localOverrides,
+        noFunctionCallContractFacts,
+        noSliceArgumentLocals);
+}
+
+internal fn u32[0 max] LowerScalarStorageInitializersForLocalWithCallContext(
+    borrow IrTable<ScalarStorageInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    stack mut u32[0 max] cursor = nextInitializer;
+    while willexit (initializers.Contains(cursor))
+    {
+        stack ScalarStorageInitializer initializer = initializers.Get(cursor);
+        if (initializer.LocalOrdinal != localOrdinal)
+        {
+            return cursor;
+        }
+
+        if (!localOverrides.Contains(initializer.ParamIndex + 1))
+        {
+            return cursor;
+        }
+
+        stack u32[0 max] storageValue = localOverrides.Get(initializer.ParamIndex + 1);
+        if (storageValue == 0)
+        {
+            return cursor;
+        }
+
+        stack MirValueId value = LowerExprNodeAsTypeWithCallContext(nodes, initializer.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, initializer.FieldType);
+        stack MirValueId store = MirStorePtrAlignedTyped(instrs, initializer.FieldType, MirValueIdOf(storageValue), value, initializer.FieldAlignment);
+        cursor = cursor + 1;
+    }
+
+    return cursor;
+}
+
+internal fn u32[0 max] LowerScalarStorageInitializersForLocal(
+    borrow IrTable<ScalarStorageInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<SourceSliceArgumentLocal> noSliceArgumentLocals = new();
+    return LowerScalarStorageInitializersForLocalWithCallContext(
+        initializers,
+        localOrdinal,
+        nextInitializer,
+        nodes,
+        instrs,
+        localTypes,
+        localOverrides,
+        noFunctionCallContractFacts,
+        noSliceArgumentLocals);
+}
+
+internal fn u32[0 max] LowerEnumStorageInitializersForLocalWithCallContext(
+    borrow IrTable<EnumStorageInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    stack mut u32[0 max] cursor = nextInitializer;
+    while willexit (initializers.Contains(cursor))
+    {
+        stack EnumStorageInitializer initializer = initializers.Get(cursor);
+        if (initializer.LocalOrdinal != localOrdinal)
+        {
+            return cursor;
+        }
+
+        if (!localOverrides.Contains(initializer.ParamIndex + 1))
+        {
+            return cursor;
+        }
+
+        stack u32[0 max] storageValue = localOverrides.Get(initializer.ParamIndex + 1);
+        if (storageValue == 0 || initializer.OwnerTypeIndex == 0)
+        {
+            return cursor;
+        }
+
+        stack MirValueId value = LowerExprNodeAsTypeWithCallContext(
+            nodes,
+            initializer.ExprRoot,
+            instrs,
+            localTypes,
+            localOverrides,
+            functionCallContractFacts,
+            sliceArgumentLocals,
+            MirType.EnumValue);
+        stack MirValueId store = MirStoreEnumPtrAligned(instrs, TypeIdOf(initializer.OwnerTypeIndex), MirValueIdOf(storageValue), value, initializer.FieldAlignment);
+        cursor = cursor + 1;
+    }
+
+    return cursor;
+}
+
+internal fn u32[0 max] LowerEnumStorageInitializersForLocal(
+    borrow IrTable<EnumStorageInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<SourceSliceArgumentLocal> noSliceArgumentLocals = new();
+    return LowerEnumStorageInitializersForLocalWithCallContext(
+        initializers,
+        localOrdinal,
+        nextInitializer,
+        nodes,
+        instrs,
+        localTypes,
+        localOverrides,
+        noFunctionCallContractFacts,
+        noSliceArgumentLocals);
+}
+
+internal fn u32[0 max] LowerFixedArrayStorageInitializersForLocalWithCallContext(
+    borrow IrTable<FixedArrayStorageInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    stack mut u32[0 max] cursor = nextInitializer;
+    while willexit (initializers.Contains(cursor))
+    {
+        stack FixedArrayStorageInitializer initializer = initializers.Get(cursor);
+        if (initializer.LocalOrdinal != localOrdinal)
+        {
+            return cursor;
+        }
+
+        if (!localOverrides.Contains(initializer.ParamIndex + 1))
+        {
+            return cursor;
+        }
+
+        stack u32[0 max] storageValue = localOverrides.Get(initializer.ParamIndex + 1);
+        if (storageValue == 0)
+        {
+            return cursor;
+        }
+
+        if (initializer.ElementIndex > 4294967295 / initializer.ElementSize)
+        {
+            return cursor;
+        }
+
+        stack u32[0 max] byteOffset = initializer.ElementIndex * initializer.ElementSize;
+        stack MirValueId elementPointer = MirPtrOffset(instrs, MirValueIdOf(storageValue), byteOffset, initializer.Alignment);
+        stack mut MirValueId value = new();
+        if (initializer.ExprRoot == 0)
+        {
+            value = MirConstIntTyped(instrs, initializer.ElementType, 0);
+        }
+        else
+        {
+            value = LowerExprNodeAsTypeWithCallContext(nodes, initializer.ExprRoot, instrs, localTypes, localOverrides, functionCallContractFacts, sliceArgumentLocals, initializer.ElementType);
+        }
+
+        stack MirValueId store = MirStorePtrAlignedTyped(instrs, initializer.ElementType, elementPointer, value, initializer.Alignment);
+        cursor = cursor + 1;
+    }
+
+    return cursor;
+}
+
+internal fn u32[0 max] LowerFixedArrayStorageInitializersForLocal(
+    borrow IrTable<FixedArrayStorageInitializer> initializers,
+    u32[0 max] localOrdinal,
+    u32[0 max] nextInitializer,
+    borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut IrTable<FunctionCallContractFacts> noFunctionCallContractFacts = new();
+    stack mut IrTable<SourceSliceArgumentLocal> noSliceArgumentLocals = new();
+    return LowerFixedArrayStorageInitializersForLocalWithCallContext(
+        initializers,
+        localOrdinal,
+        nextInitializer,
+        nodes,
+        instrs,
+        localTypes,
+        localOverrides,
+        noFunctionCallContractFacts,
+        noSliceArgumentLocals);
+}
+
+
+
+internal fn bool TryParseFixedArrayStorageInitializerRoots(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u32[0 max] arrayLength,
+    u32[0 max] fieldTypeCode,
+    u64[0 2 ** 63 - 1] initializerOpen,
+    u64[0 2 ** 63 - 1] initializerClose,
+    mut borrow IrTable<u32[0 max]> elementRoots)
+    where overlap_all(sourceValueFacts)
+{
+    if (stream.KindAt(initializerOpen) != TokenKind.LBrace
+        || stream.KindAt(initializerClose) != TokenKind.RBrace
+        || initializerClose < initializerOpen)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = initializerOpen + 1;
+    stack mut u32[0 max] elementIndex = 0;
+    while willexit (cursor < initializerClose)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Comma)
+        {
+            return false;
+        }
+
+        if (elementIndex >= arrayLength)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] valueEnd = FindObjectInitializerEntryEnd(stream, cursor, initializerClose);
+        if (valueEnd <= cursor)
+        {
+            return false;
+        }
+
+        stack ExprParseResult expr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            objectLocals,
+            sliceDescriptorLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            cursor);
+        if (expr.NodeId == 0
+            || expr.Next != valueEnd
+            || !FieldInitializerExpressionMatchesTypeCode(fieldTypeCode, nodes, expr.NodeId, localTypes)
+            || elementRoots.Add(expr.NodeId) == 0)
+        {
+            return false;
+        }
+
+        elementIndex = elementIndex + 1;
+        cursor = valueEnd;
+        if (cursor < initializerClose)
+        {
+            if (stream.KindAt(cursor) != TokenKind.Comma)
+            {
+                return false;
+            }
+
+            cursor = cursor + 1;
+            if (cursor == initializerClose)
+            {
+                return true;
+            }
+        }
+    }
+
+    return true;
+}
+
+
+internal fn bool TryDeclareInitializedRawPointerStorageLocal(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    mut borrow IrTable<u32[0 max]> localTypes,
+    mut borrow IrTable<u32[0 max]> localRoots,
+    mut borrow IrTable<u32[0 max]> localOverrideValues,
+    mut borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] statementStart,
+    u64[0 2 ** 63 - 1] statementEnd,
+    u64[0 2 ** 63 - 1] nameStart,
+    u64[0 2 ** 63 - 1] nameLength,
+    u32[0 max] typeToken,
+    u64[0 2 ** 63 - 1] initializerStart,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<ScalarStorageLocal> scalarStorageLocals,
+    mut borrow IrTable<ScalarStorageInitializer> scalarStorageInitializers)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut MirType elementType = MirType.I64;
+    stack mut u32[0 max] elementSize = 0;
+    stack mut u32[0 max] elementAlignment = 0;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut bool rawPointerMutable = false;
+    stack mut bool nestedMutable = false;
+    stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] nestedElementSize = 0;
+    stack mut u32[0 max] nestedElementAlignment = 0;
+    if (!TryReadSourceLocalRawPointerElementFacts(
+        stream,
+        source,
+        typeToken,
+        elementType,
+        elementSize,
+        elementAlignment,
+        fieldTypeCode,
+        rawPointerMutable,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+    stack ExprParseResult pointerExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        constructedObjectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        initializerStart);
+    if (params.Count() != beforeInit
+        || pointerExpr.NodeId == 0
+        || pointerExpr.Next != statementEnd
+        || TypeOfNodeWithLocals(nodes, pointerExpr.NodeId, localTypes) != ExprType.PtrType)
+    {
+        return false;
+    }
+
+    stack mut bool initializerMutable = false;
+    stack mut u32[0 max] initializerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] initializerElementSize = 0;
+    stack mut u32[0 max] initializerElementAlignment = 0;
+    stack mut bool initializerNestedMutable = false;
+    stack mut u32[0 max] initializerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] initializerNestedElementSize = 0;
+    stack mut u32[0 max] initializerNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        pointerExpr.NodeId,
+        initializerMutable,
+        initializerFieldTypeCode,
+        initializerElementSize,
+        initializerElementAlignment,
+        initializerNestedMutable,
+        initializerNestedFieldTypeCode,
+        initializerNestedElementSize,
+        initializerNestedElementAlignment)
+        || !RawPointerInitializerFactsMatchDeclaration(
+            rawPointerMutable,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment,
+            initializerMutable,
+            initializerFieldTypeCode,
+            initializerElementSize,
+            initializerElementAlignment,
+            initializerNestedMutable,
+            initializerNestedFieldTypeCode,
+            initializerNestedElementSize,
+            initializerNestedElementAlignment))
+    {
+        return false;
+    }
+
+    stack MirValueId pointerStorage = MirStackAlloc(instrs, SourceRawPointerStorageByteExtent(), SourceRawPointerStorageByteAlignment());
+    stack bool pointerMutable = SelfHostedLocalDeclarationHasMut(stream, statementStart, statementEnd);
+    stack mut bool initializerHasElementCount = false;
+    stack mut bool initializerElementCountIsParam = false;
+    stack mut u32[0 max] initializerElementCountLiteral = 0;
+    stack mut u32[0 max] initializerElementCountParamIndex = 0;
+    if (!TryGetRawPointerElementCountFactsForNameNode(
+        nodes,
+        params,
+        pointerExpr.NodeId,
+        initializerHasElementCount,
+        initializerElementCountIsParam,
+        initializerElementCountLiteral,
+        initializerElementCountParamIndex))
+    {
+        initializerHasElementCount = false;
+    }
+
+    stack u32[0 max] pointerLocalIndex = ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        nameStart,
+        nameLength,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        initializerHasElementCount,
+        initializerElementCountIsParam,
+        initializerElementCountLiteral,
+        initializerElementCountParamIndex,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment);
+    stack u32[0 max] pointerLocalOrdinal = localRoots.Add(0);
+    if (pointerLocalOrdinal == 0
+        || localTypes.Add(SourceLocalTypeCodeStoredPointer()) == 0
+        || localOverrideValues.Add(pointerStorage.Index()) == 0
+        || sourceValueFacts.Add(new ValueFacts()) == 0)
+    {
+        return false;
+    }
+
+    stack mut ScalarStorageLocal pointerLocal = new();
+    pointerLocal.Start = nameStart;
+    pointerLocal.Length = nameLength;
+    pointerLocal.ParamIndex = pointerLocalIndex;
+    pointerLocal.StorageValue = pointerStorage.Index();
+    pointerLocal.FieldAlignment = SourceRawPointerStorageByteAlignment();
+    pointerLocal.FieldType = MirType.Ptr;
+    pointerLocal.Mutable = pointerMutable;
+    if (scalarStorageLocals.Add(pointerLocal) == 0)
+    {
+        return false;
+    }
+
+    stack mut ScalarStorageInitializer pointerInitializer = new();
+    pointerInitializer.LocalOrdinal = pointerLocalOrdinal;
+    pointerInitializer.ParamIndex = pointerLocalIndex;
+    pointerInitializer.FieldAlignment = SourceRawPointerStorageByteAlignment();
+    pointerInitializer.FieldType = MirType.Ptr;
+    pointerInitializer.ExprRoot = pointerExpr.NodeId;
+    return scalarStorageInitializers.Add(pointerInitializer) != 0;
+}

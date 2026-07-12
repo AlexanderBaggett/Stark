@@ -1,0 +1,1075 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedEnumPayloadModel
+import Compiler.Typing.TypedTypeResolution
+import System.Text
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceTryPropagation
+module Compiler.Mir.SourceLocalExpressionParsing
+
+internal fn ExprParseResult TryParseSourceEnumConstructorPrimaryIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    if (stream.KindAt(cursor) != TokenKind.Identifier
+        || stream.KindAt(cursor + 1) != TokenKind.Dot
+        || stream.KindAt(cursor + 2) != TokenKind.Identifier)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut u32[0 max] ownerDeclarationIndex = 0;
+    stack mut Compiler.Parsing.DeclItem enumItem = new();
+    if (!TryGetSourceEnumOwnerDeclarationForToken(stream, source, moduleFacts, (u32[0 max])cursor, ownerDeclarationIndex, enumItem))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut u32[0 max] variantOrdinal = 0;
+    if (!TryGetSourceEnumVariantOrdinalForToken(stream, source, enumItem, (u32[0 max])(cursor + 2), variantOrdinal))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut u64[0 max] payloadCount = 0;
+    if (!moduleFacts.EnumLayouts.TryGetEnumVariantPayloadCount(ownerDeclarationIndex, variantOrdinal, payloadCount))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack TypeId ownerType = TypeIdOf(ownerDeclarationIndex + 1);
+    stack u32[0 max] enumValue = MakeEnumVariant(nodes, ownerType, variantOrdinal);
+    if (payloadCount == 0)
+    {
+        return MakeParseResult(enumValue, cursor + 3);
+    }
+
+    if (stream.KindAt(cursor + 3) == TokenKind.LBrace)
+    {
+        stack mut u64[0 2 ** 63 - 1] fieldCursor = cursor + 4;
+        stack mut u32[0 max] currentEnumValue = enumValue;
+        stack mut IrTable<u32[0 max]> seenPayloadOrdinals = new();
+        while willexit (stream.KindAt(fieldCursor) != TokenKind.RBrace)
+        {
+            if (stream.KindAt(fieldCursor) != TokenKind.Identifier
+                || stream.KindAt(fieldCursor + 1) != TokenKind.Colon)
+            {
+                return MakeParseResult(0, cursor);
+            }
+
+            stack mut u32[0 max] payloadOrdinal = 0;
+            stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (!TryGetSourceNamedEnumPayloadTypeCode(
+                    stream,
+                    source,
+                    moduleFacts,
+                    ownerDeclarationIndex,
+                    variantOrdinal,
+                    (u32[0 max])fieldCursor,
+                    payloadOrdinal,
+                    payloadTypeCode)
+                || SourceEnumPayloadOrdinalListContains(seenPayloadOrdinals, payloadOrdinal)
+                || seenPayloadOrdinals.Add(payloadOrdinal) == 0)
+            {
+                return MakeParseResult(0, cursor);
+            }
+
+            stack ExprParseResult payloadExpr = ParseConstructedObjectExprWithEnumsIn(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                objectLocals,
+                localTypes,
+                sourceValueFacts,
+                moduleFacts,
+                fieldCursor + 2);
+            if (payloadExpr.NodeId == 0
+                || !SourceExpressionTypeMatchesEnumPayloadTypeCode(TypeOfNodeWithLocals(nodes, payloadExpr.NodeId, localTypes), payloadTypeCode))
+            {
+                return MakeParseResult(0, cursor);
+            }
+
+            currentEnumValue = MakeEnumPayloadInsert(nodes, ownerType, variantOrdinal, payloadOrdinal, currentEnumValue, payloadExpr.NodeId, payloadTypeCode);
+            fieldCursor = payloadExpr.Next;
+            if (stream.KindAt(fieldCursor) == TokenKind.Comma)
+            {
+                fieldCursor = fieldCursor + 1;
+            }
+            else if (stream.KindAt(fieldCursor) != TokenKind.RBrace)
+            {
+                return MakeParseResult(0, cursor);
+            }
+        }
+
+        if (seenPayloadOrdinals.Count() != payloadCount)
+        {
+            return MakeParseResult(0, cursor);
+        }
+
+        return MakeParseResult(currentEnumValue, fieldCursor + 1);
+    }
+
+    if (stream.KindAt(cursor + 3) != TokenKind.LParen)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] argCursor = cursor + 4;
+    stack mut u32[0 max] payloadOrdinal = 0;
+    stack mut u32[0 max] currentEnumValue = enumValue;
+    while willexit ((u64[0 max])payloadOrdinal < payloadCount)
+    {
+        if (payloadOrdinal > 0)
+        {
+            if (stream.KindAt(argCursor) != TokenKind.Comma)
+            {
+                return MakeParseResult(0, cursor);
+            }
+
+            argCursor = argCursor + 1;
+        }
+
+        stack ExprParseResult payloadExpr = ParseConstructedObjectExprWithEnumsIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            objectLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            argCursor);
+        if (payloadExpr.NodeId == 0)
+        {
+            return MakeParseResult(0, cursor);
+        }
+
+        stack mut u32[0 max] payloadTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        if (!TryGetSourceEnumPayloadTypeCode(stream, source, moduleFacts, ownerDeclarationIndex, variantOrdinal, payloadOrdinal, payloadTypeCode)
+            || !SourceExpressionTypeMatchesEnumPayloadTypeCode(TypeOfNodeWithLocals(nodes, payloadExpr.NodeId, localTypes), payloadTypeCode))
+        {
+            return MakeParseResult(0, cursor);
+        }
+
+        currentEnumValue = MakeEnumPayloadInsert(nodes, ownerType, variantOrdinal, payloadOrdinal, currentEnumValue, payloadExpr.NodeId, payloadTypeCode);
+        argCursor = payloadExpr.Next;
+        payloadOrdinal = payloadOrdinal + 1;
+    }
+
+    if (stream.KindAt(argCursor) != TokenKind.RParen)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    return MakeParseResult(currentEnumValue, argCursor + 1);
+}
+
+internal fn ExprParseResult TryParseRawPointerAggregateFieldPrimaryWithEnumsAndSlicesIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    if (stream.KindAt(cursor) != TokenKind.LParen
+        || stream.KindAt(cursor + 1) != TokenKind.Star)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack u32[0 max] closeParen = MatchingParenForMirLowering(stream, (u32[0 max])cursor);
+    if (closeParen == (u32[0 max])cursor
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 1) != TokenKind.Dot
+        || stream.KindAt((u64[0 2 ** 63 - 1])closeParen + 2) != TokenKind.Identifier)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack ExprParseResult pointerExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        objectLocals,
+        sliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        cursor + 2);
+    if (pointerExpr.NodeId == 0 || pointerExpr.Next != (u64[0 2 ** 63 - 1])closeParen)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut bool pointerMutable = false;
+    stack mut u32[0 max] pointerFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerElementSize = 0;
+    stack mut u32[0 max] pointerElementAlignment = 0;
+    stack mut bool pointerNestedMutable = false;
+    stack mut u32[0 max] pointerNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] pointerNestedElementSize = 0;
+    stack mut u32[0 max] pointerNestedElementAlignment = 0;
+    if (!TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        pointerExpr.NodeId,
+        pointerMutable,
+        pointerFieldTypeCode,
+        pointerElementSize,
+        pointerElementAlignment,
+        pointerNestedMutable,
+        pointerNestedFieldTypeCode,
+        pointerNestedElementSize,
+        pointerNestedElementAlignment)
+        || !SourceResolvedFieldTypeCodeIsAggregate(pointerFieldTypeCode))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack u32[0 max] rootTypeToken = SourceResolvedFieldTypeCodeAggregateTypeToken(pointerFieldTypeCode);
+    if (rootTypeToken == 0)
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] nextToken = (u64[0 2 ** 63 - 1])closeParen + 2;
+    stack mut u32[0 max] fieldOffset = 0;
+    stack mut u32[0 max] fieldAlignment = 0;
+    stack mut u32[0 max] fieldTypeToken = 0;
+    stack mut u32[0 max] leafMemberFactRow = 0;
+    if (!TryResolveConstructedObjectMemberChainStorageField(
+        stream,
+        source,
+        moduleFacts,
+        rootTypeToken,
+        (u64[0 2 ** 63 - 1])closeParen + 2,
+        nextToken,
+        fieldOffset,
+        fieldAlignment,
+        fieldTypeToken,
+        leafMemberFactRow))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    stack mut MirType fieldType = MirType.I64;
+    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    if (!TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, fieldTypeToken, fieldType, fieldTypeCode))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    if (!SourceMemberPathFactAgreesWithFieldTypeCode(moduleFacts.MemberPathFacts, leafMemberFactRow, fieldTypeCode))
+    {
+        return MakeParseResult(0, cursor);
+    }
+
+    return MakeParseResult(MakeRawPointerFieldRead(nodes, pointerExpr.NodeId, fieldOffset, fieldAlignment, fieldTypeCode), nextToken);
+}
+
+internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack TokenKind k = stream.KindAt(cursor);
+    if (k == TokenKind.IntegerLiteral)
+    {
+        stack i64[min max] value = ParseDigitSpan(source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        return MakeParseResult(MakeIntLit(nodes, value), cursor + 1);
+    }
+
+    if (k == TokenKind.True)
+    {
+        return MakeParseResult(MakeBoolLit(nodes, true), cursor + 1);
+    }
+
+    if (k == TokenKind.False)
+    {
+        return MakeParseResult(MakeBoolLit(nodes, false), cursor + 1);
+    }
+
+    if (k == TokenKind.StringLiteral)
+    {
+        return MakeParseResult(MakeStringLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.CharacterLiteral)
+    {
+        return MakeParseResult(MakeCharacterLit(nodes, (u32[0 max])cursor, 0), cursor + 1);
+    }
+
+    if (k == TokenKind.Minus)
+    {
+        stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
+        stack u32[0 max] zero = MakeIntLit(nodes, 0);
+        stack u32[0 max] negated = MakeBinary(nodes, TokenKind.Minus, zero, operand.NodeId);
+        return MakeParseResult(negated, operand.Next);
+    }
+
+    if (k == TokenKind.And)
+    {
+        stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
+        return MakeParseResult(MakeAddressOf(nodes, operand.NodeId), operand.Next);
+    }
+
+    if (k == TokenKind.Star)
+    {
+        stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
+        stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] elementSize = 0;
+        stack mut u32[0 max] elementAlignment = 0;
+        stack mut bool nestedMutable = false;
+        stack mut u32[0 max] nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] nestedElementSize = 0;
+        stack mut u32[0 max] nestedElementAlignment = 0;
+        if (!TryGetRawPointerDerefFactsForNodeWithNested(
+            nodes,
+            params,
+            operand.NodeId,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
+        {
+            fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            elementSize = 0;
+            elementAlignment = 0;
+            nestedMutable = false;
+            nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            nestedElementSize = 0;
+            nestedElementAlignment = 0;
+        }
+
+        return MakeParseResult(
+            MakeDerefWithNested(
+                nodes,
+                operand.NodeId,
+                fieldTypeCode,
+                elementSize,
+                elementAlignment,
+                nestedMutable,
+                nestedFieldTypeCode,
+                nestedElementSize,
+                nestedElementAlignment),
+            operand.Next);
+    }
+
+    if (k == TokenKind.Try)
+    {
+        stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
+        return MakeParseResult(MakeTry(nodes, operand.NodeId), operand.Next);
+    }
+
+    if (k == TokenKind.LParen)
+    {
+        stack ExprParseResult rawPointerField = TryParseRawPointerAggregateFieldPrimaryWithEnumsAndSlicesIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            objectLocals,
+            sliceDescriptorLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            cursor);
+        if (rawPointerField.NodeId != 0)
+        {
+            return rawPointerField;
+        }
+
+        stack mut u32[0 max] conversionTypeStart = 0;
+        stack mut u32[0 max] conversionClose = 0;
+        if (TryFindSourceExpressionConversionType(stream, (u32[0 max])cursor, conversionTypeStart, conversionClose))
+        {
+            stack ExprParseResult operand = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
+                stream,
+                source,
+                nodes,
+                params,
+                funcNames,
+                objectLocals,
+                sliceDescriptorLocals,
+                localTypes,
+                sourceValueFacts,
+                moduleFacts,
+                (u64[0 2 ** 63 - 1])(conversionClose + 1));
+            stack u32[0 max] targetTypeCode = SourceExpressionTypeTokenValueTypeCode(stream, source, conversionTypeStart);
+            return MakeParseResult(MakeConversion(nodes, operand.NodeId, conversionTypeStart, targetTypeCode), operand.Next);
+        }
+
+        stack ExprParseResult inner = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 1);
+        return MakeParseResult(inner.NodeId, inner.Next + 1);
+    }
+
+    if (k == TokenKind.Identifier
+        && stream.KindAt(cursor + 1) == TokenKind.Dot
+        && stream.KindAt(cursor + 2) == TokenKind.Identifier)
+    {
+        stack ExprParseResult enumConstructor = TryParseSourceEnumConstructorPrimaryIn(
+            stream,
+            source,
+            nodes,
+            params,
+            funcNames,
+            objectLocals,
+            localTypes,
+            sourceValueFacts,
+            moduleFacts,
+            cursor);
+        if (enumConstructor.NodeId != 0)
+        {
+            return enumConstructor;
+        }
+    }
+
+    if (k == TokenKind.Identifier && stream.KindAt(cursor + 1) == TokenKind.LParen)
+    {
+        stack i64[min max] calleeIndex = ParamIndexOf(funcNames, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        stack mut u32[0 max] callee = 0;
+        if (calleeIndex >= 0)
+        {
+            callee = (u32[0 max])(calleeIndex + 1);
+        }
+
+        if (stream.KindAt(cursor + 2) == TokenKind.RParen)
+        {
+            return MakeParseResult(MakeCall(nodes, callee, 0, 0, 0, 0, 0), cursor + 3);
+        }
+
+        stack ExprParseResult firstArg = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 2);
+        stack mut u64[0 2 ** 63 - 1] argCursor = firstArg.Next;
+        stack mut u32[0 max] argCount = 1;
+        stack mut u32[0 max] secondArg = 0;
+        stack mut u32[0 max] thirdArg = 0;
+        stack mut u32[0 max] fourthArg = 0;
+        stack mut IrTable<u32[0 max]> extraArgs = new();
+        while willexit (stream.KindAt(argCursor) == TokenKind.Comma)
+        {
+            stack ExprParseResult more = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, argCursor + 1);
+            if (argCount == 1)
+            {
+                secondArg = more.NodeId;
+            }
+            else if (argCount == 2)
+            {
+                thirdArg = more.NodeId;
+            }
+            else if (argCount == 3)
+            {
+                fourthArg = more.NodeId;
+            }
+            else
+            {
+                stack u32[0 max] addedExtra = extraArgs.Add(more.NodeId);
+                if (addedExtra == 0)
+                {
+                    return MakeParseResult(0, argCursor);
+                }
+            }
+
+            argCursor = more.Next;
+            argCount = argCount + 1;
+        }
+
+        stack u32[0 max] extraArgLink = BuildCallExtraArgLinks(nodes, extraArgs);
+        return MakeParseResult(MakeCallWithExtra(nodes, callee, argCount, firstArg.NodeId, secondArg, thirdArg, fourthArg, extraArgLink), argCursor + 1);
+    }
+
+    if (k == TokenKind.Identifier
+        && stream.KindAt(cursor + 1) == TokenKind.Dot
+        && stream.KindAt(cursor + 2) == TokenKind.Identifier)
+    {
+        stack mut ConstructedObjectLocal objectLocal = new();
+        if (TryFindConstructedObjectLocal(objectLocals, source, stream.StartAt(cursor), stream.LengthAt(cursor), objectLocal))
+        {
+            stack mut u64[0 2 ** 63 - 1] nextToken = cursor;
+            stack mut u32[0 max] fieldOffset = 0;
+            stack mut u32[0 max] fieldAlignment = 0;
+            stack mut u32[0 max] fieldTypeToken = 0;
+            stack mut u32[0 max] leafMemberFactRow = 0;
+            if (TryResolveConstructedObjectMemberChainStorageField(
+                stream,
+                source,
+                moduleFacts,
+                objectLocal.TypeToken,
+                cursor + 2,
+                nextToken,
+                fieldOffset,
+                fieldAlignment,
+                fieldTypeToken,
+                leafMemberFactRow))
+            {
+                if (stream.KindAt(nextToken) == TokenKind.LBrack)
+                {
+                    stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])nextToken);
+                    if (closeBracket != (u32[0 max])nextToken
+                        && SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, leafMemberFactRow))
+                    {
+                        if (stream.KindAt(nextToken + 1) == TokenKind.IntegerLiteral
+                            && closeBracket == (u32[0 max])(nextToken + 2))
+                        {
+                            stack mut u32[0 max] elementOffset = 0;
+                            stack mut u32[0 max] elementAlignment = 0;
+                            stack mut MirType elementType = MirType.I64;
+                            if (TryResolveFixedArrayElementLayoutAtField(
+                                stream,
+                                source,
+                                fieldTypeToken,
+                                (u32[0 max])(nextToken + 1),
+                                fieldOffset,
+                                elementOffset,
+                                elementAlignment,
+                                elementType))
+                            {
+                                stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+                                if (elementTypeCode != SourceResolvedFieldTypeCodeInvalid())
+                                {
+                                    stack u32[0 max] constElementNode = MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, elementOffset, elementAlignment, elementTypeCode);
+                                    stack mut i64[min max] constElementLower = 0;
+                                    stack mut i64[min max] constElementUpperExclusive = 0;
+                                    if (TryDeclaredElementRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, leafMemberFactRow, constElementLower, constElementUpperExclusive))
+                                    {
+                                        SetNodeDeclaredRange(nodes, constElementNode, constElementLower, constElementUpperExclusive);
+                                    }
+
+                                    return MakeParseResult(constElementNode, (u64[0 2 ** 63 - 1])closeBracket + 1);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            stack mut u32[0 max] baseByteOffset = 0;
+                            stack mut u32[0 max] elementSizeBytes = 0;
+                            stack mut u32[0 max] elementAlignment = 0;
+                            stack mut MirType elementType = MirType.I64;
+                            stack mut u32[0 max] arrayLength = 0;
+                            if (TryResolveFixedArrayFieldLayoutAtField(
+                                stream,
+                                source,
+                                fieldTypeToken,
+                                fieldOffset,
+                                baseByteOffset,
+                                elementSizeBytes,
+                                elementAlignment,
+                                elementType,
+                                arrayLength))
+                            {
+                                stack u64[0 2 ** 63 - 1] beforeIndex = params.Count();
+                                stack ExprParseResult indexExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, nextToken + 1);
+                                if (params.Count() == beforeIndex
+                                    && indexExpr.NodeId != 0
+                                    && indexExpr.Next == (u64[0 2 ** 63 - 1])closeBracket
+                                    && TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) == ExprType.IntType
+                                    && SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, arrayLength))
+                                {
+                                    stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+                                    if (elementTypeCode != SourceResolvedFieldTypeCodeInvalid())
+                                    {
+                                        stack u32[0 max] indexedElementNode = MakeResolvedIndexedFieldRead(nodes, objectLocal.ParamIndex, indexExpr.NodeId, baseByteOffset, elementSizeBytes, elementAlignment, elementTypeCode);
+                                        stack mut i64[min max] indexedElementLower = 0;
+                                        stack mut i64[min max] indexedElementUpperExclusive = 0;
+                                        if (TryDeclaredElementRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, leafMemberFactRow, indexedElementLower, indexedElementUpperExclusive))
+                                        {
+                                            SetNodeDeclaredRange(nodes, indexedElementNode, indexedElementLower, indexedElementUpperExclusive);
+                                        }
+
+                                        return MakeParseResult(
+                                            indexedElementNode,
+                                            (u64[0 2 ** 63 - 1])closeBracket + 1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    stack mut MirType fieldType = MirType.I64;
+                    stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+                    if (TryGetSourceValueTypeCodeWithEnums(stream, source, moduleFacts, fieldTypeToken, fieldType, fieldTypeCode)
+                        && SourceMemberPathFactAgreesWithFieldTypeCode(moduleFacts.MemberPathFacts, leafMemberFactRow, fieldTypeCode))
+                    {
+                        stack u32[0 max] fieldNode = MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, fieldOffset, fieldAlignment, fieldTypeCode);
+                        stack mut i64[min max] declaredLower = 0;
+                        stack mut i64[min max] declaredUpperExclusive = 0;
+                        if (TryDeclaredRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, leafMemberFactRow, declaredLower, declaredUpperExclusive))
+                        {
+                            SetNodeDeclaredRange(nodes, fieldNode, declaredLower, declaredUpperExclusive);
+                        }
+
+                        return MakeParseResult(fieldNode, nextToken);
+                    }
+                }
+            }
+        }
+    }
+
+    if (k == TokenKind.Identifier
+        && stream.KindAt(cursor + 1) == TokenKind.Dot
+        && stream.KindAt(cursor + 2) == TokenKind.Identifier
+        && stream.KindAt(cursor + 3) == TokenKind.LBrack
+        && stream.KindAt(cursor + 4) == TokenKind.IntegerLiteral
+        && stream.KindAt(cursor + 5) == TokenKind.RBrack)
+    {
+        stack mut ConstructedObjectLocal objectLocal = new();
+        if (TryFindConstructedObjectLocal(objectLocals, source, stream.StartAt(cursor), stream.LengthAt(cursor), objectLocal))
+        {
+            stack mut u32[0 max] elementFactRow = 0;
+            stack mut u32[0 max] elementOffset = 0;
+            stack mut u32[0 max] elementAlignment = 0;
+            stack mut MirType elementType = MirType.I64;
+            if (SourceMemberPathFactMatchesFieldStep(
+                stream,
+                source,
+                moduleFacts.MemberFactRowsByToken,
+                moduleFacts.MemberPathFacts,
+                objectLocal.TypeToken,
+                (u32[0 max])(cursor + 2),
+                elementFactRow)
+                && SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, elementFactRow)
+                && TryFindStructFixedArrayElementLayout(
+                stream,
+                source,
+                objectLocal.TypeToken,
+                (u32[0 max])(cursor + 2),
+                (u32[0 max])(cursor + 4),
+                elementOffset,
+                elementAlignment,
+                elementType))
+            {
+                stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+                if (elementTypeCode != SourceResolvedFieldTypeCodeInvalid())
+                {
+                    return MakeParseResult(MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, elementOffset, elementAlignment, elementTypeCode), cursor + 6);
+                }
+            }
+        }
+    }
+
+    if (k == TokenKind.Identifier
+        && stream.KindAt(cursor + 1) == TokenKind.Dot
+        && stream.KindAt(cursor + 2) == TokenKind.Identifier
+        && stream.KindAt(cursor + 3) == TokenKind.LBrack)
+    {
+        stack mut ConstructedObjectLocal objectLocal = new();
+        if (TryFindConstructedObjectLocal(objectLocals, source, stream.StartAt(cursor), stream.LengthAt(cursor), objectLocal))
+        {
+            stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(cursor + 3));
+            if (closeBracket != (u32[0 max])(cursor + 3))
+            {
+                stack mut u32[0 max] arrayFactRow = 0;
+                stack mut u32[0 max] baseByteOffset = 0;
+                stack mut u32[0 max] elementSizeBytes = 0;
+                stack mut u32[0 max] elementAlignment = 0;
+                stack mut MirType elementType = MirType.I64;
+                stack mut u32[0 max] arrayLength = 0;
+                if (SourceMemberPathFactMatchesFieldStep(
+                    stream,
+                    source,
+                    moduleFacts.MemberFactRowsByToken,
+                    moduleFacts.MemberPathFacts,
+                    objectLocal.TypeToken,
+                    (u32[0 max])(cursor + 2),
+                    arrayFactRow)
+                    && SourceMemberPathFactIsFixedArray(moduleFacts.MemberPathFacts, arrayFactRow)
+                    && TryFindStructFixedArrayFieldLayout(
+                    stream,
+                    source,
+                    objectLocal.TypeToken,
+                    (u32[0 max])(cursor + 2),
+                    baseByteOffset,
+                    elementSizeBytes,
+                    elementAlignment,
+                    elementType,
+                    arrayLength))
+                {
+                    stack u64[0 2 ** 63 - 1] beforeIndex = params.Count();
+                    stack ExprParseResult indexExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 4);
+                    if (params.Count() == beforeIndex
+                        && indexExpr.NodeId != 0
+                        && indexExpr.Next == (u64[0 2 ** 63 - 1])closeBracket
+                        && TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) == ExprType.IntType
+                        && SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, arrayLength))
+                    {
+                        stack u32[0 max] elementTypeCode = SourceResolvedFieldTypeCodeForMirType(elementType);
+                        if (elementTypeCode != SourceResolvedFieldTypeCodeInvalid())
+                        {
+                            return MakeParseResult(
+                                MakeResolvedIndexedFieldRead(nodes, objectLocal.ParamIndex, indexExpr.NodeId, baseByteOffset, elementSizeBytes, elementAlignment, elementTypeCode),
+                                (u64[0 2 ** 63 - 1])closeBracket + 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (k == TokenKind.Identifier
+        && stream.KindAt(cursor + 1) == TokenKind.Dot
+        && stream.KindAt(cursor + 2) == TokenKind.Identifier)
+    {
+        stack mut ConstructedObjectLocal objectLocal = new();
+        if (TryFindConstructedObjectLocal(objectLocals, source, stream.StartAt(cursor), stream.LengthAt(cursor), objectLocal))
+        {
+            stack mut u32[0 max] fieldFactRow = 0;
+            stack mut u32[0 max] fieldOffset = 0;
+            stack mut u32[0 max] fieldAlignment = 0;
+            stack mut MirType fieldType = MirType.I64;
+            stack mut u32[0 max] fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+            if (SourceMemberPathFactMatchesFieldStep(
+                stream,
+                source,
+                moduleFacts.MemberFactRowsByToken,
+                moduleFacts.MemberPathFacts,
+                objectLocal.TypeToken,
+                (u32[0 max])(cursor + 2),
+                fieldFactRow)
+                && TryFindStructFieldLayout(stream, source, moduleFacts, objectLocal.TypeToken, (u32[0 max])(cursor + 2), fieldOffset, fieldAlignment, fieldType, fieldTypeCode))
+            {
+                if (fieldTypeCode != SourceResolvedFieldTypeCodeInvalid()
+                    && SourceMemberPathFactAgreesWithFieldTypeCode(moduleFacts.MemberPathFacts, fieldFactRow, fieldTypeCode))
+                {
+                    stack u32[0 max] fieldNode = MakeResolvedFieldRead(nodes, objectLocal.ParamIndex, fieldOffset, fieldAlignment, fieldTypeCode);
+                    stack mut i64[min max] declaredLower = 0;
+                    stack mut i64[min max] declaredUpperExclusive = 0;
+                    if (TryDeclaredRangeFactForMemberPathFact(moduleFacts.MemberPathFacts, fieldFactRow, declaredLower, declaredUpperExclusive))
+                    {
+                        SetNodeDeclaredRange(nodes, fieldNode, declaredLower, declaredUpperExclusive);
+                    }
+
+                    return MakeParseResult(fieldNode, cursor + 3);
+                }
+            }
+        }
+    }
+
+    if (k == TokenKind.Identifier && stream.KindAt(cursor + 1) == TokenKind.LBrack)
+    {
+        stack i64[min max] rawPointerParamIndex = ParamIndexOf(
+            params,
+            source,
+            stream.StartAt(cursor),
+            stream.LengthAt(cursor));
+        if (rawPointerParamIndex >= 0 && params.Contains((u32[0 max])rawPointerParamIndex + 1))
+        {
+            stack ParamName pointerParam = params.Get((u32[0 max])rawPointerParamIndex + 1);
+            if (pointerParam.RawPointerFieldTypeCodeValue() != SourceResolvedFieldTypeCodeInvalid()
+                && pointerParam.RawPointerElementSizeValue() != 0
+                && pointerParam.RawPointerElementAlignmentValue() != 0)
+            {
+                stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(cursor + 1));
+                if (closeBracket != (u32[0 max])(cursor + 1))
+                {
+                    stack ExprParseResult indexExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 2);
+                    if (indexExpr.NodeId != 0
+                        && indexExpr.Next == (u64[0 2 ** 63 - 1])closeBracket
+                        && TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) == ExprType.IntType
+                        && SourceIndexNodeProvesRawPointerBounds(nodes, indexExpr.NodeId, sourceValueFacts, pointerParam))
+                    {
+                        stack u32[0 max] pointerNode = MakeName(nodes, (u32[0 max])rawPointerParamIndex);
+                        return MakeParseResult(
+                            MakeRawPointerIndexedElementReadWithNested(
+                                nodes,
+                                pointerNode,
+                                indexExpr.NodeId,
+                                pointerParam.RawPointerElementSizeValue(),
+                                pointerParam.RawPointerElementAlignmentValue(),
+                                pointerParam.RawPointerFieldTypeCodeValue(),
+                                pointerParam.RawPointerNestedMutableValue(),
+                                pointerParam.RawPointerNestedFieldTypeCodeValue(),
+                                pointerParam.RawPointerNestedElementSizeValue(),
+                                pointerParam.RawPointerNestedElementAlignmentValue()),
+                            (u64[0 2 ** 63 - 1])closeBracket + 1);
+                    }
+                }
+            }
+        }
+
+        stack mut SourceSliceDescriptorLocal sliceLocal = new();
+        if (TryFindSourceSliceDescriptorLocal(sliceDescriptorLocals, source, stream.StartAt(cursor), stream.LengthAt(cursor), sliceLocal))
+        {
+            stack u32[0 max] closeBracket = MatchingBracketForMirLowering(stream, (u32[0 max])(cursor + 1));
+            if (closeBracket != (u32[0 max])(cursor + 1))
+            {
+                stack ExprParseResult indexExpr = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor + 2);
+                if (indexExpr.NodeId != 0
+                    && indexExpr.Next == (u64[0 2 ** 63 - 1])closeBracket
+                    && TypeOfNodeWithLocals(nodes, indexExpr.NodeId, localTypes) == ExprType.IntType
+                    && (sliceLocal.SliceLength == 0 || SourceIndexNodeProvesFixedArrayBounds(nodes, indexExpr.NodeId, sourceValueFacts, sliceLocal.SliceLength)))
+                {
+                    stack mut u32[0 max] indexedRead = 0;
+                    if (sliceLocal.IsFixedArrayValueOverride)
+                    {
+                        return MakeParseResult(0, cursor);
+                    }
+
+                    if (sliceLocal.IsFixedArrayParam)
+                    {
+                        indexedRead = MakeFixedArrayParamElementRead(
+                            nodes,
+                            sliceLocal.ReceiverParamIndex,
+                            indexExpr.NodeId,
+                            sliceLocal.SliceLength,
+                            sliceLocal.ElementSize,
+                            sliceLocal.Alignment,
+                            sliceLocal.FieldTypeCode);
+                    }
+                    else if (sliceLocal.SliceLength == 0)
+                    {
+                        indexedRead = MakeResolvedRuntimeIndexedFieldRead(
+                            nodes,
+                            sliceLocal.ReceiverParamIndex,
+                            indexExpr.NodeId,
+                            sliceLocal.BaseByteOffset,
+                            sliceLocal.ElementSize,
+                            sliceLocal.Alignment,
+                            sliceLocal.FieldTypeCode);
+                    }
+                    else
+                    {
+                        indexedRead = MakeResolvedIndexedFieldRead(
+                            nodes,
+                            sliceLocal.ReceiverParamIndex,
+                            indexExpr.NodeId,
+                            sliceLocal.BaseByteOffset,
+                            sliceLocal.ElementSize,
+                            sliceLocal.Alignment,
+                            sliceLocal.FieldTypeCode);
+                    }
+
+                    return MakeParseResult(
+                        indexedRead,
+                        (u64[0 2 ** 63 - 1])closeBracket + 1);
+                }
+            }
+        }
+    }
+
+    stack u32[0 max] paramIndex = ResolveParam(params, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+    return MakeParseResult(MakeName(nodes, paramIndex), cursor + 1);
+}
+
+internal fn ExprParseResult ParseConstructedObjectPrimaryWithEnumsIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(
+        stream,
+        source,
+        nodes,
+        params,
+        funcNames,
+        objectLocals,
+        noSliceDescriptorLocals,
+        localTypes,
+        sourceValueFacts,
+        moduleFacts,
+        cursor);
+}
+
+internal fn ExprParseResult ParseConstructedObjectMulWithEnumsAndSlicesIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut ExprParseResult left = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+    while willexit (IsProductOpToken(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ExprParseResult right = ParseConstructedObjectPrimaryWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, left.Next + 1);
+        left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+internal fn ExprParseResult ParseConstructedObjectMulWithEnumsIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ParseConstructedObjectMulWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, noSliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+}
+
+internal fn ExprParseResult ParseConstructedObjectAddWithEnumsAndSlicesIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut ExprParseResult left = ParseConstructedObjectMulWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+    while willexit (IsAddSubToken(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ExprParseResult right = ParseConstructedObjectMulWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, left.Next + 1);
+        left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+internal fn ExprParseResult ParseConstructedObjectAddWithEnumsIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ParseConstructedObjectAddWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, noSliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+}
+
+internal fn ExprParseResult ParseConstructedObjectExprWithEnumsAndSlicesIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut ExprParseResult left = ParseConstructedObjectAddWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+    while willexit (IsComparisonOperator(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ExprParseResult right = ParseConstructedObjectAddWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, left.Next + 1);
+        left.NodeId = MakeCompare(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+internal fn ExprParseResult ParseConstructedObjectExprWithEnumsIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut IrTable<SourceSliceDescriptorLocal> noSliceDescriptorLocals = new();
+    return ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, objectLocals, noSliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, cursor);
+}
+
+internal fn ExprParseResult ParseConstructedObjectExprIn(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> objectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] cursor)
+    where overlap_all(sourceValueFacts)
+{
+    stack mut SourceModuleLoweringFacts noModuleFacts = new();
+    return ParseConstructedObjectExprWithEnumsIn(stream, source, nodes, params, funcNames, objectLocals, localTypes, sourceValueFacts, noModuleFacts, cursor);
+}
+
+

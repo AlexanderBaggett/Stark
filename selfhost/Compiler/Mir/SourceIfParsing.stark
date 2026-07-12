@@ -1,0 +1,2421 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceLocalExpressionParsing
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceIfParsing
+
+internal struct ParsedIfReturnArms
+{
+    ExprParseResult Condition;
+    ExprParseResult ThenArm;
+    ExprParseResult ElseArm;
+    u32[0 max] ThenLocalRootStart;
+    u32[0 max] ThenLocalRootCount;
+    u32[0 max] ElseLocalRootStart;
+    u32[0 max] ElseLocalRootCount;
+    bool ThenBecome;
+    bool ElseBecome;
+
+    ParsedIfReturnArms()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+        self.ThenLocalRootStart = 0;
+        self.ThenLocalRootCount = 0;
+        self.ElseLocalRootStart = 0;
+        self.ElseLocalRootCount = 0;
+        self.ThenBecome = false;
+        self.ElseBecome = false;
+    }
+}
+
+internal struct ParsedNestedIfAssignmentArm
+{
+    bool IsNested;
+    ExprParseResult Leaf;
+    u32[0 max] LeafLocalRootStart;
+    u32[0 max] LeafLocalRootCount;
+    ParsedIfReturnArms Nested;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedNestedIfAssignmentArm()
+    {
+        self.IsNested = false;
+        self.Leaf = new();
+        self.LeafLocalRootStart = 0;
+        self.LeafLocalRootCount = 0;
+        self.Nested = new();
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedNestedIfAssignmentArms
+{
+    ExprParseResult Condition;
+    ParsedNestedIfAssignmentArm ThenArm;
+    ParsedNestedIfAssignmentArm ElseArm;
+
+    ParsedNestedIfAssignmentArms()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal struct ParsedRecursiveIfAssignmentArm
+{
+    bool IsNested;
+    ExprParseResult Leaf;
+    u32[0 max] LeafLocalRootStart;
+    u32[0 max] LeafLocalRootCount;
+    u32[0 max] NestedNode;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedRecursiveIfAssignmentArm()
+    {
+        self.IsNested = false;
+        self.Leaf = new();
+        self.LeafLocalRootStart = 0;
+        self.LeafLocalRootCount = 0;
+        self.NestedNode = 0;
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedRecursiveIfAssignmentNode
+{
+    ExprParseResult Condition;
+    ParsedRecursiveIfAssignmentArm ThenArm;
+    ParsedRecursiveIfAssignmentArm ElseArm;
+
+    ParsedRecursiveIfAssignmentNode()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal struct LoweredRecursiveIfAssignmentArm
+{
+    MirValueId Value;
+    u32[0 max] ExitBlockIndex;
+
+    LoweredRecursiveIfAssignmentArm()
+    {
+        self.Value = MirValueIdOf(0);
+        self.ExitBlockIndex = 0;
+    }
+}
+
+internal struct ParsedIfMultiAssignmentArms
+{
+    ExprParseResult Condition;
+    ParsedSwitchAssignmentArm ThenArm;
+    ParsedSwitchAssignmentArm ElseArm;
+
+    ParsedIfMultiAssignmentArms()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal struct ParsedNestedIfMultiAssignmentArm
+{
+    bool IsNested;
+    ParsedSwitchAssignmentArm Leaf;
+    ParsedIfMultiAssignmentArms Nested;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedNestedIfMultiAssignmentArm()
+    {
+        self.IsNested = false;
+        self.Leaf = new();
+        self.Nested = new();
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedNestedIfMultiAssignmentArms
+{
+    ExprParseResult Condition;
+    ParsedNestedIfMultiAssignmentArm ThenArm;
+    ParsedNestedIfMultiAssignmentArm ElseArm;
+
+    ParsedNestedIfMultiAssignmentArms()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal struct ParsedRecursiveIfMultiAssignmentArm
+{
+    bool IsNested;
+    ParsedSwitchAssignmentArm Leaf;
+    u32[0 max] NestedNode;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParsedRecursiveIfMultiAssignmentArm()
+    {
+        self.IsNested = false;
+        self.Leaf = new();
+        self.NestedNode = 0;
+        self.Next = 0;
+    }
+}
+
+internal struct ParsedRecursiveIfMultiAssignmentNode
+{
+    ExprParseResult Condition;
+    ParsedRecursiveIfMultiAssignmentArm ThenArm;
+    ParsedRecursiveIfMultiAssignmentArm ElseArm;
+
+    ParsedRecursiveIfMultiAssignmentNode()
+    {
+        self.Condition = new();
+        self.ThenArm = new();
+        self.ElseArm = new();
+    }
+}
+
+internal fn bool TryParseTerminalIfArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out bool usesBecome,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    usesBecome = false;
+    nextToken = armStart;
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack TokenKind terminal = stream.KindAt(armStart + 1);
+        if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, params, funcNames, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        usesBecome = terminal == TokenKind.Become;
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    stack TokenKind terminal = stream.KindAt(armStart);
+    if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, params, funcNames, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    usesBecome = terminal == TokenKind.Become;
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalIfReturnArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    out ParsedIfReturnArms arms)
+{
+    arms = new();
+    stack ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
+    stack mut ExprParseResult thenArm = new();
+    stack mut bool thenBecome = false;
+    if (!TryParseTerminalIfArm(stream, source, nodes, params, funcNames, condition.Next, thenArm, thenBecome, afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ExprParseResult elseArm = new();
+    stack mut bool elseBecome = false;
+    if (!TryParseTerminalIfArm(stream, source, nodes, params, funcNames, afterThen + 1, elseArm, elseBecome, afterElse))
+    {
+        return false;
+    }
+
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ThenBecome = thenBecome;
+    arms.ElseArm = elseArm;
+    arms.ElseBecome = elseBecome;
+    return true;
+}
+
+internal fn bool TryParseTerminalIfArmWithConstructedObjectLocals(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out bool usesBecome,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    arm = new();
+    usesBecome = false;
+    nextToken = armStart;
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack TokenKind terminal = stream.KindAt(armStart + 1);
+        if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        usesBecome = terminal == TokenKind.Become;
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    stack TokenKind terminal = stream.KindAt(armStart);
+    if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    usesBecome = terminal == TokenKind.Become;
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocals(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    u64[0 2 ** 63 - 1] ifIndex,
+    out ParsedIfReturnArms arms)
+    where overlap_all(sourceValueFacts)
+{
+    arms = new();
+    stack ExprParseResult condition = ParseConstructedObjectExprIn(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, ifIndex + 1);
+
+    stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
+    stack mut ExprParseResult thenArm = new();
+    stack mut bool thenBecome = false;
+    if (!TryParseTerminalIfArmWithConstructedObjectLocals(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, condition.Next, thenArm, thenBecome, afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ExprParseResult elseArm = new();
+    stack mut bool elseBecome = false;
+    if (!TryParseTerminalIfArmWithConstructedObjectLocals(stream, source, nodes, params, funcNames, constructedObjectLocals, localTypes, sourceValueFacts, afterThen + 1, elseArm, elseBecome, afterElse))
+    {
+        return false;
+    }
+
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ThenBecome = thenBecome;
+    arms.ElseArm = elseArm;
+    arms.ElseBecome = elseBecome;
+    return true;
+}
+
+internal fn bool TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] armStart,
+    out ExprParseResult arm,
+    out bool usesBecome,
+    out u64[0 2 ** 63 - 1] nextToken)
+    where overlap_all(sourceValueFacts)
+{
+    arm = new();
+    usesBecome = false;
+    nextToken = armStart;
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack TokenKind terminal = stream.KindAt(armStart + 1);
+        if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+        {
+            return false;
+        }
+
+        stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, armStart + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        usesBecome = terminal == TokenKind.Become;
+        arm = parsedArm;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    stack TokenKind terminal = stream.KindAt(armStart);
+    if (terminal != TokenKind.Return && terminal != TokenKind.Become)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedArm = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, armStart + 1);
+    stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+    if (stream.KindAt(afterExpr) == TokenKind.Semi)
+    {
+        afterExpr = afterExpr + 1;
+    }
+
+    usesBecome = terminal == TokenKind.Become;
+    arm = parsedArm;
+    nextToken = afterExpr;
+    return true;
+}
+
+internal fn bool TryParseTerminalIfReturnArmsWithConstructedObjectLocalsAndSlices(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<ConstructedObjectLocal> constructedObjectLocals,
+    borrow IrTable<SourceSliceDescriptorLocal> sliceDescriptorLocals,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<ValueFacts> sourceValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    u64[0 2 ** 63 - 1] ifIndex,
+    out ParsedIfReturnArms arms)
+    where overlap_all(sourceValueFacts)
+{
+    arms = new();
+    stack ExprParseResult condition = ParseConstructedObjectExprWithEnumsAndSlicesIn(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, ifIndex + 1);
+    stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
+    stack mut ExprParseResult thenArm = new();
+    stack mut bool thenBecome = false;
+    if (!TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, condition.Next, thenArm, thenBecome, afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ExprParseResult elseArm = new();
+    stack mut bool elseBecome = false;
+    if (!TryParseTerminalIfArmWithConstructedObjectLocalsAndSlices(stream, source, nodes, params, funcNames, constructedObjectLocals, sliceDescriptorLocals, localTypes, sourceValueFacts, moduleFacts, afterThen + 1, elseArm, elseBecome, afterElse))
+    {
+        return false;
+    }
+
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ThenBecome = thenBecome;
+    arms.ElseArm = elseArm;
+    arms.ElseBecome = elseBecome;
+    return true;
+}
+
+internal fn bool TryParseIfExpressionArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    out ParsedIfReturnArms arms)
+{
+    arms = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+    stack ExprParseResult thenArm = ParseExprIn(stream, source, nodes, params, funcNames, condition.Next);
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack ExprParseResult elseArm = ParseExprIn(stream, source, nodes, params, funcNames, thenArm.Next + 1);
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ElseArm = elseArm;
+    arms.ThenBecome = false;
+    arms.ElseBecome = false;
+    return true;
+}
+
+internal fn bool ExprNodeCanBeDiscardedIfOverwritten(borrow IrTable<ExprNode> nodes, u32[0 max] nodeId)
+{
+    if (!nodes.Contains(nodeId))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(nodeId);
+    switch (node.Kind)
+    {
+        case Compiler.Mir.SourceExpressions.ExprKind.IntLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FloatLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.BoolLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.StringLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.CharacterLitExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.NameExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.FieldExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.IndexedFieldExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.FixedArrayParamElementExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerIndexedElementExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left)
+                && ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.RawPointerFieldExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left);
+        case Compiler.Mir.SourceExpressions.ExprKind.AddressOfExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.DerefExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.TryExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.ConversionExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left);
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumVariantExpr:
+            return true;
+        case Compiler.Mir.SourceExpressions.ExprKind.EnumPayloadExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left)
+                && ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.CompareExpr:
+            return ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Left)
+                && ExprNodeCanBeDiscardedIfOverwritten(nodes, node.Right);
+        case Compiler.Mir.SourceExpressions.ExprKind.BinaryExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallExpr:
+            return false;
+        case Compiler.Mir.SourceExpressions.ExprKind.CallArgLinkExpr:
+            return false;
+    }
+}
+
+internal fn bool TryParseIfAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u32[0 max] targetNameToken,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    out ExprParseResult arm,
+    out u32[0 max] localRootStart,
+    out u32[0 max] localRootCount,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    localRootStart = 0;
+    localRootCount = 0;
+    nextToken = armStart;
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyParamNamePrefix(baseParams, signatureParamCount, armParams))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u32[0 max] parsedLocalRootStart = (u32[0 max])(armLocalRoots.Count() + 1);
+        stack mut u32[0 max] parsedLocalRootCount = 0;
+        stack mut u64[0 2 ** 63 - 1] cursor = armStart + 1;
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(cursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+            if (localNameToken == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] localNameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+            stack u64[0 2 ** 63 - 1] localNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+            if (ParamIndexOf(armParams, source, localNameStart, localNameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] localAssignToken = localEnd;
+            if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, localAssignToken))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
+            stack ExprParseResult localRoot = ParseExprIn(stream, source, nodes, armParams, funcNames, localAssignToken + 1);
+            if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
+            {
+                return false;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(armParams, source, localNameStart, localNameLength);
+            if (armLocalRoots.Add(localRoot.NodeId) == 0)
+            {
+                return false;
+            }
+
+            parsedLocalRootCount = parsedLocalRootCount + 1;
+            cursor = localEnd + 1;
+        }
+
+        if (cursor >= (u64[0 2 ** 63 - 1])closeBrace
+            || stream.KindAt(cursor) != TokenKind.Identifier
+            || stream.KindAt(cursor + 1) != TokenKind.Assign
+            || !TokenTextEqualsAsciiSpan(stream, source, targetNameToken, (u32[0 max])cursor))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] beforeAssign = armParams.Count();
+        stack ExprParseResult parsedArm = ParseExprIn(stream, source, nodes, armParams, funcNames, cursor + 2);
+        stack mut u64[0 2 ** 63 - 1] afterExpr = parsedArm.Next;
+        if (stream.KindAt(afterExpr) == TokenKind.Semi)
+        {
+            afterExpr = afterExpr + 1;
+        }
+
+        if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace || armParams.Count() != beforeAssign)
+        {
+            return false;
+        }
+
+        arm = parsedArm;
+        localRootStart = parsedLocalRootStart;
+        localRootCount = parsedLocalRootCount;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (stream.KindAt(armStart) != TokenKind.Identifier
+        || stream.KindAt(armStart + 1) != TokenKind.Assign
+        || !TokenTextEqualsAsciiSpan(stream, source, targetNameToken, (u32[0 max])armStart))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCompact = armParams.Count();
+    stack ExprParseResult parsedCompactArm = ParseExprIn(stream, source, nodes, armParams, funcNames, armStart + 2);
+    stack mut u64[0 2 ** 63 - 1] afterCompactExpr = parsedCompactArm.Next;
+    if (stream.KindAt(afterCompactExpr) == TokenKind.Semi)
+    {
+        afterCompactExpr = afterCompactExpr + 1;
+    }
+
+    if (armParams.Count() != beforeCompact)
+    {
+        return false;
+    }
+
+    arm = parsedCompactArm;
+    nextToken = afterCompactExpr;
+    return true;
+}
+
+internal fn bool TryParseIfAssignmentArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    u32[0 max] targetNameToken,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    out ParsedIfReturnArms arms)
+{
+    arms = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut u64[0 2 ** 63 - 1] afterThen = condition.Next;
+    stack mut ExprParseResult thenArm = new();
+    stack mut u32[0 max] thenLocalRootStart = 0;
+    stack mut u32[0 max] thenLocalRootCount = 0;
+    if (!TryParseIfAssignmentArm(stream, source, nodes, params, signatureParamCount, funcNames, targetNameToken, condition.Next, armLocalRoots, thenArm, thenLocalRootStart, thenLocalRootCount, afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ExprParseResult elseArm = new();
+    stack mut u32[0 max] elseLocalRootStart = 0;
+    stack mut u32[0 max] elseLocalRootCount = 0;
+    if (!TryParseIfAssignmentArm(stream, source, nodes, params, signatureParamCount, funcNames, targetNameToken, afterThen + 1, armLocalRoots, elseArm, elseLocalRootStart, elseLocalRootCount, afterElse))
+    {
+        return false;
+    }
+
+    thenArm.Next = afterThen;
+    elseArm.Next = afterElse;
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ElseArm = elseArm;
+    arms.ThenLocalRootStart = thenLocalRootStart;
+    arms.ThenLocalRootCount = thenLocalRootCount;
+    arms.ElseLocalRootStart = elseLocalRootStart;
+    arms.ElseLocalRootCount = elseLocalRootCount;
+    arms.ThenBecome = false;
+    arms.ElseBecome = false;
+    return true;
+}
+
+internal fn bool TryParseNestedOrLeafIfAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u32[0 max] targetNameToken,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    out ParsedNestedIfAssignmentArm arm)
+{
+    arm = new();
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nestedIfIndex = armStart + 1;
+        if (nestedIfIndex < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(nestedIfIndex) == TokenKind.If)
+        {
+            stack mut ParsedIfReturnArms nestedArms = new();
+            if (!TryParseIfAssignmentArms(
+                stream,
+                source,
+                nodes,
+                baseParams,
+                signatureParamCount,
+                funcNames,
+                nestedIfIndex,
+                targetNameToken,
+                armLocalRoots,
+                nestedArms))
+            {
+                return false;
+            }
+
+            if (nestedArms.ElseArm.Next != (u64[0 2 ** 63 - 1])closeBrace)
+            {
+                return false;
+            }
+
+            arm.IsNested = true;
+            arm.Nested = nestedArms;
+            arm.Next = (u64[0 2 ** 63 - 1])closeBrace + 1;
+            return true;
+        }
+    }
+
+    stack mut ExprParseResult leaf = new();
+    stack mut u32[0 max] leafLocalRootStart = 0;
+    stack mut u32[0 max] leafLocalRootCount = 0;
+    stack mut u64[0 2 ** 63 - 1] afterLeaf = armStart;
+    if (!TryParseIfAssignmentArm(
+        stream,
+        source,
+        nodes,
+        baseParams,
+        signatureParamCount,
+        funcNames,
+        targetNameToken,
+        armStart,
+        armLocalRoots,
+        leaf,
+        leafLocalRootStart,
+        leafLocalRootCount,
+        afterLeaf))
+    {
+        return false;
+    }
+
+    arm.IsNested = false;
+    arm.Leaf = leaf;
+    arm.LeafLocalRootStart = leafLocalRootStart;
+    arm.LeafLocalRootCount = leafLocalRootCount;
+    arm.Next = afterLeaf;
+    return true;
+}
+
+internal fn bool TryParseNestedIfAssignmentArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    u32[0 max] targetNameToken,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    out ParsedNestedIfAssignmentArms arms)
+{
+    arms = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut ParsedNestedIfAssignmentArm thenArm = new();
+    if (!TryParseNestedOrLeafIfAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameToken,
+        condition.Next,
+        armLocalRoots,
+        thenArm))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut ParsedNestedIfAssignmentArm elseArm = new();
+    if (!TryParseNestedOrLeafIfAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameToken,
+        thenArm.Next + 1,
+        armLocalRoots,
+        elseArm))
+    {
+        return false;
+    }
+
+    condition.Next = thenArm.Next;
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ElseArm = elseArm;
+    return true;
+}
+
+internal fn bool TryParseRecursiveOrLeafIfAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u32[0 max] targetNameToken,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    out ParsedRecursiveIfAssignmentArm arm)
+{
+    arm = new();
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nestedIfIndex = armStart + 1;
+        if (nestedIfIndex < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(nestedIfIndex) == TokenKind.If)
+        {
+            stack mut u32[0 max] nestedNode = 0;
+            stack mut u64[0 2 ** 63 - 1] afterNested = nestedIfIndex;
+            if (!TryParseRecursiveIfAssignmentNode(
+                stream,
+                source,
+                nodes,
+                baseParams,
+                signatureParamCount,
+                funcNames,
+                nestedIfIndex,
+                targetNameToken,
+                armLocalRoots,
+                ifNodes,
+                nestedNode,
+                afterNested))
+            {
+                return false;
+            }
+
+            if (afterNested != (u64[0 2 ** 63 - 1])closeBrace)
+            {
+                return false;
+            }
+
+            arm.IsNested = true;
+            arm.NestedNode = nestedNode;
+            arm.Next = (u64[0 2 ** 63 - 1])closeBrace + 1;
+            return true;
+        }
+    }
+
+    stack mut ExprParseResult leaf = new();
+    stack mut u32[0 max] leafLocalRootStart = 0;
+    stack mut u32[0 max] leafLocalRootCount = 0;
+    stack mut u64[0 2 ** 63 - 1] afterLeaf = armStart;
+    if (!TryParseIfAssignmentArm(
+        stream,
+        source,
+        nodes,
+        baseParams,
+        signatureParamCount,
+        funcNames,
+        targetNameToken,
+        armStart,
+        armLocalRoots,
+        leaf,
+        leafLocalRootStart,
+        leafLocalRootCount,
+        afterLeaf))
+    {
+        return false;
+    }
+
+    arm.IsNested = false;
+    arm.Leaf = leaf;
+    arm.LeafLocalRootStart = leafLocalRootStart;
+    arm.LeafLocalRootCount = leafLocalRootCount;
+    arm.Next = afterLeaf;
+    return true;
+}
+
+internal fn bool TryParseRecursiveIfAssignmentNode(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    u32[0 max] targetNameToken,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    out u32[0 max] nodeIndex,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    nodeIndex = 0;
+    nextToken = ifIndex;
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut ParsedRecursiveIfAssignmentArm thenArm = new();
+    if (!TryParseRecursiveOrLeafIfAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameToken,
+        condition.Next,
+        armLocalRoots,
+        ifNodes,
+        thenArm))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut ParsedRecursiveIfAssignmentArm elseArm = new();
+    if (!TryParseRecursiveOrLeafIfAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameToken,
+        thenArm.Next + 1,
+        armLocalRoots,
+        ifNodes,
+        elseArm))
+    {
+        return false;
+    }
+
+    condition.Next = thenArm.Next;
+
+    stack mut ParsedRecursiveIfAssignmentNode node = new();
+    node.Condition = condition;
+    node.ThenArm = thenArm;
+    node.ElseArm = elseArm;
+    nodeIndex = ifNodes.Add(node);
+    nextToken = elseArm.Next;
+    return nodeIndex != 0;
+}
+
+internal fn bool TryParseIfMultiAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedSwitchAssignmentArm arm,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    arm = new();
+    nextToken = armStart;
+
+    stack u64[0 2 ** 63 - 1] targetCountWide = targetNameTokens.Count();
+    if (targetCountWide == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> armParams = new();
+    if (!CopyParamNamePrefix(baseParams, signatureParamCount, armParams))
+    {
+        return false;
+    }
+
+    stack u32[0 max] localRootStart = (u32[0 max])(armLocalRoots.Count() + 1);
+    stack u32[0 max] assignedRootStart = (u32[0 max])(assignedRoots.Count() + 1);
+    stack mut u32[0 max] localRootCount = 0;
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] cursor = armStart + 1;
+        while willexit (cursor < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(cursor) == TokenKind.Var)
+        {
+            stack mut u64[0 2 ** 63 - 1] localEnd = cursor;
+            if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])closeBrace, localEnd))
+            {
+                return false;
+            }
+
+            stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, localEnd);
+            if (localNameToken == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] localNameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+            stack u64[0 2 ** 63 - 1] localNameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
+            if (ParamIndexOf(armParams, source, localNameStart, localNameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] localAssignToken = localEnd;
+            if (!FindSelfHostedStatementAssign(stream, cursor, localEnd, localAssignToken))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeLocal = armParams.Count();
+            stack ExprParseResult localRoot = ParseExprIn(stream, source, nodes, armParams, funcNames, localAssignToken + 1);
+            if (localRoot.Next != localEnd || armParams.Count() != beforeLocal)
+            {
+                return false;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(armParams, source, localNameStart, localNameLength);
+            if (armLocalRoots.Add(localRoot.NodeId) == 0)
+            {
+                return false;
+            }
+
+            localRootCount = localRootCount + 1;
+            cursor = localEnd + 1;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] assignmentIndex = 0;
+        while willexit (assignmentIndex < targetCountWide)
+        {
+            stack mut u32[0 max] targetOffset = 0;
+            if (cursor >= (u64[0 2 ** 63 - 1])closeBrace
+                || stream.KindAt(cursor) != TokenKind.Identifier
+                || stream.KindAt(cursor + 1) != TokenKind.Assign
+                || !TryFindSwitchTargetOffsetForToken(stream, source, targetNameTokens, (u32[0 max])cursor, targetOffset)
+                || SwitchAssignmentArmTargetOffsetExists(assignedTargetOffsets, assignedRootStart, (u32[0 max])assignmentIndex, targetOffset))
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] beforeAssign = armParams.Count();
+            stack ExprParseResult parsedAssigned = ParseExprIn(stream, source, nodes, armParams, funcNames, cursor + 2);
+            if (armParams.Count() != beforeAssign)
+            {
+                return false;
+            }
+
+            if (assignmentIndex == 0)
+            {
+                arm.Assigned = parsedAssigned;
+            }
+
+            if (assignedRoots.Add(parsedAssigned.NodeId) == 0 || assignedTargetOffsets.Add(targetOffset) == 0)
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] afterExpr = parsedAssigned.Next;
+            stack mut bool hasSemicolon = false;
+            if (stream.KindAt(afterExpr) == TokenKind.Semi)
+            {
+                hasSemicolon = true;
+                afterExpr = afterExpr + 1;
+            }
+
+            assignmentIndex = assignmentIndex + 1;
+            if (assignmentIndex < targetCountWide)
+            {
+                if (!hasSemicolon)
+                {
+                    return false;
+                }
+
+                cursor = afterExpr;
+            }
+            else
+            {
+                if (afterExpr != (u64[0 2 ** 63 - 1])closeBrace)
+                {
+                    return false;
+                }
+
+                cursor = afterExpr;
+            }
+        }
+
+        if (cursor != (u64[0 2 ** 63 - 1])closeBrace)
+        {
+            return false;
+        }
+
+        arm.AssignedRootStart = assignedRootStart;
+        arm.AssignedRootCount = (u32[0 max])targetCountWide;
+        arm.LocalRootStart = localRootStart;
+        arm.LocalRootCount = localRootCount;
+        nextToken = (u64[0 2 ** 63 - 1])closeBrace + 1;
+        return true;
+    }
+
+    if (targetCountWide != 1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] compactTargetNameToken = targetNameTokens.Get(1);
+    if (stream.KindAt(armStart) != TokenKind.Identifier
+        || stream.KindAt(armStart + 1) != TokenKind.Assign
+        || !TokenTextEqualsAsciiSpan(stream, source, compactTargetNameToken, (u32[0 max])armStart))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] beforeCompact = armParams.Count();
+    stack ExprParseResult parsedCompactArm = ParseExprIn(stream, source, nodes, armParams, funcNames, armStart + 2);
+    stack mut u64[0 2 ** 63 - 1] afterCompactExpr = parsedCompactArm.Next;
+    if (stream.KindAt(afterCompactExpr) == TokenKind.Semi)
+    {
+        afterCompactExpr = afterCompactExpr + 1;
+    }
+
+    if (armParams.Count() != beforeCompact)
+    {
+        return false;
+    }
+
+    arm.Assigned = parsedCompactArm;
+    arm.AssignedRootStart = assignedRootStart;
+    arm.AssignedRootCount = 1;
+    arm.LocalRootStart = 0;
+    arm.LocalRootCount = 0;
+    if (assignedRoots.Add(parsedCompactArm.NodeId) == 0 || assignedTargetOffsets.Add(0) == 0)
+    {
+        return false;
+    }
+
+    nextToken = afterCompactExpr;
+    return true;
+}
+
+internal fn bool TryParseIfMultiAssignmentArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ExprParseResult condition,
+    out ParsedSwitchAssignmentArm thenArm,
+    out ParsedSwitchAssignmentArm elseArm)
+{
+    condition = new();
+    thenArm = new();
+    elseArm = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack ExprParseResult parsedCondition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut u64[0 2 ** 63 - 1] afterThen = parsedCondition.Next;
+    stack mut ParsedSwitchAssignmentArm parsedThenArm = new();
+    if (!TryParseIfMultiAssignmentArm(stream, source, nodes, params, signatureParamCount, funcNames, targetNameTokens, parsedCondition.Next, armLocalRoots, assignedRoots, assignedTargetOffsets, parsedThenArm, afterThen))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(afterThen) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterElse = afterThen + 1;
+    stack mut ParsedSwitchAssignmentArm parsedElseArm = new();
+    if (!TryParseIfMultiAssignmentArm(stream, source, nodes, params, signatureParamCount, funcNames, targetNameTokens, afterThen + 1, armLocalRoots, assignedRoots, assignedTargetOffsets, parsedElseArm, afterElse))
+    {
+        return false;
+    }
+
+    parsedThenArm.Assigned.Next = afterThen;
+    parsedElseArm.Assigned.Next = afterElse;
+    condition = parsedCondition;
+    thenArm = parsedThenArm;
+    elseArm = parsedElseArm;
+    return true;
+}
+
+internal fn bool TryParseNestedOrLeafIfMultiAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedNestedIfMultiAssignmentArm arm)
+{
+    arm = new();
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nestedIfIndex = armStart + 1;
+        if (nestedIfIndex < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(nestedIfIndex) == TokenKind.If)
+        {
+            stack mut ExprParseResult nestedCondition = new();
+            stack mut ParsedSwitchAssignmentArm nestedThenArm = new();
+            stack mut ParsedSwitchAssignmentArm nestedElseArm = new();
+            if (!TryParseIfMultiAssignmentArms(
+                stream,
+                source,
+                nodes,
+                baseParams,
+                signatureParamCount,
+                funcNames,
+                nestedIfIndex,
+                targetNameTokens,
+                armLocalRoots,
+                assignedRoots,
+                assignedTargetOffsets,
+                nestedCondition,
+                nestedThenArm,
+                nestedElseArm))
+            {
+                return false;
+            }
+
+            if (nestedElseArm.Assigned.Next != (u64[0 2 ** 63 - 1])closeBrace)
+            {
+                return false;
+            }
+
+            stack mut ParsedIfMultiAssignmentArms nestedArms = new();
+            nestedArms.Condition = nestedCondition;
+            nestedArms.ThenArm = nestedThenArm;
+            nestedArms.ElseArm = nestedElseArm;
+            arm.IsNested = true;
+            arm.Nested = nestedArms;
+            arm.Next = (u64[0 2 ** 63 - 1])closeBrace + 1;
+            return true;
+        }
+    }
+
+    stack mut ParsedSwitchAssignmentArm leaf = new();
+    stack mut u64[0 2 ** 63 - 1] afterLeaf = armStart;
+    if (!TryParseIfMultiAssignmentArm(
+        stream,
+        source,
+        nodes,
+        baseParams,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        armStart,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        leaf,
+        afterLeaf))
+    {
+        return false;
+    }
+
+    arm.IsNested = false;
+    arm.Leaf = leaf;
+    arm.Next = afterLeaf;
+    return true;
+}
+
+internal fn bool TryParseNestedIfMultiAssignmentArms(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    out ParsedNestedIfMultiAssignmentArms arms)
+{
+    arms = new();
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut ParsedNestedIfMultiAssignmentArm thenArm = new();
+    if (!TryParseNestedOrLeafIfMultiAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        condition.Next,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        thenArm))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut ParsedNestedIfMultiAssignmentArm elseArm = new();
+    if (!TryParseNestedOrLeafIfMultiAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        thenArm.Next + 1,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        elseArm))
+    {
+        return false;
+    }
+
+    condition.Next = thenArm.Next;
+    arms.Condition = condition;
+    arms.ThenArm = thenArm;
+    arms.ElseArm = elseArm;
+    return thenArm.IsNested || elseArm.IsNested;
+}
+
+internal fn bool TryParseRecursiveOrLeafIfMultiAssignmentArm(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> baseParams,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    u64[0 2 ** 63 - 1] armStart,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    mut borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    out ParsedRecursiveIfMultiAssignmentArm arm)
+{
+    arm = new();
+
+    if (stream.KindAt(armStart) == TokenKind.LBrace)
+    {
+        stack u32[0 max] closeBrace = MatchingBraceForMirLowering(stream, (u32[0 max])armStart);
+        if (closeBrace == (u32[0 max])armStart)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nestedIfIndex = armStart + 1;
+        if (nestedIfIndex < (u64[0 2 ** 63 - 1])closeBrace && stream.KindAt(nestedIfIndex) == TokenKind.If)
+        {
+            stack mut u32[0 max] nestedNode = 0;
+            stack mut u64[0 2 ** 63 - 1] afterNested = nestedIfIndex;
+            if (!TryParseRecursiveIfMultiAssignmentNode(
+                stream,
+                source,
+                nodes,
+                baseParams,
+                signatureParamCount,
+                funcNames,
+                nestedIfIndex,
+                targetNameTokens,
+                armLocalRoots,
+                assignedRoots,
+                assignedTargetOffsets,
+                ifNodes,
+                nestedNode,
+                afterNested))
+            {
+                return false;
+            }
+
+            if (afterNested != (u64[0 2 ** 63 - 1])closeBrace)
+            {
+                return false;
+            }
+
+            arm.IsNested = true;
+            arm.NestedNode = nestedNode;
+            arm.Next = (u64[0 2 ** 63 - 1])closeBrace + 1;
+            return true;
+        }
+    }
+
+    stack mut ParsedSwitchAssignmentArm leaf = new();
+    stack mut u64[0 2 ** 63 - 1] afterLeaf = armStart;
+    if (!TryParseIfMultiAssignmentArm(
+        stream,
+        source,
+        nodes,
+        baseParams,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        armStart,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        leaf,
+        afterLeaf))
+    {
+        return false;
+    }
+
+    arm.IsNested = false;
+    arm.Leaf = leaf;
+    arm.Next = afterLeaf;
+    return true;
+}
+
+internal fn bool TryParseRecursiveIfMultiAssignmentNode(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    mut borrow IrTable<ExprNode> nodes,
+    mut borrow IrTable<ParamName> params,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<ParamName> funcNames,
+    u64[0 2 ** 63 - 1] ifIndex,
+    borrow IrTable<u32[0 max]> targetNameTokens,
+    mut borrow IrTable<u32[0 max]> armLocalRoots,
+    mut borrow IrTable<u32[0 max]> assignedRoots,
+    mut borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    mut borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    out u32[0 max] nodeIndex,
+    out u64[0 2 ** 63 - 1] nextToken)
+{
+    nodeIndex = 0;
+    nextToken = ifIndex;
+    if (stream.KindAt(ifIndex) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut ExprParseResult condition = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+
+    stack mut ParsedRecursiveIfMultiAssignmentArm thenArm = new();
+    if (!TryParseRecursiveOrLeafIfMultiAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        condition.Next,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        ifNodes,
+        thenArm))
+    {
+        return false;
+    }
+
+    if (stream.KindAt(thenArm.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack mut ParsedRecursiveIfMultiAssignmentArm elseArm = new();
+    if (!TryParseRecursiveOrLeafIfMultiAssignmentArm(
+        stream,
+        source,
+        nodes,
+        params,
+        signatureParamCount,
+        funcNames,
+        targetNameTokens,
+        thenArm.Next + 1,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        ifNodes,
+        elseArm))
+    {
+        return false;
+    }
+
+    condition.Next = thenArm.Next;
+
+    stack mut ParsedRecursiveIfMultiAssignmentNode node = new();
+    node.Condition = condition;
+    node.ThenArm = thenArm;
+    node.ElseArm = elseArm;
+    nodeIndex = ifNodes.Add(node);
+    nextToken = elseArm.Next;
+    return nodeIndex != 0;
+}
+
+internal fn bool RecursiveIfMultiAssignmentArmHasNestedDescendant(
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm)
+{
+    if (!arm.IsNested || !ifNodes.Contains(arm.NestedNode))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(arm.NestedNode);
+    return node.ThenArm.IsNested
+        || node.ElseArm.IsNested
+        || RecursiveIfMultiAssignmentArmHasNestedDescendant(ifNodes, node.ThenArm)
+        || RecursiveIfMultiAssignmentArmHasNestedDescendant(ifNodes, node.ElseArm);
+}
+
+internal fn bool RecursiveIfMultiAssignmentNodeHasRecursiveNestedArm(
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    return RecursiveIfMultiAssignmentArmHasNestedDescendant(ifNodes, node.ThenArm)
+        || RecursiveIfMultiAssignmentArmHasNestedDescendant(ifNodes, node.ElseArm);
+}
+
+internal fn bool TryGetIfAssignmentArmAssignedRoot(
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    out u32[0 max] rootNode)
+{
+    rootNode = 0;
+    if (targetOffset >= arm.AssignedRootCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedTargetOffset = assignedTargetOffsets.Get(rootSlot);
+        if (assignedTargetOffset == targetOffset)
+        {
+            rootNode = assignedRoots.Get(rootSlot);
+            return true;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryGetNestedIfMultiAssignmentArmRawPointerFacts(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    ParsedNestedIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    out bool isRawPointer,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool hasElementCount,
+    out bool elementCountIsParam,
+    out u32[0 max] elementCountLiteral,
+    out u32[0 max] elementCountParamIndex,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    isRawPointer = false;
+    rawPointerMutable = false;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    hasElementCount = false;
+    elementCountIsParam = false;
+    elementCountLiteral = 0;
+    elementCountParamIndex = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+
+    stack mut u32[0 max] rootNode = 0;
+    if (!arm.IsNested)
+    {
+        if (!TryGetIfAssignmentArmAssignedRoot(arm.Leaf, assignedRoots, assignedTargetOffsets, targetOffset, rootNode))
+        {
+            return false;
+        }
+
+        if (!TryGetRawPointerFactsForNodeWithNested(
+            nodes,
+            params,
+            rootNode,
+            rawPointerMutable,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
+        {
+            return true;
+        }
+
+        isRawPointer = true;
+        if (!TryGetRawPointerElementCountFactsForNameNode(
+            nodes,
+            params,
+            rootNode,
+            hasElementCount,
+            elementCountIsParam,
+            elementCountLiteral,
+            elementCountParamIndex))
+        {
+            hasElementCount = false;
+            elementCountIsParam = false;
+            elementCountLiteral = 0;
+            elementCountParamIndex = 0;
+        }
+
+        return true;
+    }
+
+    stack mut u32[0 max] thenRoot = 0;
+    stack mut u32[0 max] elseRoot = 0;
+    if (!TryGetIfAssignmentArmAssignedRoot(arm.Nested.ThenArm, assignedRoots, assignedTargetOffsets, targetOffset, thenRoot)
+        || !TryGetIfAssignmentArmAssignedRoot(arm.Nested.ElseArm, assignedRoots, assignedTargetOffsets, targetOffset, elseRoot))
+    {
+        return false;
+    }
+
+    if (TryMergeRawPointerFactsForAssignedNodes(
+        nodes,
+        params,
+        thenRoot,
+        elseRoot,
+        rawPointerMutable,
+        fieldTypeCode,
+        elementSize,
+        elementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        nestedMutable,
+        nestedFieldTypeCode,
+        nestedElementSize,
+        nestedElementAlignment))
+    {
+        isRawPointer = true;
+        return true;
+    }
+
+    stack mut bool thenMutable = false;
+    stack mut u32[0 max] thenFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenElementSize = 0;
+    stack mut u32[0 max] thenElementAlignment = 0;
+    stack bool thenIsRawPointer = TryGetRawPointerFactsForNode(
+        nodes,
+        params,
+        thenRoot,
+        thenMutable,
+        thenFieldTypeCode,
+        thenElementSize,
+        thenElementAlignment);
+
+    stack mut bool elseMutable = false;
+    stack mut u32[0 max] elseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseElementSize = 0;
+    stack mut u32[0 max] elseElementAlignment = 0;
+    stack bool elseIsRawPointer = TryGetRawPointerFactsForNode(
+        nodes,
+        params,
+        elseRoot,
+        elseMutable,
+        elseFieldTypeCode,
+        elseElementSize,
+        elseElementAlignment);
+
+    return !thenIsRawPointer && !elseIsRawPointer;
+}
+
+internal fn bool TryGetRecursiveIfMultiAssignmentArmRawPointerFacts(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParamName> params,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    out bool isRawPointer,
+    out bool rawPointerMutable,
+    out u32[0 max] fieldTypeCode,
+    out u32[0 max] elementSize,
+    out u32[0 max] elementAlignment,
+    out bool hasElementCount,
+    out bool elementCountIsParam,
+    out u32[0 max] elementCountLiteral,
+    out u32[0 max] elementCountParamIndex,
+    out bool nestedMutable,
+    out u32[0 max] nestedFieldTypeCode,
+    out u32[0 max] nestedElementSize,
+    out u32[0 max] nestedElementAlignment)
+{
+    isRawPointer = false;
+    rawPointerMutable = false;
+    fieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    elementSize = 0;
+    elementAlignment = 0;
+    hasElementCount = false;
+    elementCountIsParam = false;
+    elementCountLiteral = 0;
+    elementCountParamIndex = 0;
+    nestedMutable = false;
+    nestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    nestedElementSize = 0;
+    nestedElementAlignment = 0;
+
+    if (!arm.IsNested)
+    {
+        stack mut u32[0 max] rootNode = 0;
+        if (!TryGetIfAssignmentArmAssignedRoot(arm.Leaf, assignedRoots, assignedTargetOffsets, targetOffset, rootNode))
+        {
+            return false;
+        }
+
+        if (!TryGetRawPointerFactsForNodeWithNested(
+            nodes,
+            params,
+            rootNode,
+            rawPointerMutable,
+            fieldTypeCode,
+            elementSize,
+            elementAlignment,
+            nestedMutable,
+            nestedFieldTypeCode,
+            nestedElementSize,
+            nestedElementAlignment))
+        {
+            return true;
+        }
+
+        isRawPointer = true;
+        if (!TryGetRawPointerElementCountFactsForNameNode(
+            nodes,
+            params,
+            rootNode,
+            hasElementCount,
+            elementCountIsParam,
+            elementCountLiteral,
+            elementCountParamIndex))
+        {
+            hasElementCount = false;
+            elementCountIsParam = false;
+            elementCountLiteral = 0;
+            elementCountParamIndex = 0;
+        }
+
+        return true;
+    }
+
+    if (!ifNodes.Contains(arm.NestedNode))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(arm.NestedNode);
+
+    stack mut bool thenIsRawPointer = false;
+    stack mut bool thenMutable = false;
+    stack mut u32[0 max] thenFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenElementSize = 0;
+    stack mut u32[0 max] thenElementAlignment = 0;
+    stack mut bool thenHasElementCount = false;
+    stack mut bool thenElementCountIsParam = false;
+    stack mut u32[0 max] thenElementCountLiteral = 0;
+    stack mut u32[0 max] thenElementCountParamIndex = 0;
+    stack mut bool thenNestedMutable = false;
+    stack mut u32[0 max] thenNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenNestedElementSize = 0;
+    stack mut u32[0 max] thenNestedElementAlignment = 0;
+    if (!TryGetRecursiveIfMultiAssignmentArmRawPointerFacts(
+        nodes,
+        params,
+        ifNodes,
+        node.ThenArm,
+        assignedRoots,
+        assignedTargetOffsets,
+        targetOffset,
+        thenIsRawPointer,
+        thenMutable,
+        thenFieldTypeCode,
+        thenElementSize,
+        thenElementAlignment,
+        thenHasElementCount,
+        thenElementCountIsParam,
+        thenElementCountLiteral,
+        thenElementCountParamIndex,
+        thenNestedMutable,
+        thenNestedFieldTypeCode,
+        thenNestedElementSize,
+        thenNestedElementAlignment))
+    {
+        return false;
+    }
+
+    stack mut bool elseIsRawPointer = false;
+    stack mut bool elseMutable = false;
+    stack mut u32[0 max] elseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseElementSize = 0;
+    stack mut u32[0 max] elseElementAlignment = 0;
+    stack mut bool elseHasElementCount = false;
+    stack mut bool elseElementCountIsParam = false;
+    stack mut u32[0 max] elseElementCountLiteral = 0;
+    stack mut u32[0 max] elseElementCountParamIndex = 0;
+    stack mut bool elseNestedMutable = false;
+    stack mut u32[0 max] elseNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseNestedElementSize = 0;
+    stack mut u32[0 max] elseNestedElementAlignment = 0;
+    if (!TryGetRecursiveIfMultiAssignmentArmRawPointerFacts(
+        nodes,
+        params,
+        ifNodes,
+        node.ElseArm,
+        assignedRoots,
+        assignedTargetOffsets,
+        targetOffset,
+        elseIsRawPointer,
+        elseMutable,
+        elseFieldTypeCode,
+        elseElementSize,
+        elseElementAlignment,
+        elseHasElementCount,
+        elseElementCountIsParam,
+        elseElementCountLiteral,
+        elseElementCountParamIndex,
+        elseNestedMutable,
+        elseNestedFieldTypeCode,
+        elseNestedElementSize,
+        elseNestedElementAlignment))
+    {
+        return false;
+    }
+
+    if (!thenIsRawPointer && !elseIsRawPointer)
+    {
+        return true;
+    }
+
+    if (!thenIsRawPointer
+        || !elseIsRawPointer
+        || thenMutable != elseMutable
+        || thenFieldTypeCode != elseFieldTypeCode
+        || thenElementSize != elseElementSize
+        || thenElementAlignment != elseElementAlignment
+        || thenNestedMutable != elseNestedMutable
+        || thenNestedFieldTypeCode != elseNestedFieldTypeCode
+        || thenNestedElementSize != elseNestedElementSize
+        || thenNestedElementAlignment != elseNestedElementAlignment)
+    {
+        return false;
+    }
+
+    isRawPointer = true;
+    rawPointerMutable = thenMutable;
+    fieldTypeCode = thenFieldTypeCode;
+    elementSize = thenElementSize;
+    elementAlignment = thenElementAlignment;
+    nestedMutable = thenNestedMutable;
+    nestedFieldTypeCode = thenNestedFieldTypeCode;
+    nestedElementSize = thenNestedElementSize;
+    nestedElementAlignment = thenNestedElementAlignment;
+
+    if (thenHasElementCount
+        && elseHasElementCount
+        && RawPointerElementCountFactsEqual(
+            thenHasElementCount,
+            thenElementCountIsParam,
+            thenElementCountLiteral,
+            thenElementCountParamIndex,
+            elseHasElementCount,
+            elseElementCountIsParam,
+            elseElementCountLiteral,
+            elseElementCountParamIndex))
+    {
+        hasElementCount = thenHasElementCount;
+        elementCountIsParam = thenElementCountIsParam;
+        elementCountLiteral = thenElementCountLiteral;
+        elementCountParamIndex = thenElementCountParamIndex;
+    }
+
+    return true;
+}
+
+internal fn bool ResolveParamWithNestedIfMultiAssignmentArmFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfMultiAssignmentArm thenArm,
+    ParsedNestedIfMultiAssignmentArm elseArm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    u32[0 max] expectedParamIndex)
+{
+    stack mut bool thenIsRawPointer = false;
+    stack mut bool thenMutable = false;
+    stack mut u32[0 max] thenFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenElementSize = 0;
+    stack mut u32[0 max] thenElementAlignment = 0;
+    stack mut bool thenHasElementCount = false;
+    stack mut bool thenElementCountIsParam = false;
+    stack mut u32[0 max] thenElementCountLiteral = 0;
+    stack mut u32[0 max] thenElementCountParamIndex = 0;
+    stack mut bool thenNestedMutable = false;
+    stack mut u32[0 max] thenNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenNestedElementSize = 0;
+    stack mut u32[0 max] thenNestedElementAlignment = 0;
+    if (!TryGetNestedIfMultiAssignmentArmRawPointerFacts(
+        nodes,
+        params,
+        thenArm,
+        assignedRoots,
+        assignedTargetOffsets,
+        targetOffset,
+        thenIsRawPointer,
+        thenMutable,
+        thenFieldTypeCode,
+        thenElementSize,
+        thenElementAlignment,
+        thenHasElementCount,
+        thenElementCountIsParam,
+        thenElementCountLiteral,
+        thenElementCountParamIndex,
+        thenNestedMutable,
+        thenNestedFieldTypeCode,
+        thenNestedElementSize,
+        thenNestedElementAlignment))
+    {
+        return false;
+    }
+
+    stack mut bool elseIsRawPointer = false;
+    stack mut bool elseMutable = false;
+    stack mut u32[0 max] elseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseElementSize = 0;
+    stack mut u32[0 max] elseElementAlignment = 0;
+    stack mut bool elseHasElementCount = false;
+    stack mut bool elseElementCountIsParam = false;
+    stack mut u32[0 max] elseElementCountLiteral = 0;
+    stack mut u32[0 max] elseElementCountParamIndex = 0;
+    stack mut bool elseNestedMutable = false;
+    stack mut u32[0 max] elseNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseNestedElementSize = 0;
+    stack mut u32[0 max] elseNestedElementAlignment = 0;
+    if (!TryGetNestedIfMultiAssignmentArmRawPointerFacts(
+        nodes,
+        params,
+        elseArm,
+        assignedRoots,
+        assignedTargetOffsets,
+        targetOffset,
+        elseIsRawPointer,
+        elseMutable,
+        elseFieldTypeCode,
+        elseElementSize,
+        elseElementAlignment,
+        elseHasElementCount,
+        elseElementCountIsParam,
+        elseElementCountLiteral,
+        elseElementCountParamIndex,
+        elseNestedMutable,
+        elseNestedFieldTypeCode,
+        elseNestedElementSize,
+        elseNestedElementAlignment))
+    {
+        return false;
+    }
+
+    if (!thenIsRawPointer && !elseIsRawPointer)
+    {
+        return ResolveParam(params, source, start, length) == expectedParamIndex;
+    }
+
+    if (!thenIsRawPointer
+        || !elseIsRawPointer
+        || thenMutable != elseMutable
+        || thenFieldTypeCode != elseFieldTypeCode
+        || thenElementSize != elseElementSize
+        || thenElementAlignment != elseElementAlignment
+        || thenNestedMutable != elseNestedMutable
+        || thenNestedFieldTypeCode != elseNestedFieldTypeCode
+        || thenNestedElementSize != elseNestedElementSize
+        || thenNestedElementAlignment != elseNestedElementAlignment)
+    {
+        return false;
+    }
+
+    stack mut bool hasElementCount = false;
+    stack mut bool elementCountIsParam = false;
+    stack mut u32[0 max] elementCountLiteral = 0;
+    stack mut u32[0 max] elementCountParamIndex = 0;
+    if (thenHasElementCount
+        && elseHasElementCount
+        && RawPointerElementCountFactsEqual(
+            thenHasElementCount,
+            thenElementCountIsParam,
+            thenElementCountLiteral,
+            thenElementCountParamIndex,
+            elseHasElementCount,
+            elseElementCountIsParam,
+            elseElementCountLiteral,
+            elseElementCountParamIndex))
+    {
+        hasElementCount = thenHasElementCount;
+        elementCountIsParam = thenElementCountIsParam;
+        elementCountLiteral = thenElementCountLiteral;
+        elementCountParamIndex = thenElementCountParamIndex;
+    }
+
+    return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        start,
+        length,
+        thenMutable,
+        thenFieldTypeCode,
+        thenElementSize,
+        thenElementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        thenNestedMutable,
+        thenNestedFieldTypeCode,
+        thenNestedElementSize,
+        thenNestedElementAlignment) == expectedParamIndex;
+}
+
+internal fn bool ResolveParamWithRecursiveIfMultiAssignmentArmFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm thenArm,
+    ParsedRecursiveIfMultiAssignmentArm elseArm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    u32[0 max] expectedParamIndex)
+{
+    stack mut bool thenIsRawPointer = false;
+    stack mut bool thenMutable = false;
+    stack mut u32[0 max] thenFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenElementSize = 0;
+    stack mut u32[0 max] thenElementAlignment = 0;
+    stack mut bool thenHasElementCount = false;
+    stack mut bool thenElementCountIsParam = false;
+    stack mut u32[0 max] thenElementCountLiteral = 0;
+    stack mut u32[0 max] thenElementCountParamIndex = 0;
+    stack mut bool thenNestedMutable = false;
+    stack mut u32[0 max] thenNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] thenNestedElementSize = 0;
+    stack mut u32[0 max] thenNestedElementAlignment = 0;
+    if (!TryGetRecursiveIfMultiAssignmentArmRawPointerFacts(
+        nodes,
+        params,
+        ifNodes,
+        thenArm,
+        assignedRoots,
+        assignedTargetOffsets,
+        targetOffset,
+        thenIsRawPointer,
+        thenMutable,
+        thenFieldTypeCode,
+        thenElementSize,
+        thenElementAlignment,
+        thenHasElementCount,
+        thenElementCountIsParam,
+        thenElementCountLiteral,
+        thenElementCountParamIndex,
+        thenNestedMutable,
+        thenNestedFieldTypeCode,
+        thenNestedElementSize,
+        thenNestedElementAlignment))
+    {
+        return false;
+    }
+
+    stack mut bool elseIsRawPointer = false;
+    stack mut bool elseMutable = false;
+    stack mut u32[0 max] elseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseElementSize = 0;
+    stack mut u32[0 max] elseElementAlignment = 0;
+    stack mut bool elseHasElementCount = false;
+    stack mut bool elseElementCountIsParam = false;
+    stack mut u32[0 max] elseElementCountLiteral = 0;
+    stack mut u32[0 max] elseElementCountParamIndex = 0;
+    stack mut bool elseNestedMutable = false;
+    stack mut u32[0 max] elseNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] elseNestedElementSize = 0;
+    stack mut u32[0 max] elseNestedElementAlignment = 0;
+    if (!TryGetRecursiveIfMultiAssignmentArmRawPointerFacts(
+        nodes,
+        params,
+        ifNodes,
+        elseArm,
+        assignedRoots,
+        assignedTargetOffsets,
+        targetOffset,
+        elseIsRawPointer,
+        elseMutable,
+        elseFieldTypeCode,
+        elseElementSize,
+        elseElementAlignment,
+        elseHasElementCount,
+        elseElementCountIsParam,
+        elseElementCountLiteral,
+        elseElementCountParamIndex,
+        elseNestedMutable,
+        elseNestedFieldTypeCode,
+        elseNestedElementSize,
+        elseNestedElementAlignment))
+    {
+        return false;
+    }
+
+    if (!thenIsRawPointer && !elseIsRawPointer)
+    {
+        return ResolveParam(params, source, start, length) == expectedParamIndex;
+    }
+
+    if (!thenIsRawPointer
+        || !elseIsRawPointer
+        || thenMutable != elseMutable
+        || thenFieldTypeCode != elseFieldTypeCode
+        || thenElementSize != elseElementSize
+        || thenElementAlignment != elseElementAlignment
+        || thenNestedMutable != elseNestedMutable
+        || thenNestedFieldTypeCode != elseNestedFieldTypeCode
+        || thenNestedElementSize != elseNestedElementSize
+        || thenNestedElementAlignment != elseNestedElementAlignment)
+    {
+        return false;
+    }
+
+    stack mut bool hasElementCount = false;
+    stack mut bool elementCountIsParam = false;
+    stack mut u32[0 max] elementCountLiteral = 0;
+    stack mut u32[0 max] elementCountParamIndex = 0;
+    if (thenHasElementCount
+        && elseHasElementCount
+        && RawPointerElementCountFactsEqual(
+            thenHasElementCount,
+            thenElementCountIsParam,
+            thenElementCountLiteral,
+            thenElementCountParamIndex,
+            elseHasElementCount,
+            elseElementCountIsParam,
+            elseElementCountLiteral,
+            elseElementCountParamIndex))
+    {
+        hasElementCount = thenHasElementCount;
+        elementCountIsParam = thenElementCountIsParam;
+        elementCountLiteral = thenElementCountLiteral;
+        elementCountParamIndex = thenElementCountParamIndex;
+    }
+
+    return ResolveParamWithRawPointerElementAndCountAndNestedFacts(
+        params,
+        source,
+        start,
+        length,
+        thenMutable,
+        thenFieldTypeCode,
+        thenElementSize,
+        thenElementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        thenNestedMutable,
+        thenNestedFieldTypeCode,
+        thenNestedElementSize,
+        thenNestedElementAlignment) == expectedParamIndex;
+}

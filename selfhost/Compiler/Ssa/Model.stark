@@ -1,0 +1,246 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+module Compiler.Ssa.Model
+
+
+// Dense SSA artifacts deliberately keep the MIR opcode and value layout during the
+// first lowering boundary.  This makes the conversion allocation-linear and preserves
+// every backend-visible operand/immediate without a remap table.  Later SSA shaping
+// passes may replace rows, but the originating MIR index remains available for
+// diagnostics and exact fact-transfer checks.
+
+public struct SsaBlockId
+{
+    u32[0 max] Value;
+
+    SsaBlockId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow SsaBlockId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow SsaBlockId self)
+    {
+        return self.Value != 0;
+    }
+}
+
+public fn SsaBlockId SsaBlockIdOf(u32[0 max] index)
+{
+    stack mut SsaBlockId id = new();
+    id.Value = index;
+    return id;
+}
+
+public struct SsaFunctionId
+{
+    u32[0 max] Value;
+
+    SsaFunctionId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow SsaFunctionId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow SsaFunctionId self)
+    {
+        return self.Value != 0;
+    }
+}
+
+public fn SsaFunctionId SsaFunctionIdOf(u32[0 max] index)
+{
+    stack mut SsaFunctionId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A flat SSA instruction. Operand indexes are 1-based SsaValueId indexes, with 0
+// retaining MIR's absent-operand sentinel. Keeping the fields flat avoids generic
+// aggregate wrapper codegen and makes iteration cache-friendly.
+public struct SsaInstruction
+{
+    MirOp Op;
+    u32[0 max] AIndex;
+    u32[0 max] BIndex;
+    u32[0 max] CIndex;
+    u32[0 max] DIndex;
+    i64[min max] Imm;
+    MirType ResType;
+    u32[0 max] OriginMirValue;
+
+    SsaInstruction()
+    {
+        self.Op = MirOp.ConstInt;
+        self.AIndex = 0;
+        self.BIndex = 0;
+        self.CIndex = 0;
+        self.DIndex = 0;
+        self.Imm = 0;
+        self.ResType = MirType.I64;
+        self.OriginMirValue = 0;
+    }
+
+    public inline finite law MirOp Opcode(borrow SsaInstruction self)
+    {
+        return self.Op;
+    }
+
+    public inline finite law MirType ResultType(borrow SsaInstruction self)
+    {
+        return self.ResType;
+    }
+
+    public fn SsaValueId OperandA(borrow SsaInstruction self)
+    {
+        return SsaValueIdOf(self.AIndex);
+    }
+
+    public fn SsaValueId OperandB(borrow SsaInstruction self)
+    {
+        return SsaValueIdOf(self.BIndex);
+    }
+
+    public fn SsaValueId OperandC(borrow SsaInstruction self)
+    {
+        return SsaValueIdOf(self.CIndex);
+    }
+
+    public fn SsaValueId OperandD(borrow SsaInstruction self)
+    {
+        return SsaValueIdOf(self.DIndex);
+    }
+
+    public inline finite law i64[min max] Immediate(borrow SsaInstruction self)
+    {
+        return self.Imm;
+    }
+
+    public fn MirValueId OriginMirValueId(borrow SsaInstruction self)
+    {
+        return MirValueIdOf(self.OriginMirValue);
+    }
+}
+
+public struct SsaBlock
+{
+    MirTermKind Term;
+    u32[0 max] Slot0;
+    u32[0 max] Slot1;
+    u32[0 max] Slot2;
+    u32[0 max] Flags;
+    u32[0 max] OriginMirBlock;
+
+    SsaBlock()
+    {
+        self.Term = MirTermKind.Unterminated;
+        self.Slot0 = 0;
+        self.Slot1 = 0;
+        self.Slot2 = 0;
+        self.Flags = 0;
+        self.OriginMirBlock = 0;
+    }
+
+    public inline finite law MirTermKind Terminator(borrow SsaBlock self)
+    {
+        return self.Term;
+    }
+
+    public inline finite law u32[0 max] Slot0Index(borrow SsaBlock self)
+    {
+        return self.Slot0;
+    }
+
+    public inline finite law u32[0 max] Slot1Index(borrow SsaBlock self)
+    {
+        return self.Slot1;
+    }
+
+    public inline finite law u32[0 max] Slot2Index(borrow SsaBlock self)
+    {
+        return self.Slot2;
+    }
+
+    public inline finite law u32[0 max] FlagBits(borrow SsaBlock self)
+    {
+        return self.Flags;
+    }
+
+    public fn MirBlockId OriginMirBlockId(borrow SsaBlock self)
+    {
+        return MirBlockIdOf(self.OriginMirBlock);
+    }
+}
+
+public struct SsaFunction
+{
+    u32[0 max] Entry;
+    u32[0 max] FirstBlock;
+    u32[0 max] BlockCount;
+    u32[0 max] FirstInstr;
+    u32[0 max] InstrCount;
+    u32[0 max] OriginMirFunction;
+
+    SsaFunction()
+    {
+        self.Entry = 0;
+        self.FirstBlock = 0;
+        self.BlockCount = 0;
+        self.FirstInstr = 0;
+        self.InstrCount = 0;
+        self.OriginMirFunction = 0;
+    }
+
+    public fn SsaBlockId EntryBlock(borrow SsaFunction self)
+    {
+        return SsaBlockIdOf(self.Entry);
+    }
+
+    public inline finite law u32[0 max] FirstBlockIndex(borrow SsaFunction self)
+    {
+        return self.FirstBlock;
+    }
+
+    public inline finite law u32[0 max] OwnedBlockCount(borrow SsaFunction self)
+    {
+        return self.BlockCount;
+    }
+
+    public inline finite law u32[0 max] FirstInstructionIndex(borrow SsaFunction self)
+    {
+        return self.FirstInstr;
+    }
+
+    public inline finite law u32[0 max] OwnedInstructionCount(borrow SsaFunction self)
+    {
+        return self.InstrCount;
+    }
+
+    public fn MirFuncId OriginMirFunctionId(borrow SsaFunction self)
+    {
+        return MirFuncIdOf(self.OriginMirFunction);
+    }
+}
+
+public inline finite law bool SsaDefines(borrow IrTable<SsaInstruction> instructions, SsaValueId value)
+{
+    return instructions.Contains(value.Index());
+}
+
+public inline finite law bool SsaContainsBlock(borrow IrTable<SsaBlock> blocks, SsaBlockId block)
+{
+    return blocks.Contains(block.Index());
+}
+
+public inline finite law bool SsaContainsFunction(borrow IrTable<SsaFunction> functions, SsaFunctionId function)
+{
+    return functions.Contains(function.Index());
+}

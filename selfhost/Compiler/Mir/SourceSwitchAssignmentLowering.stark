@@ -1,0 +1,3674 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceIfLowering
+import Compiler.Mir.SourceIfParsing
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceLocalStorageLayout
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceSwitchPatterns
+import Compiler.Mir.SourceSwitchPatternConditions
+import Compiler.Mir.SourceSwitchAggregatePatterns
+import Compiler.Mir.SourceSwitchStoragePatterns
+import Compiler.Mir.SourceSwitchCaseParsing
+import Compiler.Mir.SourceSwitchAssignmentArms
+import Compiler.Mir.SourceSwitchTerminalParsing
+import Compiler.Mir.SourceSwitchTerminalLowering
+import Compiler.Typing.TypedEnumLayoutModel
+import Compiler.Typing.TypedPipeline
+import Compiler.Typing.TypedSwitchPatternModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceSwitchAssignmentLowering
+
+internal fn bool BuildSwitchAssignmentArmLocalTypesWithCaptures(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+{
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < paramCount)
+    {
+        stack mut u32[0 max] typeCode = 0;
+        stack u32[0 max] typeSlot = (u32[0 max])(paramIndex + 1);
+        if (baseLocalTypes.Contains(typeSlot))
+        {
+            typeCode = baseLocalTypes.Get(typeSlot);
+        }
+
+        if (armLocalTypes.Add(typeCode) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < arm.CaptureCount)
+    {
+        stack u32[0 max] captureRow = arm.CaptureStart + captureIndex;
+        if (!captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] captureTypeCode = captureTypeCodes.Get(captureRow);
+        stack mut u32[0 max] localTypeCode = SourceLocalTypeCodeNonValue();
+        if (!TrySourceSwitchCaptureLocalTypeCode(captureTypeCode, localTypeCode)
+            || (localTypeCode != SourceLocalTypeCodeBool()
+                && !SourceLocalTypeCodeIsIntegerValue(localTypeCode)
+                && localTypeCode != SourceLocalTypeCodeFixedArrayParam()
+                && !SourceLocalTypeCodeIsStructValue(localTypeCode)))
+        {
+            return false;
+        }
+
+        if (armLocalTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack ExprType localType = TypeOfNodeWithLocals(nodes, localRoot, armLocalTypes);
+        if (localType == ExprType.ErrorType || localType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        stack u32[0 max] localTypeCode = SourceLocalTypeCodeForNodeWithLocals(nodes, localRoot, armLocalTypes);
+
+        if (armLocalTypes.Add(localTypeCode) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildSwitchAssignmentArmLocalTypes(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<u32[0 max]> armLocalTypes)
+{
+    stack mut IrTable<u32[0 max]> noCaptureTypeCodes = new();
+    return BuildSwitchAssignmentArmLocalTypesWithCaptures(
+        nodes,
+        arm,
+        armLocalRoots,
+        noCaptureTypeCodes,
+        baseLocalTypes,
+        paramCount,
+        armLocalTypes);
+}
+
+internal fn ExprType TypeOfSwitchAssignmentArmWithCaptures(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildSwitchAssignmentArmLocalTypesWithCaptures(nodes, arm, armLocalRoots, captureTypeCodes, baseLocalTypes, paramCount, armLocalTypes))
+    {
+        return ExprType.ErrorType;
+    }
+
+    if (targetOffset >= arm.AssignedRootCount)
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return ExprType.ErrorType;
+        }
+
+        stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+        if (currentTargetOffset == targetOffset)
+        {
+            stack u32[0 max] rootNode = assignedRoots.Get(rootSlot);
+            return TypeOfNodeWithLocals(nodes, rootNode, armLocalTypes);
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return ExprType.ErrorType;
+}
+
+internal fn ExprType TypeOfSwitchAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    stack mut IrTable<u32[0 max]> noCaptureTypeCodes = new();
+    return TypeOfSwitchAssignmentArmWithCaptures(
+        nodes,
+        arm,
+        armLocalRoots,
+        noCaptureTypeCodes,
+        assignedRoots,
+        assignedTargetOffsets,
+        baseLocalTypes,
+        paramCount,
+        targetOffset);
+}
+
+internal fn bool TryGetSwitchAssignmentArmAssignedRoot(
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    u32[0 max] targetOffset,
+    out u32[0 max] rootNode)
+{
+    rootNode = 0;
+    if (targetOffset >= arm.AssignedRootCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedTargetOffset = assignedTargetOffsets.Get(rootSlot);
+        if (assignedTargetOffset == targetOffset)
+        {
+            rootNode = assignedRoots.Get(rootSlot);
+            return true;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return false;
+}
+
+internal fn bool UpdateSwitchAssignmentTargetRawPointerFacts(
+    mut borrow IrTable<ParamName> params,
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    ParsedSwitchAssignmentArm defaultArm,
+    u32[0 max] targetParamIndex,
+    u32[0 max] targetOffset,
+    u32[0 max] caseCount)
+{
+    stack mut u32[0 max] defaultRoot = 0;
+    if (!TryGetSwitchAssignmentArmAssignedRoot(defaultArm, assignedRoots, assignedTargetOffsets, targetOffset, defaultRoot))
+    {
+        return false;
+    }
+
+    stack mut bool mergedMutable = false;
+    stack mut u32[0 max] mergedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] mergedElementSize = 0;
+    stack mut u32[0 max] mergedElementAlignment = 0;
+    stack mut bool mergedNestedMutable = false;
+    stack mut u32[0 max] mergedNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] mergedNestedElementSize = 0;
+    stack mut u32[0 max] mergedNestedElementAlignment = 0;
+    stack mut bool defaultMutable = false;
+    stack mut u32[0 max] defaultFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] defaultElementSize = 0;
+    stack mut u32[0 max] defaultElementAlignment = 0;
+    stack mut bool defaultNestedMutable = false;
+    stack mut u32[0 max] defaultNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+    stack mut u32[0 max] defaultNestedElementSize = 0;
+    stack mut u32[0 max] defaultNestedElementAlignment = 0;
+    stack bool defaultIsRawPointer = TryGetRawPointerFactsForNodeWithNested(
+        nodes,
+        params,
+        defaultRoot,
+        defaultMutable,
+        defaultFieldTypeCode,
+        defaultElementSize,
+        defaultElementAlignment,
+        defaultNestedMutable,
+        defaultNestedFieldTypeCode,
+        defaultNestedElementSize,
+        defaultNestedElementAlignment);
+
+    stack mut bool anyRawPointer = defaultIsRawPointer;
+    stack mut bool hasElementCount = false;
+    stack mut bool elementCountIsParam = false;
+    stack mut u32[0 max] elementCountLiteral = 0;
+    stack mut u32[0 max] elementCountParamIndex = 0;
+    if (defaultIsRawPointer)
+    {
+        mergedMutable = defaultMutable;
+        mergedFieldTypeCode = defaultFieldTypeCode;
+        mergedElementSize = defaultElementSize;
+        mergedElementAlignment = defaultElementAlignment;
+        mergedNestedMutable = defaultNestedMutable;
+        mergedNestedFieldTypeCode = defaultNestedFieldTypeCode;
+        mergedNestedElementSize = defaultNestedElementSize;
+        mergedNestedElementAlignment = defaultNestedElementAlignment;
+        if (!TryGetRawPointerElementCountFactsForNameNode(
+            nodes,
+            params,
+            defaultRoot,
+            hasElementCount,
+            elementCountIsParam,
+            elementCountLiteral,
+            elementCountParamIndex))
+        {
+            hasElementCount = false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < (u64[0 2 ** 63 - 1])caseCount)
+    {
+        if (!caseArms.Contains((u32[0 max])(caseIndex + 1)))
+        {
+            return false;
+        }
+
+        stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        stack mut u32[0 max] caseRoot = 0;
+        if (!TryGetSwitchAssignmentArmAssignedRoot(caseArm, assignedRoots, assignedTargetOffsets, targetOffset, caseRoot))
+        {
+            return false;
+        }
+
+        stack mut bool caseMutable = false;
+        stack mut u32[0 max] caseFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] caseElementSize = 0;
+        stack mut u32[0 max] caseElementAlignment = 0;
+        stack mut bool caseNestedMutable = false;
+        stack mut u32[0 max] caseNestedFieldTypeCode = SourceResolvedFieldTypeCodeInvalid();
+        stack mut u32[0 max] caseNestedElementSize = 0;
+        stack mut u32[0 max] caseNestedElementAlignment = 0;
+        stack bool caseIsRawPointer = TryGetRawPointerFactsForNodeWithNested(
+            nodes,
+            params,
+            caseRoot,
+            caseMutable,
+            caseFieldTypeCode,
+            caseElementSize,
+            caseElementAlignment,
+            caseNestedMutable,
+            caseNestedFieldTypeCode,
+            caseNestedElementSize,
+            caseNestedElementAlignment);
+        anyRawPointer = anyRawPointer || caseIsRawPointer;
+        if (defaultIsRawPointer || caseIsRawPointer)
+        {
+            if (!defaultIsRawPointer
+                || !caseIsRawPointer
+                || mergedMutable != caseMutable
+                || mergedFieldTypeCode != caseFieldTypeCode
+                || mergedElementSize != caseElementSize
+                || mergedElementAlignment != caseElementAlignment
+                || mergedNestedMutable != caseNestedMutable
+                || mergedNestedFieldTypeCode != caseNestedFieldTypeCode
+                || mergedNestedElementSize != caseNestedElementSize
+                || mergedNestedElementAlignment != caseNestedElementAlignment)
+            {
+                return false;
+            }
+
+            stack mut bool caseHasElementCount = false;
+            stack mut bool caseElementCountIsParam = false;
+            stack mut u32[0 max] caseElementCountLiteral = 0;
+            stack mut u32[0 max] caseElementCountParamIndex = 0;
+            if (!TryGetRawPointerElementCountFactsForNameNode(
+                nodes,
+                params,
+                caseRoot,
+                caseHasElementCount,
+                caseElementCountIsParam,
+                caseElementCountLiteral,
+                caseElementCountParamIndex)
+                || !RawPointerElementCountFactsEqual(
+                    hasElementCount,
+                    elementCountIsParam,
+                    elementCountLiteral,
+                    elementCountParamIndex,
+                    caseHasElementCount,
+                    caseElementCountIsParam,
+                    caseElementCountLiteral,
+                    caseElementCountParamIndex))
+            {
+                hasElementCount = false;
+            }
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    if (!anyRawPointer)
+    {
+        return true;
+    }
+
+    return ReplaceParamRawPointerFactsWithNested(
+        params,
+        targetParamIndex,
+        mergedMutable,
+        mergedFieldTypeCode,
+        mergedElementSize,
+        mergedElementAlignment,
+        hasElementCount,
+        elementCountIsParam,
+        elementCountLiteral,
+        elementCountParamIndex,
+        mergedNestedMutable,
+        mergedNestedFieldTypeCode,
+        mergedNestedElementSize,
+        mergedNestedElementAlignment);
+}
+
+internal fn bool ValidateSwitchAssignmentArmModuleCallsWithCaptures(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildSwitchAssignmentArmLocalTypesWithCaptures(nodes, arm, armLocalRoots, captureTypeCodes, baseLocalTypes, paramCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, assignedRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ValidateSwitchAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> baseLocalTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> noCaptureTypeCodes = new();
+    return ValidateSwitchAssignmentArmModuleCallsWithCaptures(
+        nodes,
+        arm,
+        armLocalRoots,
+        noCaptureTypeCodes,
+        assignedRoots,
+        assignedTargetOffsets,
+        baseLocalTypes,
+        paramCount,
+        funcParamCounts,
+        functionCallContractFacts,
+        callerDistinctStorageFacts);
+}
+
+internal fn bool LowerSwitchAssignmentArmValuesWithCaptures(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    MirValueId enumValue,
+    u32[0 max] ownerDeclarationIndex,
+    borrow IrTable<u32[0 max]> captureVariantOrdinals,
+    borrow IrTable<u32[0 max]> capturePayloadOrdinals,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < paramCount)
+    {
+        if (localOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack TypeId ownerType = TypeIdOf(ownerDeclarationIndex + 1);
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < arm.CaptureCount)
+    {
+        stack u32[0 max] captureRow = arm.CaptureStart + captureIndex;
+        if (!captureVariantOrdinals.Contains(captureRow)
+            || !capturePayloadOrdinals.Contains(captureRow)
+            || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] payloadTypeCode = captureTypeCodes.Get(captureRow);
+        stack MirType payloadType = MirTypeForResolvedFieldTypeCode(payloadTypeCode);
+        stack u32[0 max] variantOrdinal = captureVariantOrdinals.Get(captureRow);
+        stack u32[0 max] payloadOrdinal = capturePayloadOrdinals.Get(captureRow);
+        stack MirValueId captureValue = MirEnumPayloadExtract(
+            instrs,
+            ownerType,
+            variantOrdinal,
+            payloadOrdinal,
+            enumValue,
+            payloadType);
+        if (localOverrides.Add(captureValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, localTypes, localOverrides);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> sourceOrderValues = new();
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, assignedRoot, instrs, localTypes, localOverrides);
+        if (sourceOrderValues.Add(value.Index()) == 0)
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack mut bool foundTarget = false;
+        assignedIndex = 0;
+        while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+        {
+            stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+            stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+            if (currentTargetOffset == (u32[0 max])targetIndex)
+            {
+                if (foundTarget)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] sourceOrderValue = sourceOrderValues.Get((u32[0 max])(assignedIndex + 1));
+                if (values.Add(sourceOrderValue) == 0)
+                {
+                    return false;
+                }
+
+                foundTarget = true;
+            }
+
+            assignedIndex = assignedIndex + 1;
+        }
+
+        if (!foundTarget)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerSwitchAssignmentArmValues(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    stack mut IrTable<u32[0 max]> noCaptureVariantOrdinals = new();
+    stack mut IrTable<u32[0 max]> noCapturePayloadOrdinals = new();
+    stack mut IrTable<u32[0 max]> noCaptureTypeCodes = new();
+    return LowerSwitchAssignmentArmValuesWithCaptures(
+        nodes,
+        arm,
+        armLocalRoots,
+        MirValueIdOf(0),
+        0,
+        noCaptureVariantOrdinals,
+        noCapturePayloadOrdinals,
+        noCaptureTypeCodes,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        instrs,
+        values);
+}
+
+internal fn bool BuildFixedArraySwitchAssignmentCaptureLocalOverrides(
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    FixedArrayStorageLocal fixedArrayLocal,
+    borrow IrTable<u32[0 max]> captureElementIndices,
+    borrow IrTable<u32[0 max]> captureTypeCodes,
+    u32[0 max] captureStart,
+    u32[0 max] captureCount,
+    u32[0 max] baseLocalCount,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> armLocalOverrides)
+{
+    stack mut u64[0 2 ** 63 - 1] baseIndex = 0;
+    while willexit (baseIndex < (u64[0 2 ** 63 - 1])baseLocalCount)
+    {
+        stack u32[0 max] localSlot = (u32[0 max])(baseIndex + 1);
+        stack mut u32[0 max] overrideValue = 0;
+        if (baseLocalOverrides.Contains(localSlot))
+        {
+            overrideValue = baseLocalOverrides.Get(localSlot);
+        }
+
+        if (armLocalOverrides.Add(overrideValue) == 0)
+        {
+            return false;
+        }
+
+        baseIndex = baseIndex + 1;
+    }
+
+    if (!fixedArrayFacts.IsFixedArray
+        || fixedArrayFacts.FixedArrayLength == 0
+        || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] storageValue = 0;
+    if (useFixedArrayStorageLocal)
+    {
+        if (fixedArrayParamIndex >= baseLocalCount
+            || fixedArrayLocal.ParamIndex != fixedArrayParamIndex
+            || fixedArrayLocal.ArrayLength != fixedArrayFacts.FixedArrayLength
+            || fixedArrayLocal.ElementSize != fixedArrayFacts.FixedArrayElementSize
+            || fixedArrayLocal.Alignment != fixedArrayFacts.FixedArrayAlignment
+            || fixedArrayLocal.FieldTypeCode != fixedArrayFacts.FixedArrayFieldTypeCode
+            || !baseLocalOverrides.Contains(fixedArrayLocal.ParamIndex + 1))
+        {
+            return false;
+        }
+
+        storageValue = baseLocalOverrides.Get(fixedArrayLocal.ParamIndex + 1);
+        if (storageValue == 0)
+        {
+            return false;
+        }
+    }
+
+    stack mut u32[0 max] captureIndex = 0;
+    while willexit (captureIndex < captureCount)
+    {
+        stack u32[0 max] captureRow = captureStart + captureIndex;
+        if (!captureElementIndices.Contains(captureRow)
+            || !captureTypeCodes.Contains(captureRow))
+        {
+            return false;
+        }
+
+        stack u32[0 max] elementIndex = captureElementIndices.Get(captureRow);
+        stack u32[0 max] elementTypeCode = captureTypeCodes.Get(captureRow);
+        if (elementIndex >= fixedArrayFacts.FixedArrayLength
+            || elementTypeCode != fixedArrayFacts.FixedArrayFieldTypeCode)
+        {
+            return false;
+        }
+
+        stack mut MirValueId captureValue = MirValueIdOf(0);
+        if (useFixedArrayStorageLocal)
+        {
+            if (elementIndex > 4294967295 / fixedArrayLocal.ElementSize)
+            {
+                return false;
+            }
+
+            stack u32[0 max] elementByteOffset = elementIndex * fixedArrayLocal.ElementSize;
+            if (fixedArrayLocal.BaseByteOffset > 4294967295 - elementByteOffset)
+            {
+                return false;
+            }
+
+            stack u32[0 max] byteOffset = fixedArrayLocal.BaseByteOffset + elementByteOffset;
+            stack MirValueId elementPointer = MirPtrOffset(
+                instrs,
+                MirValueIdOf(storageValue),
+                byteOffset,
+                fixedArrayLocal.Alignment);
+            if (fixedArrayLocal.HasDeclaredElementRange)
+            {
+                captureValue = MirLoadPtrAlignedTypedWithDeclaredRange(
+                    instrs,
+                    fixedArrayLocal.ElementType,
+                    elementPointer,
+                    fixedArrayLocal.Alignment,
+                    fixedArrayLocal.DeclaredElementRangeLower,
+                    fixedArrayLocal.DeclaredElementRangeUpperExclusive);
+            }
+            else
+            {
+                captureValue = MirLoadPtrAlignedTyped(
+                    instrs,
+                    fixedArrayLocal.ElementType,
+                    elementPointer,
+                    fixedArrayLocal.Alignment);
+            }
+        }
+        else
+        {
+            captureValue = MirFixedArrayParamElement(
+                instrs,
+                fixedArrayParamIndex,
+                elementIndex,
+                fixedArrayFacts.FixedArrayLength,
+                fixedArrayFacts.FixedArrayElementType);
+        }
+
+        if (armLocalOverrides.Add(captureValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        captureIndex = captureIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerFixedArrayListSwitchAssignmentArmValuesWithCaptures(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    FixedArrayStorageLocal fixedArrayLocal,
+    borrow IrTable<u32[0 max]> elementCaptureIndices,
+    borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    if (!BuildSwitchAssignmentArmLocalTypesWithCaptures(
+            nodes,
+            arm,
+            armLocalRoots,
+            elementCaptureTypeCodes,
+            localTypes,
+            paramCount,
+            armLocalTypes)
+        || !BuildFixedArraySwitchAssignmentCaptureLocalOverrides(
+            fixedArrayParamIndex,
+            fixedArrayFacts,
+            useFixedArrayStorageLocal,
+            fixedArrayLocal,
+            elementCaptureIndices,
+            elementCaptureTypeCodes,
+            arm.CaptureStart,
+            arm.CaptureCount,
+            paramCount,
+            baseLocalOverrides,
+            instrs,
+            localOverrides))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, armLocalTypes, localOverrides);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> sourceOrderValues = new();
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, assignedRoot, instrs, armLocalTypes, localOverrides);
+        if (sourceOrderValues.Add(value.Index()) == 0)
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack mut bool foundTarget = false;
+        assignedIndex = 0;
+        while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+        {
+            stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+            stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+            if (currentTargetOffset == (u32[0 max])targetIndex)
+            {
+                if (foundTarget)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] sourceOrderValue = sourceOrderValues.Get((u32[0 max])(assignedIndex + 1));
+                if (values.Add(sourceOrderValue) == 0)
+                {
+                    return false;
+                }
+
+                foundTarget = true;
+            }
+
+            assignedIndex = assignedIndex + 1;
+        }
+
+        if (!foundTarget)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerStructAggregateSwitchAssignmentArmValuesWithCaptures(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] structParamIndex,
+    u32[0 max] structBaseByteOffset,
+    bool useStructValueParam,
+    ParamAbiFacts structValueFacts,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<u32[0 max]> fieldCaptureIndices,
+    borrow IrTable<u32[0 max]> fieldCaptureOffsets,
+    borrow IrTable<u32[0 max]> fieldCaptureAlignments,
+    borrow IrTable<u32[0 max]> fieldCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> fieldCaptureMemberFactRows,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    if (!BuildSwitchAssignmentArmLocalTypesWithCaptures(
+            nodes,
+            arm,
+            armLocalRoots,
+            fieldCaptureTypeCodes,
+            localTypes,
+            paramCount,
+            armLocalTypes)
+        || !BuildStructAggregateSwitchCaptureLocalOverrides(
+            structParamIndex,
+            structBaseByteOffset,
+            useStructValueParam,
+            structValueFacts,
+            moduleFacts,
+            fieldCaptureIndices,
+            fieldCaptureOffsets,
+            fieldCaptureAlignments,
+            fieldCaptureTypeCodes,
+            fieldCaptureMemberFactRows,
+            arm.CaptureStart,
+            arm.CaptureCount,
+            paramCount,
+            baseLocalOverrides,
+            instrs,
+            localOverrides))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, armLocalTypes, localOverrides);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> sourceOrderValues = new();
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, assignedRoot, instrs, armLocalTypes, localOverrides);
+        if (sourceOrderValues.Add(value.Index()) == 0)
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack mut bool foundTarget = false;
+        assignedIndex = 0;
+        while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+        {
+            stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+            stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+            if (currentTargetOffset == (u32[0 max])targetIndex)
+            {
+                if (foundTarget)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] sourceOrderValue = sourceOrderValues.Get((u32[0 max])(assignedIndex + 1));
+                if (values.Add(sourceOrderValue) == 0)
+                {
+                    return false;
+                }
+
+                foundTarget = true;
+            }
+
+            assignedIndex = assignedIndex + 1;
+        }
+
+        if (!foundTarget)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerAssignedIntegerSwitchCasesToBlocks(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<i64[min max]> caseMaxValues,
+    bool useEnumPayloadPatterns,
+    bool useFixedArrayListPatterns,
+    bool useStructAggregatePatterns,
+    u32[0 max] fixedArrayParamIndex,
+    ParamAbiFacts fixedArrayFacts,
+    bool useFixedArrayStorageLocal,
+    FixedArrayStorageLocal fixedArrayLocal,
+    u32[0 max] structParamIndex,
+    u32[0 max] structTypeToken,
+    u32[0 max] structBaseByteOffset,
+    bool useStructValueParam,
+    ParamAbiFacts structValueFacts,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] ownerDeclarationIndex,
+    borrow SourceModuleLoweringFacts moduleFacts,
+    borrow IrTable<u32[0 max]> casePayloadPatternStarts,
+    borrow IrTable<u32[0 max]> casePayloadPatternCounts,
+    borrow IrTable<u32[0 max]> casePayloadNestedStarts,
+    borrow IrTable<u32[0 max]> casePayloadNestedCounts,
+    borrow IrTable<u32[0 max]> payloadPatternVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternOrdinals,
+    borrow IrTable<u32[0 max]> payloadPatternTypeCodes,
+    borrow IrTable<u32[0 max]> payloadPatternKinds,
+    borrow IrTable<i64[min max]> payloadPatternMinValues,
+    borrow IrTable<i64[min max]> payloadPatternMaxValues,
+    borrow IrTable<u32[0 max]> payloadCaptureVariantOrdinals,
+    borrow IrTable<u32[0 max]> payloadCaptureOrdinals,
+    borrow IrTable<u32[0 max]> payloadCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> nestedVariantOrdinals,
+    borrow IrTable<u32[0 max]> nestedPayloadOrdinals,
+    borrow IrTable<u32[0 max]> nestedKinds,
+    borrow IrTable<u32[0 max]> nestedAggregateDescriptorRows,
+    borrow IrTable<u32[0 max]> nestedListDescriptorRows,
+    borrow IrTable<u32[0 max]> caseListPatternStarts,
+    borrow IrTable<u32[0 max]> caseListPatternCounts,
+    borrow IrTable<u32[0 max]> elementPatternIndices,
+    borrow IrTable<u32[0 max]> elementPatternTypeCodes,
+    borrow IrTable<u32[0 max]> elementPatternKinds,
+    borrow IrTable<i64[min max]> elementPatternMinValues,
+    borrow IrTable<i64[min max]> elementPatternMaxValues,
+    borrow IrTable<u32[0 max]> caseElementCaptureStarts,
+    borrow IrTable<u32[0 max]> caseElementCaptureCounts,
+    borrow IrTable<u32[0 max]> elementCaptureIndices,
+    borrow IrTable<u32[0 max]> elementCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> structFieldPatternIndices,
+    borrow IrTable<u32[0 max]> caseGuardNodes,
+    borrow IrTable<u32[0 max]> structFieldPatternOffsets,
+    borrow IrTable<u32[0 max]> structFieldPatternAlignments,
+    borrow IrTable<u32[0 max]> structFieldPatternTypeCodes,
+    borrow IrTable<u32[0 max]> structFieldPatternMemberFactRows,
+    borrow IrTable<u32[0 max]> structFieldPatternKinds,
+    borrow IrTable<i64[min max]> structFieldPatternMinValues,
+    borrow IrTable<i64[min max]> structFieldPatternMaxValues,
+    borrow IrTable<u32[0 max]> caseStructFieldCaptureStarts,
+    borrow IrTable<u32[0 max]> caseStructFieldCaptureCounts,
+    borrow IrTable<u32[0 max]> caseStructNestedStarts,
+    borrow IrTable<u32[0 max]> caseStructNestedCounts,
+    borrow IrTable<u32[0 max]> structFieldCaptureIndices,
+    borrow IrTable<u32[0 max]> structFieldCaptureOffsets,
+    borrow IrTable<u32[0 max]> structFieldCaptureAlignments,
+    borrow IrTable<u32[0 max]> structFieldCaptureTypeCodes,
+    borrow IrTable<u32[0 max]> structFieldCaptureMemberFactRows,
+    borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    ParsedSwitchAssignmentArm defaultArm,
+    u32[0 max] targetCount,
+    borrow IrTable<u32[0 max]> postLocalRoots,
+    bool hasTerminalIf,
+    ParsedIfReturnArms terminalIfArms,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetParamStart,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    stack mut u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (useFixedArrayListPatterns || useStructAggregatePatterns)
+    {
+        caseCountWide = caseArms.Count();
+    }
+
+    if (caseCountWide == 0 || caseArms.Count() != caseCountWide || targetCount == 0)
+    {
+        return false;
+    }
+
+    if (!useFixedArrayListPatterns && !useStructAggregatePatterns && caseMaxValues.Count() != caseCountWide)
+    {
+        return false;
+    }
+
+    if ((useEnumPayloadPatterns && (useFixedArrayListPatterns || useStructAggregatePatterns))
+        || (useFixedArrayListPatterns && useStructAggregatePatterns)
+        || (useStructValueParam && !useStructAggregatePatterns)
+        || (useEnumPayloadPatterns
+        && (casePayloadPatternStarts.Count() != caseCountWide
+            || casePayloadPatternCounts.Count() != caseCountWide
+            || casePayloadNestedStarts.Count() != caseCountWide
+            || casePayloadNestedCounts.Count() != caseCountWide)))
+    {
+        return false;
+    }
+
+    if (useFixedArrayListPatterns
+        && (caseListPatternStarts.Count() != caseCountWide
+            || caseListPatternCounts.Count() != caseCountWide
+            || caseElementCaptureStarts.Count() != caseCountWide
+            || caseElementCaptureCounts.Count() != caseCountWide
+            || !fixedArrayFacts.IsFixedArray
+            || fixedArrayFacts.FixedArrayLength == 0
+            || fixedArrayFacts.FixedArrayFieldTypeCode == SourceResolvedFieldTypeCodeInvalid()
+            || !localTypes.Contains(fixedArrayParamIndex + 1)))
+    {
+        return false;
+    }
+
+    if (useFixedArrayListPatterns)
+    {
+        if (useFixedArrayStorageLocal)
+        {
+            if (fixedArrayLocal.ParamIndex != fixedArrayParamIndex
+                || fixedArrayLocal.ArrayLength != fixedArrayFacts.FixedArrayLength
+                || fixedArrayLocal.ElementSize != fixedArrayFacts.FixedArrayElementSize
+                || fixedArrayLocal.Alignment != fixedArrayFacts.FixedArrayAlignment
+                || fixedArrayLocal.FieldTypeCode != fixedArrayFacts.FixedArrayFieldTypeCode
+                || localTypes.Get(fixedArrayParamIndex + 1) != SourceLocalTypeCodeNonValue()
+                || !baseLocalOverrides.Contains(fixedArrayParamIndex + 1)
+                || baseLocalOverrides.Get(fixedArrayParamIndex + 1) == 0)
+            {
+                return false;
+            }
+        }
+        else if (localTypes.Get(fixedArrayParamIndex + 1) != SourceLocalTypeCodeFixedArrayParam())
+        {
+            return false;
+        }
+    }
+
+    if (useStructAggregatePatterns
+        && (caseListPatternStarts.Count() != caseCountWide
+            || caseListPatternCounts.Count() != caseCountWide
+            || caseStructFieldCaptureStarts.Count() != caseCountWide
+            || caseStructFieldCaptureCounts.Count() != caseCountWide
+            || caseStructNestedStarts.Count() != caseCountWide
+            || caseStructNestedCounts.Count() != caseCountWide
+            || caseGuardNodes.Count() != caseCountWide
+            || !localTypes.Contains(structParamIndex + 1)))
+    {
+        return false;
+    }
+
+    if (useFixedArrayListPatterns
+        && caseGuardNodes.Count() != 0
+        && caseGuardNodes.Count() != caseCountWide)
+    {
+        return false;
+    }
+
+    if (!useFixedArrayListPatterns && !useStructAggregatePatterns && caseGuardNodes.Count() != 0)
+    {
+        return false;
+    }
+
+    if (useStructAggregatePatterns)
+    {
+        if (useStructValueParam)
+        {
+            if (!structValueFacts.IsStructValue
+                || structValueFacts.StructValueFieldCount == 0
+                || structValueFacts.StructValueFieldCount > StructValueShapeMaxFields())
+            {
+                return false;
+            }
+        }
+        else if (localTypes.Get(structParamIndex + 1) != SourceLocalTypeCodeNonValue()
+            || !baseLocalOverrides.Contains(structParamIndex + 1)
+            || baseLocalOverrides.Get(structParamIndex + 1) == 0)
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<SourceSwitchListPatternDescriptor> listPatternDescriptors = new();
+    stack mut IrTable<u32[0 max]> caseListPatternDescriptorRows = new();
+    if (useFixedArrayListPatterns
+        && !TryBuildSourceSwitchListPatternCaseDescriptors(
+            fixedArrayFacts,
+            caseListPatternStarts,
+            caseListPatternCounts,
+            listPatternDescriptors,
+            caseListPatternDescriptorRows))
+    {
+        return false;
+    }
+
+    stack mut IrTable<SourceSwitchAggregatePatternDescriptor> aggregatePatternDescriptors = new();
+    stack mut IrTable<u32[0 max]> caseAggregatePatternDescriptorRows = new();
+    if (useStructAggregatePatterns
+        && !TryBuildSourceSwitchAggregatePatternCaseDescriptors(
+            structTypeToken,
+            0,
+            caseListPatternStarts,
+            caseListPatternCounts,
+            aggregatePatternDescriptors,
+            caseAggregatePatternDescriptorRows))
+    {
+        return false;
+    }
+
+    if (useEnumPayloadPatterns
+        && !TryBuildSourceSwitchEnumAggregatePatternCaseDescriptors(
+            moduleFacts,
+            ownerDeclarationIndex,
+            caseValues,
+            casePayloadPatternStarts,
+            casePayloadPatternCounts,
+            payloadPatternVariantOrdinals,
+            aggregatePatternDescriptors,
+            caseAggregatePatternDescriptorRows))
+    {
+        return false;
+    }
+
+    if (useFixedArrayListPatterns
+        && !SourceSwitchListPatternDescriptorRowsAreValid(
+            listPatternDescriptors,
+            caseListPatternDescriptorRows,
+            elementPatternIndices,
+            elementPatternTypeCodes,
+            elementPatternKinds,
+            elementPatternMinValues,
+            elementPatternMaxValues))
+    {
+        return false;
+    }
+
+    if (useStructAggregatePatterns)
+    {
+        if (useStructValueParam)
+        {
+            if (!SourceSwitchStructValuePatternDescriptorRowsAreValidForSource(
+                    stream,
+                    source,
+                    structTypeToken,
+                    structValueFacts,
+                    aggregatePatternDescriptors,
+                    caseAggregatePatternDescriptorRows,
+                    structFieldPatternIndices,
+                    structFieldPatternTypeCodes,
+                    structFieldPatternMemberFactRows,
+                    structFieldPatternKinds,
+                    structFieldPatternMinValues,
+                    structFieldPatternMaxValues))
+            {
+                return false;
+            }
+        }
+        else if (!SourceSwitchStructStoragePatternDescriptorRowsAreValid(
+                structTypeToken,
+                structBaseByteOffset,
+                aggregatePatternDescriptors,
+                caseAggregatePatternDescriptorRows,
+                structFieldPatternIndices,
+                structFieldPatternOffsets,
+                structFieldPatternAlignments,
+                structFieldPatternTypeCodes,
+                structFieldPatternMemberFactRows,
+                structFieldPatternKinds,
+                structFieldPatternMinValues,
+                structFieldPatternMaxValues))
+        {
+            return false;
+        }
+    }
+
+    if (useEnumPayloadPatterns
+        && !SourceSwitchEnumPayloadPatternDescriptorRowsAreValid(
+            moduleFacts,
+            ownerDeclarationIndex,
+            caseValues,
+            aggregatePatternDescriptors,
+            caseAggregatePatternDescriptorRows,
+            payloadPatternVariantOrdinals,
+            payloadPatternOrdinals,
+            payloadPatternTypeCodes,
+            payloadPatternKinds,
+            payloadPatternMinValues,
+            payloadPatternMaxValues))
+    {
+        return false;
+    }
+
+    if (useFixedArrayListPatterns)
+    {
+        stack mut IrTable<SourceSwitchAggregatePatternDescriptor> noNestedAggregateDescriptorsForListPreflight = new();
+        stack mut IrTable<SourceSwitchPatternDecisionNode> decisionNodesForListPreflight = new();
+        stack mut IrTable<SourceSwitchPatternDecisionMember> decisionMembersForListPreflight = new();
+        stack mut IrTable<u32[0 max]> caseDecisionMemberStartsForListPreflight = new();
+        stack mut IrTable<u32[0 max]> caseDecisionMemberCountsForListPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedListStartsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedListCountsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedListElementIndicesForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedListKindsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedListAggregateDescriptorRowsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedListDescriptorRowsForPreflight = new();
+        if (!TryBuildSourceSwitchListPatternDecisionPreflightRows(
+                nodes,
+                noNestedAggregateDescriptorsForListPreflight,
+                listPatternDescriptors,
+                caseListPatternDescriptorRows,
+                caseGuardNodes,
+                caseElementCaptureStarts,
+                caseElementCaptureCounts,
+                noNestedListStartsForPreflight,
+                noNestedListCountsForPreflight,
+                elementPatternIndices,
+                elementPatternTypeCodes,
+                elementPatternKinds,
+                elementPatternMinValues,
+                elementPatternMaxValues,
+                elementCaptureIndices,
+                elementCaptureTypeCodes,
+                noNestedListElementIndicesForPreflight,
+                noNestedListKindsForPreflight,
+                noNestedListAggregateDescriptorRowsForPreflight,
+                noNestedListDescriptorRowsForPreflight,
+                decisionNodesForListPreflight,
+                decisionMembersForListPreflight,
+                caseDecisionMemberStartsForListPreflight,
+                caseDecisionMemberCountsForListPreflight))
+        {
+            return false;
+        }
+    }
+
+    if (useStructAggregatePatterns)
+    {
+        stack mut IrTable<SourceSwitchListPatternDescriptor> listPatternDescriptorsForStructPreflight = new();
+        stack mut IrTable<SourceSwitchPatternDecisionNode> decisionNodesForStructPreflight = new();
+        stack mut IrTable<SourceSwitchPatternDecisionMember> decisionMembersForStructPreflight = new();
+        stack mut IrTable<u32[0 max]> caseDecisionMemberStartsForStructPreflight = new();
+        stack mut IrTable<u32[0 max]> caseDecisionMemberCountsForStructPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedStructFieldStartsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedStructFieldCountsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedStructFieldIndicesForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedStructFieldKindsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedStructAggregateDescriptorRowsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noNestedStructListDescriptorRowsForPreflight = new();
+        if (!TryBuildSourceSwitchStructAggregatePatternDecisionPreflightRows(
+                stream,
+                source,
+                moduleFacts,
+                nodes,
+                aggregatePatternDescriptors,
+                listPatternDescriptorsForStructPreflight,
+                caseAggregatePatternDescriptorRows,
+                caseGuardNodes,
+                caseStructFieldCaptureStarts,
+                caseStructFieldCaptureCounts,
+                caseStructNestedStarts,
+                caseStructNestedCounts,
+                structFieldPatternIndices,
+                structFieldPatternTypeCodes,
+                structFieldPatternKinds,
+                structFieldPatternMinValues,
+                structFieldPatternMaxValues,
+                structFieldCaptureIndices,
+                structFieldCaptureTypeCodes,
+                noNestedStructFieldIndicesForPreflight,
+                noNestedStructFieldKindsForPreflight,
+                noNestedStructAggregateDescriptorRowsForPreflight,
+                noNestedStructListDescriptorRowsForPreflight,
+                decisionNodesForStructPreflight,
+                decisionMembersForStructPreflight,
+                caseDecisionMemberStartsForStructPreflight,
+                caseDecisionMemberCountsForStructPreflight))
+        {
+            return false;
+        }
+
+    }
+
+    if (useEnumPayloadPatterns)
+    {
+        stack mut IrTable<u32[0 max]> casePayloadCaptureStartsForPreflight = new();
+        stack mut IrTable<u32[0 max]> casePayloadCaptureCountsForPreflight = new();
+        stack mut u64[0 2 ** 63 - 1] preflightCaseIndex = 0;
+        while willexit (preflightCaseIndex < caseCountWide)
+        {
+            stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(preflightCaseIndex + 1));
+            if (casePayloadCaptureStartsForPreflight.Add(caseArm.CaptureStart) == 0
+                || casePayloadCaptureCountsForPreflight.Add(caseArm.CaptureCount) == 0)
+            {
+                return false;
+            }
+
+            preflightCaseIndex = preflightCaseIndex + 1;
+        }
+
+        stack mut IrTable<SourceSwitchListPatternDescriptor> listPatternDescriptorsForPreflight = new();
+        stack mut IrTable<u32[0 max]> noGuardNodesForPreflight = new();
+        stack mut IrTable<SourceSwitchPatternDecisionNode> decisionNodesForPreflight = new();
+        stack mut IrTable<SourceSwitchPatternDecisionMember> decisionMembersForPreflight = new();
+        stack mut IrTable<u32[0 max]> caseDecisionMemberStartsForPreflight = new();
+        stack mut IrTable<u32[0 max]> caseDecisionMemberCountsForPreflight = new();
+        if (!TryBuildSourceSwitchEnumPayloadPatternDecisionPreflightRows(
+                nodes,
+                aggregatePatternDescriptors,
+                listPatternDescriptorsForPreflight,
+                caseAggregatePatternDescriptorRows,
+                noGuardNodesForPreflight,
+                casePayloadCaptureStartsForPreflight,
+                casePayloadCaptureCountsForPreflight,
+                casePayloadNestedStarts,
+                casePayloadNestedCounts,
+                payloadPatternVariantOrdinals,
+                payloadPatternOrdinals,
+                payloadPatternTypeCodes,
+                payloadPatternKinds,
+                payloadPatternMinValues,
+                payloadPatternMaxValues,
+                payloadCaptureVariantOrdinals,
+                payloadCaptureOrdinals,
+                payloadCaptureTypeCodes,
+                nestedVariantOrdinals,
+                nestedPayloadOrdinals,
+                nestedKinds,
+                nestedAggregateDescriptorRows,
+                nestedListDescriptorRows,
+                decisionNodesForPreflight,
+                decisionMembersForPreflight,
+                caseDecisionMemberStartsForPreflight,
+                caseDecisionMemberCountsForPreflight))
+        {
+            return false;
+        }
+    }
+
+    stack ExprType scrutineeType = TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes);
+    if (useStructAggregatePatterns)
+    {
+        if (!nodes.Contains(scrutineeNode))
+        {
+            return false;
+        }
+
+        stack ExprNode scrutineeExpr = nodes.Get(scrutineeNode);
+        if (scrutineeExpr.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr
+            || scrutineeExpr.Left != structParamIndex)
+        {
+            return false;
+        }
+    }
+    else if (useFixedArrayListPatterns)
+    {
+        if (!nodes.Contains(scrutineeNode))
+        {
+            return false;
+        }
+
+        stack ExprNode scrutineeExpr = nodes.Get(scrutineeNode);
+        if (scrutineeExpr.Kind != Compiler.Mir.SourceExpressions.ExprKind.NameExpr
+            || scrutineeExpr.Left != fixedArrayParamIndex)
+        {
+            return false;
+        }
+    }
+    else if (useEnumPayloadPatterns)
+    {
+        if (scrutineeType != ExprType.EnumType)
+        {
+            return false;
+        }
+    }
+    else if (scrutineeType != ExprType.IntType && scrutineeType != ExprType.EnumType)
+    {
+        return false;
+    }
+
+    if (targetParamStart < paramCount
+        || localTypes.Count() < (u64[0 2 ** 63 - 1])(targetParamStart + targetCount))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> phiTypeCodes = new();
+    stack mut u64[0 2 ** 63 - 1] targetTypeIndex = 0;
+    while willexit (targetTypeIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] targetTypeCode = localTypes.Get(targetParamStart + (u32[0 max])targetTypeIndex + 1);
+        stack mut ExprType expectedTargetType = ExprType.IntType;
+        if (targetTypeCode == SourceLocalTypeCodeBool())
+        {
+            expectedTargetType = ExprType.BoolType;
+        }
+        else if (targetTypeCode == SourceLocalTypeCodePointer())
+        {
+            expectedTargetType = ExprType.PtrType;
+        }
+
+        stack mut ExprType defaultArmType = ExprType.ErrorType;
+        if (useFixedArrayListPatterns)
+        {
+            defaultArmType = TypeOfSwitchAssignmentArmWithCaptures(nodes, defaultArm, armLocalRoots, elementCaptureTypeCodes, assignedRoots, assignedTargetOffsets, localTypes, targetParamStart, (u32[0 max])targetTypeIndex);
+        }
+        else if (useStructAggregatePatterns)
+        {
+            defaultArmType = TypeOfSwitchAssignmentArmWithCaptures(nodes, defaultArm, armLocalRoots, structFieldCaptureTypeCodes, assignedRoots, assignedTargetOffsets, localTypes, targetParamStart, (u32[0 max])targetTypeIndex);
+        }
+        else
+        {
+            defaultArmType = TypeOfSwitchAssignmentArmWithCaptures(nodes, defaultArm, armLocalRoots, payloadCaptureTypeCodes, assignedRoots, assignedTargetOffsets, localTypes, targetParamStart, (u32[0 max])targetTypeIndex);
+        }
+
+        if (defaultArmType != expectedTargetType)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] typeIndex = 0;
+        while willexit (typeIndex < caseCountWide)
+        {
+            stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(typeIndex + 1));
+            stack mut ExprType caseArmType = ExprType.ErrorType;
+            if (useFixedArrayListPatterns)
+            {
+                caseArmType = TypeOfSwitchAssignmentArmWithCaptures(nodes, caseArm, armLocalRoots, elementCaptureTypeCodes, assignedRoots, assignedTargetOffsets, localTypes, targetParamStart, (u32[0 max])targetTypeIndex);
+            }
+            else if (useStructAggregatePatterns)
+            {
+                caseArmType = TypeOfSwitchAssignmentArmWithCaptures(nodes, caseArm, armLocalRoots, structFieldCaptureTypeCodes, assignedRoots, assignedTargetOffsets, localTypes, targetParamStart, (u32[0 max])targetTypeIndex);
+            }
+            else
+            {
+                caseArmType = TypeOfSwitchAssignmentArmWithCaptures(nodes, caseArm, armLocalRoots, payloadCaptureTypeCodes, assignedRoots, assignedTargetOffsets, localTypes, targetParamStart, (u32[0 max])targetTypeIndex);
+            }
+
+            if (caseArmType != expectedTargetType)
+            {
+                return false;
+            }
+
+            typeIndex = typeIndex + 1;
+        }
+
+        if (phiTypeCodes.Add(targetTypeCode) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    stack mut ExprType rootType = ExprType.IntType;
+    stack mut bool terminalBothBool = false;
+    if (hasTerminalIf)
+    {
+        if (TypeOfNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, localTypes) != ExprType.BoolType)
+        {
+            return false;
+        }
+
+        stack ExprType thenType = TypeOfNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, localTypes);
+        stack ExprType elseType = TypeOfNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, localTypes);
+        stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+        terminalBothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+        if (!bothInt && !terminalBothBool)
+        {
+            return false;
+        }
+
+        rootType = thenType;
+    }
+    else
+    {
+        rootType = TypeOfNodeWithLocals(nodes, returnRootNode, localTypes);
+        if (rootType == ExprType.ErrorType || rootType == ExprType.PtrType)
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack mut u32[0 max] guardCount = 0;
+    if (caseGuardNodes.Count() != 0)
+    {
+        stack mut u64[0 2 ** 63 - 1] guardScanIndex = 0;
+        while willexit (guardScanIndex < caseCountWide)
+        {
+            if (caseGuardNodes.Get((u32[0 max])(guardScanIndex + 1)) != 0)
+            {
+                guardCount = guardCount + 1;
+            }
+
+            guardScanIndex = guardScanIndex + 1;
+        }
+    }
+
+    stack u32[0 max] caseCount = (u32[0 max])caseCountWide;
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] guardBlockBase = firstBlock + caseCount;
+    stack u32[0 max] caseBlockBase = guardBlockBase + guardCount;
+    stack u32[0 max] defaultBlockIndex = caseBlockBase + caseCount;
+    stack u32[0 max] mergeBlockBase = defaultBlockIndex + 1;
+    stack u32[0 max] terminalThenBlockIndex = mergeBlockBase + caseCount;
+    stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
+
+    stack mut IrTable<u32[0 max]> testFirsts = new();
+    stack mut IrTable<u32[0 max]> testCounts = new();
+    stack mut IrTable<u32[0 max]> conditionValues = new();
+    stack mut IrTable<u32[0 max]> guardFirsts = new();
+    stack mut IrTable<u32[0 max]> guardCounts = new();
+    stack mut IrTable<u32[0 max]> guardValues = new();
+    stack mut IrTable<u32[0 max]> guardBlocks = new();
+    stack mut IrTable<u32[0 max]> caseFirsts = new();
+    stack mut IrTable<u32[0 max]> caseCounts = new();
+    stack mut IrTable<u32[0 max]> assignedValues = new();
+    stack mut IrTable<u32[0 max]> defaultValues = new();
+    stack mut IrTable<u32[0 max]> mergeFirsts = new();
+    stack mut IrTable<u32[0 max]> mergeCounts = new();
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack mut MirValueId scrutineeValue = MirValueIdOf(0);
+    stack mut MirValueId enumValue = MirValueIdOf(0);
+    stack mut MirValueId tagValue = MirValueIdOf(0);
+    stack mut MirType tagType = MirType.I8;
+    if (useEnumPayloadPatterns)
+    {
+        if (!TryGetSourceSwitchEnumTagType(moduleFacts, ownerDeclarationIndex, tagType))
+        {
+            return false;
+        }
+
+        stack TypeId ownerType = TypeIdOf(ownerDeclarationIndex + 1);
+        enumValue = LowerExprNodeAsTypeWithTypesAndLocals(
+            nodes,
+            scrutineeNode,
+            instrs,
+            localTypes,
+            noOverrides,
+            MirType.EnumValue);
+        tagValue = MirEnumTagRead(instrs, ownerType, enumValue, tagType);
+    }
+    else if (!useFixedArrayListPatterns && !useStructAggregatePatterns)
+    {
+        scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, noOverrides);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack mut u32[0 max] testFirst = (u32[0 max])instrs.Count() + 1;
+        if (caseIndex == 0)
+        {
+            testFirst = entryFirst;
+        }
+
+        stack mut MirValueId condition = MirValueIdOf(0);
+        if (useStructAggregatePatterns)
+        {
+            stack u32[0 max] descriptorRow = caseAggregatePatternDescriptorRows.Get((u32[0 max])(caseIndex + 1));
+            if (!aggregatePatternDescriptors.Contains(descriptorRow))
+            {
+                return false;
+            }
+
+            stack SourceSwitchAggregatePatternDescriptor descriptor = aggregatePatternDescriptors.Get(descriptorRow);
+            stack u32[0 max] patternStart = descriptor.FieldPatternStart;
+            stack u32[0 max] patternCount = descriptor.FieldPatternCount;
+            if (useStructValueParam)
+            {
+                if (!TryLowerStructValueParamAggregateSwitchCaseCondition(
+                        stream,
+                        source,
+                        instrs,
+                        structParamIndex,
+                        structValueFacts,
+                        moduleFacts,
+                        patternStart,
+                        patternCount,
+                        structFieldPatternIndices,
+                        structFieldPatternTypeCodes,
+                        structFieldPatternMemberFactRows,
+                        structFieldPatternKinds,
+                        structFieldPatternMinValues,
+                        structFieldPatternMaxValues,
+                        condition))
+                {
+                    return false;
+                }
+            }
+            else if (!TryLowerStructAggregateSwitchCaseCondition(
+                        instrs,
+                        structParamIndex,
+                        structBaseByteOffset,
+                        baseLocalOverrides,
+                        moduleFacts,
+                        patternStart,
+                        patternCount,
+                        structFieldPatternIndices,
+                        structFieldPatternOffsets,
+                        structFieldPatternAlignments,
+                        structFieldPatternTypeCodes,
+                        structFieldPatternMemberFactRows,
+                        structFieldPatternKinds,
+                        structFieldPatternMinValues,
+                        structFieldPatternMaxValues,
+                        condition))
+            {
+                return false;
+            }
+
+            stack u32[0 max] caseSlot = (u32[0 max])(caseIndex + 1);
+            stack u32[0 max] nestedStart = caseStructNestedStarts.Get(caseSlot);
+            stack u32[0 max] nestedCount = caseStructNestedCounts.Get(caseSlot);
+            if (nestedCount != 0)
+            {
+                stack mut MirValueId nestedCondition = MirValueIdOf(0);
+                if (useStructValueParam)
+                {
+                    if (!TryLowerStructValueParamTypedNestedAggregateSwitchCaseCondition(
+                        stream,
+                        source,
+                        moduleFacts,
+                        instrs,
+                        structParamIndex,
+                        structValueFacts,
+                        structTypeToken,
+                        nestedStart,
+                        nestedCount,
+                        nestedCondition))
+                    {
+                        return false;
+                    }
+                }
+                else if (!TryLowerStructStorageTypedNestedAggregateSwitchCaseCondition(
+                        stream,
+                        source,
+                        moduleFacts,
+                        instrs,
+                        structParamIndex,
+                        structBaseByteOffset,
+                        baseLocalOverrides,
+                        structTypeToken,
+                        nestedStart,
+                        nestedCount,
+                        nestedCondition))
+                {
+                    return false;
+                }
+
+                condition = MirAndTyped(instrs, MirType.I1, condition, nestedCondition);
+            }
+        }
+        else if (useFixedArrayListPatterns)
+        {
+            stack u32[0 max] descriptorRow = caseListPatternDescriptorRows.Get((u32[0 max])(caseIndex + 1));
+            if (!listPatternDescriptors.Contains(descriptorRow))
+            {
+                return false;
+            }
+
+            stack SourceSwitchListPatternDescriptor descriptor = listPatternDescriptors.Get(descriptorRow);
+            stack u32[0 max] patternStart = descriptor.ElementPatternStart;
+            stack u32[0 max] patternCount = descriptor.ElementPatternCount;
+            if (useFixedArrayStorageLocal)
+            {
+                if (!TryLowerFixedArrayStorageListSwitchCaseCondition(
+                    instrs,
+                    fixedArrayLocal,
+                    baseLocalOverrides,
+                    patternStart,
+                    patternCount,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    condition))
+                {
+                    return false;
+                }
+            }
+            else if (!TryLowerFixedArrayListSwitchCaseCondition(
+                    instrs,
+                    fixedArrayParamIndex,
+                    fixedArrayFacts,
+                    patternStart,
+                    patternCount,
+                    elementPatternIndices,
+                    elementPatternTypeCodes,
+                    elementPatternKinds,
+                    elementPatternMinValues,
+                    elementPatternMaxValues,
+                    condition))
+            {
+                return false;
+            }
+        }
+        else if (useEnumPayloadPatterns)
+        {
+            stack i64[min max] caseMin = caseValues.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] descriptorRow = caseAggregatePatternDescriptorRows.Get((u32[0 max])(caseIndex + 1));
+            if (!aggregatePatternDescriptors.Contains(descriptorRow))
+            {
+                return false;
+            }
+
+            stack SourceSwitchAggregatePatternDescriptor descriptor = aggregatePatternDescriptors.Get(descriptorRow);
+            stack u32[0 max] payloadPatternStart = descriptor.FieldPatternStart;
+            stack u32[0 max] payloadPatternCount = descriptor.FieldPatternCount;
+            stack u32[0 max] expectedVariantOrdinal = SourceSwitchAggregatePatternEnumVariantOrdinal(descriptor);
+            stack u32[0 max] nestedStart = casePayloadNestedStarts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] nestedCount = casePayloadNestedCounts.Get((u32[0 max])(caseIndex + 1));
+            if (!TryLowerEnumSwitchPayloadCaseCondition(
+                    stream,
+                    source,
+                    moduleFacts,
+                    instrs,
+                    enumValue,
+                    tagValue,
+                    ownerDeclarationIndex,
+                    tagType,
+                    caseMin,
+                    expectedVariantOrdinal,
+                    payloadPatternStart,
+                    payloadPatternCount,
+                    payloadPatternVariantOrdinals,
+                    payloadPatternOrdinals,
+                    payloadPatternTypeCodes,
+                    payloadPatternKinds,
+                    payloadPatternMinValues,
+                    payloadPatternMaxValues,
+                    nestedStart,
+                    nestedCount,
+                    nestedVariantOrdinals,
+                    nestedPayloadOrdinals,
+                    nestedKinds,
+                    nestedAggregateDescriptorRows,
+                    nestedListDescriptorRows,
+                    condition))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            stack i64[min max] caseMin = caseValues.Get((u32[0 max])(caseIndex + 1));
+            stack i64[min max] caseMax = caseMaxValues.Get((u32[0 max])(caseIndex + 1));
+            condition = LowerIntegerSwitchCaseCondition(instrs, scrutineeValue, caseMin, caseMax);
+        }
+
+        stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
+        stack mut u32[0 max] guardNode = 0;
+        if (caseGuardNodes.Count() != 0)
+        {
+            guardNode = caseGuardNodes.Get((u32[0 max])(caseIndex + 1));
+        }
+
+        if (testFirsts.Add(testFirst) == 0
+            || testCounts.Add(testCount) == 0
+            || conditionValues.Add(condition.Index()) == 0)
+        {
+            return false;
+        }
+
+        if (guardNode != 0)
+        {
+            stack ParsedSwitchAssignmentArm guardArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+            stack mut IrTable<u32[0 max]> guardLocalTypes = new();
+            stack mut IrTable<u32[0 max]> guardLocalOverrides = new();
+            stack mut bool builtGuardLocals = false;
+            stack u32[0 max] guardFirst = (u32[0 max])instrs.Count() + 1;
+            if (useFixedArrayListPatterns)
+            {
+                builtGuardLocals = BuildSwitchAssignmentArmLocalTypesWithCaptures(
+                    nodes,
+                    guardArm,
+                    armLocalRoots,
+                    elementCaptureTypeCodes,
+                    localTypes,
+                    targetParamStart,
+                    guardLocalTypes)
+                    && BuildFixedArraySwitchAssignmentCaptureLocalOverrides(
+                        fixedArrayParamIndex,
+                        fixedArrayFacts,
+                        useFixedArrayStorageLocal,
+                        fixedArrayLocal,
+                        elementCaptureIndices,
+                        elementCaptureTypeCodes,
+                        guardArm.CaptureStart,
+                        guardArm.CaptureCount,
+                        targetParamStart,
+                        baseLocalOverrides,
+                        instrs,
+                        guardLocalOverrides);
+            }
+            else if (useStructAggregatePatterns)
+            {
+                builtGuardLocals = BuildSwitchAssignmentArmLocalTypesWithCaptures(
+                    nodes,
+                    guardArm,
+                    armLocalRoots,
+                    structFieldCaptureTypeCodes,
+                    localTypes,
+                    targetParamStart,
+                    guardLocalTypes)
+                    && BuildStructAggregateSwitchCaptureLocalOverrides(
+                        structParamIndex,
+                        structBaseByteOffset,
+                        useStructValueParam,
+                        structValueFacts,
+                        moduleFacts,
+                        structFieldCaptureIndices,
+                        structFieldCaptureOffsets,
+                        structFieldCaptureAlignments,
+                        structFieldCaptureTypeCodes,
+                        structFieldCaptureMemberFactRows,
+                        guardArm.CaptureStart,
+                        guardArm.CaptureCount,
+                        targetParamStart,
+                        baseLocalOverrides,
+                        instrs,
+                        guardLocalOverrides);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!builtGuardLocals || TypeOfNodeWithLocals(nodes, guardNode, guardLocalTypes) != ExprType.BoolType)
+            {
+                return false;
+            }
+
+            stack MirValueId guardValue = LowerExprNodeWithTypesAndLocals(nodes, guardNode, instrs, guardLocalTypes, guardLocalOverrides);
+            stack u32[0 max] guardInstrCount = (u32[0 max])instrs.Count() - (guardFirst - 1);
+            stack u32[0 max] guardBlockIndex = guardBlockBase + (u32[0 max])guardValues.Count();
+            if (guardFirsts.Add(guardFirst) == 0
+                || guardCounts.Add(guardInstrCount) == 0
+                || guardValues.Add(guardValue.Index()) == 0
+                || guardBlocks.Add(guardBlockIndex) == 0)
+            {
+                return false;
+            }
+        }
+        else if (guardBlocks.Add(0) == 0)
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut IrTable<u32[0 max]> caseArmValues = new();
+        stack mut bool loweredCaseArm = false;
+        if (useFixedArrayListPatterns)
+        {
+            loweredCaseArm = LowerFixedArrayListSwitchAssignmentArmValuesWithCaptures(
+                nodes,
+                caseArm,
+                armLocalRoots,
+                fixedArrayParamIndex,
+                fixedArrayFacts,
+                useFixedArrayStorageLocal,
+                fixedArrayLocal,
+                elementCaptureIndices,
+                elementCaptureTypeCodes,
+                assignedRoots,
+                assignedTargetOffsets,
+                localTypes,
+                baseLocalOverrides,
+                targetParamStart,
+                instrs,
+                caseArmValues);
+        }
+        else if (useStructAggregatePatterns)
+        {
+            loweredCaseArm = LowerStructAggregateSwitchAssignmentArmValuesWithCaptures(
+                nodes,
+                caseArm,
+                armLocalRoots,
+                structParamIndex,
+                structBaseByteOffset,
+                useStructValueParam,
+                structValueFacts,
+                moduleFacts,
+                structFieldCaptureIndices,
+                structFieldCaptureOffsets,
+                structFieldCaptureAlignments,
+                structFieldCaptureTypeCodes,
+                structFieldCaptureMemberFactRows,
+                assignedRoots,
+                assignedTargetOffsets,
+                localTypes,
+                baseLocalOverrides,
+                targetParamStart,
+                instrs,
+                caseArmValues);
+        }
+        else
+        {
+            loweredCaseArm = LowerSwitchAssignmentArmValuesWithCaptures(
+                nodes,
+                caseArm,
+                armLocalRoots,
+                enumValue,
+                ownerDeclarationIndex,
+                payloadCaptureVariantOrdinals,
+                payloadCaptureOrdinals,
+                payloadCaptureTypeCodes,
+                assignedRoots,
+                assignedTargetOffsets,
+                localTypes,
+                targetParamStart,
+                instrs,
+                caseArmValues);
+        }
+
+        if (!loweredCaseArm || caseArmValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        stack u32[0 max] caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        if (caseFirsts.Add(caseFirst) == 0
+            || caseCounts.Add(caseInstrCount) == 0)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] targetValueIndex = 0;
+        while willexit (targetValueIndex < (u64[0 2 ** 63 - 1])targetCount)
+        {
+            stack u32[0 max] caseArmValue = caseArmValues.Get((u32[0 max])(targetValueIndex + 1));
+            if (assignedValues.Add(caseArmValue) == 0)
+            {
+                return false;
+            }
+
+            targetValueIndex = targetValueIndex + 1;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut bool loweredDefaultArm = false;
+    if (useFixedArrayListPatterns)
+    {
+        loweredDefaultArm = LowerFixedArrayListSwitchAssignmentArmValuesWithCaptures(
+            nodes,
+            defaultArm,
+            armLocalRoots,
+            fixedArrayParamIndex,
+            fixedArrayFacts,
+            useFixedArrayStorageLocal,
+            fixedArrayLocal,
+            elementCaptureIndices,
+            elementCaptureTypeCodes,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            baseLocalOverrides,
+            targetParamStart,
+            instrs,
+            defaultValues);
+    }
+    else if (useStructAggregatePatterns)
+    {
+        loweredDefaultArm = LowerStructAggregateSwitchAssignmentArmValuesWithCaptures(
+            nodes,
+            defaultArm,
+            armLocalRoots,
+            structParamIndex,
+            structBaseByteOffset,
+            useStructValueParam,
+            structValueFacts,
+            moduleFacts,
+            structFieldCaptureIndices,
+            structFieldCaptureOffsets,
+            structFieldCaptureAlignments,
+            structFieldCaptureTypeCodes,
+            structFieldCaptureMemberFactRows,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            baseLocalOverrides,
+            targetParamStart,
+            instrs,
+            defaultValues);
+    }
+    else
+    {
+        loweredDefaultArm = LowerSwitchAssignmentArmValuesWithCaptures(
+            nodes,
+            defaultArm,
+            armLocalRoots,
+            enumValue,
+            ownerDeclarationIndex,
+            payloadCaptureVariantOrdinals,
+            payloadCaptureOrdinals,
+            payloadCaptureTypeCodes,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            targetParamStart,
+            instrs,
+            defaultValues);
+    }
+
+    if (!loweredDefaultArm || defaultValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+    {
+        return false;
+    }
+
+    stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+
+    stack mut IrTable<u32[0 max]> tailValues = new();
+    stack mut u64[0 2 ** 63 - 1] initialTailIndex = 0;
+    while willexit (initialTailIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] defaultValue = defaultValues.Get((u32[0 max])(initialTailIndex + 1));
+        if (tailValues.Add(defaultValue) == 0)
+        {
+            return false;
+        }
+
+        initialTailIndex = initialTailIndex + 1;
+    }
+
+    stack mut u32[0 max] tailBlock = defaultBlockIndex;
+    stack mut IrTable<u32[0 max]> finalPhis = new();
+    stack u32[0 max] firstDefaultValue = defaultValues.Get(1);
+    stack mut MirValueId finalReturnValue = MirValueIdOf(firstDefaultValue);
+    stack mut MirValueId terminalIfCondValue = MirValueIdOf(firstDefaultValue);
+    stack mut MirValueId terminalIfThenValue = MirValueIdOf(firstDefaultValue);
+    stack mut MirValueId terminalIfElseValue = MirValueIdOf(firstDefaultValue);
+    stack mut u32[0 max] terminalIfMergeCount = 0;
+    stack mut u32[0 max] terminalIfThenFirst = 0;
+    stack mut u32[0 max] terminalIfThenCount = 0;
+    stack mut u32[0 max] terminalIfElseFirst = 0;
+    stack mut u32[0 max] terminalIfElseCount = 0;
+    caseIndex = caseCountWide;
+    while willexit (caseIndex > 0)
+    {
+        caseIndex = caseIndex - 1;
+        stack u32[0 max] caseBlockIndex = caseBlockBase + (u32[0 max])caseIndex;
+        stack u32[0 max] mergeBlockIndex = mergeBlockBase + (u32[0 max])caseIndex;
+        stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+        stack mut IrTable<u32[0 max]> newTailValues = new();
+        stack mut u64[0 2 ** 63 - 1] targetPhiIndex = 0;
+        while willexit (targetPhiIndex < (u64[0 2 ** 63 - 1])targetCount)
+        {
+            stack u32[0 max] caseAssignedValue = assignedValues.Get((u32[0 max])(caseIndex * (u64[0 2 ** 63 - 1])targetCount + targetPhiIndex + 1));
+            stack u32[0 max] incomingTailValue = tailValues.Get((u32[0 max])(targetPhiIndex + 1));
+            stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetPhiIndex + 1));
+            stack mut MirType phiType = MirType.I64;
+            stack mut MirType knownPhiType = MirType.I64;
+            if (TryMirTypeForSourceLocalValueTypeCode(targetTypeCode, knownPhiType))
+            {
+                phiType = knownPhiType;
+            }
+
+            stack MirValueId phi = MirPhi2Typed(
+                instrs,
+                phiType,
+                MirValueIdOf(caseAssignedValue),
+                MirBlockIdOf(caseBlockIndex),
+                MirValueIdOf(incomingTailValue),
+                MirBlockIdOf(tailBlock));
+            if (newTailValues.Add(phi.Index()) == 0)
+            {
+                return false;
+            }
+
+            targetPhiIndex = targetPhiIndex + 1;
+        }
+
+        if (caseIndex == 0)
+        {
+            stack mut IrTable<u32[0 max]> returnOverrides = new();
+            stack mut u64[0 2 ** 63 - 1] p = 0;
+            while willexit (p < targetParamStart)
+            {
+                stack mut u32[0 max] preservedOverride = 0;
+                if (baseLocalOverrides.Contains((u32[0 max])(p + 1)))
+                {
+                    preservedOverride = baseLocalOverrides.Get((u32[0 max])(p + 1));
+                }
+
+                if (returnOverrides.Add(preservedOverride) == 0)
+                {
+                    return false;
+                }
+
+                p = p + 1;
+            }
+
+            targetPhiIndex = 0;
+            while willexit (targetPhiIndex < (u64[0 2 ** 63 - 1])targetCount)
+            {
+                stack u32[0 max] finalPhiIndex = newTailValues.Get((u32[0 max])(targetPhiIndex + 1));
+                if (finalPhis.Add(finalPhiIndex) == 0 || returnOverrides.Add(finalPhiIndex) == 0)
+                {
+                    return false;
+                }
+
+                targetPhiIndex = targetPhiIndex + 1;
+            }
+
+            postLocalIndex = 0;
+            while willexit (postLocalIndex < postLocalRoots.Count())
+            {
+                stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+                stack MirValueId postLocalValue = LowerExprNodeWithTypesAndLocals(nodes, postLocalRootNode, instrs, localTypes, returnOverrides);
+                if (returnOverrides.Add(postLocalValue.Index()) == 0)
+                {
+                    return false;
+                }
+
+                postLocalIndex = postLocalIndex + 1;
+            }
+
+            if (hasTerminalIf)
+            {
+                terminalIfCondValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides);
+                terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+                terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
+                terminalIfThenValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides);
+                if (terminalBothBool)
+                {
+                    terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
+                }
+
+                terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
+
+                terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
+                terminalIfElseValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides);
+                if (terminalBothBool)
+                {
+                    terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
+                }
+
+                terminalIfElseCount = (u32[0 max])instrs.Count() - (terminalIfElseFirst - 1);
+            }
+            else
+            {
+                stack mut MirValueId returnValue = LowerExprNodeWithTypesAndLocals(nodes, returnRootNode, instrs, localTypes, returnOverrides);
+                if (rootType == ExprType.BoolType)
+                {
+                    returnValue = MirZExt(instrs, returnValue);
+                }
+
+                finalReturnValue = returnValue;
+            }
+        }
+
+        stack mut u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+        if (hasTerminalIf && caseIndex == 0)
+        {
+            mergeCount = terminalIfMergeCount;
+        }
+
+        if (mergeFirsts.Add(mergeFirst) == 0 || mergeCounts.Add(mergeCount) == 0)
+        {
+            return false;
+        }
+
+        tailValues = newTailValues;
+        tailBlock = mergeBlockIndex;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] currentBlock = firstBlock + (u32[0 max])caseIndex;
+        stack mut u32[0 max] thenBlock = caseBlockBase + (u32[0 max])caseIndex;
+        stack u32[0 max] guardBlock = guardBlocks.Get((u32[0 max])(caseIndex + 1));
+        if (guardBlock != 0)
+        {
+            thenBlock = guardBlock;
+        }
+
+        stack mut u32[0 max] elseBlock = defaultBlockIndex;
+        if (caseIndex + 1 < caseCountWide)
+        {
+            elseBlock = currentBlock + 1;
+        }
+
+        stack u32[0 max] conditionValue = conditionValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirBlockId testBlock = MirCondBlock(
+            blocks,
+            MirValueIdOf(conditionValue),
+            MirBlockIdOf(thenBlock),
+            MirBlockIdOf(elseBlock));
+        caseIndex = caseIndex + 1;
+    }
+
+    stack mut u32[0 max] guardValueSlot = 1;
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] guardBlock = guardBlocks.Get((u32[0 max])(caseIndex + 1));
+        if (guardBlock != 0)
+        {
+            stack mut u32[0 max] elseBlock = defaultBlockIndex;
+            if (caseIndex + 1 < caseCountWide)
+            {
+                elseBlock = firstBlock + (u32[0 max])caseIndex + 1;
+            }
+
+            stack u32[0 max] guardValue = guardValues.Get(guardValueSlot);
+            stack MirBlockId guardMirBlock = MirCondBlock(
+                blocks,
+                MirValueIdOf(guardValue),
+                MirBlockIdOf(caseBlockBase + (u32[0 max])caseIndex),
+                MirBlockIdOf(elseBlock));
+            guardValueSlot = guardValueSlot + 1;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] mergeBlockIndex = mergeBlockBase + (u32[0 max])caseIndex;
+        stack MirBlockId caseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        caseIndex = caseIndex + 1;
+    }
+
+    stack MirBlockId defaultBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockBase + caseCount - 1));
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        if (caseIndex == 0)
+        {
+            if (hasTerminalIf)
+            {
+                stack MirBlockId mergeBlock = MirCondBlock(
+                    blocks,
+                    terminalIfCondValue,
+                    MirBlockIdOf(terminalThenBlockIndex),
+                    MirBlockIdOf(terminalElseBlockIndex));
+            }
+            else
+            {
+                stack MirBlockId mergeBlock = MirReturnBlock(blocks, finalReturnValue);
+            }
+        }
+        else
+        {
+            stack MirBlockId mergeBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockBase + (u32[0 max])caseIndex - 1));
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    if (hasTerminalIf)
+    {
+        stack MirBlockId terminalThenBlock = MirReturnBlock(blocks, terminalIfThenValue);
+        stack MirBlockId terminalElseBlock = MirReturnBlock(blocks, terminalIfElseValue);
+    }
+
+    if (recordRanges)
+    {
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] testFirst = testFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testCount = testCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testRange = ranges.Add(MakeBlockEmit(
+                firstBlock + (u32[0 max])caseIndex,
+                testFirst,
+                testCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        stack mut u32[0 max] guardRangeSlot = 1;
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] guardBlock = guardBlocks.Get((u32[0 max])(caseIndex + 1));
+            if (guardBlock != 0)
+            {
+                stack u32[0 max] guardFirst = guardFirsts.Get(guardRangeSlot);
+                stack u32[0 max] guardRangeCount = guardCounts.Get(guardRangeSlot);
+                stack u32[0 max] guardRange = ranges.Add(MakeBlockEmit(
+                    guardBlock,
+                    guardFirst,
+                    guardRangeCount));
+                guardRangeSlot = guardRangeSlot + 1;
+            }
+
+            caseIndex = caseIndex + 1;
+        }
+
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] caseFirst = caseFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRangeCount = caseCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(
+                caseBlockBase + (u32[0 max])caseIndex,
+                caseFirst,
+                caseRangeCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(defaultBlock.Index(), defaultFirst, defaultCount));
+
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] storedIndex = (u32[0 max])(caseCountWide - caseIndex);
+            stack u32[0 max] mergeFirst = mergeFirsts.Get(storedIndex);
+            stack u32[0 max] mergeCount = mergeCounts.Get(storedIndex);
+            stack u32[0 max] mergeRange = ranges.Add(MakeBlockEmit(
+                mergeBlockBase + (u32[0 max])caseIndex,
+                mergeFirst,
+                mergeCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        if (hasTerminalIf)
+        {
+            stack u32[0 max] terminalThenRange = ranges.Add(MakeBlockEmit(
+                terminalThenBlockIndex,
+                terminalIfThenFirst,
+                terminalIfThenCount));
+            stack u32[0 max] terminalElseRange = ranges.Add(MakeBlockEmit(
+                terminalElseBlockIndex,
+                terminalIfElseFirst,
+                terminalIfElseCount));
+        }
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    stack u32[0 max] firstConditionValue = conditionValues.Get(1);
+    body.CondValue = firstConditionValue;
+    body.ThenValue = finalPhis.Get(1);
+    if (hasTerminalIf)
+    {
+        body.ElseValue = terminalIfCondValue.Index();
+    }
+    else
+    {
+        body.ElseValue = finalReturnValue.Index();
+    }
+
+    return true;
+}
+
+internal fn bool LowerAssignedBooleanSwitchCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<u32[0 max]> caseValues,
+    borrow IrTable<ParsedSwitchAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    ParsedSwitchAssignmentArm defaultArm,
+    u32[0 max] targetCount,
+    borrow IrTable<u32[0 max]> postLocalRoots,
+    bool hasTerminalIf,
+    ParsedIfReturnArms terminalIfArms,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseCountWide > 2 || caseArms.Count() != caseCountWide || targetCount == 0)
+    {
+        return false;
+    }
+
+    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    if (localTypes.Count() < (u64[0 2 ** 63 - 1])(paramCount + targetCount))
+    {
+        return false;
+    }
+
+    stack mut bool hasTrue = false;
+    stack mut bool hasFalse = false;
+    stack mut ParsedSwitchAssignmentArm trueArm = new();
+    stack mut ParsedSwitchAssignmentArm falseArm = new();
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] caseValue = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack ParsedSwitchAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        if (caseValue == 1)
+        {
+            hasTrue = true;
+            trueArm = caseArm;
+        }
+        else if (caseValue == 0)
+        {
+            hasFalse = true;
+            falseArm = caseArm;
+        }
+        else
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack bool hasBoth = hasTrue && hasFalse;
+    stack mut IrTable<u32[0 max]> phiTypeCodes = new();
+
+    stack mut u64[0 2 ** 63 - 1] targetTypeIndex = 0;
+    while willexit (targetTypeIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] targetTypeCode = localTypes.Get(paramCount + (u32[0 max])targetTypeIndex + 1);
+        stack mut ExprType expectedTargetType = ExprType.IntType;
+        if (targetTypeCode == SourceLocalTypeCodeBool())
+        {
+            expectedTargetType = ExprType.BoolType;
+        }
+        else if (targetTypeCode == SourceLocalTypeCodePointer())
+        {
+            expectedTargetType = ExprType.PtrType;
+        }
+
+        if (TypeOfSwitchAssignmentArm(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        if (hasTrue
+            && TypeOfSwitchAssignmentArm(nodes, trueArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        if (hasFalse
+            && TypeOfSwitchAssignmentArm(nodes, falseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, (u32[0 max])targetTypeIndex) != expectedTargetType)
+        {
+            return false;
+        }
+
+        if (phiTypeCodes.Add(targetTypeCode) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    stack mut ExprType rootType = ExprType.IntType;
+    stack mut bool terminalBothBool = false;
+    if (hasTerminalIf)
+    {
+        if (TypeOfNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, localTypes) != ExprType.BoolType)
+        {
+            return false;
+        }
+
+        stack ExprType thenType = TypeOfNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, localTypes);
+        stack ExprType elseType = TypeOfNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, localTypes);
+        stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+        terminalBothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+        if (!bothInt && !terminalBothBool)
+        {
+            return false;
+        }
+
+        rootType = thenType;
+    }
+    else
+    {
+        rootType = TypeOfNodeWithLocals(nodes, returnRootNode, localTypes);
+        if (rootType == ExprType.ErrorType || rootType == ExprType.PtrType)
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] firstArmBlockIndex = firstBlock + 1;
+    stack u32[0 max] secondArmBlockIndex = firstBlock + 2;
+    stack u32[0 max] mergeBlockIndex = firstBlock + 3;
+    stack u32[0 max] terminalThenBlockIndex = mergeBlockIndex + 1;
+    stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
+
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId scrutineeValue = LowerExprNodeWithTypesAndLocals(nodes, scrutineeNode, instrs, localTypes, noOverrides);
+    if (MirValueType(instrs, scrutineeValue.Index()) != MirType.I1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack mut IrTable<u32[0 max]> trueValues = new();
+    stack mut IrTable<u32[0 max]> falseValues = new();
+    stack mut IrTable<u32[0 max]> caseValuesForMerge = new();
+    stack mut IrTable<u32[0 max]> defaultValues = new();
+    stack mut u32[0 max] trueFirst = 0;
+    stack mut u32[0 max] trueCount = 0;
+    stack mut u32[0 max] falseFirst = 0;
+    stack mut u32[0 max] falseCount = 0;
+    stack mut u32[0 max] caseFirst = 0;
+    stack mut u32[0 max] caseInstrCount = 0;
+    stack mut u32[0 max] defaultFirst = 0;
+    stack mut u32[0 max] defaultCount = 0;
+    if (hasBoth)
+    {
+        trueFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, trueArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, trueValues)
+            || trueValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        trueCount = (u32[0 max])instrs.Count() - (trueFirst - 1);
+        falseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, falseArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, falseValues)
+            || falseValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        falseCount = (u32[0 max])instrs.Count() - (falseFirst - 1);
+    }
+    else
+    {
+        stack mut ParsedSwitchAssignmentArm selectedArm = trueArm;
+        if (hasFalse)
+        {
+            selectedArm = falseArm;
+        }
+
+        caseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, selectedArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, caseValuesForMerge)
+            || caseValuesForMerge.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        defaultFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchAssignmentArmValues(nodes, defaultArm, armLocalRoots, assignedRoots, assignedTargetOffsets, localTypes, paramCount, instrs, defaultValues)
+            || defaultValues.Count() != (u64[0 2 ** 63 - 1])targetCount)
+        {
+            return false;
+        }
+
+        defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> returnOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] p = 0;
+    while willexit (p < paramCount)
+    {
+        if (returnOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        p = p + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> finalPhis = new();
+    targetTypeIndex = 0;
+    while willexit (targetTypeIndex < (u64[0 2 ** 63 - 1])targetCount)
+    {
+        stack u32[0 max] targetTypeCode = phiTypeCodes.Get((u32[0 max])(targetTypeIndex + 1));
+        stack mut MirType phiType = MirType.I64;
+        stack mut MirType knownPhiType = MirType.I64;
+        if (TryMirTypeForSourceLocalValueTypeCode(targetTypeCode, knownPhiType))
+        {
+            phiType = knownPhiType;
+        }
+
+        stack mut MirValueId phi = MirValueIdOf(0);
+        if (hasBoth)
+        {
+            stack u32[0 max] trueValueIndex = trueValues.Get((u32[0 max])(targetTypeIndex + 1));
+            stack u32[0 max] falseValueIndex = falseValues.Get((u32[0 max])(targetTypeIndex + 1));
+            phi = MirPhi2Typed(
+                instrs,
+                phiType,
+                MirValueIdOf(trueValueIndex),
+                MirBlockIdOf(firstArmBlockIndex),
+                MirValueIdOf(falseValueIndex),
+                MirBlockIdOf(secondArmBlockIndex));
+        }
+        else
+        {
+            stack u32[0 max] caseValueIndex = caseValuesForMerge.Get((u32[0 max])(targetTypeIndex + 1));
+            stack u32[0 max] defaultValueIndex = defaultValues.Get((u32[0 max])(targetTypeIndex + 1));
+            phi = MirPhi2Typed(
+                instrs,
+                phiType,
+                MirValueIdOf(caseValueIndex),
+                MirBlockIdOf(firstArmBlockIndex),
+                MirValueIdOf(defaultValueIndex),
+                MirBlockIdOf(secondArmBlockIndex));
+        }
+
+        if (finalPhis.Add(phi.Index()) == 0 || returnOverrides.Add(phi.Index()) == 0)
+        {
+            return false;
+        }
+
+        targetTypeIndex = targetTypeIndex + 1;
+    }
+
+    postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack MirValueId postLocalValue = LowerExprNodeWithTypesAndLocals(nodes, postLocalRootNode, instrs, localTypes, returnOverrides);
+        if (returnOverrides.Add(postLocalValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] firstFinalPhi = finalPhis.Get(1);
+    stack mut MirValueId finalReturnValue = MirValueIdOf(firstFinalPhi);
+    stack mut MirValueId terminalIfCondValue = MirValueIdOf(firstFinalPhi);
+    stack mut MirValueId terminalIfThenValue = MirValueIdOf(firstFinalPhi);
+    stack mut MirValueId terminalIfElseValue = MirValueIdOf(firstFinalPhi);
+    stack mut u32[0 max] terminalIfMergeCount = 0;
+    stack mut u32[0 max] terminalIfThenFirst = 0;
+    stack mut u32[0 max] terminalIfThenCount = 0;
+    stack mut u32[0 max] terminalIfElseFirst = 0;
+    stack mut u32[0 max] terminalIfElseCount = 0;
+    if (hasTerminalIf)
+    {
+        terminalIfCondValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides);
+        terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfThenValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides);
+        if (terminalBothBool)
+        {
+            terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
+        }
+
+        terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
+
+        terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfElseValue = LowerExprNodeWithTypesAndLocals(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides);
+        if (terminalBothBool)
+        {
+            terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
+        }
+
+        terminalIfElseCount = (u32[0 max])instrs.Count() - (terminalIfElseFirst - 1);
+    }
+    else
+    {
+        stack mut MirValueId returnValue = LowerExprNodeWithTypesAndLocals(nodes, returnRootNode, instrs, localTypes, returnOverrides);
+        if (rootType == ExprType.BoolType)
+        {
+            returnValue = MirZExt(instrs, returnValue);
+        }
+
+        finalReturnValue = returnValue;
+    }
+
+    stack mut u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    if (hasTerminalIf)
+    {
+        mergeCount = terminalIfMergeCount;
+    }
+
+    if (hasBoth)
+    {
+        stack MirBlockId entry = MirCondBlock(
+            blocks,
+            scrutineeValue,
+            MirBlockIdOf(firstArmBlockIndex),
+            MirBlockIdOf(secondArmBlockIndex));
+        stack MirBlockId trueBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        stack MirBlockId falseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    }
+    else
+    {
+        stack mut MirBlockId thenTarget = MirBlockIdOf(firstArmBlockIndex);
+        stack mut MirBlockId elseTarget = MirBlockIdOf(secondArmBlockIndex);
+        if (hasFalse)
+        {
+            thenTarget = MirBlockIdOf(secondArmBlockIndex);
+            elseTarget = MirBlockIdOf(firstArmBlockIndex);
+        }
+
+        stack MirBlockId entry = MirCondBlock(blocks, scrutineeValue, thenTarget, elseTarget);
+        stack MirBlockId caseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        stack MirBlockId defaultBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    }
+
+    if (hasTerminalIf)
+    {
+        stack MirBlockId mergeBlock = MirCondBlock(
+            blocks,
+            terminalIfCondValue,
+            MirBlockIdOf(terminalThenBlockIndex),
+            MirBlockIdOf(terminalElseBlockIndex));
+        stack MirBlockId terminalThenBlock = MirReturnBlock(blocks, terminalIfThenValue);
+        stack MirBlockId terminalElseBlock = MirReturnBlock(blocks, terminalIfElseValue);
+    }
+    else
+    {
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, finalReturnValue);
+    }
+
+    if (recordRanges)
+    {
+        stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(firstBlock, entryFirst, entryCount));
+        if (hasBoth)
+        {
+            stack u32[0 max] trueRange = ranges.Add(MakeBlockEmit(firstArmBlockIndex, trueFirst, trueCount));
+            stack u32[0 max] falseRange = ranges.Add(MakeBlockEmit(secondArmBlockIndex, falseFirst, falseCount));
+        }
+        else
+        {
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(firstArmBlockIndex, caseFirst, caseInstrCount));
+            stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(secondArmBlockIndex, defaultFirst, defaultCount));
+        }
+
+        stack u32[0 max] mergeRange = ranges.Add(MakeBlockEmit(mergeBlockIndex, mergeFirst, mergeCount));
+        if (hasTerminalIf)
+        {
+            stack u32[0 max] terminalThenRange = ranges.Add(MakeBlockEmit(
+                terminalThenBlockIndex,
+                terminalIfThenFirst,
+                terminalIfThenCount));
+            stack u32[0 max] terminalElseRange = ranges.Add(MakeBlockEmit(
+                terminalElseBlockIndex,
+                terminalIfElseFirst,
+                terminalIfElseCount));
+        }
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    body.CondValue = scrutineeValue.Index();
+    body.ThenValue = finalPhis.Get(1);
+    if (hasTerminalIf)
+    {
+        body.ElseValue = terminalIfCondValue.Index();
+    }
+    else
+    {
+        body.ElseValue = finalReturnValue.Index();
+    }
+
+    return true;
+}
+
+internal fn bool LowerIntegerSwitchFieldAssignmentCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<i64[min max]> caseValues,
+    borrow IrTable<i64[min max]> caseMaxValues,
+    borrow IrTable<ParsedSwitchFieldAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SwitchArenaDynamicReserveStatement> arenaDynamicReserveStatements,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    ParsedSwitchFieldAssignmentArm defaultArm,
+    borrow IrTable<u32[0 max]> postLocalRoots,
+    bool hasTerminalIf,
+    ParsedIfReturnArms terminalIfArms,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    bool usesArenaFrame,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    out LoweredBody body)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseMaxValues.Count() != caseCountWide || caseArms.Count() != caseCountWide)
+    {
+        return false;
+    }
+
+    stack ExprType scrutineeType = TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes);
+    if (scrutineeType != ExprType.IntType && scrutineeType != ExprType.EnumType)
+    {
+        return false;
+    }
+
+    stack mut ExprType rootType = ExprType.IntType;
+    stack mut bool terminalBothBool = false;
+    if (hasTerminalIf)
+    {
+        if (TypeOfNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, localTypes) != ExprType.BoolType)
+        {
+            return false;
+        }
+
+        stack ExprType thenType = TypeOfNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, localTypes);
+        stack ExprType elseType = TypeOfNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, localTypes);
+        stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+        terminalBothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+        if (!bothInt && !terminalBothBool)
+        {
+            return false;
+        }
+
+        rootType = thenType;
+    }
+    else
+    {
+        rootType = TypeOfNodeWithLocals(nodes, returnRootNode, localTypes);
+        if (rootType == ExprType.ErrorType || rootType == ExprType.PtrType)
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] caseCount = (u32[0 max])caseCountWide;
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] caseBlockBase = firstBlock + caseCount;
+    stack u32[0 max] defaultBlockIndex = caseBlockBase + caseCount;
+    stack u32[0 max] mergeBlockIndex = defaultBlockIndex + 1;
+    stack u32[0 max] terminalThenBlockIndex = mergeBlockIndex + 1;
+    stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
+
+    stack mut IrTable<u32[0 max]> testFirsts = new();
+    stack mut IrTable<u32[0 max]> testCounts = new();
+    stack mut IrTable<u32[0 max]> conditionValues = new();
+    stack mut IrTable<u32[0 max]> caseFirsts = new();
+    stack mut IrTable<u32[0 max]> caseCounts = new();
+
+    stack MirValueId scrutineeValue = LowerExprNodeWithCallContext(nodes, scrutineeNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack mut u32[0 max] testFirst = (u32[0 max])instrs.Count() + 1;
+        if (caseIndex == 0)
+        {
+            testFirst = entryFirst;
+        }
+
+        stack i64[min max] caseMin = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack i64[min max] caseMax = caseMaxValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirValueId condition = LowerIntegerSwitchCaseCondition(instrs, scrutineeValue, caseMin, caseMax);
+        stack u32[0 max] testCount = (u32[0 max])instrs.Count() - (testFirst - 1);
+        if (testFirsts.Add(testFirst) == 0
+            || testCounts.Add(testCount) == 0
+            || conditionValues.Add(condition.Index()) == 0)
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack ParsedSwitchFieldAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        stack u32[0 max] caseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, caseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        stack u32[0 max] caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        if (caseFirsts.Add(caseFirst) == 0
+            || caseCounts.Add(caseInstrCount) == 0)
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack u32[0 max] defaultFirst = (u32[0 max])instrs.Count() + 1;
+    if (!LowerSwitchFieldAssignmentArmStores(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+    {
+        return false;
+    }
+
+    stack u32[0 max] defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> returnOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] overrideIndex = 0;
+    while willexit (overrideIndex < baseLocalOverrides.Count())
+    {
+        stack u32[0 max] overrideValue = baseLocalOverrides.Get((u32[0 max])(overrideIndex + 1));
+        if (returnOverrides.Add(overrideValue) == 0)
+        {
+            return false;
+        }
+
+        overrideIndex = overrideIndex + 1;
+    }
+
+    postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack MirValueId postLocalValue = LowerExprNodeWithCallContext(nodes, postLocalRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (returnOverrides.Add(postLocalValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack mut MirValueId finalReturnValue = MirValueIdOf(0);
+    stack mut MirValueId terminalIfCondValue = MirValueIdOf(0);
+    stack mut MirValueId terminalIfThenValue = MirValueIdOf(0);
+    stack mut MirValueId terminalIfElseValue = MirValueIdOf(0);
+    stack mut u32[0 max] terminalIfMergeCount = 0;
+    stack mut u32[0 max] terminalIfThenFirst = 0;
+    stack mut u32[0 max] terminalIfThenCount = 0;
+    stack mut u32[0 max] terminalIfElseFirst = 0;
+    stack mut u32[0 max] terminalIfElseCount = 0;
+    if (hasTerminalIf)
+    {
+        terminalIfCondValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfThenValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (terminalBothBool)
+        {
+            terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId terminalThenLeave = MirArenaFrameLeave(instrs);
+        }
+
+        terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
+
+        terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfElseValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (terminalBothBool)
+        {
+            terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId terminalElseLeave = MirArenaFrameLeave(instrs);
+        }
+
+        terminalIfElseCount = (u32[0 max])instrs.Count() - (terminalIfElseFirst - 1);
+    }
+    else
+    {
+        stack mut MirValueId returnValue = LowerExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (rootType == ExprType.BoolType)
+        {
+            returnValue = MirZExt(instrs, returnValue);
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId leave = MirArenaFrameLeave(instrs);
+        }
+
+        finalReturnValue = returnValue;
+    }
+
+    stack mut u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    if (hasTerminalIf)
+    {
+        mergeCount = terminalIfMergeCount;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] currentBlock = firstBlock + (u32[0 max])caseIndex;
+        stack u32[0 max] thenBlock = caseBlockBase + (u32[0 max])caseIndex;
+        stack mut u32[0 max] elseBlock = defaultBlockIndex;
+        if (caseIndex + 1 < caseCountWide)
+        {
+            elseBlock = currentBlock + 1;
+        }
+
+        stack u32[0 max] conditionValue = conditionValues.Get((u32[0 max])(caseIndex + 1));
+        stack MirBlockId testBlock = MirCondBlock(
+            blocks,
+            MirValueIdOf(conditionValue),
+            MirBlockIdOf(thenBlock),
+            MirBlockIdOf(elseBlock));
+        caseIndex = caseIndex + 1;
+    }
+
+    caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack MirBlockId caseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        caseIndex = caseIndex + 1;
+    }
+
+    stack MirBlockId defaultBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    if (hasTerminalIf)
+    {
+        stack MirBlockId mergeBlock = MirCondBlock(
+            blocks,
+            terminalIfCondValue,
+            MirBlockIdOf(terminalThenBlockIndex),
+            MirBlockIdOf(terminalElseBlockIndex));
+        stack MirBlockId terminalThenBlock = MirReturnBlock(blocks, terminalIfThenValue);
+        stack MirBlockId terminalElseBlock = MirReturnBlock(blocks, terminalIfElseValue);
+    }
+    else
+    {
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, finalReturnValue);
+    }
+
+    if (recordRanges)
+    {
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] testFirst = testFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testCount = testCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] testRange = ranges.Add(MakeBlockEmit(
+                firstBlock + (u32[0 max])caseIndex,
+                testFirst,
+                testCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        caseIndex = 0;
+        while willexit (caseIndex < caseCountWide)
+        {
+            stack u32[0 max] caseFirst = caseFirsts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRangeCount = caseCounts.Get((u32[0 max])(caseIndex + 1));
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(
+                caseBlockBase + (u32[0 max])caseIndex,
+                caseFirst,
+                caseRangeCount));
+            caseIndex = caseIndex + 1;
+        }
+
+        stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(defaultBlockIndex, defaultFirst, defaultCount));
+        stack u32[0 max] mergeRange = ranges.Add(MakeBlockEmit(mergeBlockIndex, mergeFirst, mergeCount));
+        if (hasTerminalIf)
+        {
+            stack u32[0 max] terminalThenRange = ranges.Add(MakeBlockEmit(
+                terminalThenBlockIndex,
+                terminalIfThenFirst,
+                terminalIfThenCount));
+            stack u32[0 max] terminalElseRange = ranges.Add(MakeBlockEmit(
+                terminalElseBlockIndex,
+                terminalIfElseFirst,
+                terminalIfElseCount));
+        }
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    stack u32[0 max] firstConditionValue = conditionValues.Get(1);
+    body.CondValue = firstConditionValue;
+    body.ThenValue = finalReturnValue.Index();
+    if (hasTerminalIf)
+    {
+        body.ElseValue = terminalIfCondValue.Index();
+    }
+    else
+    {
+        body.ElseValue = finalReturnValue.Index();
+    }
+
+    return true;
+}
+
+internal fn bool LowerBooleanSwitchFieldAssignmentCasesToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] scrutineeNode,
+    borrow IrTable<u32[0 max]> caseValues,
+    borrow IrTable<ParsedSwitchFieldAssignmentArm> caseArms,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<ScalarStorageAssignment> scalarAssignments,
+    borrow IrTable<EnumStorageAssignment> enumAssignments,
+    borrow IrTable<ConstructedObjectFieldAssignment> fieldAssignments,
+    borrow IrTable<SwitchArenaDynamicReserveStatement> arenaDynamicReserveStatements,
+    borrow IrTable<SourceStorageMutationStatement> storageMutationStatements,
+    ParsedSwitchFieldAssignmentArm defaultArm,
+    borrow IrTable<u32[0 max]> postLocalRoots,
+    bool hasTerminalIf,
+    ParsedIfReturnArms terminalIfArms,
+    u32[0 max] returnRootNode,
+    borrow IrTable<u32[0 max]> localTypes,
+    borrow IrTable<u32[0 max]> baseLocalOverrides,
+    u32[0 max] paramCount,
+    u32[0 max] entryFirst,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    bool usesArenaFrame,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<SourceSliceArgumentLocal> sliceArgumentLocals,
+    out LoweredBody body)
+    where overlap(functionCallContractFacts, sliceArgumentLocals)
+{
+    body = new();
+    stack u64[0 2 ** 63 - 1] caseCountWide = caseValues.Count();
+    if (caseCountWide == 0 || caseCountWide > 2 || caseArms.Count() != caseCountWide)
+    {
+        return false;
+    }
+
+    if (TypeOfNodeWithLocals(nodes, scrutineeNode, localTypes) != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    stack mut bool hasTrue = false;
+    stack mut bool hasFalse = false;
+    stack mut ParsedSwitchFieldAssignmentArm trueArm = new();
+    stack mut ParsedSwitchFieldAssignmentArm falseArm = new();
+    stack mut u64[0 2 ** 63 - 1] caseIndex = 0;
+    while willexit (caseIndex < caseCountWide)
+    {
+        stack u32[0 max] caseValue = caseValues.Get((u32[0 max])(caseIndex + 1));
+        stack ParsedSwitchFieldAssignmentArm caseArm = caseArms.Get((u32[0 max])(caseIndex + 1));
+        if (caseValue == 1)
+        {
+            hasTrue = true;
+            trueArm = caseArm;
+        }
+        else if (caseValue == 0)
+        {
+            hasFalse = true;
+            falseArm = caseArm;
+        }
+        else
+        {
+            return false;
+        }
+
+        caseIndex = caseIndex + 1;
+    }
+
+    stack bool hasBoth = hasTrue && hasFalse;
+    stack mut ExprType rootType = ExprType.IntType;
+    stack mut bool terminalBothBool = false;
+    if (hasTerminalIf)
+    {
+        if (TypeOfNodeWithLocals(nodes, terminalIfArms.Condition.NodeId, localTypes) != ExprType.BoolType)
+        {
+            return false;
+        }
+
+        stack ExprType thenType = TypeOfNodeWithLocals(nodes, terminalIfArms.ThenArm.NodeId, localTypes);
+        stack ExprType elseType = TypeOfNodeWithLocals(nodes, terminalIfArms.ElseArm.NodeId, localTypes);
+        stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+        terminalBothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+        if (!bothInt && !terminalBothBool)
+        {
+            return false;
+        }
+
+        rootType = thenType;
+    }
+    else
+    {
+        rootType = TypeOfNodeWithLocals(nodes, returnRootNode, localTypes);
+        if (rootType == ExprType.ErrorType || rootType == ExprType.PtrType)
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack ExprType postLocalType = TypeOfNodeWithLocals(nodes, postLocalRootNode, localTypes);
+        if (postLocalType == ExprType.ErrorType || postLocalType == ExprType.PtrType)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] firstArmBlockIndex = firstBlock + 1;
+    stack u32[0 max] secondArmBlockIndex = firstBlock + 2;
+    stack u32[0 max] mergeBlockIndex = firstBlock + 3;
+    stack u32[0 max] terminalThenBlockIndex = mergeBlockIndex + 1;
+    stack u32[0 max] terminalElseBlockIndex = terminalThenBlockIndex + 1;
+
+    stack MirValueId scrutineeValue = LowerExprNodeWithCallContext(nodes, scrutineeNode, instrs, localTypes, baseLocalOverrides, functionCallContractFacts, sliceArgumentLocals);
+    if (MirValueType(instrs, scrutineeValue.Index()) != MirType.I1)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack mut u32[0 max] trueFirst = 0;
+    stack mut u32[0 max] trueCount = 0;
+    stack mut u32[0 max] falseFirst = 0;
+    stack mut u32[0 max] falseCount = 0;
+    stack mut u32[0 max] caseFirst = 0;
+    stack mut u32[0 max] caseInstrCount = 0;
+    stack mut u32[0 max] defaultFirst = 0;
+    stack mut u32[0 max] defaultCount = 0;
+    if (hasBoth)
+    {
+        trueFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, trueArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        trueCount = (u32[0 max])instrs.Count() - (trueFirst - 1);
+        falseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, falseArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        falseCount = (u32[0 max])instrs.Count() - (falseFirst - 1);
+    }
+    else
+    {
+        stack mut ParsedSwitchFieldAssignmentArm selectedArm = trueArm;
+        if (hasFalse)
+        {
+            selectedArm = falseArm;
+        }
+
+        caseFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, selectedArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        caseInstrCount = (u32[0 max])instrs.Count() - (caseFirst - 1);
+        defaultFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerSwitchFieldAssignmentArmStores(nodes, defaultArm, armLocalRoots, scalarAssignments, enumAssignments, fieldAssignments, arenaDynamicReserveStatements, storageMutationStatements, localTypes, baseLocalOverrides, instrs, functionCallContractFacts, sliceArgumentLocals))
+        {
+            return false;
+        }
+
+        defaultCount = (u32[0 max])instrs.Count() - (defaultFirst - 1);
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> returnOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] overrideIndex = 0;
+    while willexit (overrideIndex < baseLocalOverrides.Count())
+    {
+        stack u32[0 max] overrideValue = baseLocalOverrides.Get((u32[0 max])(overrideIndex + 1));
+        if (returnOverrides.Add(overrideValue) == 0)
+        {
+            return false;
+        }
+
+        overrideIndex = overrideIndex + 1;
+    }
+
+    postLocalIndex = 0;
+    while willexit (postLocalIndex < postLocalRoots.Count())
+    {
+        stack u32[0 max] postLocalRootNode = postLocalRoots.Get((u32[0 max])(postLocalIndex + 1));
+        stack MirValueId postLocalValue = LowerExprNodeWithCallContext(nodes, postLocalRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (returnOverrides.Add(postLocalValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        postLocalIndex = postLocalIndex + 1;
+    }
+
+    stack mut MirValueId finalReturnValue = MirValueIdOf(0);
+    stack mut MirValueId terminalIfCondValue = MirValueIdOf(0);
+    stack mut MirValueId terminalIfThenValue = MirValueIdOf(0);
+    stack mut MirValueId terminalIfElseValue = MirValueIdOf(0);
+    stack mut u32[0 max] terminalIfMergeCount = 0;
+    stack mut u32[0 max] terminalIfThenFirst = 0;
+    stack mut u32[0 max] terminalIfThenCount = 0;
+    stack mut u32[0 max] terminalIfElseFirst = 0;
+    stack mut u32[0 max] terminalIfElseCount = 0;
+    if (hasTerminalIf)
+    {
+        terminalIfCondValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.Condition.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        terminalIfMergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+
+        terminalIfThenFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfThenValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ThenArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (terminalBothBool)
+        {
+            terminalIfThenValue = MirZExt(instrs, terminalIfThenValue);
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId terminalThenLeave = MirArenaFrameLeave(instrs);
+        }
+
+        terminalIfThenCount = (u32[0 max])instrs.Count() - (terminalIfThenFirst - 1);
+
+        terminalIfElseFirst = (u32[0 max])instrs.Count() + 1;
+        terminalIfElseValue = LowerExprNodeWithCallContext(nodes, terminalIfArms.ElseArm.NodeId, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (terminalBothBool)
+        {
+            terminalIfElseValue = MirZExt(instrs, terminalIfElseValue);
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId terminalElseLeave = MirArenaFrameLeave(instrs);
+        }
+
+        terminalIfElseCount = (u32[0 max])instrs.Count() - (terminalIfElseFirst - 1);
+    }
+    else
+    {
+        stack mut MirValueId returnValue = LowerExprNodeWithCallContext(nodes, returnRootNode, instrs, localTypes, returnOverrides, functionCallContractFacts, sliceArgumentLocals);
+        if (rootType == ExprType.BoolType)
+        {
+            returnValue = MirZExt(instrs, returnValue);
+        }
+
+        if (usesArenaFrame)
+        {
+            stack MirValueId leave = MirArenaFrameLeave(instrs);
+        }
+
+        finalReturnValue = returnValue;
+    }
+
+    stack mut u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    if (hasTerminalIf)
+    {
+        mergeCount = terminalIfMergeCount;
+    }
+
+    if (hasBoth)
+    {
+        stack MirBlockId entry = MirCondBlock(
+            blocks,
+            scrutineeValue,
+            MirBlockIdOf(firstArmBlockIndex),
+            MirBlockIdOf(secondArmBlockIndex));
+        stack MirBlockId trueBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        stack MirBlockId falseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    }
+    else
+    {
+        stack mut MirBlockId thenTarget = MirBlockIdOf(firstArmBlockIndex);
+        stack mut MirBlockId elseTarget = MirBlockIdOf(secondArmBlockIndex);
+        if (hasFalse)
+        {
+            thenTarget = MirBlockIdOf(secondArmBlockIndex);
+            elseTarget = MirBlockIdOf(firstArmBlockIndex);
+        }
+
+        stack MirBlockId entry = MirCondBlock(blocks, scrutineeValue, thenTarget, elseTarget);
+        stack MirBlockId caseBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+        stack MirBlockId defaultBlock = MirBranchBlock(blocks, MirBlockIdOf(mergeBlockIndex));
+    }
+
+    if (hasTerminalIf)
+    {
+        stack MirBlockId mergeBlock = MirCondBlock(
+            blocks,
+            terminalIfCondValue,
+            MirBlockIdOf(terminalThenBlockIndex),
+            MirBlockIdOf(terminalElseBlockIndex));
+        stack MirBlockId terminalThenBlock = MirReturnBlock(blocks, terminalIfThenValue);
+        stack MirBlockId terminalElseBlock = MirReturnBlock(blocks, terminalIfElseValue);
+    }
+    else
+    {
+        stack MirBlockId mergeBlock = MirReturnBlock(blocks, finalReturnValue);
+    }
+
+    if (recordRanges)
+    {
+        stack u32[0 max] entryRange = ranges.Add(MakeBlockEmit(firstBlock, entryFirst, entryCount));
+        if (hasBoth)
+        {
+            stack u32[0 max] trueRange = ranges.Add(MakeBlockEmit(firstArmBlockIndex, trueFirst, trueCount));
+            stack u32[0 max] falseRange = ranges.Add(MakeBlockEmit(secondArmBlockIndex, falseFirst, falseCount));
+        }
+        else
+        {
+            stack u32[0 max] caseRange = ranges.Add(MakeBlockEmit(firstArmBlockIndex, caseFirst, caseInstrCount));
+            stack u32[0 max] defaultRange = ranges.Add(MakeBlockEmit(secondArmBlockIndex, defaultFirst, defaultCount));
+        }
+
+        stack u32[0 max] mergeRange = ranges.Add(MakeBlockEmit(mergeBlockIndex, mergeFirst, mergeCount));
+        if (hasTerminalIf)
+        {
+            stack u32[0 max] terminalThenRange = ranges.Add(MakeBlockEmit(
+                terminalThenBlockIndex,
+                terminalIfThenFirst,
+                terminalIfThenCount));
+            stack u32[0 max] terminalElseRange = ranges.Add(MakeBlockEmit(
+                terminalElseBlockIndex,
+                terminalIfElseFirst,
+                terminalIfElseCount));
+        }
+    }
+
+    body.Ok = true;
+    body.EntryBlock = firstBlock;
+    body.ParamCount = paramCount;
+    body.CondValue = scrutineeValue.Index();
+    body.ThenValue = finalReturnValue.Index();
+    if (hasTerminalIf)
+    {
+        body.ElseValue = terminalIfCondValue.Index();
+    }
+    else
+    {
+        body.ElseValue = finalReturnValue.Index();
+    }
+
+    return true;
+}
