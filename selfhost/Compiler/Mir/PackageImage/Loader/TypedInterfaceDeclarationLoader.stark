@@ -1,0 +1,3553 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.TypeCodec
+import System.Json
+import System.Memory
+import System.Text
+import Compiler.Mir.PackageImage.Loader.TypedInterfaceTypeReferenceLoader
+module Compiler.Mir.PackageImage.Loader.TypedInterfaceDeclarationLoader
+
+// Typed alias, callable, global, and named-type fact materialization. All ABI,
+// layout, thread-safety, and type-reference facts retain their manifest rows.
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeAliasFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedTypeAliasFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageTypedTypeAliasFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeAliasFactTypeReference(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeReferenceNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    out u32[0 max] typeReferenceRow)
+{
+    typeReferenceRow = 0;
+    return LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+        document,
+        typeReferenceNode,
+        moduleOrdinal,
+        LogicalPackageTypedDeclarationKind.TypeAlias,
+        typeAliasOrdinal,
+        0,
+        0,
+        source,
+        payloadOrdinal,
+        graph.TypeReferences,
+        typeReferenceRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeAliasGenericParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeAliasNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    u32[0 max] typeAliasRow,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    out u32[0 max] parameterCount)
+{
+    parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        typeAliasNode,
+        "GenericParameters",
+        arrayNode,
+        parameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii name = document.TextAt(parameterNode);
+        if (System.Text.AsciiLength(name) <= 0
+            || !LogicalPackageTypedTypeAliasFactGraphAddTextRow(
+                graph,
+                LogicalPackageTypedTypeAliasFactTextKind.GenericParameterName,
+                index,
+                name,
+                nameTextRow)
+            || !LogicalPackageTypedTypeAliasFactGraphAddGenericParameterRow(
+                graph,
+                typeAliasRow,
+                moduleOrdinal,
+                typeAliasOrdinal,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+internal fn bool LogicalPackageImageJsonMaterializeTypeAliasComptimeGenericParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeAliasNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    u32[0 max] typeAliasRow,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    out u32[0 max] parameterCount)
+{
+    parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        typeAliasNode,
+        "ComptimeGenericParameters",
+        arrayNode,
+        parameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeAliasFactTextMemberRow(
+                document,
+                parameterNode,
+                "Name",
+                LogicalPackageTypedTypeAliasFactTextKind.ComptimeGenericParameterName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeTypeAliasFactTypeReference(
+                document,
+                typeNode,
+                moduleOrdinal,
+                typeAliasOrdinal,
+                LogicalPackageTypedTypeReferenceSource.TypeAliasComptimeGenericParameterType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageTypedTypeAliasFactGraphAddComptimeGenericParameterRow(
+                graph,
+                typeAliasRow,
+                moduleOrdinal,
+                typeAliasOrdinal,
+                index,
+                nameTextRow,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedTypeAliasFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeAliasNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+    stack mut u32[0 max] targetTypeReferenceRow = 0;
+    stack mut u32[0 max] typeAliasRow = 0;
+    stack mut u32[0 max] genericParameterCount = 0;
+    stack mut u32[0 max] comptimeGenericParameterCount = 0;
+    return LogicalPackageImageJsonRequiredObjectMember(document, typeAliasNode, "TargetType", targetTypeNode)
+        && LogicalPackageImageJsonMaterializeTypeAliasFactTypeReference(
+            document,
+            targetTypeNode,
+            moduleOrdinal,
+            typeAliasOrdinal,
+            LogicalPackageTypedTypeReferenceSource.TypeAliasTarget,
+            0,
+            graph,
+            targetTypeReferenceRow)
+        && LogicalPackageTypedTypeAliasFactGraphAddTypeAliasRow(
+            graph,
+            moduleOrdinal,
+            typeAliasOrdinal,
+            targetTypeReferenceRow,
+            typeAliasRow)
+        && LogicalPackageImageJsonMaterializeTypeAliasGenericParameterRows(
+            document,
+            typeAliasNode,
+            moduleOrdinal,
+            typeAliasOrdinal,
+            typeAliasRow,
+            graph,
+            genericParameterCount)
+        && LogicalPackageImageJsonMaterializeTypeAliasComptimeGenericParameterRows(
+            document,
+            typeAliasNode,
+            moduleOrdinal,
+            typeAliasOrdinal,
+            typeAliasRow,
+            graph,
+            comptimeGenericParameterCount);
+}
+
+
+internal fn MemoryStatus LogicalPackageTypedTypeAliasFactGraphAppendText(
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageTypedTypeAliasFactGraphAddTextRow(
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    LogicalPackageTypedTypeAliasFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageTypedTypeAliasFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageTypedTypeAliasFactTextRow row =
+                new LogicalPackageTypedTypeAliasFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageTypedTypeAliasFactGraphAddTypeAliasRow(
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    u32[0 max] targetTypeReferenceRow,
+    out u32[0 max] typeAliasRow)
+{
+    typeAliasRow = 0;
+    if (!graph.TypeReferences.ContainsTypeReference(targetTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeAliasRow row = new LogicalPackageTypedTypeAliasRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeAliasOrdinalValue = typeAliasOrdinal,
+        TargetTypeReferenceRowValue = targetTypeReferenceRow
+    };
+    typeAliasRow = graph.TypeAliasRows.Add(row);
+    return typeAliasRow != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeAliasFactGraphAddGenericParameterRow(
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    u32[0 max] typeAliasRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TypeAliasRows.Contains(typeAliasRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeAliasGenericParameterRow row =
+        new LogicalPackageTypedTypeAliasGenericParameterRow()
+    {
+        TypeAliasRowValue = typeAliasRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeAliasOrdinalValue = typeAliasOrdinal,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    stack u32[0 max] addedRow = graph.GenericParameterRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedTypeAliasRow parent = graph.TypeAliasRows.Get(typeAliasRow);
+    if (parent.GenericParameterRowCountValue == 0)
+    {
+        parent.FirstGenericParameterRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstGenericParameterRowValue + parent.GenericParameterRowCountValue)
+    {
+        return false;
+    }
+
+    parent.GenericParameterRowCountValue = parent.GenericParameterRowCountValue + 1;
+    return graph.TypeAliasRows.Replace(typeAliasRow, parent);
+}
+
+internal fn bool LogicalPackageTypedTypeAliasFactGraphAddComptimeGenericParameterRow(
+    mut borrow LogicalPackageTypedTypeAliasFactGraph graph,
+    u32[0 max] typeAliasRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeAliasOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TypeAliasRows.Contains(typeAliasRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeAliasComptimeGenericParameterRow row =
+        new LogicalPackageTypedTypeAliasComptimeGenericParameterRow()
+    {
+        TypeAliasRowValue = typeAliasRow,
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeAliasOrdinalValue = typeAliasOrdinal,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    stack u32[0 max] addedRow = graph.ComptimeGenericParameterRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedTypeAliasRow parent = graph.TypeAliasRows.Get(typeAliasRow);
+    if (parent.ComptimeGenericParameterRowCountValue == 0)
+    {
+        parent.FirstComptimeGenericParameterRowValue = addedRow;
+    }
+    else if (addedRow
+        != parent.FirstComptimeGenericParameterRowValue + parent.ComptimeGenericParameterRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ComptimeGenericParameterRowCountValue =
+        parent.ComptimeGenericParameterRowCountValue + 1;
+    return graph.TypeAliasRows.Replace(typeAliasRow, parent);
+}
+
+
+internal fn MemoryStatus LogicalPackageTypedCallableFactGraphAppendText(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddTextRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    LogicalPackageTypedCallableFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageTypedCallableFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageTypedCallableFactTextRow row = new LogicalPackageTypedCallableFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddGenericParameterRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableGenericParameterRow row =
+        new LogicalPackageTypedCallableGenericParameterRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.GenericParameterRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddComptimeGenericParameterRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TextRows.Contains(nameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableComptimeGenericParameterRow row =
+        new LogicalPackageTypedCallableComptimeGenericParameterRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.ComptimeGenericParameterRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddTypeParameterConstraintRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] constraintOrdinal,
+    u32[0 max] parameterNameTextRow,
+    out u32[0 max] constraintRow)
+{
+    constraintRow = 0;
+    if (!graph.TextRows.Contains(parameterNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableTypeParameterConstraintRow row =
+        new LogicalPackageTypedCallableTypeParameterConstraintRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        ConstraintOrdinalValue = constraintOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow
+    };
+    constraintRow = graph.TypeParameterConstraintRows.Add(row);
+    return constraintRow != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddTypeParameterBoundTraitRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] constraintRow,
+    u32[0 max] boundTraitOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TypeParameterConstraintRows.Contains(constraintRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableTypeParameterBoundTraitRow row =
+        new LogicalPackageTypedCallableTypeParameterBoundTraitRow()
+    {
+        ConstraintRowValue = constraintRow,
+        BoundTraitOrdinalValue = boundTraitOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    stack u32[0 max] addedRow = graph.TypeParameterBoundTraitRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedCallableTypeParameterConstraintRow constraint =
+        graph.TypeParameterConstraintRows.Get(constraintRow);
+    if (constraint.BoundTraitRowCountValue == 0)
+    {
+        constraint.FirstBoundTraitRowValue = addedRow;
+    }
+    else if (addedRow != constraint.FirstBoundTraitRowValue + constraint.BoundTraitRowCountValue)
+    {
+        return false;
+    }
+
+    constraint.BoundTraitRowCountValue = constraint.BoundTraitRowCountValue + 1;
+    return graph.TypeParameterConstraintRows.Replace(constraintRow, constraint);
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddThreadSafetyLawPredicateRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] predicateOrdinal,
+    u32[0 max] lawNameTextRow,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TextRows.Contains(lawNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableThreadSafetyLawPredicateRow row =
+        new LogicalPackageTypedCallableThreadSafetyLawPredicateRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        PredicateOrdinalValue = predicateOrdinal,
+        LawNameTextRowValue = lawNameTextRow,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.ThreadSafetyLawPredicateRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddValueContractRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] contractOrdinal,
+    u32[0 max] leftTextRow,
+    u32[0 max] operatorTextRow,
+    u32[0 max] rightTextRow)
+{
+    if (!graph.TextRows.Contains(leftTextRow)
+        || !graph.TextRows.Contains(operatorTextRow)
+        || !graph.TextRows.Contains(rightTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableValueContractRow row = new LogicalPackageTypedCallableValueContractRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        ContractOrdinalValue = contractOrdinal,
+        LeftTextRowValue = leftTextRow,
+        OperatorTextRowValue = operatorTextRow,
+        RightTextRowValue = rightTextRow
+    };
+    return graph.ValueContractRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddParameterGroupRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] groupOrdinal,
+    out u32[0 max] parameterGroupRow)
+{
+    parameterGroupRow = 0;
+    stack LogicalPackageTypedCallableParameterGroupRow row =
+        new LogicalPackageTypedCallableParameterGroupRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        GroupKindValue = groupKind,
+        GroupOrdinalValue = groupOrdinal
+    };
+    parameterGroupRow = graph.ParameterGroupRows.Add(row);
+    return parameterGroupRow != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddParameterGroupNameRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] parameterGroupRow,
+    u32[0 max] parameterOrdinal,
+    u32[0 max] nameTextRow,
+    out u32[0 max] nameRow)
+{
+    nameRow = 0;
+    if (!graph.ParameterGroupRows.Contains(parameterGroupRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableParameterGroupNameRow row =
+        new LogicalPackageTypedCallableParameterGroupNameRow()
+    {
+        ParameterGroupRowValue = parameterGroupRow,
+        ParameterOrdinalValue = parameterOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    stack u32[0 max] addedNameRow = graph.ParameterGroupNameRows.Add(row);
+    if (addedNameRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedCallableParameterGroupRow group =
+        graph.ParameterGroupRows.Get(parameterGroupRow);
+    if (group.NameRowCountValue == 0)
+    {
+        group.FirstNameRowValue = addedNameRow;
+    }
+    else if (addedNameRow != group.FirstNameRowValue + group.NameRowCountValue)
+    {
+        return false;
+    }
+
+    group.NameRowCountValue = group.NameRowCountValue + 1;
+    if (!graph.ParameterGroupRows.Replace(parameterGroupRow, group))
+    {
+        return false;
+    }
+
+    nameRow = addedNameRow;
+    return true;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddParameterGroupRegionRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] parameterGroupRow,
+    u32[0 max] regionOrdinal,
+    u32[0 max] parameterNameTextRow,
+    bool hasStartExpression,
+    u32[0 max] startExpressionTextRow,
+    bool hasCountExpression,
+    u32[0 max] countExpressionTextRow,
+    out u32[0 max] regionRow)
+{
+    regionRow = 0;
+    if (!graph.ParameterGroupRows.Contains(parameterGroupRow)
+        || !graph.TextRows.Contains(parameterNameTextRow)
+        || (hasStartExpression && !graph.TextRows.Contains(startExpressionTextRow))
+        || (hasCountExpression && !graph.TextRows.Contains(countExpressionTextRow)))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableParameterGroupRegionRow row =
+        new LogicalPackageTypedCallableParameterGroupRegionRow()
+    {
+        ParameterGroupRowValue = parameterGroupRow,
+        RegionOrdinalValue = regionOrdinal,
+        ParameterNameTextRowValue = parameterNameTextRow,
+        HasStartExpressionValue = hasStartExpression,
+        StartExpressionTextRowValue = startExpressionTextRow,
+        HasCountExpressionValue = hasCountExpression,
+        CountExpressionTextRowValue = countExpressionTextRow
+    };
+    stack u32[0 max] addedRegionRow = graph.ParameterGroupRegionRows.Add(row);
+    if (addedRegionRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedCallableParameterGroupRow group =
+        graph.ParameterGroupRows.Get(parameterGroupRow);
+    if (group.RegionRowCountValue == 0)
+    {
+        group.FirstRegionRowValue = addedRegionRow;
+    }
+    else if (addedRegionRow != group.FirstRegionRowValue + group.RegionRowCountValue)
+    {
+        return false;
+    }
+
+    group.RegionRowCountValue = group.RegionRowCountValue + 1;
+    if (!graph.ParameterGroupRows.Replace(parameterGroupRow, group))
+    {
+        return false;
+    }
+
+    regionRow = addedRegionRow;
+    return true;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddImportRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    bool hasFfiAbi,
+    u32[0 max] ffiAbiTextRow,
+    bool hasLinkName,
+    u32[0 max] linkNameTextRow)
+{
+    if ((!hasFfiAbi && !hasLinkName)
+        || (hasFfiAbi && !graph.TextRows.Contains(ffiAbiTextRow))
+        || (hasLinkName && !graph.TextRows.Contains(linkNameTextRow)))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableImportRow row = new LogicalPackageTypedCallableImportRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        CallableKindValue = callableKind,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        FfiAbiTextRowValue = ffiAbiTextRow,
+        LinkNameTextRowValue = linkNameTextRow,
+        HasFfiAbiValue = hasFfiAbi,
+        HasLinkNameValue = hasLinkName
+    };
+    return graph.ImportRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddAsmRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] architectureTextRow,
+    u32[0 max] templateTextRow,
+    out u32[0 max] asmRow)
+{
+    asmRow = 0;
+    if (!graph.TextRows.Contains(architectureTextRow)
+        || !graph.TextRows.Contains(templateTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableAsmRow row = new LogicalPackageTypedCallableAsmRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        DeclarationOrdinalValue = declarationOrdinal,
+        ArchitectureTextRowValue = architectureTextRow,
+        TemplateTextRowValue = templateTextRow
+    };
+    asmRow = graph.AsmRows.Add(row);
+    return asmRow != 0;
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddAsmInputRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] asmRow,
+    u32[0 max] inputOrdinal,
+    u32[0 max] registerNameTextRow,
+    u32[0 max] valueNameTextRow)
+{
+    if (!graph.AsmRows.Contains(asmRow)
+        || !graph.TextRows.Contains(registerNameTextRow)
+        || !graph.TextRows.Contains(valueNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableAsmInputRow row = new LogicalPackageTypedCallableAsmInputRow()
+    {
+        AsmRowValue = asmRow,
+        InputOrdinalValue = inputOrdinal,
+        RegisterNameTextRowValue = registerNameTextRow,
+        ValueNameTextRowValue = valueNameTextRow
+    };
+    stack u32[0 max] addedRow = graph.AsmInputRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedCallableAsmRow parent = graph.AsmRows.Get(asmRow);
+    if (parent.InputRowCountValue == 0)
+    {
+        parent.FirstInputRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstInputRowValue + parent.InputRowCountValue)
+    {
+        return false;
+    }
+
+    parent.InputRowCountValue = parent.InputRowCountValue + 1;
+    return graph.AsmRows.Replace(asmRow, parent);
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddAsmOutputRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] asmRow,
+    u32[0 max] outputOrdinal,
+    u32[0 max] registerNameTextRow,
+    u32[0 max] valueNameTextRow,
+    bool bindsReturnValue)
+{
+    if (!graph.AsmRows.Contains(asmRow)
+        || !graph.TextRows.Contains(registerNameTextRow)
+        || !graph.TextRows.Contains(valueNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableAsmOutputRow row = new LogicalPackageTypedCallableAsmOutputRow()
+    {
+        AsmRowValue = asmRow,
+        OutputOrdinalValue = outputOrdinal,
+        RegisterNameTextRowValue = registerNameTextRow,
+        ValueNameTextRowValue = valueNameTextRow,
+        BindsReturnValueValue = bindsReturnValue
+    };
+    stack u32[0 max] addedRow = graph.AsmOutputRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedCallableAsmRow parent = graph.AsmRows.Get(asmRow);
+    if (parent.OutputRowCountValue == 0)
+    {
+        parent.FirstOutputRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstOutputRowValue + parent.OutputRowCountValue)
+    {
+        return false;
+    }
+
+    parent.OutputRowCountValue = parent.OutputRowCountValue + 1;
+    return graph.AsmRows.Replace(asmRow, parent);
+}
+
+internal fn bool LogicalPackageTypedCallableFactGraphAddAsmClobberRow(
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    u32[0 max] asmRow,
+    u32[0 max] clobberOrdinal,
+    u32[0 max] registerNameTextRow)
+{
+    if (!graph.AsmRows.Contains(asmRow)
+        || !graph.TextRows.Contains(registerNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedCallableAsmClobberRow row = new LogicalPackageTypedCallableAsmClobberRow()
+    {
+        AsmRowValue = asmRow,
+        ClobberOrdinalValue = clobberOrdinal,
+        RegisterNameTextRowValue = registerNameTextRow
+    };
+    stack u32[0 max] addedRow = graph.AsmClobberRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedCallableAsmRow parent = graph.AsmRows.Get(asmRow);
+    if (parent.ClobberRowCountValue == 0)
+    {
+        parent.FirstClobberRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstClobberRowValue + parent.ClobberRowCountValue)
+    {
+        return false;
+    }
+
+    parent.ClobberRowCountValue = parent.ClobberRowCountValue + 1;
+    return graph.AsmRows.Replace(asmRow, parent);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedCallableFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageTypedCallableFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalCallableFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedCallableFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageTypedCallableFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableFactTypeReference(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeReferenceNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] typeReferenceRow)
+{
+    typeReferenceRow = 0;
+    stack LogicalPackageTypedDeclarationKind declarationKind =
+        callableKind == LogicalPackageTypedCallableKind.Method
+            ? LogicalPackageTypedDeclarationKind.Type
+            : LogicalPackageTypedDeclarationKind.Function;
+    return LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+        document,
+        typeReferenceNode,
+        moduleOrdinal,
+        declarationKind,
+        declarationOrdinal,
+        methodOrdinal,
+        0,
+        source,
+        payloadOrdinal,
+        graph.TypeReferences,
+        typeReferenceRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableGenericParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] parameterCount)
+{
+    parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, callableNode, "GenericParameters", arrayNode, parameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii name = document.TextAt(parameterNode);
+        if (System.Text.AsciiLength(name) <= 0
+            || !LogicalPackageTypedCallableFactGraphAddTextRow(
+                graph,
+                LogicalPackageTypedCallableFactTextKind.GenericParameterName,
+                index,
+                name,
+                nameTextRow)
+            || !LogicalPackageTypedCallableFactGraphAddGenericParameterRow(
+                graph,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableComptimeGenericParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] parameterCount)
+{
+    parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        callableNode,
+        "ComptimeGenericParameters",
+        arrayNode,
+        parameterCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                parameterNode,
+                "Name",
+                LogicalPackageTypedCallableFactTextKind.ComptimeGenericParameterName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeCallableFactTypeReference(
+                document,
+                typeNode,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageTypedCallableFactGraphAddComptimeGenericParameterRow(
+                graph,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                index,
+                nameTextRow,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableTypeParameterConstraintRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] constraintCount)
+{
+    constraintCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        callableNode,
+        "TypeParameterConstraints",
+        arrayNode,
+        constraintCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] constraintIndex = 0;
+    while willexit (constraintIndex < constraintCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] constraintNode = 0;
+        stack mut u64[0 2 ** 63 - 1] boundTraitsNode = 0;
+        stack mut u32[0 max] boundTraitCount = 0;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] constraintRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])constraintIndex, constraintNode)
+            || document.KindAt(constraintNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                constraintNode,
+                "ParameterName",
+                LogicalPackageTypedCallableFactTextKind.TypeParameterConstraintParameterName,
+                constraintIndex,
+                graph,
+                parameterNameTextRow)
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                constraintNode,
+                "BoundTraits",
+                boundTraitsNode,
+                boundTraitCount)
+            || !LogicalPackageTypedCallableFactGraphAddTypeParameterConstraintRow(
+                graph,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                constraintIndex,
+                parameterNameTextRow,
+                constraintRow))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] boundTraitIndex = 0;
+        while willexit (boundTraitIndex < boundTraitCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] boundTraitNode = 0;
+            stack mut u32[0 max] typeReferenceRow = 0;
+            if (!document.TryChildAt(boundTraitsNode, (u64[0 2 ** 63 - 1])boundTraitIndex, boundTraitNode)
+                || document.KindAt(boundTraitNode) != JsonKind.Object
+                || !LogicalPackageImageJsonMaterializeCallableFactTypeReference(
+                    document,
+                    boundTraitNode,
+                    moduleOrdinal,
+                    callableKind,
+                    declarationOrdinal,
+                    methodOrdinal,
+                    LogicalPackageTypedTypeReferenceSource.CallableTypeParameterConstraintBoundTrait,
+                    constraintIndex,
+                    graph,
+                    typeReferenceRow)
+                || !LogicalPackageTypedCallableFactGraphAddTypeParameterBoundTraitRow(
+                    graph,
+                    constraintRow,
+                    boundTraitIndex,
+                    typeReferenceRow))
+            {
+                return false;
+            }
+
+            boundTraitIndex = boundTraitIndex + 1;
+        }
+
+        constraintIndex = constraintIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableThreadSafetyLawPredicateRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] predicateCount)
+{
+    predicateCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        callableNode,
+        "ThreadSafetyLawPredicates",
+        arrayNode,
+        predicateCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < predicateCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] predicateNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] lawNameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, predicateNode)
+            || document.KindAt(predicateNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                predicateNode,
+                "LawName",
+                LogicalPackageTypedCallableFactTextKind.ThreadSafetyLawPredicateLawName,
+                index,
+                graph,
+                lawNameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, predicateNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeCallableFactTypeReference(
+                document,
+                typeNode,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                LogicalPackageTypedTypeReferenceSource.CallableThreadSafetyLawPredicateType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageTypedCallableFactGraphAddThreadSafetyLawPredicateRow(
+                graph,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                index,
+                lawNameTextRow,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableValueContractRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] contractCount)
+{
+    contractCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, callableNode, "ValueContracts", arrayNode, contractCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < contractCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] contractNode = 0;
+        stack mut u32[0 max] leftTextRow = 0;
+        stack mut u32[0 max] operatorTextRow = 0;
+        stack mut u32[0 max] rightTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, contractNode)
+            || document.KindAt(contractNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                contractNode,
+                "Left",
+                LogicalPackageTypedCallableFactTextKind.ValueContractLeft,
+                index,
+                graph,
+                leftTextRow)
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                contractNode,
+                "Operator",
+                LogicalPackageTypedCallableFactTextKind.ValueContractOperator,
+                index,
+                graph,
+                operatorTextRow)
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                contractNode,
+                "Right",
+                LogicalPackageTypedCallableFactTextKind.ValueContractRight,
+                index,
+                graph,
+                rightTextRow)
+            || !LogicalPackageTypedCallableFactGraphAddValueContractRow(
+                graph,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                index,
+                leftTextRow,
+                operatorTextRow,
+                rightTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableParameterGroupNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupNode,
+    u32[0 max] groupRow,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] nameCount)
+{
+    nameCount = 0;
+    stack mut u64[0 2 ** 63 - 1] namesNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, groupNode, "ParameterNames", namesNode, nameCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < nameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] nameRow = 0;
+        if (!document.TryChildAt(namesNode, (u64[0 2 ** 63 - 1])index, nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii value = document.TextAt(nameNode);
+        if (System.Text.AsciiLength(value) <= 0
+            || !LogicalPackageTypedCallableFactGraphAddTextRow(
+                graph,
+                LogicalPackageTypedCallableFactTextKind.ParameterGroupParameterName,
+                index,
+                value,
+                nameTextRow)
+            || !LogicalPackageTypedCallableFactGraphAddParameterGroupNameRow(
+                graph,
+                groupRow,
+                index,
+                nameTextRow,
+                nameRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableParameterGroupRegionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupNode,
+    u32[0 max] groupRow,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] regionCount)
+{
+    regionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] regionsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, groupNode, "Regions", regionsNode, regionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < regionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] regionNode = 0;
+        stack mut bool hasStartExpression = false;
+        stack mut bool hasCountExpression = false;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] startExpressionTextRow = 0;
+        stack mut u32[0 max] countExpressionTextRow = 0;
+        stack mut u32[0 max] regionRow = 0;
+        if (!document.TryChildAt(regionsNode, (u64[0 2 ** 63 - 1])index, regionNode)
+            || document.KindAt(regionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                regionNode,
+                "ParameterName",
+                LogicalPackageTypedCallableFactTextKind.ParameterGroupRegionParameterName,
+                index,
+                graph,
+                parameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalCallableFactTextMemberRow(
+                document,
+                regionNode,
+                "StartExpression",
+                LogicalPackageTypedCallableFactTextKind.ParameterGroupRegionStartExpression,
+                index,
+                graph,
+                hasStartExpression,
+                startExpressionTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalCallableFactTextMemberRow(
+                document,
+                regionNode,
+                "CountExpression",
+                LogicalPackageTypedCallableFactTextKind.ParameterGroupRegionCountExpression,
+                index,
+                graph,
+                hasCountExpression,
+                countExpressionTextRow)
+            || !LogicalPackageTypedCallableFactGraphAddParameterGroupRegionRow(
+                graph,
+                groupRow,
+                index,
+                parameterNameTextRow,
+                hasStartExpression,
+                startExpressionTextRow,
+                hasCountExpression,
+                countExpressionTextRow,
+                regionRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableParameterGroupRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    ascii memberName,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out u32[0 max] groupCount)
+{
+    groupCount = 0;
+    stack mut u64[0 2 ** 63 - 1] groupsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, callableNode, memberName, groupsNode, groupCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < groupCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] groupNode = 0;
+        stack mut u32[0 max] groupRow = 0;
+        stack mut u32[0 max] nameCount = 0;
+        stack mut u32[0 max] regionCount = 0;
+        if (!document.TryChildAt(groupsNode, (u64[0 2 ** 63 - 1])index, groupNode)
+            || document.KindAt(groupNode) != JsonKind.Object
+            || !LogicalPackageTypedCallableFactGraphAddParameterGroupRow(
+                graph,
+                moduleOrdinal,
+                callableKind,
+                declarationOrdinal,
+                methodOrdinal,
+                groupKind,
+                index,
+                groupRow)
+            || !LogicalPackageImageJsonMaterializeCallableParameterGroupNameRows(
+                document,
+                groupNode,
+                groupRow,
+                graph,
+                nameCount)
+            || !LogicalPackageImageJsonMaterializeCallableParameterGroupRegionRows(
+                document,
+                groupNode,
+                groupRow,
+                graph,
+                regionCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableImportRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out bool hasImportRow)
+{
+    hasImportRow = false;
+    stack mut bool hasFfiAbi = false;
+    stack mut bool hasLinkName = false;
+    stack mut u32[0 max] ffiAbiTextRow = 0;
+    stack mut u32[0 max] linkNameTextRow = 0;
+    if (!LogicalPackageImageJsonMaterializeOptionalCallableFactTextMemberRow(
+            document,
+            callableNode,
+            "FfiAbi",
+            LogicalPackageTypedCallableFactTextKind.FfiAbi,
+            0,
+            graph,
+            hasFfiAbi,
+            ffiAbiTextRow))
+    {
+        return false;
+    }
+
+    if (callableKind == LogicalPackageTypedCallableKind.Method
+        && LogicalPackageImageJsonMemberHasValue(document, callableNode, "LinkName"))
+    {
+        return false;
+    }
+
+    if (callableKind == LogicalPackageTypedCallableKind.Function
+        && !LogicalPackageImageJsonMaterializeOptionalCallableFactTextMemberRow(
+            document,
+            callableNode,
+            "LinkName",
+            LogicalPackageTypedCallableFactTextKind.LinkName,
+            0,
+            graph,
+            hasLinkName,
+            linkNameTextRow))
+    {
+        return false;
+    }
+
+    if (!hasFfiAbi && !hasLinkName)
+    {
+        return true;
+    }
+
+    hasImportRow = true;
+    return LogicalPackageTypedCallableFactGraphAddImportRow(
+        graph,
+        moduleOrdinal,
+        callableKind,
+        declarationOrdinal,
+        methodOrdinal,
+        hasFfiAbi,
+        ffiAbiTextRow,
+        hasLinkName,
+        linkNameTextRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeCallableAsmRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph,
+    out bool hasAsmRow)
+{
+    hasAsmRow = false;
+    if (callableKind == LogicalPackageTypedCallableKind.Method)
+    {
+        return !LogicalPackageImageJsonMemberHasValue(document, callableNode, "Asm");
+    }
+
+    stack mut u64[0 2 ** 63 - 1] asmNode = 0;
+    stack mut bool hasAsm = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, callableNode, "Asm", asmNode, hasAsm))
+    {
+        return false;
+    }
+
+    if (!hasAsm)
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] inputsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] outputsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] clobbersNode = 0;
+    stack mut u32[0 max] inputCount = 0;
+    stack mut u32[0 max] outputCount = 0;
+    stack mut u32[0 max] clobberCount = 0;
+    stack mut u32[0 max] architectureTextRow = 0;
+    stack mut u32[0 max] templateTextRow = 0;
+    stack mut u32[0 max] asmRow = 0;
+    if (!LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+            document,
+            asmNode,
+            "ArchitectureText",
+            LogicalPackageTypedCallableFactTextKind.AsmArchitecture,
+            0,
+            graph,
+            architectureTextRow)
+        || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+            document,
+            asmNode,
+            "TemplateText",
+            LogicalPackageTypedCallableFactTextKind.AsmTemplate,
+            0,
+            graph,
+            templateTextRow)
+        || !LogicalPackageImageJsonRequiredArrayMember(document, asmNode, "Inputs", inputsNode, inputCount)
+        || !LogicalPackageImageJsonRequiredArrayMember(document, asmNode, "Outputs", outputsNode, outputCount)
+        || !LogicalPackageImageJsonRequiredArrayMember(document, asmNode, "Clobbers", clobbersNode, clobberCount)
+        || !LogicalPackageTypedCallableFactGraphAddAsmRow(
+            graph,
+            moduleOrdinal,
+            declarationOrdinal,
+            architectureTextRow,
+            templateTextRow,
+            asmRow))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] inputIndex = 0;
+    while willexit (inputIndex < inputCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] inputNode = 0;
+        stack mut u32[0 max] registerNameTextRow = 0;
+        stack mut u32[0 max] valueNameTextRow = 0;
+        if (!document.TryChildAt(inputsNode, (u64[0 2 ** 63 - 1])inputIndex, inputNode)
+            || document.KindAt(inputNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                inputNode,
+                "RegisterName",
+                LogicalPackageTypedCallableFactTextKind.AsmInputRegisterName,
+                inputIndex,
+                graph,
+                registerNameTextRow)
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                inputNode,
+                "ValueName",
+                LogicalPackageTypedCallableFactTextKind.AsmInputValueName,
+                inputIndex,
+                graph,
+                valueNameTextRow)
+            || !LogicalPackageTypedCallableFactGraphAddAsmInputRow(
+                graph,
+                asmRow,
+                inputIndex,
+                registerNameTextRow,
+                valueNameTextRow))
+        {
+            return false;
+        }
+
+        inputIndex = inputIndex + 1;
+    }
+
+    stack mut u32[0 max] outputIndex = 0;
+    while willexit (outputIndex < outputCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] outputNode = 0;
+        stack mut bool bindsReturnValue = false;
+        stack mut u32[0 max] registerNameTextRow = 0;
+        stack mut u32[0 max] valueNameTextRow = 0;
+        if (!document.TryChildAt(outputsNode, (u64[0 2 ** 63 - 1])outputIndex, outputNode)
+            || document.KindAt(outputNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                outputNode,
+                "RegisterName",
+                LogicalPackageTypedCallableFactTextKind.AsmOutputRegisterName,
+                outputIndex,
+                graph,
+                registerNameTextRow)
+            || !LogicalPackageImageJsonMaterializeCallableFactTextMemberRow(
+                document,
+                outputNode,
+                "ValueName",
+                LogicalPackageTypedCallableFactTextKind.AsmOutputValueName,
+                outputIndex,
+                graph,
+                valueNameTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                outputNode,
+                "BindsReturnValue",
+                bindsReturnValue)
+            || !LogicalPackageTypedCallableFactGraphAddAsmOutputRow(
+                graph,
+                asmRow,
+                outputIndex,
+                registerNameTextRow,
+                valueNameTextRow,
+                bindsReturnValue))
+        {
+            return false;
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack mut u32[0 max] clobberIndex = 0;
+    while willexit (clobberIndex < clobberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] clobberNode = 0;
+        stack mut u32[0 max] registerNameTextRow = 0;
+        if (!document.TryChildAt(clobbersNode, (u64[0 2 ** 63 - 1])clobberIndex, clobberNode)
+            || document.KindAt(clobberNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii registerName = document.TextAt(clobberNode);
+        if (System.Text.AsciiLength(registerName) <= 0
+            || !LogicalPackageTypedCallableFactGraphAddTextRow(
+                graph,
+                LogicalPackageTypedCallableFactTextKind.AsmClobberRegisterName,
+                clobberIndex,
+                registerName,
+                registerNameTextRow)
+            || !LogicalPackageTypedCallableFactGraphAddAsmClobberRow(
+                graph,
+                asmRow,
+                clobberIndex,
+                registerNameTextRow))
+        {
+            return false;
+        }
+
+        clobberIndex = clobberIndex + 1;
+    }
+
+    hasAsmRow = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedCallableFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    mut borrow LogicalPackageTypedCallableFactGraph graph)
+{
+    stack mut u32[0 max] genericParameterCount = 0;
+    stack mut u32[0 max] comptimeGenericParameterCount = 0;
+    stack mut u32[0 max] typeParameterConstraintCount = 0;
+    stack mut u32[0 max] threadSafetyLawPredicateCount = 0;
+    stack mut u32[0 max] valueContractCount = 0;
+    stack mut u32[0 max] disjointParameterGroupCount = 0;
+    stack mut u32[0 max] overlapParameterGroupCount = 0;
+    stack mut u32[0 max] sameParameterGroupCount = 0;
+    stack mut bool hasImportRow = false;
+    stack mut bool hasAsmRow = false;
+    return LogicalPackageImageJsonMaterializeCallableGenericParameterRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            genericParameterCount)
+        && LogicalPackageImageJsonMaterializeCallableComptimeGenericParameterRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            comptimeGenericParameterCount)
+        && LogicalPackageImageJsonMaterializeCallableTypeParameterConstraintRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            typeParameterConstraintCount)
+        && LogicalPackageImageJsonMaterializeCallableThreadSafetyLawPredicateRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            threadSafetyLawPredicateCount)
+        && LogicalPackageImageJsonMaterializeCallableValueContractRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            valueContractCount)
+        && LogicalPackageImageJsonMaterializeCallableParameterGroupRows(
+            document,
+            callableNode,
+            "DisjointParameterGroups",
+            LogicalPackageTypeReferenceParameterGroupKind.Disjoint,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            disjointParameterGroupCount)
+        && LogicalPackageImageJsonMaterializeCallableParameterGroupRows(
+            document,
+            callableNode,
+            "OverlapParameterGroups",
+            LogicalPackageTypeReferenceParameterGroupKind.Overlap,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            overlapParameterGroupCount)
+        && LogicalPackageImageJsonMaterializeCallableParameterGroupRows(
+            document,
+            callableNode,
+            "SameParameterGroups",
+            LogicalPackageTypeReferenceParameterGroupKind.Same,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            sameParameterGroupCount)
+        && LogicalPackageImageJsonMaterializeCallableImportRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            methodOrdinal,
+            graph,
+            hasImportRow)
+        && LogicalPackageImageJsonMaterializeCallableAsmRows(
+            document,
+            callableNode,
+            moduleOrdinal,
+            callableKind,
+            declarationOrdinal,
+            graph,
+            hasAsmRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeGlobalFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedGlobalFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageTypedGlobalFactGraphAddTextRow(graph, textKind, textOrdinal, value, false, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalGlobalFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedGlobalFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    bool allowEmpty,
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) < 0
+        || (!allowEmpty && System.Text.AsciiLength(value) == 0))
+    {
+        return false;
+    }
+
+    if (!LogicalPackageTypedGlobalFactGraphAddTextRow(
+        graph,
+        textKind,
+        textOrdinal,
+        value,
+        allowEmpty,
+        textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedTypeFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageTypedTypeFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalTypeFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypedTypeFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageTypedTypeFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonConstantInitializerKindHasAggregateElements(ascii kind)
+{
+    return System.Text.Equals(kind, "fixedarray")
+        || System.Text.Equals(kind, "namedaggregate")
+        || System.Text.Equals(kind, "enumaggregate");
+}
+
+internal fn bool LogicalPackageImageJsonConstantInitializerKindShapeIsValid(
+    ascii kind,
+    bool hasIntegerValue,
+    bool hasFloatLiteralText,
+    bool hasBoolValue,
+    bool hasTextLiteralText,
+    bool hasVariantName,
+    bool hasElements)
+{
+    if (System.Text.Equals(kind, "integer"))
+    {
+        return hasIntegerValue && !hasElements;
+    }
+
+    if (System.Text.Equals(kind, "float"))
+    {
+        return hasFloatLiteralText && !hasElements;
+    }
+
+    if (System.Text.Equals(kind, "bool"))
+    {
+        return hasBoolValue && !hasElements;
+    }
+
+    if (System.Text.Equals(kind, "text"))
+    {
+        return hasTextLiteralText && !hasElements;
+    }
+
+    if (System.Text.Equals(kind, "null"))
+    {
+        return !hasElements;
+    }
+
+    if (System.Text.Equals(kind, "fixedarray")
+        || System.Text.Equals(kind, "namedaggregate"))
+    {
+        return hasElements;
+    }
+
+    if (System.Text.Equals(kind, "enumaggregate"))
+    {
+        return hasElements && hasVariantName;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedConstantInitializerRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] rootInitializerNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] globalOrdinal,
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    out u32[0 max] rootInitializerRow)
+{
+    rootInitializerRow = 0;
+    stack mut IrTable<LogicalPackageTypedConstantInitializerWorkItem> work = new();
+    if (!LogicalPackageTypedConstantInitializerWorkListAdd(work, rootInitializerNode, 0, 0))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] workCursor = 1;
+    while willexit (workCursor <= work.Count())
+    {
+        if (workCursor > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack LogicalPackageTypedConstantInitializerWorkItem item = work.Get((u32[0 max])workCursor);
+        if (document.KindAt(item.NodeValue) != JsonKind.Object)
+        {
+            return false;
+        }
+
+        stack u32[0 max] initializerOrdinal = (u32[0 max])(workCursor - 1);
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] elementsNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindMember = 0;
+        stack mut u32[0 max] elementCount = 0;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut bool hasIntegerValue = false;
+        stack mut bool hasFloatLiteralText = false;
+        stack mut bool hasBoolValue = false;
+        stack mut bool boolValue = false;
+        stack mut bool hasTextLiteralText = false;
+        stack mut bool hasVariantName = false;
+        stack mut u32[0 max] integerValueTextRow = 0;
+        stack mut u32[0 max] floatLiteralTextRow = 0;
+        stack mut u32[0 max] textLiteralTextRow = 0;
+        stack mut u32[0 max] variantNameTextRow = 0;
+        stack mut bool hasElements = false;
+        if (!LogicalPackageImageJsonMaterializeGlobalFactTextMemberRow(
+                document,
+                item.NodeValue,
+                "Kind",
+                LogicalPackageTypedGlobalFactTextKind.ConstantInitializerKind,
+                initializerOrdinal,
+                graph,
+                kindTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, item.NodeValue, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Global,
+                globalOrdinal,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.GlobalConstantInitializerType,
+                initializerOrdinal,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGlobalFactTextMemberRow(
+                document,
+                item.NodeValue,
+                "IntegerValue",
+                LogicalPackageTypedGlobalFactTextKind.ConstantInitializerIntegerValue,
+                initializerOrdinal,
+                false,
+                graph,
+                hasIntegerValue,
+                integerValueTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGlobalFactTextMemberRow(
+                document,
+                item.NodeValue,
+                "FloatLiteralText",
+                LogicalPackageTypedGlobalFactTextKind.ConstantInitializerFloatLiteralText,
+                initializerOrdinal,
+                false,
+                graph,
+                hasFloatLiteralText,
+                floatLiteralTextRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, item.NodeValue, "BoolValue", boolValue)
+            || !LogicalPackageImageJsonMaterializeOptionalGlobalFactTextMemberRow(
+                document,
+                item.NodeValue,
+                "TextLiteralText",
+                LogicalPackageTypedGlobalFactTextKind.ConstantInitializerTextLiteralText,
+                initializerOrdinal,
+                true,
+                graph,
+                hasTextLiteralText,
+                textLiteralTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGlobalFactTextMemberRow(
+                document,
+                item.NodeValue,
+                "VariantName",
+                LogicalPackageTypedGlobalFactTextKind.ConstantInitializerVariantName,
+                initializerOrdinal,
+                false,
+                graph,
+                hasVariantName,
+                variantNameTextRow))
+        {
+            return false;
+        }
+
+        if (!document.TryFindMember(item.NodeValue, "Kind", kindMember)
+            || document.KindAt(kindMember) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii kind = document.TextAt(kindMember);
+        if (System.Text.AsciiLength(kind) <= 0)
+        {
+            return false;
+        }
+
+        hasBoolValue = LogicalPackageImageJsonMemberHasValue(document, item.NodeValue, "BoolValue");
+        hasElements = LogicalPackageImageJsonMemberHasValue(document, item.NodeValue, "Elements");
+        if (LogicalPackageImageJsonConstantInitializerKindHasAggregateElements(kind))
+        {
+            if (!LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                item.NodeValue,
+                "Elements",
+                elementsNode,
+                elementCount))
+            {
+                return false;
+            }
+        }
+        else if (hasElements)
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageJsonConstantInitializerKindShapeIsValid(
+            kind,
+            hasIntegerValue,
+            hasFloatLiteralText,
+            hasBoolValue,
+            hasTextLiteralText,
+            hasVariantName,
+            hasElements))
+        {
+            return false;
+        }
+
+        stack mut u32[0 max] initializerRow = 0;
+        if (!LogicalPackageTypedGlobalFactGraphAddInitializerRow(
+            graph,
+            item.ParentInitializerRowValue,
+            item.ParentChildOrdinalValue,
+            moduleOrdinal,
+            globalOrdinal,
+            initializerOrdinal,
+            kindTextRow,
+            typeReferenceRow,
+            hasIntegerValue,
+            integerValueTextRow,
+            hasFloatLiteralText,
+            floatLiteralTextRow,
+            hasBoolValue,
+            boolValue,
+            hasTextLiteralText,
+            textLiteralTextRow,
+            hasVariantName,
+            variantNameTextRow,
+            initializerRow))
+        {
+            return false;
+        }
+
+        if (rootInitializerRow == 0)
+        {
+            rootInitializerRow = initializerRow;
+        }
+
+        stack mut u32[0 max] elementIndex = 0;
+        while willexit (elementIndex < elementCount)
+        {
+            stack mut u64[0 2 ** 63 - 1] childNode = 0;
+            if (!document.TryChildAt(elementsNode, (u64[0 2 ** 63 - 1])elementIndex, childNode)
+                || document.KindAt(childNode) != JsonKind.Object
+                || !LogicalPackageTypedConstantInitializerWorkListAdd(
+                    work,
+                    childNode,
+                    initializerRow,
+                    elementIndex))
+            {
+                return false;
+            }
+
+            elementIndex = elementIndex + 1;
+        }
+
+        workCursor = workCursor + 1;
+    }
+
+    return rootInitializerRow != 0;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedGlobalFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] globalNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] globalOrdinal,
+    mut borrow LogicalPackageTypedGlobalFactGraph graph)
+{
+    stack mut bool isMutable = false;
+    stack mut bool hasConstantInitializer = false;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] initializerNode = 0;
+    stack mut u32[0 max] kindTextRow = 0;
+    stack mut u32[0 max] typeReferenceRow = 0;
+    stack mut u32[0 max] rootInitializerRow = 0;
+    stack mut u32[0 max] globalRow = 0;
+    if (!LogicalPackageImageJsonMaterializeGlobalFactTextMemberRow(
+            document,
+            globalNode,
+            "Kind",
+            LogicalPackageTypedGlobalFactTextKind.Kind,
+            0,
+            graph,
+            kindTextRow)
+        || !LogicalPackageImageJsonRequiredObjectMember(document, globalNode, "Type", typeNode)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(document, globalNode, "IsMutable", isMutable)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+            document,
+            typeNode,
+            moduleOrdinal,
+            LogicalPackageTypedDeclarationKind.Global,
+            globalOrdinal,
+            0,
+            0,
+            LogicalPackageTypedTypeReferenceSource.GlobalType,
+            0,
+            graph.TypeReferences,
+            typeReferenceRow))
+    {
+        return false;
+    }
+
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+        document,
+        globalNode,
+        "ConstantInitializer",
+        initializerNode,
+        hasConstantInitializer))
+    {
+        return false;
+    }
+
+    if (hasConstantInitializer
+        && !LogicalPackageImageJsonMaterializeTypedConstantInitializerRows(
+            document,
+            initializerNode,
+            moduleOrdinal,
+            globalOrdinal,
+            graph,
+            rootInitializerRow))
+    {
+        return false;
+    }
+
+    return LogicalPackageTypedGlobalFactGraphAddGlobalRow(
+        graph,
+        moduleOrdinal,
+        globalOrdinal,
+        kindTextRow,
+        typeReferenceRow,
+        isMutable,
+        hasConstantInitializer,
+        rootInitializerRow,
+        globalRow);
+}
+
+internal fn MemoryStatus LogicalPackageTypedGlobalFactGraphAppendText(
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    ascii text,
+    bool allowEmpty,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength < 0
+        || (!allowEmpty && signedLength == 0)
+        || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    if (signedLength == 0)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageTypedGlobalFactGraphAddTextRow(
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    LogicalPackageTypedGlobalFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    bool allowEmpty,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageTypedGlobalFactGraphAppendText(graph, text, allowEmpty, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageTypedGlobalFactTextRow row = new LogicalPackageTypedGlobalFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageTypedGlobalFactGraphAddGlobalRow(
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] globalOrdinal,
+    u32[0 max] kindTextRow,
+    u32[0 max] typeReferenceRow,
+    bool isMutable,
+    bool hasConstantInitializer,
+    u32[0 max] rootInitializerRow,
+    out u32[0 max] globalRow)
+{
+    globalRow = 0;
+    if (!graph.TextRows.Contains(kindTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || (hasConstantInitializer && !graph.InitializerRows.Contains(rootInitializerRow))
+        || (!hasConstantInitializer && rootInitializerRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedGlobalRow row = new LogicalPackageTypedGlobalRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        GlobalOrdinalValue = globalOrdinal,
+        KindTextRowValue = kindTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        RootInitializerRowValue = rootInitializerRow,
+        IsMutableValue = isMutable,
+        HasConstantInitializerValue = hasConstantInitializer
+    };
+    globalRow = graph.GlobalRows.Add(row);
+    return globalRow != 0;
+}
+
+internal fn bool LogicalPackageTypedGlobalFactGraphAddInitializerRow(
+    mut borrow LogicalPackageTypedGlobalFactGraph graph,
+    u32[0 max] parentInitializerRow,
+    u32[0 max] parentChildOrdinal,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] globalOrdinal,
+    u32[0 max] initializerOrdinal,
+    u32[0 max] kindTextRow,
+    u32[0 max] typeReferenceRow,
+    bool hasIntegerValue,
+    u32[0 max] integerValueTextRow,
+    bool hasFloatLiteralText,
+    u32[0 max] floatLiteralTextRow,
+    bool hasBoolValue,
+    bool boolValue,
+    bool hasTextLiteralText,
+    u32[0 max] textLiteralTextRow,
+    bool hasVariantName,
+    u32[0 max] variantNameTextRow,
+    out u32[0 max] initializerRow)
+{
+    initializerRow = 0;
+    if ((parentInitializerRow != 0 && !graph.InitializerRows.Contains(parentInitializerRow))
+        || !graph.TextRows.Contains(kindTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow)
+        || (hasIntegerValue && !graph.TextRows.Contains(integerValueTextRow))
+        || (!hasIntegerValue && integerValueTextRow != 0)
+        || (hasFloatLiteralText && !graph.TextRows.Contains(floatLiteralTextRow))
+        || (!hasFloatLiteralText && floatLiteralTextRow != 0)
+        || (hasTextLiteralText && !graph.TextRows.Contains(textLiteralTextRow))
+        || (!hasTextLiteralText && textLiteralTextRow != 0)
+        || (hasVariantName && !graph.TextRows.Contains(variantNameTextRow))
+        || (!hasVariantName && variantNameTextRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedConstantInitializerRow row = new LogicalPackageTypedConstantInitializerRow()
+    {
+        ParentInitializerRowValue = parentInitializerRow,
+        ParentChildOrdinalValue = parentChildOrdinal,
+        ModuleOrdinalValue = moduleOrdinal,
+        GlobalOrdinalValue = globalOrdinal,
+        InitializerOrdinalValue = initializerOrdinal,
+        KindTextRowValue = kindTextRow,
+        TypeReferenceRowValue = typeReferenceRow,
+        IntegerValueTextRowValue = integerValueTextRow,
+        FloatLiteralTextRowValue = floatLiteralTextRow,
+        TextLiteralTextRowValue = textLiteralTextRow,
+        VariantNameTextRowValue = variantNameTextRow,
+        HasIntegerValueValue = hasIntegerValue,
+        HasFloatLiteralTextValue = hasFloatLiteralText,
+        HasBoolValueValue = hasBoolValue,
+        BoolValueValue = boolValue,
+        HasTextLiteralTextValue = hasTextLiteralText,
+        HasVariantNameValue = hasVariantName
+    };
+    stack u32[0 max] addedRow = graph.InitializerRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    if (parentInitializerRow != 0)
+    {
+        stack mut LogicalPackageTypedConstantInitializerRow parent =
+
+            graph.InitializerRows.Get(parentInitializerRow);
+        if (parent.ElementRowCountValue == 0)
+        {
+            parent.FirstElementRowValue = addedRow;
+        }
+        else if (addedRow != parent.FirstElementRowValue + parent.ElementRowCountValue)
+        {
+            return false;
+        }
+
+        parent.ElementRowCountValue = parent.ElementRowCountValue + 1;
+        if (!graph.InitializerRows.Replace(parentInitializerRow, parent))
+        {
+            return false;
+        }
+    }
+
+    initializerRow = addedRow;
+    return true;
+}
+
+internal fn MemoryStatus LogicalPackageTypedTypeFactGraphAppendText(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddTextRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    LogicalPackageTypedTypeFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageTypedTypeFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageTypedTypeFactTextRow row = new LogicalPackageTypedTypeFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddTypeRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] kindTextRow,
+    bool hasBackendOptimizationMode,
+    u32[0 max] backendOptimizationModeTextRow,
+    bool hasStructLayout,
+    u32[0 max] structLayoutTextRow,
+    bool hasPackBytes,
+    u32[0 max] packBytes,
+    bool hasAlignBytes,
+    u32[0 max] alignBytes,
+    bool isDynTrait,
+    out u32[0 max] typeRow)
+{
+    typeRow = 0;
+    if (!graph.TextRows.Contains(kindTextRow)
+        || (hasBackendOptimizationMode && !graph.TextRows.Contains(backendOptimizationModeTextRow))
+        || (!hasBackendOptimizationMode && backendOptimizationModeTextRow != 0)
+        || (hasStructLayout && !graph.TextRows.Contains(structLayoutTextRow))
+        || (!hasStructLayout && structLayoutTextRow != 0)
+        || (!hasPackBytes && packBytes != 0)
+        || (!hasAlignBytes && alignBytes != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeRow row = new LogicalPackageTypedTypeRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        KindTextRowValue = kindTextRow,
+        BackendOptimizationModeTextRowValue = backendOptimizationModeTextRow,
+        StructLayoutTextRowValue = structLayoutTextRow,
+        PackBytesValue = packBytes,
+        AlignBytesValue = alignBytes,
+        HasBackendOptimizationModeValue = hasBackendOptimizationMode,
+        HasStructLayoutValue = hasStructLayout,
+        HasPackBytesValue = hasPackBytes,
+        HasAlignBytesValue = hasAlignBytes,
+        IsDynTraitValue = isDynTrait
+    };
+    typeRow = graph.TypeRows.Add(row);
+    return typeRow != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddAssociatedTypeRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] associatedTypeOrdinal,
+    u32[0 max] nameTextRow,
+    bool hasTargetType,
+    u32[0 max] targetTypeReferenceRow)
+{
+    if (!graph.TextRows.Contains(nameTextRow)
+        || (hasTargetType && !graph.TypeReferences.ContainsTypeReference(targetTypeReferenceRow))
+        || (!hasTargetType && targetTypeReferenceRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeAssociatedTypeRow row =
+        new LogicalPackageTypedTypeAssociatedTypeRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        AssociatedTypeOrdinalValue = associatedTypeOrdinal,
+        NameTextRowValue = nameTextRow,
+        TargetTypeReferenceRowValue = targetTypeReferenceRow,
+        HasTargetTypeValue = hasTargetType
+    };
+    return graph.AssociatedTypeRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddImplementedTraitNameRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] traitOrdinal,
+    u32[0 max] nameTextRow)
+{
+    if (!graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeImplementedTraitNameRow row =
+        new LogicalPackageTypedTypeImplementedTraitNameRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        TraitOrdinalValue = traitOrdinal,
+        NameTextRowValue = nameTextRow
+    };
+    return graph.ImplementedTraitNameRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddImplementedTraitTypeRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] traitOrdinal,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeImplementedTraitTypeRow row =
+        new LogicalPackageTypedTypeImplementedTraitTypeRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        TraitOrdinalValue = traitOrdinal,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    return graph.ImplementedTraitTypeRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddThreadSafetyLawAttributeRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] attributeOrdinal,
+    u32[0 max] kindTextRow,
+    u32[0 max] lawNameTextRow,
+    bool hasCondition,
+    u32[0 max] conditionLawNameTextRow,
+    u32[0 max] conditionTypeReferenceRow)
+{
+    if (!graph.TextRows.Contains(kindTextRow)
+        || !graph.TextRows.Contains(lawNameTextRow)
+        || (hasCondition && !graph.TextRows.Contains(conditionLawNameTextRow))
+        || (!hasCondition && conditionLawNameTextRow != 0)
+        || (hasCondition && !graph.TypeReferences.ContainsTypeReference(conditionTypeReferenceRow))
+        || (!hasCondition && conditionTypeReferenceRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeThreadSafetyLawAttributeRow row =
+        new LogicalPackageTypedTypeThreadSafetyLawAttributeRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        AttributeOrdinalValue = attributeOrdinal,
+        KindTextRowValue = kindTextRow,
+        LawNameTextRowValue = lawNameTextRow,
+        ConditionLawNameTextRowValue = conditionLawNameTextRow,
+        ConditionTypeReferenceRowValue = conditionTypeReferenceRow,
+        HasConditionValue = hasCondition
+    };
+    return graph.ThreadSafetyLawAttributeRows.Add(row) != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddEnumVariantRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] variantOrdinal,
+    u32[0 max] nameTextRow,
+    bool usesNamedFields,
+    bool hasRole,
+    u32[0 max] roleTextRow,
+    bool hasAbsorbsErrorType,
+    u32[0 max] absorbsErrorTypeReferenceRow,
+    out u32[0 max] variantRow)
+{
+    variantRow = 0;
+    if (!graph.TextRows.Contains(nameTextRow)
+        || (hasRole && !graph.TextRows.Contains(roleTextRow))
+        || (!hasRole && roleTextRow != 0)
+        || (hasAbsorbsErrorType && !graph.TypeReferences.ContainsTypeReference(absorbsErrorTypeReferenceRow))
+        || (!hasAbsorbsErrorType && absorbsErrorTypeReferenceRow != 0))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeEnumVariantRow row = new LogicalPackageTypedTypeEnumVariantRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        VariantOrdinalValue = variantOrdinal,
+        NameTextRowValue = nameTextRow,
+        RoleTextRowValue = roleTextRow,
+        AbsorbsErrorTypeReferenceRowValue = absorbsErrorTypeReferenceRow,
+        UsesNamedFieldsValue = usesNamedFields,
+        HasRoleValue = hasRole,
+        HasAbsorbsErrorTypeValue = hasAbsorbsErrorType
+    };
+    variantRow = graph.EnumVariantRows.Add(row);
+    return variantRow != 0;
+}
+
+internal fn bool LogicalPackageTypedTypeFactGraphAddEnumPayloadRow(
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    u32[0 max] variantRow,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] variantOrdinal,
+    u32[0 max] payloadOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeReferenceRow)
+{
+    if (!graph.EnumVariantRows.Contains(variantRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedTypeEnumPayloadRow row = new LogicalPackageTypedTypeEnumPayloadRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        TypeOrdinalValue = typeOrdinal,
+        VariantOrdinalValue = variantOrdinal,
+        PayloadOrdinalValue = payloadOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    stack u32[0 max] addedRow = graph.EnumPayloadRows.Add(row);
+    if (addedRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypedTypeEnumVariantRow parent = graph.EnumVariantRows.Get(variantRow);
+    if (parent.PayloadRowCountValue == 0)
+    {
+        parent.FirstPayloadRowValue = addedRow;
+    }
+    else if (addedRow != parent.FirstPayloadRowValue + parent.PayloadRowCountValue)
+    {
+        return false;
+    }
+
+    parent.PayloadRowCountValue = parent.PayloadRowCountValue + 1;
+    return graph.EnumVariantRows.Replace(variantRow, parent);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeAssociatedTypeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] associatedTypeCount)
+{
+    associatedTypeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "AssociatedTypes", arrayNode, associatedTypeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < associatedTypeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] associatedTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+        stack mut bool hasTargetType = false;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] targetTypeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, associatedTypeNode)
+            || document.KindAt(associatedTypeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+                document,
+                associatedTypeNode,
+                "Name",
+                LogicalPackageTypedTypeFactTextKind.AssociatedTypeName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                associatedTypeNode,
+                "TargetType",
+                targetTypeNode,
+                hasTargetType))
+        {
+            return false;
+        }
+
+        if (hasTargetType
+            && !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                targetTypeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                typeOrdinal,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.TypeAssociatedTypeTarget,
+                index,
+                graph.TypeReferences,
+                targetTypeReferenceRow))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageTypedTypeFactGraphAddAssociatedTypeRow(
+            graph,
+            moduleOrdinal,
+            typeOrdinal,
+            index,
+            nameTextRow,
+            hasTargetType,
+            targetTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeEnumPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] variantNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    u32[0 max] variantOrdinal,
+    u32[0 max] variantRow,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] payloadCount)
+{
+    payloadCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, variantNode, "Fields", arrayNode, payloadCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < payloadCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, payloadNode)
+            || document.KindAt(payloadNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+                document,
+                payloadNode,
+                "Name",
+                LogicalPackageTypedTypeFactTextKind.EnumVariantPayloadName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                typeOrdinal,
+                0,
+                variantOrdinal,
+                LogicalPackageTypedTypeReferenceSource.TypeEnumVariantPayloadType,
+                index,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageTypedTypeFactGraphAddEnumPayloadRow(
+                graph,
+                variantRow,
+                moduleOrdinal,
+                typeOrdinal,
+                variantOrdinal,
+                index,
+                nameTextRow,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeEnumVariantRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] variantCount)
+{
+    variantCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "Variants", arrayNode, variantCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < variantCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] variantNode = 0;
+        stack mut u64[0 2 ** 63 - 1] absorbsErrorTypeNode = 0;
+        stack mut bool usesNamedFields = false;
+        stack mut bool hasRole = false;
+        stack mut bool hasAbsorbsErrorType = false;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] roleTextRow = 0;
+        stack mut u32[0 max] absorbsErrorTypeReferenceRow = 0;
+        stack mut u32[0 max] variantRow = 0;
+        stack mut u32[0 max] payloadCount = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, variantNode)
+            || document.KindAt(variantNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+                document,
+                variantNode,
+                "Name",
+                LogicalPackageTypedTypeFactTextKind.EnumVariantName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                variantNode,
+                "UsesNamedFields",
+                usesNamedFields)
+            || !LogicalPackageImageJsonMaterializeOptionalTypeFactTextMemberRow(
+                document,
+                variantNode,
+                "Role",
+                LogicalPackageTypedTypeFactTextKind.EnumVariantRole,
+                index,
+                graph,
+                hasRole,
+                roleTextRow)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                variantNode,
+                "AbsorbsErrorType",
+                absorbsErrorTypeNode,
+                hasAbsorbsErrorType))
+        {
+            return false;
+        }
+
+        if (hasAbsorbsErrorType
+            && !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                absorbsErrorTypeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                typeOrdinal,
+                0,
+                index,
+                LogicalPackageTypedTypeReferenceSource.TypeEnumVariantAbsorbsErrorType,
+                0,
+                graph.TypeReferences,
+                absorbsErrorTypeReferenceRow))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageTypedTypeFactGraphAddEnumVariantRow(
+            graph,
+            moduleOrdinal,
+            typeOrdinal,
+            index,
+            nameTextRow,
+            usesNamedFields,
+            hasRole,
+            roleTextRow,
+            hasAbsorbsErrorType,
+            absorbsErrorTypeReferenceRow,
+            variantRow)
+            || !LogicalPackageImageJsonMaterializeTypeEnumPayloadRows(
+                document,
+                variantNode,
+                moduleOrdinal,
+                typeOrdinal,
+                index,
+                variantRow,
+                graph,
+                payloadCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeImplementedTraitNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] implementedTraitNameCount)
+{
+    implementedTraitNameCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "ImplementedTraits", arrayNode, implementedTraitNameCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < implementedTraitNameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] traitNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, traitNode)
+            || document.KindAt(traitNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii value = document.TextAt(traitNode);
+        if (System.Text.AsciiLength(value) <= 0
+            || !LogicalPackageTypedTypeFactGraphAddTextRow(
+                graph,
+                LogicalPackageTypedTypeFactTextKind.ImplementedTraitName,
+                index,
+                value,
+                nameTextRow)
+            || !LogicalPackageTypedTypeFactGraphAddImplementedTraitNameRow(
+                graph,
+                moduleOrdinal,
+                typeOrdinal,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeImplementedTraitTypeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] implementedTraitTypeCount)
+{
+    implementedTraitTypeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "ImplementedTraitTypes", arrayNode, implementedTraitTypeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < implementedTraitTypeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] traitNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, traitNode)
+            || document.KindAt(traitNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                traitNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                typeOrdinal,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.TypeImplementedTrait,
+                index,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageTypedTypeFactGraphAddImplementedTraitTypeRow(
+                graph,
+                moduleOrdinal,
+                typeOrdinal,
+                index,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeThreadSafetyLawAttributeRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph,
+    out u32[0 max] attributeCount)
+{
+    attributeCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "ThreadSafetyLawAttributes", arrayNode, attributeCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < attributeCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] attributeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] conditionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] conditionTypeNode = 0;
+        stack mut bool hasCondition = false;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] lawNameTextRow = 0;
+        stack mut u32[0 max] conditionLawNameTextRow = 0;
+        stack mut u32[0 max] conditionTypeReferenceRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, attributeNode)
+            || document.KindAt(attributeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+                document,
+                attributeNode,
+                "Kind",
+                LogicalPackageTypedTypeFactTextKind.ThreadSafetyLawAttributeKind,
+                index,
+                graph,
+                kindTextRow)
+            || !LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+                document,
+                attributeNode,
+                "LawName",
+                LogicalPackageTypedTypeFactTextKind.ThreadSafetyLawAttributeLawName,
+                index,
+                graph,
+                lawNameTextRow)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                attributeNode,
+                "Condition",
+                conditionNode,
+                hasCondition))
+        {
+            return false;
+        }
+
+        if (hasCondition)
+        {
+            if (!LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+                    document,
+                    conditionNode,
+                    "LawName",
+                    LogicalPackageTypedTypeFactTextKind.ThreadSafetyLawAttributeConditionLawName,
+                    index,
+                    graph,
+                    conditionLawNameTextRow)
+                || !LogicalPackageImageJsonRequiredObjectMember(
+                    document,
+                    conditionNode,
+                    "Type",
+                    conditionTypeNode)
+                || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                    document,
+                    conditionTypeNode,
+                    moduleOrdinal,
+                    LogicalPackageTypedDeclarationKind.Type,
+                    typeOrdinal,
+                    0,
+                    0,
+                    LogicalPackageTypedTypeReferenceSource.TypeThreadSafetyLawAttributeConditionType,
+                    index,
+                    graph.TypeReferences,
+                    conditionTypeReferenceRow))
+            {
+                return false;
+            }
+        }
+
+        if (!LogicalPackageTypedTypeFactGraphAddThreadSafetyLawAttributeRow(
+            graph,
+            moduleOrdinal,
+            typeOrdinal,
+            index,
+            kindTextRow,
+            lawNameTextRow,
+            hasCondition,
+            conditionLawNameTextRow,
+            conditionTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedTypeFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] typeOrdinal,
+    mut borrow LogicalPackageTypedTypeFactGraph graph)
+{
+    stack mut bool hasBackendOptimizationMode = false;
+    stack mut bool hasStructLayout = false;
+    stack mut bool hasPackBytes = false;
+    stack mut bool hasAlignBytes = false;
+    stack mut bool isDynTrait = false;
+    stack mut u32[0 max] kindTextRow = 0;
+    stack mut u32[0 max] backendOptimizationModeTextRow = 0;
+    stack mut u32[0 max] structLayoutTextRow = 0;
+    stack mut u32[0 max] packBytes = 0;
+    stack mut u32[0 max] alignBytes = 0;
+    stack mut u32[0 max] typeRow = 0;
+    stack mut u32[0 max] associatedTypeCount = 0;
+    stack mut u32[0 max] variantCount = 0;
+    stack mut u32[0 max] implementedTraitNameCount = 0;
+    stack mut u32[0 max] implementedTraitTypeCount = 0;
+    stack mut u32[0 max] threadSafetyLawAttributeCount = 0;
+    if (!LogicalPackageImageJsonMaterializeTypeFactTextMemberRow(
+            document,
+            typeNode,
+            "Kind",
+            LogicalPackageTypedTypeFactTextKind.Kind,
+            0,
+            graph,
+            kindTextRow)
+        || !LogicalPackageImageJsonMaterializeOptionalTypeFactTextMemberRow(
+            document,
+            typeNode,
+            "BackendOptimizationMode",
+            LogicalPackageTypedTypeFactTextKind.BackendOptimizationMode,
+            0,
+            graph,
+            hasBackendOptimizationMode,
+            backendOptimizationModeTextRow)
+        || !LogicalPackageImageJsonMaterializeOptionalTypeFactTextMemberRow(
+            document,
+            typeNode,
+            "StructLayout",
+            LogicalPackageTypedTypeFactTextKind.StructLayout,
+            0,
+            graph,
+            hasStructLayout,
+            structLayoutTextRow)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeNode, "PackBytes", hasPackBytes, packBytes)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeNode, "AlignBytes", hasAlignBytes, alignBytes)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeNode, "IsDynTrait", isDynTrait)
+        || !LogicalPackageTypedTypeFactGraphAddTypeRow(
+            graph,
+            moduleOrdinal,
+            typeOrdinal,
+            kindTextRow,
+            hasBackendOptimizationMode,
+            backendOptimizationModeTextRow,
+            hasStructLayout,
+            structLayoutTextRow,
+            hasPackBytes,
+            packBytes,
+            hasAlignBytes,
+            alignBytes,
+            isDynTrait,
+            typeRow)
+        || !LogicalPackageImageJsonMaterializeTypeAssociatedTypeRows(
+            document,
+            typeNode,
+            moduleOrdinal,
+            typeOrdinal,
+            graph,
+            associatedTypeCount)
+        || !LogicalPackageImageJsonMaterializeTypeEnumVariantRows(
+            document,
+            typeNode,
+            moduleOrdinal,
+            typeOrdinal,
+            graph,
+            variantCount)
+        || !LogicalPackageImageJsonMaterializeTypeImplementedTraitNameRows(
+            document,
+            typeNode,
+            moduleOrdinal,
+            typeOrdinal,
+            graph,
+            implementedTraitNameCount)
+        || !LogicalPackageImageJsonMaterializeTypeImplementedTraitTypeRows(
+            document,
+            typeNode,
+            moduleOrdinal,
+            typeOrdinal,
+            graph,
+            implementedTraitTypeCount)
+        || !LogicalPackageImageJsonMaterializeTypeThreadSafetyLawAttributeRows(
+            document,
+            typeNode,
+            moduleOrdinal,
+            typeOrdinal,
+            graph,
+            threadSafetyLawAttributeCount))
+    {
+        return false;
+    }
+
+    return true;
+}

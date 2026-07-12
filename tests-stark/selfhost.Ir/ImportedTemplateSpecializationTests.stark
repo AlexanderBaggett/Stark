@@ -1,0 +1,356 @@
+import Compiler.Ir
+import Compiler.Mir
+import System.Memory
+import System.Text
+module ImportedTemplateSpecializationTests
+
+public fn bool ImportedTemplateScalarSpecializationsPreserveBackendFactsToLlvm()
+{
+    stack ascii manifestJson = raw"""
+        {
+          "Modules": [
+            {
+              "ModuleName": "Demo",
+              "ReExports": [],
+              "Functions": [],
+              "Types": [],
+              "Globals": [],
+              "CompilerSections": {
+                "CompilerFacts": {
+                  "FunctionEffects": [
+                    {
+                      "QualifiedResolvedName": "Demo.Fast",
+                      "Kind": "finite law",
+                      "ReadsArgumentMemory": false,
+                      "IsPure": true,
+                      "NoSync": true,
+                      "NoFree": true,
+                      "NoUnwind": true,
+                      "WillReturn": true,
+                      "MustProgress": true,
+                      "UseFastCallingConvention": true,
+                      "IsFfi": false,
+                      "IsHot": true,
+                      "IsCold": false,
+                      "InlinePreference": "inline",
+                      "IsStrictFp": true,
+                      "IsTailCallable": false,
+                      "NoRecurse": true
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Opaque",
+                      "Kind": "finite law",
+                      "ReadsArgumentMemory": false,
+                      "IsPure": true,
+                      "NoSync": true,
+                      "NoFree": true,
+                      "NoUnwind": true,
+                      "WillReturn": true,
+                      "MustProgress": true,
+                      "UseFastCallingConvention": true,
+                      "IsFfi": false,
+                      "IsHot": false,
+                      "IsCold": true,
+                      "InlinePreference": "inline",
+                      "IsStrictFp": false,
+                      "IsTailCallable": true,
+                      "BackendOptimizationMode": "opaque",
+                      "NoRecurse": true
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Mismatch",
+                      "Kind": "finite law",
+                      "ReadsArgumentMemory": false,
+                      "IsPure": true,
+                      "NoSync": true,
+                      "NoFree": true,
+                      "NoUnwind": true,
+                      "WillReturn": true,
+                      "MustProgress": true,
+                      "UseFastCallingConvention": true,
+                      "IsFfi": false,
+                      "IsHot": false,
+                      "IsCold": false,
+                      "InlinePreference": "inlinehint",
+                      "IsStrictFp": false,
+                      "NoRecurse": true
+                    }
+                  ]
+                },
+                "GenericTemplates": {
+                  "Functions": [
+                    {
+                      "QualifiedResolvedName": "Demo.Fast#0",
+                      "QualifiedName": "Demo.Fast",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "7",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Opaque#0",
+                      "QualifiedName": "Demo.Opaque",
+                      "OverloadKey": "()",
+                      "BackendOptimizationMode": "opaque",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "9",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.NoFacts#0",
+                      "QualifiedName": "Demo.NoFacts",
+                      "OverloadKey": "()",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "11",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "QualifiedResolvedName": "Demo.Mismatch#0",
+                      "QualifiedName": "Demo.Mismatch",
+                      "OverloadKey": "()",
+                      "BackendOptimizationMode": "opaque",
+                      "TopLevelStatementCount": 1,
+                      "TypedBody": {
+                        "Statements": [
+                          {
+                            "Kind": "return",
+                            "Expression": {
+                              "Kind": "literal",
+                              "LiteralText": "13",
+                              "Type": {
+                                "Kind": "integer",
+                                "BitWidth": 16,
+                                "RangeMin": "0",
+                                "RangeMax": "100"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+    stack mut LogicalPackageGenericTemplateFactGraph templateGraph = new();
+    stack mut LogicalPackageFunctionEffectFactGraph effectGraph = new();
+    unsafe
+    {
+        if (!TryMaterializeLogicalPackageGenericTemplateFactJsonGraph(
+                manifestJson,
+                0,
+                templateGraph)
+            || !TryMaterializeLogicalPackageFunctionEffectFactJsonGraph(
+                manifestJson,
+                0,
+                effectGraph))
+        {
+            return false;
+        }
+    }
+
+    stack mut IrTable<MirInstruction> instructions = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> functions = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut IrTable<FunctionEffectFacts> functionEffectFacts = new();
+    stack mut IrTable<u32[0 max]> functionTailFlags = new();
+    stack mut IrTable<FunctionCallingConventionFacts> callingConventionFacts = new();
+    stack mut ValueFacts expectedReturnFacts = new();
+    expectedReturnFacts.SetIntegerRange(0, 101);
+    stack mut MirFuncId fastFunction = MirFuncIdOf(0);
+    stack mut MirFuncId opaqueFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarSpecializationToMir(
+            templateGraph,
+            effectGraph,
+            "Demo.Fast#0",
+            "()",
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            fastFunction) != ImportedTemplateMirLoweringStatus.Ok
+        || LowerImportedTemplateScalarSpecializationToMir(
+            templateGraph,
+            effectGraph,
+            "Demo.Opaque#0",
+            "()",
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            opaqueFunction) != ImportedTemplateMirLoweringStatus.Ok)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] instructionCount = instructions.Count();
+    stack u64[0 2 ** 63 - 1] blockCount = blocks.Count();
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut MirFuncId invalidFunction = MirFuncIdOf(0);
+    if (LowerImportedTemplateScalarSpecializationToMir(
+            templateGraph,
+            effectGraph,
+            "Demo.NoFacts#0",
+            "()",
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            invalidFunction) != ImportedTemplateMirLoweringStatus.MissingBackendFacts
+        || LowerImportedTemplateScalarSpecializationToMir(
+            templateGraph,
+            effectGraph,
+            "Demo.Mismatch#0",
+            "()",
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            invalidFunction) != ImportedTemplateMirLoweringStatus.BackendFactMismatch
+        || LowerImportedTemplateScalarSpecializationToMir(
+            templateGraph,
+            effectGraph,
+            "Demo.Missing#0",
+            "()",
+            MirType.I16,
+            false,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            invalidFunction) != ImportedTemplateMirLoweringStatus.TemplateNotFound
+        || invalidFunction.IsValid()
+        || instructions.Count() != instructionCount
+        || blocks.Count() != blockCount
+        || functions.Count() != functionCount
+        || valueFacts.Count() != instructionCount
+        || functionReturnFacts.Count() != functionCount
+        || functionEffectFacts.Count() != functionCount
+        || functionTailFlags.Count() != functionCount
+        || callingConventionFacts.Count() != functionCount)
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii llvm = new();
+    if (EmitImportedTemplateScalarSpecializationToLlvm(
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            "specialized_",
+            fastFunction,
+            llvm) != MemoryStatus.Ok
+        || EmitImportedTemplateScalarSpecializationToLlvm(
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            functionEffectFacts,
+            functionTailFlags,
+            callingConventionFacts,
+            "specialized_",
+            opaqueFunction,
+            llvm) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    return fastFunction.Index() == 1
+        && opaqueFunction.Index() == 2
+        && instructionCount == 2
+        && blockCount == 2
+        && functionCount == 2
+        && System.Text.OwnedAsciiEqualsAscii(
+            llvm,
+            "define fastcc range(i16 7, 8) i16 @specialized_1() memory(none) nosync nofree willreturn mustprogress nounwind hot strictfp alwaysinline norecurse {\nb1:\n  %v1 = add i16 0, 7\n  ret i16 %v1\n}\ndefine tailcc range(i16 9, 10) i16 @specialized_2() memory(none) nosync nofree willreturn mustprogress nounwind cold optnone noinline norecurse {\nb2:\n  %v2 = add i16 0, 9\n  ret i16 %v2\n}\n");
+}

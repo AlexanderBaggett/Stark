@@ -1,0 +1,2068 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Mir.SourceIfParsing
+import Compiler.Mir.SourceIfStorageMutation
+import Compiler.Typing.TypedEnumLayoutModel
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceIfAssignmentLowering
+
+internal fn ExprType TypeOfIfArmWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] armRoot,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] localRootStart,
+    u32[0 max] localRootCount,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfArmLocalTypes(nodes, armLocalRoots, localRootStart, localRootCount, localTypes, paramCount, armLocalTypes))
+    {
+        return ExprType.ErrorType;
+    }
+
+    return TypeOfNodeWithLocals(nodes, armRoot, armLocalTypes);
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForIfArmWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] armRoot,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] localRootStart,
+    u32[0 max] localRootCount,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfArmLocalTypes(nodes, armLocalRoots, localRootStart, localRootCount, localTypes, paramCount, armLocalTypes))
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    return SourceLocalTypeCodeForNodeWithLocals(nodes, armRoot, armLocalTypes);
+}
+
+internal fn bool ValidateIfArmModuleCallsWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] armRoot,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] localRootStart,
+    u32[0 max] localRootCount,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfArmLocalTypes(nodes, armLocalRoots, localRootStart, localRootCount, localTypes, paramCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])localRootCount)
+    {
+        stack u32[0 max] rootSlot = localRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    return ValidateModuleCallsForRoot(nodes, armRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts);
+}
+
+internal fn MirValueId LowerIfArmValueWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    u32[0 max] armRoot,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    u32[0 max] localRootStart,
+    u32[0 max] localRootCount,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfArmLocalTypes(nodes, armLocalRoots, localRootStart, localRootCount, localTypes, paramCount, armLocalTypes))
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < (u64[0 2 ** 63 - 1])paramCount)
+    {
+        if (localOverrides.Add(0) == 0)
+        {
+            return MirConstInt(instrs, 0);
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])localRootCount)
+    {
+        stack u32[0 max] rootSlot = localRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return MirConstInt(instrs, 0);
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, armLocalTypes, localOverrides);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return MirConstInt(instrs, 0);
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    return LowerExprNodeWithTypesAndLocals(nodes, armRoot, instrs, armLocalTypes, localOverrides);
+}
+
+internal fn ExprType TypeOfNestedIfAssignmentArmResult(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    if (!arm.IsNested)
+    {
+        return TypeOfIfArmWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount);
+    }
+
+    stack ExprType thenType = TypeOfIfArmWithLocals(
+        nodes,
+        arm.Nested.ThenArm.NodeId,
+        armLocalRoots,
+        arm.Nested.ThenLocalRootStart,
+        arm.Nested.ThenLocalRootCount,
+        localTypes,
+        paramCount);
+    stack ExprType elseType = TypeOfIfArmWithLocals(
+        nodes,
+        arm.Nested.ElseArm.NodeId,
+        armLocalRoots,
+        arm.Nested.ElseLocalRootStart,
+        arm.Nested.ElseLocalRootCount,
+        localTypes,
+        paramCount);
+    if (thenType != elseType)
+    {
+        return ExprType.ErrorType;
+    }
+
+    return thenType;
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForNestedIfAssignmentArmResult(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    if (!arm.IsNested)
+    {
+        return SourceLocalTypeCodeForIfArmWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount);
+    }
+
+    stack u32[0 max] thenTypeCode = SourceLocalTypeCodeForIfArmWithLocals(
+        nodes,
+        arm.Nested.ThenArm.NodeId,
+        armLocalRoots,
+        arm.Nested.ThenLocalRootStart,
+        arm.Nested.ThenLocalRootCount,
+        localTypes,
+        paramCount);
+    stack u32[0 max] elseTypeCode = SourceLocalTypeCodeForIfArmWithLocals(
+        nodes,
+        arm.Nested.ElseArm.NodeId,
+        armLocalRoots,
+        arm.Nested.ElseLocalRootStart,
+        arm.Nested.ElseLocalRootCount,
+        localTypes,
+        paramCount);
+    if (thenTypeCode != elseTypeCode)
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    return thenTypeCode;
+}
+
+internal fn bool ValidateNestedIfAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!arm.IsNested)
+    {
+        return ValidateIfArmModuleCallsWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+    }
+
+    return ValidateModuleCallsForRoot(nodes, arm.Nested.Condition.NodeId, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+        && ValidateIfArmModuleCallsWithLocals(
+            nodes,
+            arm.Nested.ThenArm.NodeId,
+            armLocalRoots,
+            arm.Nested.ThenLocalRootStart,
+            arm.Nested.ThenLocalRootCount,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts)
+        && ValidateIfArmModuleCallsWithLocals(
+            nodes,
+            arm.Nested.ElseArm.NodeId,
+            armLocalRoots,
+            arm.Nested.ElseLocalRootStart,
+            arm.Nested.ElseLocalRootCount,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+}
+
+internal fn MirValueId LowerNestedIfAssignmentLeafValueWithLocals(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs)
+{
+    return LowerIfArmValueWithLocals(
+        nodes,
+        arm.Leaf.NodeId,
+        armLocalRoots,
+        arm.LeafLocalRootStart,
+        arm.LeafLocalRootCount,
+        localTypes,
+        paramCount,
+        instrs);
+}
+
+internal fn ExprType TypeOfRecursiveIfAssignmentArmResult(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    ParsedRecursiveIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    if (!arm.IsNested)
+    {
+        return TypeOfIfArmWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount);
+    }
+
+    return TypeOfRecursiveIfAssignmentNodeResult(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        localTypes,
+        paramCount);
+}
+
+internal fn ExprType TypeOfRecursiveIfAssignmentNodeResult(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack ExprType thenType = TypeOfRecursiveIfAssignmentArmResult(nodes, ifNodes, node.ThenArm, armLocalRoots, localTypes, paramCount);
+    stack ExprType elseType = TypeOfRecursiveIfAssignmentArmResult(nodes, ifNodes, node.ElseArm, armLocalRoots, localTypes, paramCount);
+    if (thenType != elseType)
+    {
+        return ExprType.ErrorType;
+    }
+
+    return thenType;
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForRecursiveIfAssignmentArmResult(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    ParsedRecursiveIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    if (!arm.IsNested)
+    {
+        return SourceLocalTypeCodeForIfArmWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount);
+    }
+
+    return SourceLocalTypeCodeForRecursiveIfAssignmentNodeResult(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        localTypes,
+        paramCount);
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForRecursiveIfAssignmentNodeResult(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenTypeCode = SourceLocalTypeCodeForRecursiveIfAssignmentArmResult(nodes, ifNodes, node.ThenArm, armLocalRoots, localTypes, paramCount);
+    stack u32[0 max] elseTypeCode = SourceLocalTypeCodeForRecursiveIfAssignmentArmResult(nodes, ifNodes, node.ElseArm, armLocalRoots, localTypes, paramCount);
+    if (thenTypeCode != elseTypeCode)
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    return thenTypeCode;
+}
+
+internal fn bool ValidateRecursiveIfAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    ParsedRecursiveIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!arm.IsNested)
+    {
+        return ValidateIfArmModuleCallsWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+    }
+
+    return ValidateRecursiveIfAssignmentNodeModuleCalls(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        localTypes,
+        paramCount,
+        funcParamCounts,
+        functionCallContractFacts,
+        callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfAssignmentNodeModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    return ValidateModuleCallsForRoot(nodes, node.Condition.NodeId, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+        && ValidateRecursiveIfAssignmentArmModuleCalls(
+            nodes,
+            ifNodes,
+            node.ThenArm,
+            armLocalRoots,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts)
+        && ValidateRecursiveIfAssignmentArmModuleCalls(
+            nodes,
+            ifNodes,
+            node.ElseArm,
+            armLocalRoots,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfAssignmentArmConditionTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    ParsedRecursiveIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!arm.IsNested)
+    {
+        return true;
+    }
+
+    return ValidateRecursiveIfAssignmentNodeConditionTypes(nodes, ifNodes, arm.NestedNode, localTypes);
+}
+
+internal fn bool ValidateRecursiveIfAssignmentNodeConditionTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    return TypeOfNodeWithLocals(nodes, node.Condition.NodeId, localTypes) == ExprType.BoolType
+        && ValidateRecursiveIfAssignmentArmConditionTypes(nodes, ifNodes, node.ThenArm, localTypes)
+        && ValidateRecursiveIfAssignmentArmConditionTypes(nodes, ifNodes, node.ElseArm, localTypes);
+}
+
+internal fn u32[0 max] RecursiveIfAssignmentArmBlockCount(
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    ParsedRecursiveIfAssignmentArm arm)
+{
+    if (!arm.IsNested)
+    {
+        return 1;
+    }
+
+    return RecursiveIfAssignmentNodeBlockCount(ifNodes, arm.NestedNode);
+}
+
+internal fn u32[0 max] RecursiveIfAssignmentNodeBlockCount(
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return 0;
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenCount = RecursiveIfAssignmentArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseCount = RecursiveIfAssignmentArmBlockCount(ifNodes, node.ElseArm);
+    if (thenCount == 0 || elseCount == 0)
+    {
+        return 0;
+    }
+
+    return 2 + thenCount + elseCount;
+}
+
+internal fn ExprType TypeOfIfAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfAssignmentArmLocalTypes(nodes, arm, armLocalRoots, localTypes, paramCount, armLocalTypes))
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack mut u32[0 max] rootNode = 0;
+    if (!TryGetIfAssignmentArmAssignedRoot(arm, assignedRoots, assignedTargetOffsets, targetOffset, rootNode))
+    {
+        return ExprType.ErrorType;
+    }
+
+    return TypeOfNodeWithLocals(nodes, rootNode, armLocalTypes);
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForIfAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfAssignmentArmLocalTypes(nodes, arm, armLocalRoots, localTypes, paramCount, armLocalTypes))
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    stack mut u32[0 max] rootNode = 0;
+    if (!TryGetIfAssignmentArmAssignedRoot(arm, assignedRoots, assignedTargetOffsets, targetOffset, rootNode))
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    return SourceLocalTypeCodeForNodeWithLocals(nodes, rootNode, armLocalTypes);
+}
+
+internal fn bool ValidateIfAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfAssignmentArmLocalTypes(nodes, arm, armLocalRoots, localTypes, paramCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, localRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        if (!ValidateModuleCallsForRoot(nodes, assignedRoot, funcParamCounts, functionCallContractFacts, armLocalTypes, callerDistinctStorageFacts))
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerIfAssignmentArmValues(
+    borrow IrTable<ExprNode> nodes,
+    ParsedSwitchAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    stack mut IrTable<u32[0 max]> armLocalTypes = new();
+    if (!BuildIfAssignmentArmLocalTypes(nodes, arm, armLocalRoots, localTypes, paramCount, armLocalTypes))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < (u64[0 2 ** 63 - 1])paramCount)
+    {
+        if (localOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] localIndex = 0;
+    while willexit (localIndex < (u64[0 2 ** 63 - 1])arm.LocalRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.LocalRootStart + (u32[0 max])localIndex;
+        if (!armLocalRoots.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] localRoot = armLocalRoots.Get(rootSlot);
+        stack MirValueId localValue = LowerExprNodeWithTypesAndLocals(nodes, localRoot, instrs, armLocalTypes, localOverrides);
+        if (localOverrides.Add(localValue.Index()) == 0)
+        {
+            return false;
+        }
+
+        localIndex = localIndex + 1;
+    }
+
+    stack mut IrTable<u32[0 max]> sourceOrderValues = new();
+    stack mut u64[0 2 ** 63 - 1] assignedIndex = 0;
+    while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+        if (!assignedRoots.Contains(rootSlot) || !assignedTargetOffsets.Contains(rootSlot))
+        {
+            return false;
+        }
+
+        stack u32[0 max] assignedRoot = assignedRoots.Get(rootSlot);
+        stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, assignedRoot, instrs, armLocalTypes, localOverrides);
+        if (sourceOrderValues.Add(value.Index()) == 0)
+        {
+            return false;
+        }
+
+        assignedIndex = assignedIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+    {
+        stack mut bool foundTarget = false;
+        assignedIndex = 0;
+        while willexit (assignedIndex < (u64[0 2 ** 63 - 1])arm.AssignedRootCount)
+        {
+            stack u32[0 max] rootSlot = arm.AssignedRootStart + (u32[0 max])assignedIndex;
+            stack u32[0 max] currentTargetOffset = assignedTargetOffsets.Get(rootSlot);
+            if (currentTargetOffset == (u32[0 max])targetIndex)
+            {
+                if (foundTarget)
+                {
+                    return false;
+                }
+
+                stack u32[0 max] sourceOrderValue = sourceOrderValues.Get((u32[0 max])(assignedIndex + 1));
+                if (values.Add(sourceOrderValue) == 0)
+                {
+                    return false;
+                }
+
+                foundTarget = true;
+            }
+
+            assignedIndex = assignedIndex + 1;
+        }
+
+        if (!foundTarget)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn ExprType TypeOfNestedIfMultiAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    if (!arm.IsNested)
+    {
+        return TypeOfIfAssignmentArm(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            targetOffset);
+    }
+
+    stack ExprType thenType = TypeOfIfAssignmentArm(
+        nodes,
+        arm.Nested.ThenArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    stack ExprType elseType = TypeOfIfAssignmentArm(
+        nodes,
+        arm.Nested.ElseArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    if (thenType != elseType)
+    {
+        return ExprType.ErrorType;
+    }
+
+    return thenType;
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForNestedIfMultiAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    if (!arm.IsNested)
+    {
+        return SourceLocalTypeCodeForIfAssignmentArm(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            targetOffset);
+    }
+
+    stack u32[0 max] thenTypeCode = SourceLocalTypeCodeForIfAssignmentArm(
+        nodes,
+        arm.Nested.ThenArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    stack u32[0 max] elseTypeCode = SourceLocalTypeCodeForIfAssignmentArm(
+        nodes,
+        arm.Nested.ElseArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    if (thenTypeCode != elseTypeCode)
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    return thenTypeCode;
+}
+
+internal fn bool ValidateNestedIfMultiAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!arm.IsNested)
+    {
+        return ValidateIfAssignmentArmModuleCalls(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+    }
+
+    return ValidateModuleCallsForRoot(nodes, arm.Nested.Condition.NodeId, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+        && ValidateIfAssignmentArmModuleCalls(
+            nodes,
+            arm.Nested.ThenArm,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts)
+        && ValidateIfAssignmentArmModuleCalls(
+            nodes,
+            arm.Nested.ElseArm,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+}
+
+internal fn ExprType TypeOfRecursiveIfMultiAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    if (!arm.IsNested)
+    {
+        return TypeOfIfAssignmentArm(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            targetOffset);
+    }
+
+    return TypeOfRecursiveIfMultiAssignmentNode(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+}
+
+internal fn ExprType TypeOfRecursiveIfMultiAssignmentNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack ExprType thenType = TypeOfRecursiveIfMultiAssignmentArm(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    stack ExprType elseType = TypeOfRecursiveIfMultiAssignmentArm(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    if (thenType != elseType)
+    {
+        return ExprType.ErrorType;
+    }
+
+    return thenType;
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForRecursiveIfMultiAssignmentArm(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    if (!arm.IsNested)
+    {
+        return SourceLocalTypeCodeForIfAssignmentArm(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            targetOffset);
+    }
+
+    return SourceLocalTypeCodeForRecursiveIfMultiAssignmentNode(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+}
+
+internal fn u32[0 max] SourceLocalTypeCodeForRecursiveIfMultiAssignmentNode(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    u32[0 max] targetOffset)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenTypeCode = SourceLocalTypeCodeForRecursiveIfMultiAssignmentArm(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    stack u32[0 max] elseTypeCode = SourceLocalTypeCodeForRecursiveIfMultiAssignmentArm(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        targetOffset);
+    if (thenTypeCode != elseTypeCode)
+    {
+        return SourceLocalTypeCodeInt();
+    }
+
+    return thenTypeCode;
+}
+
+internal fn bool ValidateRecursiveIfMultiAssignmentArmModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!arm.IsNested)
+    {
+        return ValidateIfAssignmentArmModuleCalls(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+    }
+
+    return ValidateRecursiveIfMultiAssignmentNodeModuleCalls(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        funcParamCounts,
+        functionCallContractFacts,
+        callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfMultiAssignmentNodeModuleCalls(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<FunctionCallContractFacts> functionCallContractFacts,
+    borrow IrTable<DistinctStoragePair> callerDistinctStorageFacts)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    return ValidateModuleCallsForRoot(nodes, node.Condition.NodeId, funcParamCounts, functionCallContractFacts, localTypes, callerDistinctStorageFacts)
+        && ValidateRecursiveIfMultiAssignmentArmModuleCalls(
+            nodes,
+            ifNodes,
+            node.ThenArm,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts)
+        && ValidateRecursiveIfMultiAssignmentArmModuleCalls(
+            nodes,
+            ifNodes,
+            node.ElseArm,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            paramCount,
+            funcParamCounts,
+            functionCallContractFacts,
+            callerDistinctStorageFacts);
+}
+
+internal fn bool ValidateRecursiveIfMultiAssignmentArmConditionTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!arm.IsNested)
+    {
+        return true;
+    }
+
+    return ValidateRecursiveIfMultiAssignmentNodeConditionTypes(nodes, ifNodes, arm.NestedNode, localTypes);
+}
+
+internal fn bool ValidateRecursiveIfMultiAssignmentNodeConditionTypes(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    return TypeOfNodeWithLocals(nodes, node.Condition.NodeId, localTypes) == ExprType.BoolType
+        && ValidateRecursiveIfMultiAssignmentArmConditionTypes(nodes, ifNodes, node.ThenArm, localTypes)
+        && ValidateRecursiveIfMultiAssignmentArmConditionTypes(nodes, ifNodes, node.ElseArm, localTypes);
+}
+
+internal fn u32[0 max] RecursiveIfMultiAssignmentArmBlockCount(
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm)
+{
+    if (!arm.IsNested)
+    {
+        return 1;
+    }
+
+    return RecursiveIfMultiAssignmentNodeBlockCount(ifNodes, arm.NestedNode);
+}
+
+internal fn u32[0 max] RecursiveIfMultiAssignmentNodeBlockCount(
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex)
+{
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return 0;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenCount = RecursiveIfMultiAssignmentArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseCount = RecursiveIfMultiAssignmentArmBlockCount(ifNodes, node.ElseArm);
+    if (thenCount == 0 || elseCount == 0)
+    {
+        return 0;
+    }
+
+    return 2 + thenCount + elseCount;
+}
+
+internal fn bool LowerNestedIfMultiAssignmentLeafValues(
+    borrow IrTable<ExprNode> nodes,
+    ParsedNestedIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> values)
+{
+    return LowerIfAssignmentArmValues(
+        nodes,
+        arm.Leaf,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        paramCount,
+        instrs,
+        values);
+}
+
+internal fn bool EmitMultiLocalPhiValues(
+    borrow IrTable<u32[0 max]> localTypes,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    u64[0 2 ** 63 - 1] targetCount,
+    borrow IrTable<u32[0 max]> thenValues,
+    u32[0 max] thenBlockId,
+    borrow IrTable<u32[0 max]> elseValues,
+    u32[0 max] elseBlockId,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<u32[0 max]> phis)
+{
+    if (thenValues.Count() != targetCount || elseValues.Count() != targetCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < targetCount)
+    {
+        stack u32[0 max] targetTypeCode = localTypes.Get((u32[0 max])(signatureParamCount + targetIndex + 1));
+        stack mut MirType phiType = MirType.I64;
+        stack mut MirType knownPhiType = MirType.I64;
+        if (TryMirTypeForSourceLocalValueTypeCode(targetTypeCode, knownPhiType))
+        {
+            phiType = knownPhiType;
+        }
+
+        stack u32[0 max] thenValue = thenValues.Get((u32[0 max])(targetIndex + 1));
+        stack u32[0 max] elseValue = elseValues.Get((u32[0 max])(targetIndex + 1));
+        stack MirValueId phi = MirPhi2Typed(
+            instrs,
+            phiType,
+            MirValueIdOf(thenValue),
+            MirBlockIdOf(thenBlockId),
+            MirValueIdOf(elseValue),
+            MirBlockIdOf(elseBlockId));
+        if (phis.Add(phi.Index()) == 0)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildMultiLocalPhiOverrides(
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    borrow IrTable<u32[0 max]> finalPhis,
+    mut borrow IrTable<u32[0 max]> localOverrides)
+{
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < signatureParamCount)
+    {
+        if (localOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] targetIndex = 0;
+    while willexit (targetIndex < finalPhis.Count())
+    {
+        if (localOverrides.Add(finalPhis.Get((u32[0 max])(targetIndex + 1))) == 0)
+        {
+            return false;
+        }
+
+        targetIndex = targetIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LowerRecursiveIfMultiAssignmentArmToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    ParsedRecursiveIfMultiAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    u64[0 2 ** 63 - 1] targetCount,
+    u32[0 max] startBlock,
+    u32[0 max] exitBlock,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    mut borrow IrTable<u32[0 max]> values,
+    out u32[0 max] exitBlockIndex)
+{
+    exitBlockIndex = 0;
+    if (startBlock == 0 || exitBlock == 0)
+    {
+        return false;
+    }
+
+    if (!arm.IsNested)
+    {
+        stack u32[0 max] leafFirst = (u32[0 max])instrs.Count() + 1;
+        if (!LowerIfAssignmentArmValues(
+            nodes,
+            arm.Leaf,
+            armLocalRoots,
+            assignedRoots,
+            assignedTargetOffsets,
+            localTypes,
+            (u32[0 max])signatureParamCount,
+            instrs,
+            values))
+        {
+            return false;
+        }
+
+        if (values.Count() != targetCount)
+        {
+            return false;
+        }
+
+        stack u32[0 max] leafCount = (u32[0 max])instrs.Count() - (leafFirst - 1);
+        stack MirBlockId leafBlock = MirBranchBlock(blocks, MirBlockIdOf(exitBlock));
+        if (leafBlock.Index() != startBlock)
+        {
+            return false;
+        }
+
+        if (recordRanges && ranges.Add(MakeBlockEmit(leafBlock.Index(), leafFirst, leafCount)) == 0)
+        {
+            return false;
+        }
+
+        exitBlockIndex = leafBlock.Index();
+        return true;
+    }
+
+    return LowerRecursiveIfMultiAssignmentNodeToBranchBlocks(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        startBlock,
+        exitBlock,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        values,
+        exitBlockIndex);
+}
+
+internal fn bool LowerRecursiveIfMultiAssignmentNodeToBranchBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    u64[0 2 ** 63 - 1] targetCount,
+    u32[0 max] startBlock,
+    u32[0 max] exitBlock,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    mut borrow IrTable<u32[0 max]> values,
+    out u32[0 max] exitBlockIndex)
+{
+    exitBlockIndex = 0;
+    if (!ifNodes.Contains(nodeIndex) || startBlock == 0 || exitBlock == 0)
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenBlockCount = RecursiveIfMultiAssignmentArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseBlockCount = RecursiveIfMultiAssignmentArmBlockCount(ifNodes, node.ElseArm);
+    if (thenBlockCount == 0 || elseBlockCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] thenEntryBlock = startBlock + 1;
+    stack u32[0 max] elseEntryBlock = thenEntryBlock + thenBlockCount;
+    stack u32[0 max] mergeBlockIndex = elseEntryBlock + elseBlockCount;
+
+    if ((u32[0 max])blocks.Count() + 1 != startBlock)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, node.Condition.NodeId, instrs, localTypes, noOverrides);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack MirBlockId entryBlock = MirCondBlock(blocks, condValue, MirBlockIdOf(thenEntryBlock), MirBlockIdOf(elseEntryBlock));
+    if (entryBlock.Index() != startBlock)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(entryBlock.Index(), entryFirst, entryCount)) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> thenValues = new();
+    stack mut u32[0 max] thenExitBlock = 0;
+    if (!LowerRecursiveIfMultiAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        thenEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        thenValues,
+        thenExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != elseEntryBlock)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> elseValues = new();
+    stack mut u32[0 max] elseExitBlock = 0;
+    if (!LowerRecursiveIfMultiAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        elseEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        elseValues,
+        elseExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    if (!EmitMultiLocalPhiValues(
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        thenValues,
+        thenExitBlock,
+        elseValues,
+        elseExitBlock,
+        instrs,
+        values))
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    stack MirBlockId mergeBlock = MirBranchBlock(blocks, MirBlockIdOf(exitBlock));
+    if (mergeBlock.Index() != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount)) == 0)
+    {
+        return false;
+    }
+
+    exitBlockIndex = mergeBlock.Index();
+    return values.Count() == targetCount;
+}
+
+internal fn bool LowerRecursiveIfMultiAssignmentNodeToReturnBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfMultiAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> assignedRoots,
+    borrow IrTable<u32[0 max]> assignedTargetOffsets,
+    borrow IrTable<u32[0 max]> localTypes,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    u64[0 2 ** 63 - 1] targetCount,
+    ExprParseResult returnRoot,
+    ExprType rootType,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfMultiAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenBlockCount = RecursiveIfMultiAssignmentArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseBlockCount = RecursiveIfMultiAssignmentArmBlockCount(ifNodes, node.ElseArm);
+    if (thenBlockCount == 0 || elseBlockCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] thenEntryBlock = firstBlock + 1;
+    stack u32[0 max] elseEntryBlock = thenEntryBlock + thenBlockCount;
+    stack u32[0 max] mergeBlockIndex = elseEntryBlock + elseBlockCount;
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, node.Condition.NodeId, instrs, localTypes, noOverrides);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack MirBlockId entryBlock = MirCondBlock(blocks, condValue, MirBlockIdOf(thenEntryBlock), MirBlockIdOf(elseEntryBlock));
+    if (entryBlock.Index() != firstBlock)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(entryBlock.Index(), entryFirst, entryCount)) == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> thenValues = new();
+    stack mut u32[0 max] thenExitBlock = 0;
+    if (!LowerRecursiveIfMultiAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        thenEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        thenValues,
+        thenExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != elseEntryBlock)
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> elseValues = new();
+    stack mut u32[0 max] elseExitBlock = 0;
+    if (!LowerRecursiveIfMultiAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        assignedRoots,
+        assignedTargetOffsets,
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        elseEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        elseValues,
+        elseExitBlock))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> finalPhis = new();
+    if (!EmitMultiLocalPhiValues(
+        localTypes,
+        signatureParamCount,
+        targetCount,
+        thenValues,
+        thenExitBlock,
+        elseValues,
+        elseExitBlock,
+        instrs,
+        finalPhis))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    if (!BuildMultiLocalPhiOverrides(signatureParamCount, finalPhis, localOverrides))
+    {
+        return false;
+    }
+
+    stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, returnRoot.NodeId, instrs, localTypes, localOverrides);
+    stack mut MirValueId returnValue = value;
+    if (rootType == ExprType.BoolType)
+    {
+        returnValue = MirZExt(instrs, value);
+    }
+
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+    if (mergeBlock.Index() != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount)) == 0)
+    {
+        return false;
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entryBlock.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    body.CondValue = condValue.Index();
+    body.ThenValue = finalPhis.Get(1);
+    body.ElseValue = returnValue.Index();
+    return true;
+}
+
+internal fn bool LowerRecursiveIfAssignmentArmToBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    ParsedRecursiveIfAssignmentArm arm,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    MirType phiType,
+    u32[0 max] startBlock,
+    u32[0 max] exitBlock,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredRecursiveIfAssignmentArm result)
+{
+    result = new();
+    if (startBlock == 0 || exitBlock == 0)
+    {
+        return false;
+    }
+
+    if (!arm.IsNested)
+    {
+        stack u32[0 max] leafFirst = (u32[0 max])instrs.Count() + 1;
+        stack MirValueId leafValue = LowerIfArmValueWithLocals(
+            nodes,
+            arm.Leaf.NodeId,
+            armLocalRoots,
+            arm.LeafLocalRootStart,
+            arm.LeafLocalRootCount,
+            localTypes,
+            paramCount,
+            instrs);
+        stack u32[0 max] leafCount = (u32[0 max])instrs.Count() - (leafFirst - 1);
+        stack MirBlockId leafBlock = MirBranchBlock(blocks, MirBlockIdOf(exitBlock));
+        if (leafBlock.Index() != startBlock)
+        {
+            return false;
+        }
+
+        if (recordRanges && ranges.Add(MakeBlockEmit(leafBlock.Index(), leafFirst, leafCount)) == 0)
+        {
+            return false;
+        }
+
+        result.Value = leafValue;
+        result.ExitBlockIndex = leafBlock.Index();
+        return true;
+    }
+
+    return LowerRecursiveIfAssignmentNodeToBranchBlocks(
+        nodes,
+        ifNodes,
+        arm.NestedNode,
+        armLocalRoots,
+        localTypes,
+        paramCount,
+        phiType,
+        startBlock,
+        exitBlock,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        result);
+}
+
+internal fn bool LowerRecursiveIfAssignmentNodeToBranchBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u32[0 max] paramCount,
+    MirType phiType,
+    u32[0 max] startBlock,
+    u32[0 max] exitBlock,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredRecursiveIfAssignmentArm result)
+{
+    result = new();
+    if (!ifNodes.Contains(nodeIndex) || startBlock == 0 || exitBlock == 0)
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenBlockCount = RecursiveIfAssignmentArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseBlockCount = RecursiveIfAssignmentArmBlockCount(ifNodes, node.ElseArm);
+    if (thenBlockCount == 0 || elseBlockCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] thenEntryBlock = startBlock + 1;
+    stack u32[0 max] elseEntryBlock = thenEntryBlock + thenBlockCount;
+    stack u32[0 max] mergeBlockIndex = elseEntryBlock + elseBlockCount;
+
+    if ((u32[0 max])blocks.Count() + 1 != startBlock)
+    {
+        return false;
+    }
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, node.Condition.NodeId, instrs, localTypes, noOverrides);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack MirBlockId entryBlock = MirCondBlock(blocks, condValue, MirBlockIdOf(thenEntryBlock), MirBlockIdOf(elseEntryBlock));
+    if (entryBlock.Index() != startBlock)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(entryBlock.Index(), entryFirst, entryCount)) == 0)
+    {
+        return false;
+    }
+
+    stack mut LoweredRecursiveIfAssignmentArm thenResult = new();
+    if (!LowerRecursiveIfAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        localTypes,
+        paramCount,
+        phiType,
+        thenEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        thenResult))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != elseEntryBlock)
+    {
+        return false;
+    }
+
+    stack mut LoweredRecursiveIfAssignmentArm elseResult = new();
+    if (!LowerRecursiveIfAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        localTypes,
+        paramCount,
+        phiType,
+        elseEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        elseResult))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId phi = MirPhi2Typed(
+        instrs,
+        phiType,
+        thenResult.Value,
+        MirBlockIdOf(thenResult.ExitBlockIndex),
+        elseResult.Value,
+        MirBlockIdOf(elseResult.ExitBlockIndex));
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    stack MirBlockId mergeBlock = MirBranchBlock(blocks, MirBlockIdOf(exitBlock));
+    if (mergeBlock.Index() != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount)) == 0)
+    {
+        return false;
+    }
+
+    result.Value = phi;
+    result.ExitBlockIndex = mergeBlock.Index();
+    return true;
+}
+
+internal fn bool LowerRecursiveIfAssignmentNodeToReturnBlocks(
+    borrow IrTable<ExprNode> nodes,
+    borrow IrTable<ParsedRecursiveIfAssignmentNode> ifNodes,
+    u32[0 max] nodeIndex,
+    borrow IrTable<u32[0 max]> armLocalRoots,
+    borrow IrTable<u32[0 max]> localTypes,
+    u64[0 2 ** 63 - 1] signatureParamCount,
+    MirType phiType,
+    ExprParseResult returnRoot,
+    ExprType rootType,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<BlockEmit> ranges,
+    bool recordRanges,
+    out LoweredBody body)
+{
+    body = new();
+    if (!ifNodes.Contains(nodeIndex))
+    {
+        return false;
+    }
+
+    stack ParsedRecursiveIfAssignmentNode node = ifNodes.Get(nodeIndex);
+    stack u32[0 max] thenBlockCount = RecursiveIfAssignmentArmBlockCount(ifNodes, node.ThenArm);
+    stack u32[0 max] elseBlockCount = RecursiveIfAssignmentArmBlockCount(ifNodes, node.ElseArm);
+    if (thenBlockCount == 0 || elseBlockCount == 0)
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack u32[0 max] thenEntryBlock = firstBlock + 1;
+    stack u32[0 max] elseEntryBlock = thenEntryBlock + thenBlockCount;
+    stack u32[0 max] mergeBlockIndex = elseEntryBlock + elseBlockCount;
+
+    stack u32[0 max] entryFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    stack MirValueId condValue = LowerExprNodeWithTypesAndLocals(nodes, node.Condition.NodeId, instrs, localTypes, noOverrides);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count() - (entryFirst - 1);
+    stack MirBlockId entryBlock = MirCondBlock(blocks, condValue, MirBlockIdOf(thenEntryBlock), MirBlockIdOf(elseEntryBlock));
+    if (entryBlock.Index() != firstBlock)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(entryBlock.Index(), entryFirst, entryCount)) == 0)
+    {
+        return false;
+    }
+
+    stack mut LoweredRecursiveIfAssignmentArm thenResult = new();
+    if (!LowerRecursiveIfAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ThenArm,
+        armLocalRoots,
+        localTypes,
+        (u32[0 max])signatureParamCount,
+        phiType,
+        thenEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        thenResult))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != elseEntryBlock)
+    {
+        return false;
+    }
+
+    stack mut LoweredRecursiveIfAssignmentArm elseResult = new();
+    if (!LowerRecursiveIfAssignmentArmToBlocks(
+        nodes,
+        ifNodes,
+        node.ElseArm,
+        armLocalRoots,
+        localTypes,
+        (u32[0 max])signatureParamCount,
+        phiType,
+        elseEntryBlock,
+        mergeBlockIndex,
+        instrs,
+        blocks,
+        ranges,
+        recordRanges,
+        elseResult))
+    {
+        return false;
+    }
+
+    if ((u32[0 max])blocks.Count() + 1 != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    stack u32[0 max] mergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId phi = MirPhi2Typed(
+        instrs,
+        phiType,
+        thenResult.Value,
+        MirBlockIdOf(thenResult.ExitBlockIndex),
+        elseResult.Value,
+        MirBlockIdOf(elseResult.ExitBlockIndex));
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] paramIndex = 0;
+    while willexit (paramIndex < signatureParamCount)
+    {
+        if (localOverrides.Add(0) == 0)
+        {
+            return false;
+        }
+
+        paramIndex = paramIndex + 1;
+    }
+
+    if (localOverrides.Add(phi.Index()) == 0)
+    {
+        return false;
+    }
+
+    stack MirValueId value = LowerExprNodeWithTypesAndLocals(nodes, returnRoot.NodeId, instrs, localTypes, localOverrides);
+    stack mut MirValueId returnValue = value;
+    if (rootType == ExprType.BoolType)
+    {
+        returnValue = MirZExt(instrs, value);
+    }
+
+    stack u32[0 max] mergeCount = (u32[0 max])instrs.Count() - (mergeFirst - 1);
+    stack MirBlockId mergeBlock = MirReturnBlock(blocks, returnValue);
+    if (mergeBlock.Index() != mergeBlockIndex)
+    {
+        return false;
+    }
+
+    if (recordRanges && ranges.Add(MakeBlockEmit(mergeBlock.Index(), mergeFirst, mergeCount)) == 0)
+    {
+        return false;
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entryBlock.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    body.CondValue = condValue.Index();
+    body.ThenValue = phi.Index();
+    body.ElseValue = returnValue.Index();
+    return true;
+}

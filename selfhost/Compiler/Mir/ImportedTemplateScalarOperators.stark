@@ -1,0 +1,589 @@
+import Compiler.Mir.Facts
+import Compiler.Mir.Model
+import System.Text
+module Compiler.Mir.ImportedTemplateScalarOperators
+
+internal enum ImportedTemplateScalarBinaryOp
+{
+    Unsupported,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Power,
+    WrappingAdd,
+    WrappingSub,
+    WrappingMul,
+    SaturatingAdd,
+    SaturatingSub,
+    SaturatingMul,
+    BitwiseAnd,
+    BitwiseXor,
+    BitwiseOr,
+    ShiftLeft,
+    ShiftRight,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    LogicalAnd,
+    LogicalOr,
+}
+
+internal enum ImportedTemplateScalarUnaryOp
+{
+    Unsupported,
+    Positive,
+    Negate,
+    WrappingNegate,
+    LogicalNot,
+    BitwiseNot,
+}
+
+internal fn ImportedTemplateScalarBinaryOp ImportedTemplateScalarBinaryOpOf(
+    borrow OwnedAscii text)
+{
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+"))
+    {
+        return ImportedTemplateScalarBinaryOp.Add;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-"))
+    {
+        return ImportedTemplateScalarBinaryOp.Sub;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "*"))
+    {
+        return ImportedTemplateScalarBinaryOp.Mul;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "/"))
+    {
+        return ImportedTemplateScalarBinaryOp.Div;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "%"))
+    {
+        return ImportedTemplateScalarBinaryOp.Mod;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "**"))
+    {
+        return ImportedTemplateScalarBinaryOp.Power;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+%"))
+    {
+        return ImportedTemplateScalarBinaryOp.WrappingAdd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-%"))
+    {
+        return ImportedTemplateScalarBinaryOp.WrappingSub;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "*%"))
+    {
+        return ImportedTemplateScalarBinaryOp.WrappingMul;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+|"))
+    {
+        return ImportedTemplateScalarBinaryOp.SaturatingAdd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-|"))
+    {
+        return ImportedTemplateScalarBinaryOp.SaturatingSub;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "*|"))
+    {
+        return ImportedTemplateScalarBinaryOp.SaturatingMul;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "&"))
+    {
+        return ImportedTemplateScalarBinaryOp.BitwiseAnd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "^"))
+    {
+        return ImportedTemplateScalarBinaryOp.BitwiseXor;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "|"))
+    {
+        return ImportedTemplateScalarBinaryOp.BitwiseOr;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "<<"))
+    {
+        return ImportedTemplateScalarBinaryOp.ShiftLeft;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, ">>"))
+    {
+        return ImportedTemplateScalarBinaryOp.ShiftRight;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "=="))
+    {
+        return ImportedTemplateScalarBinaryOp.Equal;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "!="))
+    {
+        return ImportedTemplateScalarBinaryOp.NotEqual;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "<"))
+    {
+        return ImportedTemplateScalarBinaryOp.Less;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "<="))
+    {
+        return ImportedTemplateScalarBinaryOp.LessEqual;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, ">"))
+    {
+        return ImportedTemplateScalarBinaryOp.Greater;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, ">="))
+    {
+        return ImportedTemplateScalarBinaryOp.GreaterEqual;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "&&"))
+    {
+        return ImportedTemplateScalarBinaryOp.LogicalAnd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "||"))
+    {
+        return ImportedTemplateScalarBinaryOp.LogicalOr;
+    }
+
+    return ImportedTemplateScalarBinaryOp.Unsupported;
+}
+
+internal fn ImportedTemplateScalarUnaryOp ImportedTemplateScalarUnaryOpOf(
+    borrow OwnedAscii text)
+{
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+"))
+    {
+        return ImportedTemplateScalarUnaryOp.Positive;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-"))
+    {
+        return ImportedTemplateScalarUnaryOp.Negate;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-%"))
+    {
+        return ImportedTemplateScalarUnaryOp.WrappingNegate;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "!"))
+    {
+        return ImportedTemplateScalarUnaryOp.LogicalNot;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "~"))
+    {
+        return ImportedTemplateScalarUnaryOp.BitwiseNot;
+    }
+
+    return ImportedTemplateScalarUnaryOp.Unsupported;
+}
+
+internal fn ImportedTemplateScalarBinaryOp ImportedTemplateScalarAssignmentBinaryOpOf(
+    borrow OwnedAscii text)
+{
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+="))
+    {
+        return ImportedTemplateScalarBinaryOp.Add;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-="))
+    {
+        return ImportedTemplateScalarBinaryOp.Sub;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "*="))
+    {
+        return ImportedTemplateScalarBinaryOp.Mul;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "/="))
+    {
+        return ImportedTemplateScalarBinaryOp.Div;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "%="))
+    {
+        return ImportedTemplateScalarBinaryOp.Mod;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+%="))
+    {
+        return ImportedTemplateScalarBinaryOp.WrappingAdd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-%="))
+    {
+        return ImportedTemplateScalarBinaryOp.WrappingSub;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "*%="))
+    {
+        return ImportedTemplateScalarBinaryOp.WrappingMul;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "+|="))
+    {
+        return ImportedTemplateScalarBinaryOp.SaturatingAdd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "-|="))
+    {
+        return ImportedTemplateScalarBinaryOp.SaturatingSub;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "*|="))
+    {
+        return ImportedTemplateScalarBinaryOp.SaturatingMul;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "&="))
+    {
+        return ImportedTemplateScalarBinaryOp.BitwiseAnd;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "^="))
+    {
+        return ImportedTemplateScalarBinaryOp.BitwiseXor;
+    }
+
+    if (System.Text.OwnedAsciiEqualsAscii(text, "|="))
+    {
+        return ImportedTemplateScalarBinaryOp.BitwiseOr;
+    }
+
+    return ImportedTemplateScalarBinaryOp.Unsupported;
+}
+
+internal finite law bool ImportedTemplateScalarOpIsComparison(
+    ImportedTemplateScalarBinaryOp op)
+{
+    return op == ImportedTemplateScalarBinaryOp.Equal
+        || op == ImportedTemplateScalarBinaryOp.NotEqual
+        || op == ImportedTemplateScalarBinaryOp.Less
+        || op == ImportedTemplateScalarBinaryOp.LessEqual
+        || op == ImportedTemplateScalarBinaryOp.Greater
+        || op == ImportedTemplateScalarBinaryOp.GreaterEqual;
+}
+
+internal finite law bool ImportedTemplateScalarOpIsSaturating(
+    ImportedTemplateScalarBinaryOp op)
+{
+    return op == ImportedTemplateScalarBinaryOp.SaturatingAdd
+        || op == ImportedTemplateScalarBinaryOp.SaturatingSub
+        || op == ImportedTemplateScalarBinaryOp.SaturatingMul;
+}
+
+internal finite bool TryEvaluateImportedTemplateScalarPower(
+    MirType type,
+    i64[min max] left,
+    i64[min max] right,
+    out i64[min max] value)
+{
+    value = 0;
+    if (right < 0 || right > 1024)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] computed = 1;
+    stack mut u16[0 1024] remaining = (u16[0 1024])right;
+    while willexit (remaining > 0)
+    {
+        stack mut i64[min max] next = 0;
+        if (!TryCheckedMulI64(computed, left, next))
+        {
+            return false;
+        }
+
+        computed = next;
+        remaining = remaining - 1;
+    }
+
+    if (!IntegerValueFitsMirType(type, computed))
+    {
+        return false;
+    }
+
+    value = computed;
+    return true;
+}
+
+internal finite bool TryEvaluateImportedTemplateScalarWrapping(
+    ImportedTemplateScalarBinaryOp op,
+    MirType type,
+    i64[min max] left,
+    i64[min max] right,
+    out i64[min max] value)
+{
+    value = 0;
+    if (type == MirType.I64)
+    {
+        switch (op)
+        {
+            case ImportedTemplateScalarBinaryOp.WrappingAdd:
+                value = left +% right;
+                return true;
+            case ImportedTemplateScalarBinaryOp.WrappingSub:
+                value = left -% right;
+                return true;
+            case ImportedTemplateScalarBinaryOp.WrappingMul:
+                value = left *% right;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    stack mut MirOp mirOp = MirOp.Add;
+    switch (op)
+    {
+        case ImportedTemplateScalarBinaryOp.WrappingAdd:
+            mirOp = MirOp.WrappingAdd;
+        case ImportedTemplateScalarBinaryOp.WrappingSub:
+            mirOp = MirOp.WrappingSub;
+        case ImportedTemplateScalarBinaryOp.WrappingMul:
+            mirOp = MirOp.WrappingMul;
+        default:
+            return false;
+    }
+
+    return TryBuildExactWrappingIntegerResult(mirOp, type, left, right, value);
+}
+
+internal finite bool TryEvaluateImportedTemplateScalarSaturating(
+    ImportedTemplateScalarBinaryOp op,
+    MirType type,
+    i64[min max] left,
+    i64[min max] right,
+    out i64[min max] value)
+{
+    stack mut MirOp mirOp = MirOp.Add;
+    switch (op)
+    {
+        case ImportedTemplateScalarBinaryOp.SaturatingAdd:
+            mirOp = MirOp.SaturatingAdd;
+        case ImportedTemplateScalarBinaryOp.SaturatingSub:
+            mirOp = MirOp.SaturatingSub;
+        case ImportedTemplateScalarBinaryOp.SaturatingMul:
+            mirOp = MirOp.SaturatingMul;
+        default:
+            value = 0;
+            return false;
+    }
+
+    return TryBuildExactSaturatingIntegerResult(mirOp, type, left, right, value);
+}
+
+internal fn bool TryEvaluateImportedTemplateScalarBinary(
+    ImportedTemplateScalarBinaryOp op,
+    MirType resultType,
+    bool resultIsUnsigned,
+    MirType leftType,
+    bool leftIsUnsigned,
+    i64[min max] left,
+    MirType rightType,
+    bool rightIsUnsigned,
+    i64[min max] right,
+    out i64[min max] value)
+{
+    value = 0;
+    if (op == ImportedTemplateScalarBinaryOp.LogicalAnd
+        || op == ImportedTemplateScalarBinaryOp.LogicalOr)
+    {
+        if (resultType != MirType.I1
+            || leftType != MirType.I1
+            || rightType != MirType.I1)
+        {
+            return false;
+        }
+
+        value = op == ImportedTemplateScalarBinaryOp.LogicalAnd
+            ? (left != 0 && right != 0 ? 1 : 0)
+            : (left != 0 || right != 0 ? 1 : 0);
+        return true;
+    }
+
+    if (ImportedTemplateScalarOpIsComparison(op))
+    {
+        if (resultType != MirType.I1
+            || leftType != rightType
+            || leftIsUnsigned != rightIsUnsigned)
+        {
+            return false;
+        }
+
+        switch (op)
+        {
+            case ImportedTemplateScalarBinaryOp.Equal:
+                value = left == right ? 1 : 0;
+            case ImportedTemplateScalarBinaryOp.NotEqual:
+                value = left != right ? 1 : 0;
+            case ImportedTemplateScalarBinaryOp.Less:
+                value = left < right ? 1 : 0;
+            case ImportedTemplateScalarBinaryOp.LessEqual:
+                value = left <= right ? 1 : 0;
+            case ImportedTemplateScalarBinaryOp.Greater:
+                value = left > right ? 1 : 0;
+            case ImportedTemplateScalarBinaryOp.GreaterEqual:
+                value = left >= right ? 1 : 0;
+            default:
+                return false;
+        }
+
+        return true;
+    }
+
+    if (resultType == MirType.I1
+        || resultType != leftType
+        || resultType != rightType
+        || resultIsUnsigned != leftIsUnsigned
+        || resultIsUnsigned != rightIsUnsigned)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] computed = 0;
+    switch (op)
+    {
+        case ImportedTemplateScalarBinaryOp.Add:
+            if (!TryCheckedAddI64(left, right, computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.Sub:
+            if (!TryCheckedSubI64(left, right, computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.Mul:
+            if (!TryCheckedMulI64(left, right, computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.Div:
+            if (!TryCheckedDivI64(left, right, computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.Mod:
+            if (!TryCheckedModI64(left, right, computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.Power:
+            if (!TryEvaluateImportedTemplateScalarPower(
+                    resultType,
+                    left,
+                    right,
+                    computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.WrappingAdd:
+        case ImportedTemplateScalarBinaryOp.WrappingSub:
+        case ImportedTemplateScalarBinaryOp.WrappingMul:
+            if (resultIsUnsigned
+                || !TryEvaluateImportedTemplateScalarWrapping(
+                    op,
+                    resultType,
+                    left,
+                    right,
+                    computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.SaturatingAdd:
+        case ImportedTemplateScalarBinaryOp.SaturatingSub:
+        case ImportedTemplateScalarBinaryOp.SaturatingMul:
+            if (resultIsUnsigned
+                || !TryEvaluateImportedTemplateScalarSaturating(
+                    op,
+                    resultType,
+                    left,
+                    right,
+                    computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.BitwiseAnd:
+            computed = left & right;
+        case ImportedTemplateScalarBinaryOp.BitwiseXor:
+            computed = left ^ right;
+        case ImportedTemplateScalarBinaryOp.BitwiseOr:
+            computed = left | right;
+        case ImportedTemplateScalarBinaryOp.ShiftLeft:
+            if (!TryCheckedShlI64(resultType, left, right, computed))
+            {
+                return false;
+            }
+        case ImportedTemplateScalarBinaryOp.ShiftRight:
+            if (!TryCheckedAShrI64(resultType, left, right, computed))
+            {
+                return false;
+            }
+        default:
+            return false;
+    }
+
+    if ((resultIsUnsigned && computed < 0)
+        || !IntegerValueFitsMirType(resultType, computed))
+    {
+        return false;
+    }
+
+    value = computed;
+    return true;
+}
+
+internal finite bool TryEvaluateImportedTemplateScalarWrappingNegate(
+    MirType type,
+    bool isUnsigned,
+    i64[min max] operand,
+    out i64[min max] value)
+{
+    value = 0;
+    if (type == MirType.I1 || isUnsigned)
+    {
+        return false;
+    }
+
+    if (type == MirType.I64)
+    {
+        value = 0 -% operand;
+        return true;
+    }
+
+    return TryBuildExactWrappingIntegerResult(
+        MirOp.WrappingSub,
+        type,
+        0,
+        operand,
+        value);
+}

@@ -433,7 +433,13 @@ family lands):
   - [x] Move MIR text rendering helpers into a MIR text-rendering module.
   - [x] Move MIR byte codecs and fixed-record section serializers into a package-image codec module.
   - [x] Move package-image validation, inspection, summary, and file IO helpers into package-image modules.
+  - [x] Split the 15,895-line logical package-image model carrier into focused core, enum, MANF-row, generic-template, typed-interface, function, and backend-fact modules, keeping every resulting model module below 4,000 lines without changing row identity or adding fact conversion. (2026-07-12)
+  - [x] Split the 7,279-line generic-template section loader into focused graph-builder, value-materialization, and typed-tree orchestration modules, keeping each below 4,000 lines and preserving direct manifest ordinals/type-reference rows. (2026-07-12)
+  - [x] Split the 6,944-line typed-interface loader into focused type-reference, declaration/fact, and summary/API modules, keeping each below 4,000 lines and preserving callable ABI, alias-contract groups, layout metadata, and stable source ordinals. (2026-07-12)
+  - [x] Split the 5,070-line compiler-fact loader by LLVM-facing effect/ABI, layout/native, and semantic/ownership families, keeping each below 2,300 lines without changing fact rows or text payloads. (2026-07-12)
+  - [x] Split the 7,256-line package source bridge into focused core lookup, expression/type rendering, statement/pattern rendering, declaration rendering, and public orchestration modules, keeping each below 2,400 lines while structured package facts remain authoritative. (2026-07-12)
   - [x] Move value-range transfer, branch refinement, and returned-value validation helpers into a MIR facts module.
+  - [x] Move direct imported-template scalar operator decoding and constant evaluation into a focused module before that lowering path grows beyond the maintenance threshold.
   - [x] Move source-expression parsing, name checks, arity checks, and semantic probes out of MIR into source-lowering modules.
     - [x] Move integer range endpoint parsing and range fact readers into a source range-facts module.
     - [x] Move source token span, parameter-name, and local-binding helpers into a source symbols module.
@@ -448,6 +454,8 @@ family lands):
     - [x] Move switch arm parsers and lowering helpers into a source switch-lowering module.
     - [x] Move while and for loop shape detection and lowering helpers into a source loop-lowering module.
     - [x] Move module/function AST lowering orchestration and package-image-with-asm table builders into a source module-lowering module.
+    - [x] Move allocation-free MIR effect scans, law/finite/norecurse fixed-point proofs, and source backend-modifier fact merging into a focused source function-effects module. (2026-07-11)
+    - [x] Move source `try` shape detection and typed enum/range/storage/control-flow lowering into a focused source try-lowering module, bringing both it and `SourceModuleLowering.stark` below the preferred 5k-line maintenance threshold without allocation or indirection. (4,437 and 4,402 lines respectively after focused import trimming, 2026-07-11.)
   - [x] Move assembly metadata collection into an assembly metadata module.
   - [x] Move clang verification and temporary-file helpers into a test-support or compiler harness module.
   - [x] Add dependency-direction checks so MIR core does not import parsing, LLVM emission, package images, or test helpers.
@@ -456,6 +464,44 @@ family lands):
     - [x] Run focused lower-MIR checks and selected if facts for the source function-context and source if-lowering splits.
     - [x] Run focused lower-MIR checks for the source switch-lowering and source loop-lowering splits.
     - [x] Run focused lower-MIR and API re-export checks for the source module-lowering split.
+    - [x] Run focused checks for the source function-effects module and its source module-lowering consumer after the effect-prepass split. (2026-07-11)
+    - [x] Run focused checks for the source try-lowering module and its source module-lowering consumer after the try-family split. (2026-07-11)
+    - [x] Run focused checks for every logical package-image model module plus the compatibility facade, logical loader, and manifest builder after the model-carrier split. (2026-07-12)
+    - [x] Run focused checks for the generic-template graph builder, value materializer, typed-tree orchestrator, direct package-loader consumer, and package-image facade after the loader split. (2026-07-12)
+    - [x] Run focused checks and declaration-parity comparisons for the typed-interface loader, compiler-fact loader, and package source-bridge splits, followed by the aggregate package-image facade check. (2026-07-12)
+    - [x] Run full-front-end checks for `SourceModuleLowering.stark` and the `selfhost.Ir` fact root after all package-image files were brought below 5,000 lines. (2026-07-12)
+
+- [x] Continue decomposing source-lowering modules that remain above the preferred 5k-line maintenance threshold without adding allocation, callback indirection, or fact conversion.
+  - [x] Split the oversized source switch lowerer along dependency-directed pattern and lowering boundaries.
+    - [x] Extract typed switch decision nodes/descriptors, validation, worklist translation, and typed row conversion into `SourceSwitchPatterns.stark` (2,426 lines). (2026-07-11)
+    - [x] Extract scalar/enum condition construction and recursive list/aggregate overlap proofs into `SourceSwitchPatternConditions.stark` (1,408 lines). (2026-07-11)
+    - [x] Extract fixed-array/list label parsing, typed struct field flattening, nested capture translation, and value-parameter aggregate condition lowering into `SourceSwitchAggregatePatterns.stark` (3,678 lines). (2026-07-11)
+    - [x] Extract storage-backed struct aggregate and typed fixed-array/list condition lowering into `SourceSwitchStoragePatterns.stark` (877 lines), preserving direct storage offsets, typed member layout, ABI facts, and capture conditions. (2026-07-11)
+    - [x] Extract decision preflight rows, case descriptors, enum variant/tag resolution, descriptor validation, and typed enum case-label parsing into `SourceSwitchCaseParsing.stark` (1,683 lines). (2026-07-11)
+    - [x] Extract switch assignment-arm parsing, arena-reserve handling, local-type construction, module-call validation, and direct MIR store lowering into `SourceSwitchAssignmentArms.stark` (979 lines). (2026-07-11)
+    - [x] Extract terminal return-arm and case collection, exhaustiveness/overlap checks, capture typing, scalar range/enum tag preservation, and fixed-array slice descriptor construction into `SourceSwitchTerminalParsing.stark` (4,707 lines). (2026-07-11)
+    - [x] Extract terminal integer/boolean/enum/fixed-array/aggregate CFG lowering and capture materialization into `SourceSwitchTerminalLowering.stark` (2,805 lines), retaining direct MIR instruction/block/range emission. (2026-07-11)
+    - [x] Extract assignment-case collection into `SourceSwitchAssignmentParsing.stark` (2,507 lines), preserving case intervals, typed patterns, capture spans, enum tags, and parsed assignment arms. (2026-07-11)
+    - [x] Extract assignment value/capture handling, raw-pointer fact updates, and assignment CFG construction into `SourceSwitchAssignmentLowering.stark` (3,672 lines), retaining direct MIR and fact-table mutation. (2026-07-11)
+    - [x] Extract constructed-object and terminal function-to-block orchestration into `SourceSwitchFunctionLowering.stark` (2,998 lines). (2026-07-11)
+    - [x] Bring `SourceSwitchLowering.stark` below the preferred 5k-line threshold (4,304 lines) while keeping every extracted module below 5k and preserving direct-call dependency direction. (2026-07-11)
+  - [x] Split the oversized source if lowerer into dependency-directed modules without adding allocation, callbacks, or fact conversion. (2026-07-12)
+    - [x] Extract enum-return carrier helpers into `SourceIfCore.stark` (102 lines) and source-shape detection into `SourceIfShapes.stark` (229 lines).
+    - [x] Extract typed arm/assignment parsing and raw-pointer fact resolution into `SourceIfParsing.stark` (2,419 lines).
+    - [x] Extract storage-mutation parsing, validation, and CFG lowering into `SourceIfStorageMutation.stark` (2,075 lines).
+    - [x] Extract assignment value/capture typing, validation, phi construction, and recursive CFG lowering into `SourceIfAssignmentLowering.stark` (2,068 lines).
+    - [x] Extract if-expression, local-assignment, and nested function-to-block orchestration into `SourceIfFunctionLowering.stark` (3,337 lines).
+    - [x] Extract local-if and if-return function lowering into `SourceIfReturnLowering.stark` (1,981 lines).
+    - [x] Bring `SourceIfLowering.stark` below the preferred 5k-line threshold (1,396 lines), with every extracted module below 5k and direct downstream imports for non-transitive consumers.
+  - [x] Split the remaining oversized `SourceLocalLowering.stark` module (10,278 lines) along dependency-directed local parsing, storage, and lowering boundaries. (2026-07-12)
+    - [x] Keep lexical/type scanning, scalar layout, alignment, and shared low-level helpers in the 1,777-line `SourceLocalLowering.stark` core.
+    - [x] Extract aggregate/enum storage layout, local models, raw-pointer facts, bounds proofs, and declaration handling into `SourceLocalStorageLayout.stark` (3,419 lines).
+    - [x] Extract propagation role, compatibility, error-funnel, payload-range, and enum-payload facts into `SourceTryPropagation.stark` (987 lines).
+    - [x] Extract enum/aggregate/raw-pointer expression parsing into `SourceLocalExpressionParsing.stark` (1,075 lines).
+    - [x] Extract object, scalar, enum, fixed-array, and initialized raw-pointer local setup/lowering into `SourceLocalInitialization.stark` (959 lines).
+    - [x] Extract scalar, enum, slice, raw-pointer, and constructed-object storage mutation parsing/lowering into `SourceLocalMutation.stark` (1,809 lines).
+    - [x] Extract arena selector, target-typed constructor, dynamic-local, and reserve lowering into `SourceLocalArena.stark` (398 lines).
+    - [x] Add direct imports for every non-transitive consumer and verify that every top-level MIR source-lowering module is below 5,000 lines.
 
 - [ ] Implement HIR/MIR lowering.
   - [x] Define the self-host HIR model or explicit direct-to-MIR boundary.
@@ -549,6 +595,10 @@ family lands):
         - [x] Emit LLVM direct-call attributes from computed callee effect facts.
         - [x] Preserve `memory(none)` across law calls to memory-none callees.
         - [x] Precompute effect summaries before emission so forward direct calls keep attributes.
+        - [x] Preserve explicitly declared source hot/cold, strict-FP, inline/noinline/inlinehint, and `[Backend(Opaque)]` facts through the module effect prepass into LLVM definitions and direct-call attributes; opaque mode forces `optnone noinline`, and the prelude scan is allocation-free. (2026-07-11)
+        - [~] Import inferred `nounwind`, default inline-hint, and internal fast-call facts from the typed function-effect/ABI summaries when the open optimized-SSA ABI lowering owns those defaults, preserving tail/FFI/export precedence without changing the compatibility emitter independently.
+          - [x] Add an opt-in typed-summary bridge for the source-to-MIR path that imports the inferred effect and calling-convention rows into the existing LLVM definition and direct-call carriers, with exact function-token identity checks and tail/FFI/export precedence. Its core accepts already-built module facts and typed summaries so the future optimized pipeline does not rebuild them; the compatibility entry point remains byte-stable. (2026-07-11)
+          - [ ] Route the optimized SSA/ABI pipeline through the typed-summary bridge when that pipeline replaces the compatibility entry point, then retire the opt-in boundary after snapshot migration.
       - [x] Preserve ownership and alias obligations for memory-backed call arguments.
   - [~] Lower returns.
     - [x] Lower value returns to MIR return blocks without dropping value facts.
@@ -892,8 +942,9 @@ family lands):
           - [x] Lower nested list subpatterns inside fixed-array list elements. (2026-07-08: focused `emit-llvm` probes over `Box { Matrix: [[1, 2], _] }` pass for terminal and assignment switches, preserving direct scalar `i8` loads with `!range` through LLVM.)
           - [x] Preserve multi-dimensional scalar fixed-array row strides while lowering nested list-element list patterns. (2026-07-08: fixed-array storage layout now multiplies remaining scalar array suffixes into the outer element stride, nested list-element lowering recursively descends into inner array rows, and `selfhost.Ir` second-row facts assert direct scalar loads at row-two byte offsets without aggregate carrier loads.)
           - [x] Thread fixed-array suffix depth through recursive nested list-element list lowering. (2026-07-08: recursive storage-backed nested-list lowering now asks layout for the current array suffix depth instead of always reusing depth one, keeping three-dimensional scalar list elements on direct scalar loads at the correct byte offsets.)
-          - [~] Eliminate dead aggregate carrier loads emitted before scalar nested fixed-array element tests in raw O0 LLVM. (2026-07-08: LLVM block/direct-switch emission now counts value uses, terminators, and wide-call operands, then elides unused `FixedArrayLoad`/`StructValueLoad` carrier instructions only; scalar loads and range metadata still emit. Added a focused `selfhost.Ir` fact; touched MIR LLVM modules typecheck and semantic host-inspect reports 0 diagnostics, but executable/fact execution remains pending after a focused probe was capped in `lower-mir`.)
-          - [~] Route nested pattern failures to the next sibling label without leaking captures. (2026-07-08: added focused `selfhost.Ir` terminal-return and assignment LLVM facts for sibling nested struct/list labels that reuse capture names across labels, preserving direct scalar loads/range metadata and rejecting aggregate fallback shapes; `IrTests.stark` semantic host-test passed with 0 diagnostics, focused fact-runner execution remains pending.)
+          - [x] Eliminate dead aggregate carrier loads emitted before scalar nested fixed-array element tests in raw O0 LLVM. (Completed 2026-07-12: LLVM block/direct-switch emission counts value uses, terminators, and wide-call operands, then elides only unused `FixedArrayLoad`/`StructValueLoad` carriers; scalar loads and `!range` metadata remain. The focused `LlvmBlockEmissionDropsUnusedAggregateCarrierLoadsButKeepsScalarRangeLoads` executable fact passed.)
+          - [~] Route nested pattern failures to the next sibling label without leaking captures. (2026-07-12 update: the post-parenthesis-repair cold `Sibling` execution rebuilt the self-host library/package/test executable but still failed the same eight source-facing facts; the row-level preflight continued to pass. Staged probes proved typed rows for both alternatives, both enum label parses, full section parsing, descriptor validation, decision preflight, capture-aware call validation, enum identity, MIR construction, parameter/ABI/value facts, and return-range validation all pass. The exact terminal dispatcher alone rejected because it speculatively tried narrower lowerers before the generic sibling-aware path. Terminal switches with a top-level first-case `|` now route directly to that generic path, and the remaining field-list `switch (` scan now uses `MatchingParenForMirLowering`. Both owning modules pass focused checks. A second cold executable run after those repairs still produced the same eight failures, so the dispatcher repair is retained but executable closure remains open; the next boundary to stage is the public compile orchestration/function-effect prepass shared by assignment and terminal functions. A temporary conservative-effect fallback and a standalone import probe were both removed without claiming evidence: the first test invocation produced no progress before interruption, and the standalone probe would have rebuilt and optimized the entire compiler graph. The checked-path semantic blocker is now repaired: the preliminary name pass parses typed signature parameters and excludes typed signature syntax from value-use resolution, while redeclaration analysis scopes pattern captures by case section and sibling alternative. A narrow executable probe passed the exact struct/list sibling semantic sources plus duplicate-negative controls; full source-to-LLVM closure remains pending.)
+            - [x] Repair checked semantic scoping for typed signatures and sibling pattern captures. (Completed 2026-07-12: name resolution now seeds parsed typed function/parameter names, recognizes typed-local headers, and keeps switch-pattern/type/member syntax out of the value namespace while leaving exact owner/category validation to the typed binder; redeclaration checking permits equal-name captures only across distinct sibling alternatives or case sections and still rejects same-alternative, parameter/local, and duplicate-parameter declarations. Function arity, uniqueness, and finite-call rows also use parsed typed signatures. The owning module check and a narrow executable semantic probe passed.)
           - [~] Add overlap validation for nested aggregate and list descriptors before emitting MIR. (2026-07-08: added source-facing `selfhost.Ir` facts for nested aggregate/list, list-element aggregate/list, and nested enum-payload overlap rejection; dynamic nested aggregate guards still allow later overlapping unguarded siblings. `IrTests.stark` semantic host-test passed with 0 diagnostics; filtered fact-runner execution remains pending.)
             - [x] Add row-model overlap validation for scalar, nested aggregate, nested enum variant, and nested list descriptor decisions.
             - [x] Hook nested descriptor overlap validation into source switch preflight before MIR branch block emission.
@@ -932,7 +983,7 @@ family lands):
             - [x] Lower fixed-array list element capture bindings for terminal return switch arms.
             - [x] Lower fixed-array list element capture bindings for non-terminal assignment switch arms.
         - [~] Merge pattern capture facts across sibling labels before lowering section bodies.
-          - [~] Merge enum payload capture facts across sibling labels before lowering shared assignment and terminal section bodies. (2026-07-07: implemented assignment and terminal return lowering; filtered IR test build stayed silent and was interrupted before pass/fail.)
+          - [~] Merge enum payload capture facts across sibling labels before lowering shared assignment and terminal section bodies. (2026-07-12 update: fresh-package sibling runs before and after the terminal-dispatch repair still reject the assignment and terminal enum facts. Staged terminal probes passed parsing through MIR/value-fact construction; first-case sibling alternatives now select the generic sibling-aware terminal path directly, but the unchanged public-compile failures show another earlier/shared orchestration boundary remains. The checked semantic-gate repair clears the six checked aggregate/list facts but does not affect these two unchecked enum facts. The function-effect prepass remains the next staged target because it independently lowers every body before emission and is shared by assignment and terminal functions. Neither enum item is marked complete from check-only evidence.)
           - [x] Merge struct aggregate field capture facts across sibling labels before lowering shared section bodies. (2026-07-07: implemented assignment and terminal return lowering with per-label field capture rows; direct lowering and IR test file checks passed, filtered IR test runner stayed silent and was interrupted.)
           - [x] Merge fixed-array list element capture facts across sibling labels before lowering shared section bodies. (2026-07-07: implemented by-value, storage-local, and field-backed assignment plus terminal return paths with per-label element capture rows; direct lowering and IR test file checks passed, filtered IR test runner stayed silent and was interrupted.)
         - [x] Lower guarded aggregate and list switch labels after guard expression lowering can consume capture locals.
@@ -1065,7 +1116,14 @@ family lands):
     - [x] Lower unit enum values referenced through an imported source module's own imports.
   - [~] Port imported-template lowering.
     - [x] Lower fact-complete typed integer/bool constant-expression return templates directly from the package graph to MIR, without reconstructed source. Consume ordered top-level empty and pure constant-expression preambles plus the terminal return, including the same sequence inside one terminal flat block; consume canonical Stage0 lowercase type kinds and inferred `Name`-backed unary/binary results; fold bounded nested literal/unary/binary/comparison-chain/conditional/comptime/conversion arithmetic, comparison, and boolean trees to one MIR constant; join ordered conversion expressions to exact published target-type/range side facts across statement roots; require an exact specialized return type/signedness/range-fact match; reject scalar-inapplicable caller fact families rather than dropping LLVM inputs; reject overflow, malformed/detached rows, and every template carrying unconsumed operation families; keep statement/expression traversal linear and allocation-free with transactional output reservation; and publish exact MIR value plus function-return ranges to LLVM. (2026-07-11)
-    - [ ] Connect direct package-template MIR lowering to imported generic specialization and expand it across the remaining structured statement/expression families before deleting the compatibility source bridge.
+    - [x] Fold package-template integer power, signed wrapping/saturating arithmetic, signed wrapping negation, bitwise operations, and checked shifts directly to exact MIR constants; clamp signed saturation to the published ranged type and retain compatibility fallback where the signed fact carrier cannot represent the full unsigned result. (2026-07-11)
+    - [x] Fold ordered immutable scalar local constants and later name references directly from typed statements plus exact `const` declaration side rows; validate local storage/provenance/type/range facts, reject duplicate or unresolved names transactionally, keep the environment bounded to 64 stack entries with cached name hashes and exact collision comparison through reusable scratch, and publish only the terminal singleton MIR/LLVM range. (2026-07-11)
+    - [x] Fold initialized independent scalar `stack`/`register` variables and direct-name assignments from exact `var` declaration side rows; consume the duplicated statement/target name facts and both root expression trees, enforce mutability and declared range, support `=` plus every checked/wrapping/saturating/bitwise compound assignment, and eliminate all local storage while publishing the terminal singleton range to LLVM. (2026-07-11)
+    - [x] Track definite initialization for independent scalar package-template locals; admit initializer-free `stack`/`register` declarations, reject name reads and compound updates before initialization, accept both Stage0-compatible first plain `=` and distinct `init =` writes only to mutable locals, and eliminate the storage after validating exact declaration/type/range/operator facts. (2026-07-11)
+    - [~] Connect direct package-template MIR lowering to imported generic specialization and expand it across the remaining structured statement/expression families before deleting the compatibility source bridge.
+      - [x] Resolve a requested specialization by exact qualified-resolved-name plus overload key, join its base qualified name to exactly one package compiler-effect row, validate template/effect backend-mode consistency before mutation, and carry purity/memory, progress, unwind, hot/cold, strict-FP, inline/opaque, fast-call, tail, and norecurse facts through numbered LLVM definition emission. Missing, ambiguous, or inconsistent package facts fail transactionally. (2026-07-11)
+      - [ ] Route the specialization adapter from the Stage1 package-import orchestration once that driver owns imported package selection and concrete type/comptime substitution.
+      - [ ] Expand direct lowering across the remaining structured statement/expression families before deleting the compatibility source bridge.
   - [~] Preserve range facts through MIR lowering.
     - [x] Reject integer range facts on pointer HIR values at the common value-fact compatibility boundary.
     - [x] Reject stale pointer range facts when binding or rebinding SSA local symbols.
@@ -1120,12 +1178,18 @@ family lands):
     - [ ] Audit arena fact transfer when each remaining arena-producing HIR construct is added.
   - [ ] Preserve drop facts through MIR lowering.
 
-- [ ] Implement SSA lowering.
-  - [ ] Port MIR-to-SSA lowering.
+- [~] Implement SSA lowering.
+  - [~] Port MIR-to-SSA lowering.
+    - [x] Add the allocation-linear, zero-remap MIR-to-SSA foundation for dense instructions, blocks, functions, and value facts.
+    - [x] Reject malformed MIR and missing/misaligned value-fact rows before publishing any SSA output table.
+    - [x] Preserve bodyless MIR declaration rows without inventing blocks, values, or empty backend-fact carriers.
+    - [ ] Replace the index-preserving foundation with full CFG shaping, phi placement, and SSA renaming as the remaining lowering slices land.
   - [ ] Port SSA block shaping.
   - [ ] Port SSA phi construction.
   - [ ] Port memory operation lowering.
-  - [ ] Port the SSA artifact model.
+  - [~] Port the SSA artifact model.
+    - [x] Add flat dense instruction, block, and function rows with typed SSA handles, contiguous ownership ranges, and originating MIR identities.
+    - [ ] Add the remaining Stage 0 SSA artifact payloads required by shaped blocks, validation diagnostics, deterministic rendering, and optimized-SSA output.
   - [ ] Port the SSA deterministic renderer.
   - [ ] Port the structured invalid-IR fixture path.
   - [ ] Port SSA type validation.
@@ -1136,7 +1200,9 @@ family lands):
     - [x] Validate exact integer-range preservation at the foundational SSA rewrite boundary.
   - [ ] Port SSA ABI-fact validation.
     - [x] Validate exact callable-ABI preservation at the foundational SSA rewrite boundary.
-  - [ ] Port SSA package-fact validation.
+  - [~] Port SSA package-fact validation.
+    - [x] Require one exact `ValueFacts` row per dense MIR/SSA value at the initial phase boundary; never synthesize a missing backend fact row.
+    - [ ] Validate the remaining durable package fact tables as their SSA carriers land.
   - [ ] Port value fact analysis.
   - [ ] Revalidate facts at each SSA rewrite boundary.
     - [x] Establish dense `SsaValueId` generated/empty/preserve/translate/recompute/consume and parameter/global/return import APIs for every current backend value-fact family.
@@ -1445,7 +1511,7 @@ family lands):
 
 ## 3. Tooling And Packaging
 
-- [ ] Root-module pipeline incrementality: the dependency LLVM cache (docs/Self-host-Prep/DevVelocity.md §1.4, `DependencyLlvmCache`) removes per-dependency pipeline re-runs, but a package build's root module (the entire selfhost library) still runs the full pipeline on every build; per-function or per-module caching inside the root pipeline is the remaining lever for the ~20-minute selfhost package rebuild.
+- [ ] Root-module pipeline incrementality: the dependency LLVM cache (docs/Self-host-Prep/DevVelocity.md §1.4, `DependencyLlvmCache`) removes per-dependency pipeline re-runs, but a package build's root module (the entire selfhost library) still runs the full pipeline on every build; per-function or per-module caching inside the root pipeline is the remaining lever. A 2026-07-12 cold filtered `selfhost.Ir` build after the source-lowering splits took more than 65 minutes before executing one fact, with individual imported `lower-mir` stages reported up to 1,564.9 seconds; the identical unchanged rerun skipped rebuilding and completed in 0.2 seconds. The earlier ~20-minute estimate is no longer representative of a cold rebuild at the current compiler size.
 - [~] Complete libLLVM-primary backend integration through the LLVM C API.
   - [x] Finish `System.C` C string and owned foreign-message helper coverage needed by LLVM.
   - [x] Implement LLVM C API bindings.

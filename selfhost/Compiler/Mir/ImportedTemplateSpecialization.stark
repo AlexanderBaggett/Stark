@@ -1,0 +1,497 @@
+import Compiler.Ir
+import Compiler.Mir.ImportedTemplateLowering
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Loader.CompilerFactsSectionLoader
+import Compiler.Mir.PackageImage.Loader.GenericTemplateSectionLoader
+import System.Memory
+import System.Text
+module Compiler.Mir.ImportedTemplateSpecialization
+
+internal fn bool ImportedTemplateEffectFactTextEquals(
+    borrow LogicalPackageFunctionEffectFactGraph graph,
+    u32[0 max] textRow,
+    ascii expected,
+    mut borrow OwnedAscii scratch)
+{
+    if (textRow == 0
+        || (u64[0 2 ** 63 - 1])textRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    scratch.Clear();
+    stack LogicalPackageFunctionEffectFactTextRow row = graph.TextRowAt(textRow);
+    return AppendLogicalPackageFunctionEffectFactText(graph, row, scratch)
+            == MemoryStatus.Ok
+        && System.Text.OwnedAsciiEqualsAscii(scratch, expected);
+}
+
+internal fn bool TryCopyImportedTemplateGenericFactText(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    u32[0 max] textRow,
+    mut borrow OwnedAscii destination)
+{
+    if (textRow == 0
+        || (u64[0 2 ** 63 - 1])textRow > graph.TextRowCount())
+    {
+        return false;
+    }
+
+    destination.Clear();
+    stack LogicalPackageGenericTemplateFactTextRow row = graph.TextRowAt(textRow);
+    return AppendLogicalPackageGenericTemplateFactText(graph, row, destination)
+        == MemoryStatus.Ok;
+}
+
+internal fn ImportedTemplateMirLoweringStatus FindImportedTemplateSpecializationRow(
+    borrow LogicalPackageGenericTemplateFactGraph graph,
+    const ascii qualifiedResolvedName,
+    const ascii overloadKey,
+    mut borrow OwnedAscii scratch,
+    out u32[0 max] functionTemplateRow)
+{
+    functionTemplateRow = 0;
+    if (System.Text.AsciiLength(qualifiedResolvedName) <= 0
+        || System.Text.AsciiLength(overloadKey) <= 0
+        || graph.FunctionTemplateRowCount() > 4294967295)
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] rowIndex = 1;
+    while willexit (rowIndex <= graph.FunctionTemplateRowCount())
+    {
+        stack LogicalPackageFunctionTemplateRow row =
+            graph.FunctionTemplateRowAt((u32[0 max])rowIndex);
+        if (ImportedTemplateGenericFactTextEquals(
+                graph,
+                row.QualifiedResolvedNameTextRow(),
+                qualifiedResolvedName,
+                scratch)
+            && ImportedTemplateGenericFactTextEquals(
+                graph,
+                row.OverloadKeyTextRow(),
+                overloadKey,
+                scratch))
+        {
+            if (functionTemplateRow != 0)
+            {
+                return ImportedTemplateMirLoweringStatus.AmbiguousTemplate;
+            }
+
+            functionTemplateRow = (u32[0 max])rowIndex;
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+
+    if (functionTemplateRow == 0)
+    {
+        return ImportedTemplateMirLoweringStatus.TemplateNotFound;
+    }
+
+    return ImportedTemplateMirLoweringStatus.Ok;
+}
+
+internal fn ImportedTemplateMirLoweringStatus FindImportedTemplateFunctionEffectRow(
+    borrow LogicalPackageFunctionEffectFactGraph graph,
+    ascii qualifiedTemplateName,
+    mut borrow OwnedAscii scratch,
+    out u32[0 max] functionEffectRow)
+{
+    functionEffectRow = 0;
+    if (System.Text.AsciiLength(qualifiedTemplateName) <= 0
+        || graph.FunctionEffectRowCount() > 4294967295)
+    {
+        return ImportedTemplateMirLoweringStatus.BackendFactMismatch;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] rowIndex = 1;
+    while willexit (rowIndex <= graph.FunctionEffectRowCount())
+    {
+        stack LogicalPackageFunctionEffectRow row =
+            graph.FunctionEffectRowAt((u32[0 max])rowIndex);
+        if (ImportedTemplateEffectFactTextEquals(
+                graph,
+                row.QualifiedResolvedNameTextRow(),
+                qualifiedTemplateName,
+                scratch))
+        {
+            if (functionEffectRow != 0)
+            {
+                return ImportedTemplateMirLoweringStatus.BackendFactMismatch;
+            }
+
+            functionEffectRow = (u32[0 max])rowIndex;
+        }
+
+        rowIndex = rowIndex + 1;
+    }
+
+    if (functionEffectRow == 0)
+    {
+        return ImportedTemplateMirLoweringStatus.MissingBackendFacts;
+    }
+
+    return ImportedTemplateMirLoweringStatus.Ok;
+}
+
+internal fn bool TryReadImportedTemplateFunctionKind(
+    borrow LogicalPackageFunctionEffectFactGraph graph,
+    LogicalPackageFunctionEffectRow row,
+    mut borrow OwnedAscii scratch,
+    out bool isLaw,
+    out bool isFinite)
+{
+    isLaw = false;
+    isFinite = false;
+    if (ImportedTemplateEffectFactTextEquals(graph, row.KindTextRow(), "fn", scratch))
+    {
+        return true;
+    }
+
+    if (ImportedTemplateEffectFactTextEquals(graph, row.KindTextRow(), "finite", scratch))
+    {
+        isFinite = true;
+        return true;
+    }
+
+    if (ImportedTemplateEffectFactTextEquals(graph, row.KindTextRow(), "law", scratch))
+    {
+        isLaw = true;
+        return true;
+    }
+
+    if (ImportedTemplateEffectFactTextEquals(
+            graph,
+            row.KindTextRow(),
+            "finite law",
+            scratch))
+    {
+        isLaw = true;
+        isFinite = true;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryReadImportedTemplateInlinePreference(
+    borrow LogicalPackageFunctionEffectFactGraph graph,
+    LogicalPackageFunctionEffectRow row,
+    mut borrow OwnedAscii scratch,
+    out FunctionInlinePreference preference)
+{
+    preference = FunctionInlinePreference.Default;
+    if (ImportedTemplateEffectFactTextEquals(
+            graph,
+            row.InlinePreferenceTextRow(),
+            "inline",
+            scratch))
+    {
+        preference = FunctionInlinePreference.Inline;
+        return true;
+    }
+
+    if (ImportedTemplateEffectFactTextEquals(
+            graph,
+            row.InlinePreferenceTextRow(),
+            "inlinehint",
+            scratch))
+    {
+        preference = FunctionInlinePreference.InlineHint;
+        return true;
+    }
+
+    if (ImportedTemplateEffectFactTextEquals(
+            graph,
+            row.InlinePreferenceTextRow(),
+            "noinline",
+            scratch))
+    {
+        preference = FunctionInlinePreference.NoInline;
+        return true;
+    }
+
+    return ImportedTemplateEffectFactTextEquals(
+        graph,
+        row.InlinePreferenceTextRow(),
+        "default",
+        scratch);
+}
+
+internal fn bool TryBuildImportedTemplateSpecializationBackendFacts(
+    borrow LogicalPackageGenericTemplateFactGraph templateGraph,
+    LogicalPackageFunctionTemplateRow template,
+    borrow LogicalPackageFunctionEffectFactGraph effectGraph,
+    LogicalPackageFunctionEffectRow effect,
+    mut borrow OwnedAscii scratch,
+    out FunctionEffectFacts functionEffects,
+    out FunctionCallingConventionFacts callingConventionFacts,
+    out u32[0 max] tailFlag)
+{
+    functionEffects = new();
+    callingConventionFacts = new();
+    tailFlag = 0;
+    stack mut bool isLaw = false;
+    stack mut bool isFinite = false;
+    stack mut FunctionInlinePreference inlinePreference =
+        FunctionInlinePreference.Default;
+    if (!TryReadImportedTemplateFunctionKind(
+            effectGraph,
+            effect,
+            scratch,
+            isLaw,
+            isFinite)
+        || !TryReadImportedTemplateInlinePreference(
+            effectGraph,
+            effect,
+            scratch,
+            inlinePreference)
+        || effect.IsFfi()
+        || effect.IsVarargs()
+        || effect.HasFfiAbi()
+        || effect.IsHot() && effect.IsCold()
+        || effect.IsPure() != isLaw
+        || (!isLaw && effect.ReadsArgumentMemory()))
+    {
+        return false;
+    }
+
+    stack bool templateIsOpaque = template.HasBackendOptimizationMode();
+    stack bool effectIsOpaque = effect.HasBackendOptimizationMode();
+    if (templateIsOpaque != effectIsOpaque
+        || (templateIsOpaque
+            && (!ImportedTemplateGenericFactTextEquals(
+                    templateGraph,
+                    template.BackendOptimizationModeTextRow(),
+                    "opaque",
+                    scratch)
+                || !ImportedTemplateEffectFactTextEquals(
+                    effectGraph,
+                    effect.BackendOptimizationModeTextRow(),
+                    "opaque",
+                    scratch))))
+    {
+        return false;
+    }
+
+    functionEffects.IsLaw = isLaw;
+    functionEffects.LawMayReadMemory = effect.ReadsArgumentMemory();
+    functionEffects.IsFinite = isFinite;
+    functionEffects.IsNoRecurse = effect.NoRecurse();
+    functionEffects.NoSync = effect.NoSync();
+    functionEffects.NoFree = effect.NoFree();
+    functionEffects.NoUnwind = effect.NoUnwind();
+    functionEffects.WillReturn = effect.WillReturn();
+    functionEffects.MustProgress = effect.MustProgress();
+    functionEffects.IsHot = effect.IsHot();
+    functionEffects.IsCold = effect.IsCold();
+    functionEffects.IsStrictFp = effect.IsStrictFp();
+    functionEffects.BackendIsOpaque = templateIsOpaque;
+    functionEffects.InlinePreference = inlinePreference;
+
+    if (effect.UsesFastCallingConvention())
+    {
+        callingConventionFacts = FastCallingConventionFacts();
+    }
+
+    if (effect.IsTailCallable())
+    {
+        tailFlag = 1;
+    }
+
+    return true;
+}
+
+internal fn ImportedTemplateMirLoweringStatus LowerImportedTemplateScalarSpecializationToMir(
+    borrow LogicalPackageGenericTemplateFactGraph templateGraph,
+    borrow LogicalPackageFunctionEffectFactGraph effectGraph,
+    const ascii qualifiedResolvedName,
+    const ascii overloadKey,
+    MirType expectedReturnType,
+    bool expectedReturnIsUnsigned,
+    ValueFacts expectedReturnFacts,
+    mut borrow IrTable<MirInstruction> instructions,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<MirFunction> functions,
+    mut borrow IrTable<ValueFacts> valueFacts,
+    mut borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    mut borrow IrTable<u32[0 max]> functionTailFlags,
+    mut borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    out MirFuncId loweredFunction)
+{
+    loweredFunction = MirFuncIdOf(0);
+    if (functionEffectFacts.Count() != functions.Count()
+        || functionTailFlags.Count() != functions.Count()
+        || functionCallingConventionFacts.Count() != functions.Count())
+    {
+        return ImportedTemplateMirLoweringStatus.OutputFactMismatch;
+    }
+
+    stack mut OwnedAscii scratch = new();
+    stack mut u32[0 max] functionTemplateRow = 0;
+    stack ImportedTemplateMirLoweringStatus templateStatus =
+        FindImportedTemplateSpecializationRow(
+            templateGraph,
+            qualifiedResolvedName,
+            overloadKey,
+            scratch,
+            functionTemplateRow);
+    if (!ImportedTemplateMirLoweringSucceeded(templateStatus))
+    {
+        return templateStatus;
+    }
+
+    stack LogicalPackageFunctionTemplateRow template =
+        templateGraph.FunctionTemplateRowAt(functionTemplateRow);
+    stack mut OwnedAscii qualifiedTemplateName = new();
+    if (!TryCopyImportedTemplateGenericFactText(
+            templateGraph,
+            template.QualifiedNameTextRow(),
+            qualifiedTemplateName))
+    {
+        return ImportedTemplateMirLoweringStatus.MalformedGraph;
+    }
+
+    stack mut u32[0 max] functionEffectRow = 0;
+    stack ImportedTemplateMirLoweringStatus effectStatus =
+        FindImportedTemplateFunctionEffectRow(
+            effectGraph,
+            qualifiedTemplateName.View(),
+            scratch,
+            functionEffectRow);
+    if (!ImportedTemplateMirLoweringSucceeded(effectStatus))
+    {
+        return effectStatus;
+    }
+
+    stack LogicalPackageFunctionEffectRow effect =
+        effectGraph.FunctionEffectRowAt(functionEffectRow);
+    stack mut FunctionEffectFacts effects = new();
+    stack mut FunctionCallingConventionFacts callingConvention = new();
+    stack mut u32[0 max] tailFlag = 0;
+    if (!TryBuildImportedTemplateSpecializationBackendFacts(
+            templateGraph,
+            template,
+            effectGraph,
+            effect,
+            scratch,
+            effects,
+            callingConvention,
+            tailFlag))
+    {
+        return ImportedTemplateMirLoweringStatus.BackendFactMismatch;
+    }
+
+    switch (functionEffectFacts.Reserve(1))
+    {
+        case MemoryStatus.Err(var effectReserveError):
+            return ImportedTemplateMirLoweringStatus.OutOfMemory;
+        case MemoryStatus.Ok:
+    }
+    switch (functionTailFlags.Reserve(1))
+    {
+        case MemoryStatus.Err(var tailReserveError):
+            return ImportedTemplateMirLoweringStatus.OutOfMemory;
+        case MemoryStatus.Ok:
+    }
+    switch (functionCallingConventionFacts.Reserve(1))
+    {
+        case MemoryStatus.Err(var conventionReserveError):
+            return ImportedTemplateMirLoweringStatus.OutOfMemory;
+        case MemoryStatus.Ok:
+    }
+
+    stack ImportedTemplateMirLoweringStatus loweringStatus =
+        LowerImportedTemplateScalarReturnToMir(
+            templateGraph,
+            functionTemplateRow,
+            expectedReturnType,
+            expectedReturnIsUnsigned,
+            expectedReturnFacts,
+            instructions,
+            blocks,
+            functions,
+            valueFacts,
+            functionReturnFacts,
+            loweredFunction);
+    if (!ImportedTemplateMirLoweringSucceeded(loweringStatus))
+    {
+        return loweringStatus;
+    }
+
+    if (functionEffectFacts.Add(effects) != loweredFunction.Index()
+        || functionTailFlags.Add(tailFlag) != loweredFunction.Index()
+        || functionCallingConventionFacts.Add(callingConvention)
+            != loweredFunction.Index())
+    {
+        return ImportedTemplateMirLoweringStatus.OutputFactMismatch;
+    }
+
+    return ImportedTemplateMirLoweringStatus.Ok;
+}
+
+internal fn MemoryStatus EmitImportedTemplateScalarSpecializationToLlvm(
+    borrow IrTable<MirInstruction> instructions,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> functions,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    borrow IrTable<FunctionEffectFacts> functionEffectFacts,
+    borrow IrTable<u32[0 max]> functionTailFlags,
+    borrow IrTable<FunctionCallingConventionFacts> functionCallingConventionFacts,
+    const ascii namePrefix,
+    MirFuncId function,
+    mut borrow OwnedAscii sink)
+{
+    if (!function.IsValid()
+        || !functions.Contains(function.Index())
+        || !functionReturnFacts.Contains(function.Index())
+        || !functionEffectFacts.Contains(function.Index())
+        || !functionTailFlags.Contains(function.Index())
+        || !functionCallingConventionFacts.Contains(function.Index()))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack MirFunction lowered = functions.Get(function.Index());
+    stack mut IrTable<FunctionCallContractFacts> noCallContractFacts = new();
+    stack mut IrTable<FunctionLinkageFacts> noLinkageFacts = new();
+    stack mut IrTable<ValueFacts> noParameterFacts = new();
+    stack mut IrTable<ParamAbiFacts> noParameterAbiFacts = new();
+    stack mut IrTable<DistinctStoragePair> noSeparateStorageFacts = new();
+    stack mut IrTable<ValueFacts> noGlobalFacts = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    try EmitLlvmNumberedFunctionWithRangeFactsCore(
+        instructions,
+        functionTailFlags,
+        functionEffectFacts,
+        noCallContractFacts,
+        noLinkageFacts,
+        functionCallingConventionFacts,
+        blocks,
+        namePrefix,
+        function.Index(),
+        FunctionIdIsTailCallable(functionTailFlags, function.Index()),
+        ValueFactsAtIndex(functionReturnFacts, function.Index()),
+        noParameterFacts,
+        noParameterAbiFacts,
+        noSeparateStorageFacts,
+        valueFacts,
+        noGlobalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        FunctionEffectFactsAt(functionEffectFacts, function.Index()),
+        0,
+        lowered.EntryIndex(),
+        lowered.FirstInstrIndex(),
+        lowered.OwnedInstrCount(),
+        sink);
+    try EmitLlvmRangeMetadataDefinitions(rangeMetadata, sink);
+    return MemoryStatus.Ok;
+}

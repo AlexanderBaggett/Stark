@@ -58,7 +58,16 @@ constant roots are evaluated for validation and conversion-row consumption but
 emit no runtime work. Bounded
 nested literal/unary/binary/comparison-chain/conditional/comptime/conversion
 arithmetic, comparisons, and boolean logic fold during import lowering to one
-MIR constant, avoiding a runtime operator tree. Conversions consume ordered
+MIR constant, avoiding a runtime operator tree. Integer folding includes
+checked arithmetic, bounded power, signed wrapping and saturating arithmetic,
+signed wrapping negation, bitwise operations, and checked shifts. Signed
+saturation clamps to the published ranged result type rather than only its
+storage width. Unsigned wrapping/saturation remains on compatibility fallback
+when the signed MIR fact carrier cannot represent the complete unsigned result;
+representable unsigned bitwise and shift results retain their unsigned return
+contract and exact range. Operator decoding and evaluation live in the focused
+`Compiler.Mir.ImportedTemplateScalarOperators` module so the direct lowerer
+does not accumulate another monolithic implementation. Conversions consume ordered
 published conversion side rows, require exact target scalar/range identity, and
 use Stage0-compatible two's-complement width normalization before rechecking the
 target's inclusive range. Conversion ordinals remain in source order across
@@ -66,7 +75,32 @@ all statement roots. The path consumes the canonical Stage0 schema
 (lowercase type kinds, `Name`-backed unary/binary operators, operator-row
 comparison chains, and inferred expression result types) rather than requiring
 normalized result annotations. The path
-preflights the entire per-template statement/expression shape, refuses overflow
+also consumes ordered immutable scalar local constants and later `name`
+references without materializing runtime storage. Each local statement must
+match one contiguous `const` declaration side row, its exact published type,
+`local` storage, and `immutable-binding` provenance. Initializers are evaluated
+before binding, duplicate or unresolved names fail closed, and grouped,
+mutable, storage-backed, or more-than-64-local bodies retain compatibility
+fallback. The focused `Compiler.Mir.ImportedTemplateScalarLocals` module keeps
+the environment in bounded stack arrays, caches one stable hash per declared
+name, and performs exact text comparison on hash matches with two reusable
+scratches; the terminal value still emits as one constant with singleton MIR
+and LLVM range facts.
+Independent scalar `var` declarations now use the same environment when their
+storage is `stack` or `register`, including declarations without an initializer.
+The environment carries a definite-initialization bit alongside exact type,
+signedness, mutability, and value facts. Name reads and compound updates require
+that bit; a mutable local's first ordinary `=` or separately published `init =`
+write establishes it. Direct-name assignments consume
+both the published statement name and separate target-expression tree, require
+a mutable target, and implement `=` plus every grammar-defined checked,
+wrapping, saturating, and bitwise compound assignment. Saturating updates clamp
+to the declared ranged local type; every update must fit that type before the
+environment changes. Heap/arena, grouped, indirect, or
+otherwise observable storage retains compatibility fallback. Consequently the
+entire scalar statement sequence can disappear into one terminal MIR constant
+instead of relying on later SROA or memory optimization.
+The direct lowerer preflights the entire per-template statement/expression shape, refuses overflow
 and any unconsumed call, ownership, layout, enum, or bound-operation
 family, requires the graph result type, signedness, and exact folded range to
 satisfy the specialized function return contract supplied by its caller, and
@@ -82,6 +116,18 @@ table, so LLVM definitions and downstream call sites receive that fact without
 rediscovering it from synthetic source. Unsupported bodies continue through the
 compatibility bridge; malformed graphs and fact-table misalignment do not
 silently fall back.
+
+`Compiler.Mir.ImportedTemplateSpecialization` now supplies the package-backed
+specialization boundary around that scalar lowerer. It resolves the exact
+qualified resolved name and overload key, joins the template's base qualified
+name to exactly one compiler function-effect row, and validates backend-mode
+agreement before any MIR table changes. The adapter carries purity and memory,
+progress, unwind, hot/cold, strict-FP, inline or opaque optimization mode,
+fast/tail calling convention, and no-recurse facts into the numbered LLVM
+definition alongside the exact return range. Missing, duplicate, or
+inconsistent package facts fail transactionally. Routing this adapter from the
+general package-import driver still depends on that driver owning concrete
+type/comptime substitution and imported-package selection.
 
 Historical note:
 

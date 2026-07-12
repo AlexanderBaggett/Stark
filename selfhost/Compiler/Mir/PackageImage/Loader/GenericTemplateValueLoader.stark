@@ -1,0 +1,3602 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
+import Compiler.Mir.PackageImage.Loader.GenericTemplateFactGraphBuilder
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Text
+module Compiler.Mir.PackageImage.Loader.GenericTemplateValueLoader
+
+// Generic-template call, bound-operation, object/enum, conversion, field,
+// local, and try-propagation JSON materialization.
+
+internal fn bool LogicalPackageImageJsonEffectiveGenericTemplatesNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] genericTemplatesNode,
+    out bool usesCompilerSections)
+{
+    genericTemplatesNode = 0;
+    usesCompilerSections = false;
+    stack mut u64[0 2 ** 63 - 1] directGenericTemplatesNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsGenericTemplatesNode = 0;
+    stack mut bool hasDirectGenericTemplates = false;
+    stack mut bool hasCompilerSections = false;
+    stack mut bool hasCompilerSectionsGenericTemplates = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "GenericTemplates", directGenericTemplatesNode, hasDirectGenericTemplates)
+        || !LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "CompilerSections", compilerSectionsNode, hasCompilerSections))
+    {
+        return false;
+    }
+
+    if (hasCompilerSections)
+    {
+        if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            compilerSectionsNode,
+            "GenericTemplates",
+            compilerSectionsGenericTemplatesNode,
+            hasCompilerSectionsGenericTemplates))
+        {
+            return false;
+        }
+    }
+
+    if (hasCompilerSectionsGenericTemplates)
+    {
+        genericTemplatesNode = compilerSectionsGenericTemplatesNode;
+        usesCompilerSections = true;
+        return true;
+    }
+
+    if (hasDirectGenericTemplates)
+    {
+        genericTemplatesNode = directGenericTemplatesNode;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageGenericTemplateFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageGenericTemplateFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageGenericTemplateFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageGenericTemplateFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRowAllowEmpty(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageGenericTemplateFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    bool allowEmpty,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) < 0
+        || (!allowEmpty && System.Text.AsciiLength(value) == 0))
+    {
+        return false;
+    }
+
+    if (!LogicalPackageGenericTemplateFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeReferenceNode,
+    u32[0 max] functionTemplateRow,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out u32[0 max] typeReferenceRow)
+{
+    typeReferenceRow = 0;
+    if (!graph.FunctionTemplateRows.Contains(functionTemplateRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageFunctionTemplateRow template =
+        graph.FunctionTemplateRows.Get(functionTemplateRow);
+    return LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+        document,
+        typeReferenceNode,
+        template.ModuleOrdinal(),
+        LogicalPackageTypedDeclarationKind.Function,
+        template.TemplateOrdinal(),
+        0,
+        0,
+        source,
+        payloadOrdinal,
+        graph.TypeReferences,
+        typeReferenceRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedTemplateExpressionMemberNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] memberNamesNode,
+    u32[0 max] memberNameCount,
+    u32[0 max] expressionRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberNameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(memberNamesNode, (u64[0 2 ** 63 - 1])index, memberNameNode)
+            || document.KindAt(memberNameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii memberName = document.TextAt(memberNameNode);
+        if (System.Text.AsciiLength(memberName) <= 0
+            || !LogicalPackageGenericTemplateFactGraphAddTextRow(
+                graph,
+                LogicalPackageGenericTemplateFactTextKind.ExpressionMemberName,
+                index,
+                memberName,
+                nameTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionMemberNameRow(
+                graph,
+                expressionRow,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedTemplateExpressionOperatorNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] operatorNamesNode,
+    u32[0 max] operatorNameCount,
+    u32[0 max] expressionRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < operatorNameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] operatorNameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(operatorNamesNode, (u64[0 2 ** 63 - 1])index, operatorNameNode)
+            || document.KindAt(operatorNameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii operatorName = document.TextAt(operatorNameNode);
+        if (System.Text.AsciiLength(operatorName) <= 0
+            || !LogicalPackageGenericTemplateFactGraphAddTextRow(
+                graph,
+                LogicalPackageGenericTemplateFactTextKind.ExpressionOperatorName,
+                index,
+                operatorName,
+                nameTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionOperatorNameRow(
+                graph,
+                expressionRow,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedTemplateExpressionTypeArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeArgumentsNode,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] expressionRow,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < typeArgumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeArgumentNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(
+                typeArgumentsNode,
+                (u64[0 2 ** 63 - 1])index,
+                typeArgumentNode)
+            || document.KindAt(typeArgumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeArgumentNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionTypeArgument,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionTypeArgumentRow(
+                graph,
+                expressionRow,
+                index,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypedTemplateExpressionComptimeValueArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] argumentsNode,
+    u32[0 max] argumentCount,
+    u32[0 max] expressionRow,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] integerValueTextRow = 0;
+        stack mut u32[0 max] symbolicSourceNameTextRow = 0;
+        stack mut bool hasSymbolicSourceName = false;
+        stack mut bool isSymbolic = false;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(argumentsNode, (u64[0 2 ** 63 - 1])index, argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "ParameterName",
+                LogicalPackageGenericTemplateFactTextKind.ExpressionComptimeValueArgumentParameterName,
+                index,
+                graph,
+                parameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "IntegerValue",
+                LogicalPackageGenericTemplateFactTextKind.ExpressionComptimeValueArgumentIntegerValue,
+                index,
+                graph,
+                integerValueTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "SymbolicSourceName",
+                LogicalPackageGenericTemplateFactTextKind.ExpressionComptimeValueArgumentSymbolicSourceName,
+                index,
+                graph,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, argumentNode, "IsSymbolic", isSymbolic)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, argumentNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionComptimeValueArgumentType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTypedTemplateExpressionComptimeValueArgumentRow(
+                graph,
+                expressionRow,
+                index,
+                parameterNameTextRow,
+                integerValueTextRow,
+                typeReferenceRow,
+                isSymbolic,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeDeferredFunctionInstantiationTypeArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeArgumentsNode,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] instantiationRow,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < typeArgumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeArgumentNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(
+                typeArgumentsNode,
+                (u64[0 2 ** 63 - 1])index,
+                typeArgumentNode)
+            || document.KindAt(typeArgumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeArgumentNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationTypeArgument,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddDeferredFunctionInstantiationTypeArgumentRow(
+                graph,
+                instantiationRow,
+                index,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeDeferredFunctionInstantiationComptimeValueArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] argumentsNode,
+    u32[0 max] argumentCount,
+    u32[0 max] instantiationRow,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] integerValueTextRow = 0;
+        stack mut u32[0 max] symbolicSourceNameTextRow = 0;
+        stack mut bool hasSymbolicSourceName = false;
+        stack mut bool isSymbolic = false;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(argumentsNode, (u64[0 2 ** 63 - 1])index, argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "ParameterName",
+                LogicalPackageGenericTemplateFactTextKind.DeferredFunctionInstantiationComptimeValueArgumentParameterName,
+                index,
+                graph,
+                parameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "IntegerValue",
+                LogicalPackageGenericTemplateFactTextKind.DeferredFunctionInstantiationComptimeValueArgumentIntegerValue,
+                index,
+                graph,
+                integerValueTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "SymbolicSourceName",
+                LogicalPackageGenericTemplateFactTextKind.DeferredFunctionInstantiationComptimeValueArgumentSymbolicSourceName,
+                index,
+                graph,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, argumentNode, "IsSymbolic", isSymbolic)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, argumentNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddDeferredFunctionInstantiationComptimeValueArgumentRow(
+                graph,
+                instantiationRow,
+                index,
+                parameterNameTextRow,
+                integerValueTextRow,
+                typeReferenceRow,
+                isSymbolic,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeDeferredFunctionInstantiationRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] instantiationsNode,
+    u32[0 max] instantiationCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < instantiationCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] instantiationNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeArgumentsNode = 0;
+        stack mut u32[0 max] typeArgumentCount = 0;
+        stack mut u64[0 2 ** 63 - 1] comptimeValueArgumentsNode = 0;
+        stack mut u32[0 max] comptimeValueArgumentCount = 0;
+        stack mut u32[0 max] calleeTemplateNameTextRow = 0;
+        stack mut u32[0 max] instantiationRow = 0;
+        if (!document.TryChildAt(
+                instantiationsNode,
+                (u64[0 2 ** 63 - 1])index,
+                instantiationNode)
+            || document.KindAt(instantiationNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                instantiationNode,
+                "CalleeTemplateName",
+                LogicalPackageGenericTemplateFactTextKind.DeferredFunctionInstantiationCalleeTemplateName,
+                index,
+                graph,
+                calleeTemplateNameTextRow)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                instantiationNode,
+                "TypeArguments",
+                typeArgumentsNode,
+                typeArgumentCount)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                instantiationNode,
+                "ComptimeValueArguments",
+                comptimeValueArgumentsNode,
+                comptimeValueArgumentCount)
+            || !LogicalPackageGenericTemplateFactGraphAddDeferredFunctionInstantiationRow(
+                graph,
+                functionTemplateRow,
+                index,
+                calleeTemplateNameTextRow,
+                typeArgumentCount,
+                comptimeValueArgumentCount,
+                instantiationRow)
+            || !LogicalPackageImageJsonMaterializeDeferredFunctionInstantiationTypeArgumentRows(
+                document,
+                typeArgumentsNode,
+                typeArgumentCount,
+                instantiationRow,
+                functionTemplateRow,
+                graph)
+            || !LogicalPackageImageJsonMaterializeDeferredFunctionInstantiationComptimeValueArgumentRows(
+                document,
+                comptimeValueArgumentsNode,
+                comptimeValueArgumentCount,
+                instantiationRow,
+                functionTemplateRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeDeferredTypeInstantiationRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] instantiationsNode,
+    u32[0 max] instantiationCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < instantiationCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] instantiationNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(
+                instantiationsNode,
+                (u64[0 2 ** 63 - 1])index,
+                instantiationNode)
+            || document.KindAt(instantiationNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredObjectMember(document, instantiationNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredTypeInstantiationType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddDeferredTypeInstantiationRow(
+                graph,
+                functionTemplateRow,
+                index,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn LogicalPackageTypedTypeReferenceSource LogicalPackageTemplateCallReturnTypeSource(
+    LogicalPackageTemplateCallParentKind parentKind)
+{
+    switch (parentKind)
+    {
+        case LogicalPackageTemplateCallParentKind.DirectCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallReturnType;
+        case LogicalPackageTemplateCallParentKind.MemberCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallReturnType;
+        case LogicalPackageTemplateCallParentKind.FunctionAddress:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressReturnType;
+        case LogicalPackageTemplateCallParentKind.BoundOperation:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReturnType;
+    }
+}
+
+internal fn LogicalPackageTypedTypeReferenceSource LogicalPackageTemplateCallParameterTypeSource(
+    LogicalPackageTemplateCallParentKind parentKind)
+{
+    switch (parentKind)
+    {
+        case LogicalPackageTemplateCallParentKind.DirectCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallParameterType;
+        case LogicalPackageTemplateCallParentKind.MemberCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallParameterType;
+        case LogicalPackageTemplateCallParentKind.FunctionAddress:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressParameterType;
+        case LogicalPackageTemplateCallParentKind.BoundOperation:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationParameterType;
+    }
+}
+
+internal fn LogicalPackageTypedTypeReferenceSource LogicalPackageTemplateCallTypeArgumentSource(
+    LogicalPackageTemplateCallParentKind parentKind)
+{
+    switch (parentKind)
+    {
+        case LogicalPackageTemplateCallParentKind.DirectCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallTypeArgument;
+        case LogicalPackageTemplateCallParentKind.MemberCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallTypeArgument;
+        case LogicalPackageTemplateCallParentKind.FunctionAddress:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTypeArgument;
+        case LogicalPackageTemplateCallParentKind.BoundOperation:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTypeArgument;
+    }
+}
+
+internal fn LogicalPackageTypedTypeReferenceSource LogicalPackageTemplateCallComptimeValueArgumentTypeSource(
+    LogicalPackageTemplateCallParentKind parentKind)
+{
+    switch (parentKind)
+    {
+        case LogicalPackageTemplateCallParentKind.DirectCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallComptimeValueArgumentType;
+        case LogicalPackageTemplateCallParentKind.MemberCall:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallComptimeValueArgumentType;
+        case LogicalPackageTemplateCallParentKind.FunctionAddress:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressComptimeValueArgumentType;
+        case LogicalPackageTemplateCallParentKind.BoundOperation:
+            return LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationComptimeValueArgumentType;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallParameterRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parametersNode,
+    u32[0 max] parameterCount,
+    u32[0 max] callSignatureRow,
+    u32[0 max] functionTemplateRow,
+    LogicalPackageTemplateCallParentKind parentKind,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut u32[0 max] rawPointerElementCountExpressionTextRow = 0;
+        stack mut bool isDisjoint = false;
+        stack mut bool isConst = false;
+        stack mut bool hasRawPointerElementCountExpression = false;
+        if (!document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                parameterNode,
+                "Name",
+                LogicalPackageGenericTemplateFactTextKind.CallParameterName,
+                index,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTemplateCallParameterTypeSource(parentKind),
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsDisjoint", isDisjoint)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                parameterNode,
+                "RawPointerElementCountExpression",
+                LogicalPackageGenericTemplateFactTextKind.CallParameterRawPointerElementCountExpression,
+                index,
+                graph,
+                hasRawPointerElementCountExpression,
+                rawPointerElementCountExpressionTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterRow(
+                graph,
+                callSignatureRow,
+                index,
+                nameTextRow,
+                typeReferenceRow,
+                isDisjoint,
+                isConst,
+                hasRawPointerElementCountExpression,
+                rawPointerElementCountExpressionTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallTypeArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeArgumentsNode,
+    u32[0 max] typeArgumentCount,
+    u32[0 max] callSignatureRow,
+    u32[0 max] functionTemplateRow,
+    LogicalPackageTemplateCallParentKind parentKind,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < typeArgumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(typeArgumentsNode, (u64[0 2 ** 63 - 1])index, typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTemplateCallTypeArgumentSource(parentKind),
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallTypeArgumentRow(
+                graph,
+                callSignatureRow,
+                index,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallComptimeValueArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] argumentsNode,
+    u32[0 max] argumentCount,
+    u32[0 max] callSignatureRow,
+    u32[0 max] functionTemplateRow,
+    LogicalPackageTemplateCallParentKind parentKind,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] integerValueTextRow = 0;
+        stack mut u32[0 max] symbolicSourceNameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut bool isSymbolic = false;
+        stack mut bool hasSymbolicSourceName = false;
+        if (!document.TryChildAt(argumentsNode, (u64[0 2 ** 63 - 1])index, argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "ParameterName",
+                LogicalPackageGenericTemplateFactTextKind.CallComptimeValueArgumentParameterName,
+                index,
+                graph,
+                parameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "IntegerValue",
+                LogicalPackageGenericTemplateFactTextKind.CallComptimeValueArgumentIntegerValue,
+                index,
+                graph,
+                integerValueTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                argumentNode,
+                "SymbolicSourceName",
+                LogicalPackageGenericTemplateFactTextKind.CallComptimeValueArgumentSymbolicSourceName,
+                index,
+                graph,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, argumentNode, "IsSymbolic", isSymbolic)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, argumentNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTemplateCallComptimeValueArgumentTypeSource(parentKind),
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallComptimeValueArgumentRow(
+                graph,
+                callSignatureRow,
+                index,
+                parameterNameTextRow,
+                integerValueTextRow,
+                typeReferenceRow,
+                isSymbolic,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallParameterGroupNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupNode,
+    u32[0 max] groupRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out u32[0 max] nameCount)
+{
+    nameCount = 0;
+    stack mut u64[0 2 ** 63 - 1] namesNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, groupNode, "ParameterNames", namesNode, nameCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < nameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(namesNode, (u64[0 2 ** 63 - 1])index, nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii name = document.TextAt(nameNode);
+        if (System.Text.AsciiLength(name) <= 0
+            || !LogicalPackageGenericTemplateFactGraphAddTextRow(
+                graph,
+                LogicalPackageGenericTemplateFactTextKind.CallParameterGroupParameterName,
+                index,
+                name,
+                nameTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterGroupNameRow(
+                graph,
+                groupRow,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallParameterGroupRegionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupNode,
+    u32[0 max] groupRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out u32[0 max] regionCount)
+{
+    regionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] regionsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, groupNode, "Regions", regionsNode, regionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < regionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] regionNode = 0;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] startExpressionTextRow = 0;
+        stack mut u32[0 max] countExpressionTextRow = 0;
+        stack mut bool hasStartExpression = false;
+        stack mut bool hasCountExpression = false;
+        if (!document.TryChildAt(regionsNode, (u64[0 2 ** 63 - 1])index, regionNode)
+            || document.KindAt(regionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                regionNode,
+                "ParameterName",
+                LogicalPackageGenericTemplateFactTextKind.CallParameterGroupRegionParameterName,
+                index,
+                graph,
+                parameterNameTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                regionNode,
+                "StartExpression",
+                LogicalPackageGenericTemplateFactTextKind.CallParameterGroupRegionStartExpression,
+                index,
+                graph,
+                hasStartExpression,
+                startExpressionTextRow)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                regionNode,
+                "CountExpression",
+                LogicalPackageGenericTemplateFactTextKind.CallParameterGroupRegionCountExpression,
+                index,
+                graph,
+                hasCountExpression,
+                countExpressionTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterGroupRegionRow(
+                graph,
+                groupRow,
+                index,
+                parameterNameTextRow,
+                hasStartExpression,
+                startExpressionTextRow,
+                hasCountExpression,
+                countExpressionTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallParameterGroupRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupsNode,
+    u32[0 max] groupCount,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] callSignatureRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < groupCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] groupNode = 0;
+        stack mut u64[0 2 ** 63 - 1] namesNode = 0;
+        stack mut u64[0 2 ** 63 - 1] regionsNode = 0;
+        stack mut u32[0 max] groupRow = 0;
+        stack mut u32[0 max] nameCount = 0;
+        stack mut u32[0 max] regionCount = 0;
+        if (!document.TryChildAt(groupsNode, (u64[0 2 ** 63 - 1])index, groupNode)
+            || document.KindAt(groupNode) != JsonKind.Object
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                groupNode,
+                "ParameterNames",
+                namesNode,
+                nameCount)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                groupNode,
+                "Regions",
+                regionsNode,
+                regionCount)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallParameterGroupRow(
+                graph,
+                callSignatureRow,
+                groupKind,
+                index,
+                nameCount,
+                regionCount,
+                groupRow))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageJsonMaterializeTemplateCallParameterGroupNameRows(
+                document,
+                groupNode,
+                groupRow,
+                graph,
+                nameCount)
+            || !LogicalPackageImageJsonMaterializeTemplateCallParameterGroupRegionRows(
+                document,
+                groupNode,
+                groupRow,
+                graph,
+                regionCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallDeadOnReturnParameterNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] namesNode,
+    u32[0 max] nameCount,
+    u32[0 max] callSignatureRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < nameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        if (!document.TryChildAt(namesNode, (u64[0 2 ** 63 - 1])index, nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii name = document.TextAt(nameNode);
+        if (System.Text.AsciiLength(name) <= 0
+            || !LogicalPackageGenericTemplateFactGraphAddTextRow(
+                graph,
+                LogicalPackageGenericTemplateFactTextKind.CallPointeeDeadOnReturnParameterName,
+                index,
+                name,
+                nameTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateCallDeadOnReturnParameterNameRow(
+                graph,
+                callSignatureRow,
+                index,
+                nameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallSignatureRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callNode,
+    LogicalPackageTemplateCallParentKind parentKind,
+    u32[0 max] parentOrdinal,
+    u32[0 max] functionTemplateRow,
+    bool requirePublishedOrdinal,
+    bool requireTargetType,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph,
+    out u32[0 max] callSignatureRow)
+{
+    callSignatureRow = 0;
+    stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u64[0 2 ** 63 - 1] typeArgumentsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] comptimeValueArgumentsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] disjointGroupsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] overlapGroupsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] sameGroupsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] deadOnReturnNamesNode = 0;
+    stack mut bool hasPublishedOrdinal = false;
+    stack mut u32[0 max] publishedOrdinal = 0;
+    stack mut u32[0 max] qualifiedResolvedNameTextRow = 0;
+    stack mut u32[0 max] qualifiedSourceNameTextRow = 0;
+    stack mut u32[0 max] qualifiedTemplateNameTextRow = 0;
+    stack mut u32[0 max] returnTypeReferenceRow = 0;
+    stack mut u32[0 max] targetTypeReferenceRow = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeValueArgumentCount = 0;
+    stack mut u32[0 max] disjointGroupCount = 0;
+    stack mut u32[0 max] overlapGroupCount = 0;
+    stack mut u32[0 max] sameGroupCount = 0;
+    stack mut u32[0 max] deadOnReturnNameCount = 0;
+    stack mut u32[0 max] addedCallSignatureRow = 0;
+    stack mut bool hasQualifiedSourceName = false;
+    stack mut bool hasQualifiedTemplateName = false;
+    if (requirePublishedOrdinal)
+    {
+        if (!LogicalPackageImageJsonRequiredU32MemberValue(document, callNode, "Ordinal", publishedOrdinal))
+        {
+            return false;
+        }
+
+        hasPublishedOrdinal = true;
+    }
+    else if (!LogicalPackageImageJsonOptionalU32MemberValue(
+        document,
+        callNode,
+        "Ordinal",
+        hasPublishedOrdinal,
+        publishedOrdinal))
+    {
+        return false;
+    }
+
+    if (!LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+            document,
+            callNode,
+            "QualifiedResolvedName",
+            LogicalPackageGenericTemplateFactTextKind.CallQualifiedResolvedName,
+            parentOrdinal,
+            graph,
+            qualifiedResolvedNameTextRow)
+        || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+            document,
+            callNode,
+            "QualifiedSourceName",
+            LogicalPackageGenericTemplateFactTextKind.CallQualifiedSourceName,
+            parentOrdinal,
+            graph,
+            hasQualifiedSourceName,
+            qualifiedSourceNameTextRow)
+        || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+            document,
+            callNode,
+            "QualifiedTemplateName",
+            LogicalPackageGenericTemplateFactTextKind.CallQualifiedTemplateName,
+            parentOrdinal,
+            graph,
+            hasQualifiedTemplateName,
+            qualifiedTemplateNameTextRow)
+        || !LogicalPackageImageJsonRequiredObjectMember(document, callNode, "ReturnType", returnTypeNode)
+        || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+            document,
+            returnTypeNode,
+            functionTemplateRow,
+            LogicalPackageTemplateCallReturnTypeSource(parentKind),
+            parentOrdinal,
+            graph,
+            returnTypeReferenceRow)
+        || !LogicalPackageImageJsonRequiredArrayMember(
+            document,
+            callNode,
+            "Parameters",
+            parametersNode,
+            parameterCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            callNode,
+            "TypeArguments",
+            typeArgumentsNode,
+            typeArgumentCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            callNode,
+            "ComptimeValueArguments",
+            comptimeValueArgumentsNode,
+            comptimeValueArgumentCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            callNode,
+            "DisjointParameterGroups",
+            disjointGroupsNode,
+            disjointGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            callNode,
+            "OverlapParameterGroups",
+            overlapGroupsNode,
+            overlapGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            callNode,
+            "SameParameterGroups",
+            sameGroupsNode,
+            sameGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            callNode,
+            "PointeeDeadOnReturnParameterNames",
+            deadOnReturnNamesNode,
+            deadOnReturnNameCount))
+    {
+        return false;
+    }
+
+    if (requireTargetType)
+    {
+        if (!LogicalPackageImageJsonRequiredObjectMember(document, callNode, "TargetType", targetTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                targetTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTargetType,
+                parentOrdinal,
+                graph,
+                targetTypeReferenceRow))
+        {
+            return false;
+        }
+    }
+
+    if (!LogicalPackageGenericTemplateFactGraphAddTemplateCallSignatureRow(
+            graph,
+            parentKind,
+            functionTemplateRow,
+            parentOrdinal,
+            hasPublishedOrdinal,
+            publishedOrdinal,
+            qualifiedResolvedNameTextRow,
+            returnTypeReferenceRow,
+            hasQualifiedSourceName,
+            qualifiedSourceNameTextRow,
+            hasQualifiedTemplateName,
+            qualifiedTemplateNameTextRow,
+            requireTargetType,
+            targetTypeReferenceRow,
+            parameterCount,
+            typeArgumentCount,
+            comptimeValueArgumentCount,
+            disjointGroupCount,
+            overlapGroupCount,
+            sameGroupCount,
+            deadOnReturnNameCount,
+            addedCallSignatureRow)
+        || !LogicalPackageImageJsonMaterializeTemplateCallParameterRows(
+            document,
+            parametersNode,
+            parameterCount,
+            addedCallSignatureRow,
+            functionTemplateRow,
+            parentKind,
+            graph)
+        || !LogicalPackageImageJsonMaterializeTemplateCallTypeArgumentRows(
+            document,
+            typeArgumentsNode,
+            typeArgumentCount,
+            addedCallSignatureRow,
+            functionTemplateRow,
+            parentKind,
+            graph)
+        || !LogicalPackageImageJsonMaterializeTemplateCallComptimeValueArgumentRows(
+            document,
+            comptimeValueArgumentsNode,
+            comptimeValueArgumentCount,
+            addedCallSignatureRow,
+            functionTemplateRow,
+            parentKind,
+            graph)
+        || !LogicalPackageImageJsonMaterializeTemplateCallParameterGroupRows(
+            document,
+            disjointGroupsNode,
+            disjointGroupCount,
+            LogicalPackageTypeReferenceParameterGroupKind.Disjoint,
+            addedCallSignatureRow,
+            graph)
+        || !LogicalPackageImageJsonMaterializeTemplateCallParameterGroupRows(
+            document,
+            overlapGroupsNode,
+            overlapGroupCount,
+            LogicalPackageTypeReferenceParameterGroupKind.Overlap,
+            addedCallSignatureRow,
+            graph)
+        || !LogicalPackageImageJsonMaterializeTemplateCallParameterGroupRows(
+            document,
+            sameGroupsNode,
+            sameGroupCount,
+            LogicalPackageTypeReferenceParameterGroupKind.Same,
+            addedCallSignatureRow,
+            graph)
+        || !LogicalPackageImageJsonMaterializeTemplateCallDeadOnReturnParameterNameRows(
+            document,
+            deadOnReturnNamesNode,
+            deadOnReturnNameCount,
+            addedCallSignatureRow,
+            graph))
+    {
+        return false;
+    }
+
+    callSignatureRow = addedCallSignatureRow;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateCallSignatureRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callsNode,
+    u32[0 max] callCount,
+    LogicalPackageTemplateCallParentKind parentKind,
+    u32[0 max] functionTemplateRow,
+    bool requireTargetType,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < callCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] callNode = 0;
+        stack mut u32[0 max] callSignatureRow = 0;
+        if (!document.TryChildAt(callsNode, (u64[0 2 ** 63 - 1])index, callNode)
+            || document.KindAt(callNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTemplateCallSignatureRow(
+                document,
+                callNode,
+                parentKind,
+                index,
+                functionTemplateRow,
+                true,
+                requireTargetType,
+                graph,
+                callSignatureRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationCallArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] argumentsNode,
+    u32[0 max] argumentCount,
+    u32[0 max] boundOperationRow,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        stack mut u64[0 2 ** 63 - 1] parameterTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] argumentTypeNode = 0;
+        stack mut u32[0 max] parameterIndex = 0;
+        stack mut u32[0 max] sourceArgumentIndex = 0;
+        stack mut u32[0 max] parameterTypeReferenceRow = 0;
+        stack mut u32[0 max] argumentTypeReferenceRow = 0;
+        stack mut bool isReceiver = false;
+        stack mut bool requiresAddressable = false;
+        stack mut bool requiresMutable = false;
+        stack mut bool requiresConstProvenance = false;
+        stack mut bool argumentIsAddressable = false;
+        stack mut bool argumentIsMutable = false;
+        stack mut bool argumentHasConstProvenance = false;
+        if (!document.TryChildAt(argumentsNode, (u64[0 2 ** 63 - 1])index, argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                argumentNode,
+                "ParameterIndex",
+                parameterIndex)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                argumentNode,
+                "SourceArgumentIndex",
+                sourceArgumentIndex)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                argumentNode,
+                "ParameterType",
+                parameterTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                parameterTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentParameterType,
+                index,
+                graph,
+                parameterTypeReferenceRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                argumentNode,
+                "ArgumentType",
+                argumentTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                argumentTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentArgumentType,
+                index,
+                graph,
+                argumentTypeReferenceRow)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(document, argumentNode, "IsReceiver", isReceiver)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                argumentNode,
+                "RequiresAddressable",
+                requiresAddressable)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                argumentNode,
+                "RequiresMutable",
+                requiresMutable)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                argumentNode,
+                "RequiresConstProvenance",
+                requiresConstProvenance)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                argumentNode,
+                "ArgumentIsAddressable",
+                argumentIsAddressable)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                argumentNode,
+                "ArgumentIsMutable",
+                argumentIsMutable)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                argumentNode,
+                "ArgumentHasConstProvenance",
+                argumentHasConstProvenance)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationCallArgumentRow(
+                graph,
+                boundOperationRow,
+                index,
+                parameterIndex,
+                sourceArgumentIndex,
+                parameterTypeReferenceRow,
+                argumentTypeReferenceRow,
+                isReceiver,
+                requiresAddressable,
+                requiresMutable,
+                requiresConstProvenance,
+                argumentIsAddressable,
+                argumentIsMutable,
+                argumentHasConstProvenance))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationTypePayloadKind payloadKind,
+    LogicalPackageTypedTypeReferenceSource typeSource,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    stack mut u32[0 max] typeReferenceRow = 0;
+    return LogicalPackageImageJsonRequiredObjectMember(document, objectNode, memberName, typeNode)
+        && LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+            document,
+            typeNode,
+            functionTemplateRow,
+            typeSource,
+            payloadOrdinal,
+            graph,
+            typeReferenceRow)
+        && LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationTypePayloadRow(
+            graph,
+            boundOperationRow,
+            payloadKind,
+            payloadOrdinal,
+            typeReferenceRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] boundOperationRow,
+    LogicalPackageGenericTemplateFactTextKind textKind,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] textRow = 0;
+    return LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+            document,
+            objectNode,
+            memberName,
+            textKind,
+            payloadOrdinal,
+            graph,
+            textRow)
+        && LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationTextPayloadRow(
+            graph,
+            boundOperationRow,
+            payloadOrdinal,
+            textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationTextPayload(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] boundOperationRow,
+    LogicalPackageGenericTemplateFactTextKind textKind,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut bool present = false;
+    stack mut u32[0 max] textRow = 0;
+    if (!LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+            document,
+            objectNode,
+            memberName,
+            textKind,
+            payloadOrdinal,
+            graph,
+            present,
+            textRow))
+    {
+        return false;
+    }
+
+    if (!present)
+    {
+        return true;
+    }
+
+    return LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationTextPayloadRow(
+        graph,
+        boundOperationRow,
+        payloadOrdinal,
+        textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationU32PayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] value = 0;
+    return LogicalPackageImageJsonRequiredU32MemberValue(document, objectNode, memberName, value)
+        && LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationU32PayloadRow(
+            graph,
+            boundOperationRow,
+            payloadKind,
+            payloadOrdinal,
+            value);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationU32Payload(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationU32PayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut bool present = false;
+    stack mut u32[0 max] value = 0;
+    if (!LogicalPackageImageJsonOptionalU32MemberValue(document, objectNode, memberName, present, value))
+    {
+        return false;
+    }
+
+    if (!present)
+    {
+        return true;
+    }
+
+    return LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationU32PayloadRow(
+        graph,
+        boundOperationRow,
+        payloadKind,
+        payloadOrdinal,
+        value);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationBoolPayload(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationBoolPayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut bool value = false;
+    return LogicalPackageImageJsonRequiredBoolMemberValue(document, objectNode, memberName, value)
+        && LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationBoolPayloadRow(
+            graph,
+            boundOperationRow,
+            payloadKind,
+            payloadOrdinal,
+            value);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationBoolPayload(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    u32[0 max] boundOperationRow,
+    LogicalPackageTemplateBoundOperationBoolPayloadKind payloadKind,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut bool present = false;
+    stack mut bool value = false;
+    if (!LogicalPackageImageJsonOptionalBoolMemberPresenceValueWithDefault(
+            document,
+            objectNode,
+            memberName,
+            false,
+            present,
+            value))
+    {
+        return false;
+    }
+
+    if (!present)
+    {
+        return true;
+    }
+
+    return LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationBoolPayloadRow(
+        graph,
+        boundOperationRow,
+        payloadKind,
+        payloadOrdinal,
+        value);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationReceiverFlagPayloadRows(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] operationNode,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    return LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationBoolPayload(
+            document,
+            operationNode,
+            "ReceiverIsAddressable",
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationBoolPayloadKind.ReceiverIsAddressable,
+            0,
+            graph)
+        && LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationBoolPayload(
+            document,
+            operationNode,
+            "ReceiverIsMutable",
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationBoolPayloadKind.ReceiverIsMutable,
+            0,
+            graph);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationConstructorParameterPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parametersNode,
+    u32[0 max] parameterCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < parameterCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut bool isDisjoint = false;
+        stack mut bool isConst = false;
+        if (!document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])index, parameterNode)
+            || document.KindAt(parameterNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                parameterNode,
+                "Name",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationConstructorParameterName,
+                index,
+                graph)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationConstructorParameterType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationTypePayloadRow(
+                graph,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.ConstructorParameter,
+                index,
+                typeReferenceRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(
+                document,
+                parameterNode,
+                "IsDisjoint",
+                isDisjoint)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationBoolPayloadRow(
+                graph,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationBoolPayloadKind.ConstructorParameterIsDisjoint,
+                index,
+                isDisjoint)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationBoolPayloadRow(
+                graph,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationBoolPayloadKind.ConstructorParameterIsConst,
+                index,
+                isConst)
+            || !LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationTextPayload(
+                document,
+                parameterNode,
+                "RawPointerElementCountExpression",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationConstructorParameterRawPointerElementCountExpression,
+                index,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationObjectInitializerMemberPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] membersNode,
+    u32[0 max] memberCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        if (!document.TryChildAt(membersNode, (u64[0 2 ** 63 - 1])index, memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                memberNode,
+                "FieldName",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationObjectInitializerMemberFieldName,
+                index,
+                graph)
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                memberNode,
+                "FieldIndex",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.ObjectInitializerMemberFieldIndex,
+                index,
+                graph)
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                memberNode,
+                "FieldType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.ObjectInitializerMemberField,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationObjectInitializerMemberFieldType,
+                index,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationEnumMemberPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] membersNode,
+    u32[0 max] memberCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        if (!document.TryChildAt(membersNode, (u64[0 2 ** 63 - 1])index, memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                memberNode,
+                "FieldName",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationEnumMemberFieldName,
+                index,
+                graph)
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                memberNode,
+                "FieldIndex",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.EnumMemberFieldIndex,
+                index,
+                graph)
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                memberNode,
+                "FieldType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.EnumMemberField,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumMemberFieldType,
+                index,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationObjectPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] operationNode,
+    ascii kindText,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    if (kindText != "object-creation")
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] constructorNode = 0;
+    stack mut u64[0 2 ** 63 - 1] constructorParametersNode = 0;
+    stack mut u64[0 2 ** 63 - 1] initializerMembersNode = 0;
+    stack mut bool hasConstructor = false;
+    stack mut u32[0 max] constructorParameterCount = 0;
+    stack mut u32[0 max] initializerMemberCount = 0;
+    stack bool hasInitializerMembers =
+        LogicalPackageImageJsonMemberHasValue(document, operationNode, "InitializerMembers");
+    if (!LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+            document,
+            operationNode,
+            "CreatedType",
+            functionTemplateRow,
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationTypePayloadKind.Created,
+            LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCreatedType,
+            0,
+            graph)
+        || !LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationTextPayload(
+            document,
+            operationNode,
+            "ExpressionText",
+            boundOperationRow,
+            LogicalPackageGenericTemplateFactTextKind.BoundOperationExpressionText,
+            0,
+            graph)
+        || !LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            operationNode,
+            "Constructor",
+            constructorNode,
+            hasConstructor)
+        || !LogicalPackageImageJsonOptionalArrayMember(
+            document,
+            operationNode,
+            "InitializerMembers",
+            initializerMembersNode,
+            initializerMemberCount)
+        || !LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationU32Payload(
+            document,
+            operationNode,
+            "StorageSelector",
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationU32PayloadKind.StorageSelector,
+            0,
+            graph))
+    {
+        return false;
+    }
+
+    if (hasConstructor)
+    {
+        if (!LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                constructorNode,
+                "TypeName",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationConstructorTypeName,
+                0,
+                graph)
+            || !LogicalPackageImageJsonRequiredArrayMember(
+                document,
+                constructorNode,
+                "Parameters",
+                constructorParametersNode,
+                constructorParameterCount)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationU32PayloadRow(
+                graph,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.ConstructorParameterCount,
+                0,
+                constructorParameterCount)
+            || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationBoolPayload(
+                document,
+                constructorNode,
+                "IsPrimaryShape",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationBoolPayloadKind.ConstructorIsPrimaryShape,
+                0,
+                graph)
+            || !LogicalPackageImageJsonMaterializeTemplateBoundOperationConstructorParameterPayloadRows(
+                document,
+                constructorParametersNode,
+                constructorParameterCount,
+                functionTemplateRow,
+                boundOperationRow,
+                graph))
+        {
+            return false;
+        }
+    }
+
+    if (hasInitializerMembers
+        && !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationU32PayloadRow(
+            graph,
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationU32PayloadKind.InitializerMemberCount,
+            0,
+            initializerMemberCount))
+    {
+        return false;
+    }
+
+    return LogicalPackageImageJsonMaterializeTemplateBoundOperationObjectInitializerMemberPayloadRows(
+        document,
+        initializerMembersNode,
+        initializerMemberCount,
+        functionTemplateRow,
+        boundOperationRow,
+        graph);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationEnumPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] operationNode,
+    ascii kindText,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    if (kindText != "enum-construction" && kindText != "enum-call" && kindText != "enum-value")
+    {
+        return true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] membersNode = 0;
+    stack mut u32[0 max] memberCount = 0;
+    stack bool hasEnumMembers = LogicalPackageImageJsonMemberHasValue(document, operationNode, "EnumMembers");
+    if (!LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+            document,
+            operationNode,
+            "EnumType",
+            functionTemplateRow,
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationTypePayloadKind.Enum,
+            LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumType,
+            0,
+            graph)
+        || !LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+            document,
+            operationNode,
+            "VariantName",
+            boundOperationRow,
+            LogicalPackageGenericTemplateFactTextKind.BoundOperationEnumVariantName,
+            0,
+            graph))
+    {
+        return false;
+    }
+
+    if (kindText != "enum-construction")
+    {
+        return true;
+    }
+
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, operationNode, "EnumMembers", membersNode, memberCount))
+    {
+        return false;
+    }
+
+    if (hasEnumMembers
+        && !LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationU32PayloadRow(
+            graph,
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationU32PayloadKind.EnumMemberCount,
+            0,
+            memberCount))
+    {
+        return false;
+    }
+
+    return LogicalPackageImageJsonMaterializeTemplateBoundOperationEnumMemberPayloadRows(
+        document,
+        membersNode,
+        memberCount,
+        functionTemplateRow,
+        boundOperationRow,
+        graph);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationPayloadRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] operationNode,
+    ascii kindText,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] boundOperationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    if (kindText == "direct-call")
+    {
+        return true;
+    }
+
+    if (kindText == "member-call")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "ReceiverType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Receiver,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReceiverType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeTemplateBoundOperationReceiverFlagPayloadRows(
+                document,
+                operationNode,
+                boundOperationRow,
+                graph);
+    }
+
+    if (kindText == "function-pointer-call")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+            document,
+            operationNode,
+            "FunctionPointerType",
+            functionTemplateRow,
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationTypePayloadKind.FunctionPointer,
+            LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationFunctionPointerType,
+            0,
+            graph);
+    }
+
+    if (kindText == "closure-call")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+            document,
+            operationNode,
+            "ClosureType",
+            functionTemplateRow,
+            boundOperationRow,
+            LogicalPackageTemplateBoundOperationTypePayloadKind.Closure,
+            LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationClosureType,
+            0,
+            graph);
+    }
+
+    if (kindText == "index-access" || kindText == "slice-access")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "AccessKind",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationAccessKind,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "SourceKind",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationSourceKind,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "SourceType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Source,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSourceType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "IndexCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.IndexCount,
+                0,
+                graph);
+    }
+
+    if (kindText == "dynamic-storage-operation")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "OperationName",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationOperationName,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "ReceiverType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Receiver,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReceiverType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "ArgumentCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.ArgumentCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeTemplateBoundOperationReceiverFlagPayloadRows(
+                document,
+                operationNode,
+                boundOperationRow,
+                graph);
+    }
+
+    if (kindText == "dyn-trait-from-parts")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "OperationName",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationOperationName,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "TargetType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Target,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTargetType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "SourceType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Source,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSourceType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "ReceiverType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Receiver,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReceiverType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeOptionalTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "ArgumentCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.ArgumentCount,
+                0,
+                graph);
+    }
+
+    if (kindText == "object-creation")
+    {
+        return LogicalPackageImageJsonMaterializeTemplateBoundOperationObjectPayloadRows(
+            document,
+            operationNode,
+            kindText,
+            functionTemplateRow,
+            boundOperationRow,
+            graph);
+    }
+
+    if (kindText == "enum-construction" || kindText == "enum-call" || kindText == "enum-value")
+    {
+        return LogicalPackageImageJsonMaterializeTemplateBoundOperationEnumPayloadRows(
+            document,
+            operationNode,
+            kindText,
+            functionTemplateRow,
+            boundOperationRow,
+            graph);
+    }
+
+    if (kindText == "text-interpolation")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "SegmentCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.SegmentCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "HoleCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.HoleCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationBoolPayload(
+                document,
+                operationNode,
+                "UsesFixedStorage",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationBoolPayloadKind.UsesFixedStorage,
+                0,
+                graph);
+    }
+
+    if (kindText == "text-build")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "BuildKind",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationTextBuildKind,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "OperandCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.OperandCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationBoolPayload(
+                document,
+                operationNode,
+                "UsesFixedStorage",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationBoolPayloadKind.UsesFixedStorage,
+                0,
+                graph);
+    }
+
+    if (kindText == "layout-query")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "QueryKind",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationLayoutQueryKind,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "TargetType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.LayoutQueryTarget,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationLayoutQueryTargetType,
+                0,
+                graph);
+    }
+
+    if (kindText == "switch-dispatch")
+    {
+        return LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTextPayload(
+                document,
+                operationNode,
+                "SwitchFamily",
+                boundOperationRow,
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationSwitchFamily,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationTypePayload(
+                document,
+                operationNode,
+                "SwitchType",
+                functionTemplateRow,
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationTypePayloadKind.Switch,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSwitchType,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "SectionCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.SectionCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "LabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.LabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "ExplicitDefaultLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.ExplicitDefaultLabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "LoweredDefaultLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.LoweredDefaultLabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "LiteralLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.LiteralLabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "MatchAllLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.MatchAllLabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "CaptureLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.CaptureLabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "StructuredPatternLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.StructuredPatternLabelCount,
+                0,
+                graph)
+            && LogicalPackageImageJsonMaterializeRequiredTemplateBoundOperationU32Payload(
+                document,
+                operationNode,
+                "GuardedLabelCount",
+                boundOperationRow,
+                LogicalPackageTemplateBoundOperationU32PayloadKind.GuardedLabelCount,
+                0,
+                graph);
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateBoundOperationRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] operationsNode,
+    u32[0 max] operationCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < operationCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] operationNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u64[0 2 ** 63 - 1] resultTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] callArgumentsNode = 0;
+        stack mut u64[0 2 ** 63 - 1] qualifiedResolvedNameNode = 0;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] line = 0;
+        stack mut u32[0 max] column = 0;
+        stack mut u32[0 max] resultTypeReferenceRow = 0;
+        stack mut bool hasPublishedOrdinal = false;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut bool hasEnclosingFunctionName = false;
+        stack mut u32[0 max] enclosingFunctionNameTextRow = 0;
+        stack mut u32[0 max] callArgumentCount = 0;
+        stack mut u32[0 max] boundOperationRow = 0;
+        stack mut bool hasCallSignature = false;
+        stack mut u32[0 max] callSignatureRow = 0;
+        if (!document.TryChildAt(operationsNode, (u64[0 2 ** 63 - 1])index, operationNode)
+            || document.KindAt(operationNode) != JsonKind.Object
+            || !document.TryFindMember(operationNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                operationNode,
+                "Kind",
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationKind,
+                index,
+                graph,
+                kindTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, operationNode, "Line", line)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, operationNode, "Column", column)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, operationNode, "ResultType", resultTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                resultTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationResultType,
+                index,
+                graph,
+                resultTypeReferenceRow)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                operationNode,
+                "Ordinal",
+                hasPublishedOrdinal,
+                publishedOrdinal)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                operationNode,
+                "EnclosingFunctionName",
+                LogicalPackageGenericTemplateFactTextKind.BoundOperationEnclosingFunctionName,
+                index,
+                graph,
+                hasEnclosingFunctionName,
+                enclosingFunctionNameTextRow)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                operationNode,
+                "CallArguments",
+                callArgumentsNode,
+                callArgumentCount))
+        {
+            return false;
+        }
+
+        stack ascii kindText = document.TextAt(kindNode);
+        if (document.TryFindMember(operationNode, "QualifiedResolvedName", qualifiedResolvedNameNode)
+            && document.KindAt(qualifiedResolvedNameNode) != JsonKind.Null)
+        {
+            if (document.KindAt(qualifiedResolvedNameNode) != JsonKind.Text)
+            {
+                return false;
+            }
+
+            hasCallSignature = true;
+        }
+
+        if ((kindText == "direct-call" || kindText == "member-call") && !hasCallSignature)
+        {
+            return false;
+        }
+
+        if (!LogicalPackageGenericTemplateFactGraphAddTemplateBoundOperationRow(
+                graph,
+                functionTemplateRow,
+                index,
+                kindTextRow,
+                line,
+                column,
+                resultTypeReferenceRow,
+                hasPublishedOrdinal,
+                publishedOrdinal,
+                hasEnclosingFunctionName,
+                enclosingFunctionNameTextRow,
+                callArgumentCount,
+                boundOperationRow))
+        {
+            return false;
+        }
+
+        if (hasCallSignature
+            && (!LogicalPackageImageJsonMaterializeTemplateCallSignatureRow(
+                    document,
+                    operationNode,
+                    LogicalPackageTemplateCallParentKind.BoundOperation,
+                    index,
+                    functionTemplateRow,
+                    false,
+                    false,
+                    graph,
+                    callSignatureRow)
+                || !LogicalPackageGenericTemplateFactGraphSetTemplateBoundOperationCallSignature(
+                    graph,
+                    boundOperationRow,
+                    callSignatureRow)))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageJsonMaterializeTemplateBoundOperationCallArgumentRows(
+                document,
+                callArgumentsNode,
+                callArgumentCount,
+                boundOperationRow,
+                functionTemplateRow,
+                graph)
+            || !LogicalPackageImageJsonMaterializeTemplateBoundOperationPayloadRows(
+                document,
+                operationNode,
+                kindText,
+                functionTemplateRow,
+                boundOperationRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateObjectInitializerMemberRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] membersNode,
+    u32[0 max] memberCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] objectCreationRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldTypeNode = 0;
+        stack mut u32[0 max] fieldNameTextRow = 0;
+        stack mut u32[0 max] fieldIndex = 0;
+        stack mut u32[0 max] fieldTypeReferenceRow = 0;
+        if (!document.TryChildAt(membersNode, (u64[0 2 ** 63 - 1])index, memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                memberNode,
+                "FieldName",
+                LogicalPackageGenericTemplateFactTextKind.ObjectInitializerMemberFieldName,
+                index,
+                graph,
+                fieldNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, memberNode, "FieldIndex", fieldIndex)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, memberNode, "FieldType", fieldTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                fieldTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectInitializerMemberFieldType,
+                index,
+                graph,
+                fieldTypeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateObjectInitializerMemberRow(
+                graph,
+                objectCreationRow,
+                index,
+                fieldNameTextRow,
+                fieldIndex,
+                fieldTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateObjectCreationRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] creationsNode,
+    u32[0 max] creationCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < creationCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] creationNode = 0;
+        stack mut u64[0 2 ** 63 - 1] createdTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] constructorNode = 0;
+        stack mut u64[0 2 ** 63 - 1] initializerMembersNode = 0;
+        stack mut u32[0 max] createdTypeReferenceRow = 0;
+        stack mut u32[0 max] constructorTypeNameTextRow = 0;
+        stack mut u32[0 max] constructorParameterCount = 0;
+        stack mut u32[0 max] storageSelector = 0;
+        stack mut u32[0 max] expressionTextRow = 0;
+        stack mut u32[0 max] initializerMemberCount = 0;
+        stack mut u32[0 max] objectCreationRow = 0;
+        stack mut bool hasConstructor = false;
+        stack mut bool constructorIsPrimaryShape = false;
+        stack mut bool hasStorageSelector = false;
+        stack mut bool hasExpressionText = false;
+        if (!document.TryChildAt(creationsNode, (u64[0 2 ** 63 - 1])index, creationNode)
+            || document.KindAt(creationNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredObjectMember(document, creationNode, "CreatedType", createdTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                createdTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectCreationCreatedType,
+                index,
+                graph,
+                createdTypeReferenceRow)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                creationNode,
+                "Constructor",
+                constructorNode,
+                hasConstructor)
+            || !LogicalPackageImageJsonOptionalU32MemberValue(
+                document,
+                creationNode,
+                "StorageSelector",
+                hasStorageSelector,
+                storageSelector)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                creationNode,
+                "InitializerMembers",
+                initializerMembersNode,
+                initializerMemberCount)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                creationNode,
+                "ExpressionText",
+                LogicalPackageGenericTemplateFactTextKind.ObjectCreationExpressionText,
+                index,
+                graph,
+                hasExpressionText,
+                expressionTextRow))
+        {
+            return false;
+        }
+
+        if (hasConstructor)
+        {
+            if (!LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                    document,
+                    constructorNode,
+                    "TypeName",
+                    LogicalPackageGenericTemplateFactTextKind.ObjectCreationConstructorTypeName,
+                    index,
+                    graph,
+                    constructorTypeNameTextRow)
+                || !LogicalPackageImageJsonRequiredArrayMemberCount(
+                    document,
+                    constructorNode,
+                    "Parameters",
+                    constructorParameterCount)
+                || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                    document,
+                    constructorNode,
+                    "IsPrimaryShape",
+                    constructorIsPrimaryShape))
+            {
+                return false;
+            }
+        }
+
+        if (!LogicalPackageGenericTemplateFactGraphAddTemplateObjectCreationRow(
+                graph,
+                functionTemplateRow,
+                index,
+                createdTypeReferenceRow,
+                hasConstructor,
+                constructorTypeNameTextRow,
+                constructorParameterCount,
+                constructorIsPrimaryShape,
+                storageSelector,
+                hasExpressionText,
+                expressionTextRow,
+                initializerMemberCount,
+                objectCreationRow)
+            || !LogicalPackageImageJsonMaterializeTemplateObjectInitializerMemberRows(
+                document,
+                initializerMembersNode,
+                initializerMemberCount,
+                functionTemplateRow,
+                objectCreationRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateEnumConstructorMemberRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] membersNode,
+    u32[0 max] memberCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] enumConstructorRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldTypeNode = 0;
+        stack mut u32[0 max] fieldNameTextRow = 0;
+        stack mut u32[0 max] fieldIndex = 0;
+        stack mut u32[0 max] fieldTypeReferenceRow = 0;
+        if (!document.TryChildAt(membersNode, (u64[0 2 ** 63 - 1])index, memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                memberNode,
+                "FieldName",
+                LogicalPackageGenericTemplateFactTextKind.EnumConstructorMemberFieldName,
+                index,
+                graph,
+                fieldNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, memberNode, "FieldIndex", fieldIndex)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, memberNode, "FieldType", fieldTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                fieldTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorMemberFieldType,
+                index,
+                graph,
+                fieldTypeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateEnumConstructorMemberRow(
+                graph,
+                enumConstructorRow,
+                index,
+                fieldNameTextRow,
+                fieldIndex,
+                fieldTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateEnumConstructorRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] constructorsNode,
+    u32[0 max] constructorCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < constructorCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] constructorNode = 0;
+        stack mut u64[0 2 ** 63 - 1] enumTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] membersNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] enumTypeReferenceRow = 0;
+        stack mut u32[0 max] variantNameTextRow = 0;
+        stack mut u32[0 max] memberCount = 0;
+        stack mut u32[0 max] enumConstructorRow = 0;
+        if (!document.TryChildAt(constructorsNode, (u64[0 2 ** 63 - 1])index, constructorNode)
+            || document.KindAt(constructorNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                constructorNode,
+                "Ordinal",
+                publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, constructorNode, "EnumType", enumTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                enumTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorEnumType,
+                index,
+                graph,
+                enumTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                constructorNode,
+                "VariantName",
+                LogicalPackageGenericTemplateFactTextKind.EnumConstructorVariantName,
+                index,
+                graph,
+                variantNameTextRow)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                constructorNode,
+                "Members",
+                membersNode,
+                memberCount)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateEnumConstructorRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                enumTypeReferenceRow,
+                variantNameTextRow,
+                memberCount,
+                enumConstructorRow)
+            || !LogicalPackageImageJsonMaterializeTemplateEnumConstructorMemberRows(
+                document,
+                membersNode,
+                memberCount,
+                functionTemplateRow,
+                enumConstructorRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateEnumCallRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callsNode,
+    u32[0 max] callCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < callCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] callNode = 0;
+        stack mut u64[0 2 ** 63 - 1] enumTypeNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] enumTypeReferenceRow = 0;
+        stack mut u32[0 max] variantNameTextRow = 0;
+        if (!document.TryChildAt(callsNode, (u64[0 2 ** 63 - 1])index, callNode)
+            || document.KindAt(callNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, callNode, "Ordinal", publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, callNode, "EnumType", enumTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                enumTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumCallEnumType,
+                index,
+                graph,
+                enumTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                callNode,
+                "VariantName",
+                LogicalPackageGenericTemplateFactTextKind.EnumCallVariantName,
+                index,
+                graph,
+                variantNameTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateEnumCallRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                enumTypeReferenceRow,
+                variantNameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateEnumValueRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] valuesNode,
+    u32[0 max] valueCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < valueCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] valueNode = 0;
+        stack mut u64[0 2 ** 63 - 1] enumTypeNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] enumTypeReferenceRow = 0;
+        stack mut u32[0 max] variantNameTextRow = 0;
+        if (!document.TryChildAt(valuesNode, (u64[0 2 ** 63 - 1])index, valueNode)
+            || document.KindAt(valueNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, valueNode, "Ordinal", publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, valueNode, "EnumType", enumTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                enumTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumValueEnumType,
+                index,
+                graph,
+                enumTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                valueNode,
+                "VariantName",
+                LogicalPackageGenericTemplateFactTextKind.EnumValueVariantName,
+                index,
+                graph,
+                variantNameTextRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateEnumValueRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                enumTypeReferenceRow,
+                variantNameTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateEnumPatternMemberRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] membersNode,
+    u32[0 max] memberCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] enumPatternRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldTypeNode = 0;
+        stack mut u32[0 max] fieldNameTextRow = 0;
+        stack mut u32[0 max] fieldIndex = 0;
+        stack mut u32[0 max] fieldTypeReferenceRow = 0;
+        if (!document.TryChildAt(membersNode, (u64[0 2 ** 63 - 1])index, memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                memberNode,
+                "FieldName",
+                LogicalPackageGenericTemplateFactTextKind.EnumPatternMemberFieldName,
+                index,
+                graph,
+                fieldNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, memberNode, "FieldIndex", fieldIndex)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, memberNode, "FieldType", fieldTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                fieldTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternMemberFieldType,
+                index,
+                graph,
+                fieldTypeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateEnumPatternMemberRow(
+                graph,
+                enumPatternRow,
+                index,
+                fieldNameTextRow,
+                fieldIndex,
+                fieldTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateEnumPatternRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] patternsNode,
+    u32[0 max] patternCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < patternCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] patternNode = 0;
+        stack mut u64[0 2 ** 63 - 1] enumTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] membersNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] enumTypeReferenceRow = 0;
+        stack mut u32[0 max] variantNameTextRow = 0;
+        stack mut u32[0 max] memberCount = 0;
+        stack mut u32[0 max] enumPatternRow = 0;
+        if (!document.TryChildAt(patternsNode, (u64[0 2 ** 63 - 1])index, patternNode)
+            || document.KindAt(patternNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, patternNode, "Ordinal", publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, patternNode, "EnumType", enumTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                enumTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternEnumType,
+                index,
+                graph,
+                enumTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                patternNode,
+                "VariantName",
+                LogicalPackageGenericTemplateFactTextKind.EnumPatternVariantName,
+                index,
+                graph,
+                variantNameTextRow)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                patternNode,
+                "Members",
+                membersNode,
+                memberCount)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateEnumPatternRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                enumTypeReferenceRow,
+                variantNameTextRow,
+                memberCount,
+                enumPatternRow)
+            || !LogicalPackageImageJsonMaterializeTemplateEnumPatternMemberRows(
+                document,
+                membersNode,
+                memberCount,
+                functionTemplateRow,
+                enumPatternRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateAggregatePatternMemberRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] membersNode,
+    u32[0 max] memberCount,
+    u32[0 max] functionTemplateRow,
+    u32[0 max] aggregatePatternRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < memberCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] memberNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldTypeNode = 0;
+        stack mut u32[0 max] fieldNameTextRow = 0;
+        stack mut u32[0 max] fieldIndex = 0;
+        stack mut u32[0 max] fieldTypeReferenceRow = 0;
+        if (!document.TryChildAt(membersNode, (u64[0 2 ** 63 - 1])index, memberNode)
+            || document.KindAt(memberNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                memberNode,
+                "FieldName",
+                LogicalPackageGenericTemplateFactTextKind.AggregatePatternMemberFieldName,
+                index,
+                graph,
+                fieldNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, memberNode, "FieldIndex", fieldIndex)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, memberNode, "FieldType", fieldTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                fieldTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternMemberFieldType,
+                index,
+                graph,
+                fieldTypeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateAggregatePatternMemberRow(
+                graph,
+                aggregatePatternRow,
+                index,
+                fieldNameTextRow,
+                fieldIndex,
+                fieldTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateAggregatePatternRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] patternsNode,
+    u32[0 max] patternCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < patternCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] patternNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] membersNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut u32[0 max] memberCount = 0;
+        stack mut u32[0 max] aggregatePatternRow = 0;
+        if (!document.TryChildAt(patternsNode, (u64[0 2 ** 63 - 1])index, patternNode)
+            || document.KindAt(patternNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, patternNode, "Ordinal", publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, patternNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageImageJsonOptionalArrayMember(
+                document,
+                patternNode,
+                "Members",
+                membersNode,
+                memberCount)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateAggregatePatternRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                typeReferenceRow,
+                memberCount,
+                aggregatePatternRow)
+            || !LogicalPackageImageJsonMaterializeTemplateAggregatePatternMemberRows(
+                document,
+                membersNode,
+                memberCount,
+                functionTemplateRow,
+                aggregatePatternRow,
+                graph))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateLocalDeclarationRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationsNode,
+    u32[0 max] declarationCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < declarationCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] declarationNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] line = 0;
+        stack mut u32[0 max] column = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        if (!document.TryChildAt(declarationsNode, (u64[0 2 ** 63 - 1])index, declarationNode)
+            || document.KindAt(declarationNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                declarationNode,
+                "Kind",
+                LogicalPackageGenericTemplateFactTextKind.LocalDeclarationKind,
+                index,
+                graph,
+                kindTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, declarationNode, "Line", line)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, declarationNode, "Column", column)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "Type", typeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                typeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateLocalDeclarationType,
+                index,
+                graph,
+                typeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateLocalDeclarationRow(
+                graph,
+                functionTemplateRow,
+                index,
+                kindTextRow,
+                line,
+                column,
+                typeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateConversionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] conversionsNode,
+    u32[0 max] conversionCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < conversionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] conversionNode = 0;
+        stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] targetTypeReferenceRow = 0;
+        if (!document.TryChildAt(conversionsNode, (u64[0 2 ** 63 - 1])index, conversionNode)
+            || document.KindAt(conversionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                conversionNode,
+                "Ordinal",
+                publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                conversionNode,
+                "TargetType",
+                targetTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                targetTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateConversionTargetType,
+                index,
+                graph,
+                targetTypeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateConversionRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                targetTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateFieldAccessRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] accessesNode,
+    u32[0 max] accessCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < accessCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] accessNode = 0;
+        stack mut u64[0 2 ** 63 - 1] fieldTypeNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] fieldNameTextRow = 0;
+        stack mut u32[0 max] fieldIndex = 0;
+        stack mut u32[0 max] fieldTypeReferenceRow = 0;
+        if (!document.TryChildAt(accessesNode, (u64[0 2 ** 63 - 1])index, accessNode)
+            || document.KindAt(accessNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                accessNode,
+                "Ordinal",
+                publishedOrdinal)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                accessNode,
+                "FieldName",
+                LogicalPackageGenericTemplateFactTextKind.FieldAccessFieldName,
+                index,
+                graph,
+                fieldNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                accessNode,
+                "FieldIndex",
+                fieldIndex)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                accessNode,
+                "FieldType",
+                fieldTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                fieldTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateFieldAccessFieldType,
+                index,
+                graph,
+                fieldTypeReferenceRow)
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateFieldAccessRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                fieldNameTextRow,
+                fieldIndex,
+                fieldTypeReferenceRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTemplateTryPropagationRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] propagationsNode,
+    u32[0 max] propagationCount,
+    u32[0 max] functionTemplateRow,
+    mut borrow LogicalPackageGenericTemplateFactGraph graph)
+{
+    stack mut u32[0 max] index = 0;
+    while willexit (index < propagationCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] propagationNode = 0;
+        stack mut u64[0 2 ** 63 - 1] operandTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] successPayloadTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] operandFailurePayloadTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] enclosingFailurePayloadTypeNode = 0;
+        stack mut u32[0 max] publishedOrdinal = 0;
+        stack mut u32[0 max] operandTypeReferenceRow = 0;
+        stack mut u32[0 max] operandOkVariantNameTextRow = 0;
+        stack mut u32[0 max] operandErrVariantNameTextRow = 0;
+        stack mut u32[0 max] returnTypeReferenceRow = 0;
+        stack mut u32[0 max] enclosingErrVariantNameTextRow = 0;
+        stack mut u32[0 max] successPayloadTypeReferenceRow = 0;
+        stack mut u32[0 max] operandFailurePayloadTypeReferenceRow = 0;
+        stack mut u32[0 max] enclosingFailurePayloadTypeReferenceRow = 0;
+        stack mut u32[0 max] conversionFunnelVariantTextRow = 0;
+        stack mut bool hasSuccessPayloadType = false;
+        stack mut bool hasOperandFailurePayloadType = false;
+        stack mut bool hasEnclosingFailurePayloadType = false;
+        stack mut bool hasConversionFunnelVariant = false;
+        if (!document.TryChildAt(propagationsNode, (u64[0 2 ** 63 - 1])index, propagationNode)
+            || document.KindAt(propagationNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                propagationNode,
+                "Ordinal",
+                publishedOrdinal)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                propagationNode,
+                "OperandType",
+                operandTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                operandTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandType,
+                index,
+                graph,
+                operandTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                propagationNode,
+                "OperandOkVariantName",
+                LogicalPackageGenericTemplateFactTextKind.TryPropagationOperandOkVariantName,
+                index,
+                graph,
+                operandOkVariantNameTextRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                propagationNode,
+                "OperandErrVariantName",
+                LogicalPackageGenericTemplateFactTextKind.TryPropagationOperandErrVariantName,
+                index,
+                graph,
+                operandErrVariantNameTextRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(
+                document,
+                propagationNode,
+                "ReturnType",
+                returnTypeNode)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                document,
+                returnTypeNode,
+                functionTemplateRow,
+                LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationReturnType,
+                index,
+                graph,
+                returnTypeReferenceRow)
+            || !LogicalPackageImageJsonMaterializeGenericTemplateFactTextMemberRow(
+                document,
+                propagationNode,
+                "EnclosingErrVariantName",
+                LogicalPackageGenericTemplateFactTextKind.TryPropagationEnclosingErrVariantName,
+                index,
+                graph,
+                enclosingErrVariantNameTextRow)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                propagationNode,
+                "SuccessPayloadType",
+                successPayloadTypeNode,
+                hasSuccessPayloadType)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                propagationNode,
+                "OperandFailurePayloadType",
+                operandFailurePayloadTypeNode,
+                hasOperandFailurePayloadType)
+            || !LogicalPackageImageJsonOptionalObjectMember(
+                document,
+                propagationNode,
+                "EnclosingFailurePayloadType",
+                enclosingFailurePayloadTypeNode,
+                hasEnclosingFailurePayloadType)
+            || !LogicalPackageImageJsonMaterializeOptionalGenericTemplateFactTextMemberRow(
+                document,
+                propagationNode,
+                "ConversionFunnelVariant",
+                LogicalPackageGenericTemplateFactTextKind.TryPropagationConversionFunnelVariant,
+                index,
+                graph,
+                hasConversionFunnelVariant,
+                conversionFunnelVariantTextRow))
+        {
+            return false;
+        }
+
+        if ((hasSuccessPayloadType
+                && !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                    document,
+                    successPayloadTypeNode,
+                    functionTemplateRow,
+                    LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationSuccessPayloadType,
+                    index,
+                    graph,
+                    successPayloadTypeReferenceRow))
+            || (hasOperandFailurePayloadType
+                && !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                    document,
+                    operandFailurePayloadTypeNode,
+                    functionTemplateRow,
+                    LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandFailurePayloadType,
+                    index,
+                    graph,
+                    operandFailurePayloadTypeReferenceRow))
+            || (hasEnclosingFailurePayloadType
+                && !LogicalPackageImageJsonMaterializeGenericTemplateTypeReference(
+                    document,
+                    enclosingFailurePayloadTypeNode,
+                    functionTemplateRow,
+                    LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationEnclosingFailurePayloadType,
+                    index,
+                    graph,
+                    enclosingFailurePayloadTypeReferenceRow))
+            || !LogicalPackageGenericTemplateFactGraphAddTemplateTryPropagationRow(
+                graph,
+                functionTemplateRow,
+                index,
+                publishedOrdinal,
+                operandTypeReferenceRow,
+                operandOkVariantNameTextRow,
+                operandErrVariantNameTextRow,
+                returnTypeReferenceRow,
+                enclosingErrVariantNameTextRow,
+                hasSuccessPayloadType,
+                successPayloadTypeReferenceRow,
+                hasOperandFailurePayloadType,
+                operandFailurePayloadTypeReferenceRow,
+                hasEnclosingFailurePayloadType,
+                enclosingFailurePayloadTypeReferenceRow,
+                hasConversionFunnelVariant,
+                conversionFunnelVariantTextRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}

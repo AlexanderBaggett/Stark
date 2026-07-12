@@ -1,0 +1,1651 @@
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
+import Compiler.Mir.PackageImage.Models
+import System.Json
+import System.Memory
+import System.Text
+import Compiler.Mir.PackageImage.Loader.CompilerEffectAbiFactsLoader
+module Compiler.Mir.PackageImage.Loader.CompilerLayoutNativeFactsLoader
+
+// Concrete layout, enum layout, native dependency, and linkage fact
+// materialization with stable manifest and text-row identities.
+
+internal fn MemoryStatus LogicalPackageLayoutFactGraphAppendText(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageLayoutFactGraphAddTextRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    LogicalPackageLayoutFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageLayoutFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageLayoutFactTextRow row = new LogicalPackageLayoutFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+internal fn bool LogicalPackageLayoutFactGraphAddConcreteLayoutRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] layoutOrdinal,
+    u32[0 max] qualifiedTypeNameTextRow,
+    u32[0 max] sizeBytes,
+    u32[0 max] alignmentBytes,
+    out u32[0 max] layoutRow)
+{
+    layoutRow = 0;
+    if (!graph.TextRows.Contains(qualifiedTypeNameTextRow)
+        || alignmentBytes == 0)
+    {
+        return false;
+    }
+
+    stack LogicalPackageConcreteTypeLayoutRow row = new LogicalPackageConcreteTypeLayoutRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        LayoutOrdinalValue = layoutOrdinal,
+        QualifiedTypeNameTextRowValue = qualifiedTypeNameTextRow,
+        SizeBytesValue = sizeBytes,
+        AlignmentBytesValue = alignmentBytes
+    };
+    layoutRow = graph.ConcreteLayoutRows.Add(row);
+    return layoutRow != 0;
+}
+
+internal fn bool LogicalPackageLayoutFactGraphAddConcreteFieldRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    u32[0 max] concreteLayoutRow,
+    u32[0 max] fieldOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] offsetBytes,
+    u32[0 max] sizeBytes,
+    u32[0 max] naturalAlignmentBytes,
+    u32[0 max] effectiveAlignmentBytes,
+    bool isMisaligned,
+    out u32[0 max] fieldRow)
+{
+    fieldRow = 0;
+    if (!graph.ConcreteLayoutRows.Contains(concreteLayoutRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || naturalAlignmentBytes == 0
+        || effectiveAlignmentBytes == 0)
+    {
+        return false;
+    }
+
+    stack LogicalPackageConcreteFieldLayoutRow row = new LogicalPackageConcreteFieldLayoutRow()
+    {
+        ConcreteLayoutRowValue = concreteLayoutRow,
+        FieldOrdinalValue = fieldOrdinal,
+        NameTextRowValue = nameTextRow,
+        OffsetBytesValue = offsetBytes,
+        SizeBytesValue = sizeBytes,
+        NaturalAlignmentBytesValue = naturalAlignmentBytes,
+        EffectiveAlignmentBytesValue = effectiveAlignmentBytes,
+        IsMisalignedValue = isMisaligned
+    };
+    stack u32[0 max] addedFieldRow = graph.ConcreteFieldRows.Add(row);
+    if (addedFieldRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageConcreteTypeLayoutRow layout =
+        graph.ConcreteLayoutRows.Get(concreteLayoutRow);
+    if (layout.FieldRowCountValue == 0)
+    {
+        layout.FirstFieldRowValue = addedFieldRow;
+    }
+    else if (addedFieldRow != layout.FirstFieldRowValue + layout.FieldRowCountValue)
+    {
+        return false;
+    }
+
+    layout.FieldRowCountValue = layout.FieldRowCountValue + 1;
+    if (!graph.ConcreteLayoutRows.Replace(concreteLayoutRow, layout))
+    {
+        return false;
+    }
+
+    fieldRow = addedFieldRow;
+    return true;
+}
+
+internal fn bool LogicalPackageLayoutFactGraphAddEnumLayoutRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] layoutOrdinal,
+    u32[0 max] qualifiedTypeNameTextRow,
+    LogicalPackageEnumLayoutKind kind,
+    u32[0 max] kindTextRow,
+    u32[0 max] tagFieldNameTextRow,
+    u32[0 max] tagFieldTypeReferenceRow,
+    out u32[0 max] layoutRow)
+{
+    layoutRow = 0;
+    if (!graph.TextRows.Contains(qualifiedTypeNameTextRow)
+        || !graph.TextRows.Contains(kindTextRow)
+        || !graph.TextRows.Contains(tagFieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(tagFieldTypeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageEnumLayoutRow row = new LogicalPackageEnumLayoutRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        LayoutOrdinalValue = layoutOrdinal,
+        QualifiedTypeNameTextRowValue = qualifiedTypeNameTextRow,
+        KindValue = kind,
+        KindTextRowValue = kindTextRow,
+        TagFieldNameTextRowValue = tagFieldNameTextRow,
+        TagFieldTypeReferenceRowValue = tagFieldTypeReferenceRow
+    };
+    layoutRow = graph.EnumLayoutRows.Add(row);
+    return layoutRow != 0;
+}
+
+internal fn bool LogicalPackageLayoutFactGraphAddEnumOrderedFieldRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    u32[0 max] enumLayoutRow,
+    u32[0 max] fieldOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] typeReferenceRow,
+    out u32[0 max] fieldRow)
+{
+    fieldRow = 0;
+    if (!graph.EnumLayoutRows.Contains(enumLayoutRow)
+        || !graph.TextRows.Contains(nameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageEnumOrderedFieldLayoutRow row =
+        new LogicalPackageEnumOrderedFieldLayoutRow()
+    {
+        EnumLayoutRowValue = enumLayoutRow,
+        FieldOrdinalValue = fieldOrdinal,
+        NameTextRowValue = nameTextRow,
+        TypeReferenceRowValue = typeReferenceRow
+    };
+    stack u32[0 max] addedFieldRow = graph.EnumOrderedFieldRows.Add(row);
+    if (addedFieldRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageEnumLayoutRow layout = graph.EnumLayoutRows.Get(enumLayoutRow);
+    if (layout.OrderedFieldRowCountValue == 0)
+    {
+        layout.FirstOrderedFieldRowValue = addedFieldRow;
+    }
+    else if (addedFieldRow != layout.FirstOrderedFieldRowValue + layout.OrderedFieldRowCountValue)
+    {
+        return false;
+    }
+
+    layout.OrderedFieldRowCountValue = layout.OrderedFieldRowCountValue + 1;
+    if (!graph.EnumLayoutRows.Replace(enumLayoutRow, layout))
+    {
+        return false;
+    }
+
+    fieldRow = addedFieldRow;
+    return true;
+}
+
+internal fn bool LogicalPackageLayoutFactGraphAddEnumVariantRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    u32[0 max] enumLayoutRow,
+    u32[0 max] variantOrdinal,
+    u32[0 max] nameTextRow,
+    u32[0 max] tagValue,
+    bool usesNamedFields,
+    out u32[0 max] variantRow)
+{
+    variantRow = 0;
+    if (!graph.EnumLayoutRows.Contains(enumLayoutRow)
+        || !graph.TextRows.Contains(nameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageEnumVariantLayoutRow row = new LogicalPackageEnumVariantLayoutRow()
+    {
+        EnumLayoutRowValue = enumLayoutRow,
+        VariantOrdinalValue = variantOrdinal,
+        NameTextRowValue = nameTextRow,
+        TagValueValue = tagValue,
+        UsesNamedFieldsValue = usesNamedFields
+    };
+    stack u32[0 max] addedVariantRow = graph.EnumVariantRows.Add(row);
+    if (addedVariantRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageEnumLayoutRow layout = graph.EnumLayoutRows.Get(enumLayoutRow);
+    if (layout.VariantRowCountValue == 0)
+    {
+        layout.FirstVariantRowValue = addedVariantRow;
+    }
+    else if (addedVariantRow != layout.FirstVariantRowValue + layout.VariantRowCountValue)
+    {
+        return false;
+    }
+
+    layout.VariantRowCountValue = layout.VariantRowCountValue + 1;
+    if (!graph.EnumLayoutRows.Replace(enumLayoutRow, layout))
+    {
+        return false;
+    }
+
+    variantRow = addedVariantRow;
+    return true;
+}
+
+internal fn bool LogicalPackageLayoutFactGraphAddEnumVariantFieldRow(
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    u32[0 max] enumVariantRow,
+    u32[0 max] fieldOrdinal,
+    u32[0 max] sourcePosition,
+    bool hasSourceFieldName,
+    u32[0 max] sourceFieldNameTextRow,
+    u32[0 max] storageFieldNameTextRow,
+    u32[0 max] storageFieldIndex,
+    u32[0 max] typeReferenceRow,
+    out u32[0 max] fieldRow)
+{
+    fieldRow = 0;
+    if (!graph.EnumVariantRows.Contains(enumVariantRow)
+        || (hasSourceFieldName && !graph.TextRows.Contains(sourceFieldNameTextRow))
+        || (!hasSourceFieldName && sourceFieldNameTextRow != 0)
+        || !graph.TextRows.Contains(storageFieldNameTextRow)
+        || !graph.TypeReferences.ContainsTypeReference(typeReferenceRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageEnumVariantFieldLayoutRow row =
+        new LogicalPackageEnumVariantFieldLayoutRow()
+    {
+        EnumVariantRowValue = enumVariantRow,
+        FieldOrdinalValue = fieldOrdinal,
+        SourcePositionValue = sourcePosition,
+        SourceFieldNameTextRowValue = sourceFieldNameTextRow,
+        StorageFieldNameTextRowValue = storageFieldNameTextRow,
+        StorageFieldIndexValue = storageFieldIndex,
+        TypeReferenceRowValue = typeReferenceRow,
+        HasSourceFieldNameValue = hasSourceFieldName
+    };
+    stack u32[0 max] addedFieldRow = graph.EnumVariantFieldRows.Add(row);
+    if (addedFieldRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageEnumVariantLayoutRow variant =
+        graph.EnumVariantRows.Get(enumVariantRow);
+    if (variant.FieldRowCountValue == 0)
+    {
+        variant.FirstFieldRowValue = addedFieldRow;
+    }
+    else if (addedFieldRow != variant.FirstFieldRowValue + variant.FieldRowCountValue)
+    {
+        return false;
+    }
+
+    variant.FieldRowCountValue = variant.FieldRowCountValue + 1;
+    if (!graph.EnumVariantRows.Replace(enumVariantRow, variant))
+    {
+        return false;
+    }
+
+    fieldRow = addedFieldRow;
+    return true;
+}
+
+public fn MemoryStatus AppendLogicalPackageLayoutFactText(
+    borrow LogicalPackageLayoutFactGraph graph,
+    LogicalPackageLayoutFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageLayoutFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageLayoutFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalLayoutFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageLayoutFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageLayoutFactGraphAddTextRow(graph, textKind, textOrdinal, value, textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonParseEnumLayoutKind(
+    ascii kindText,
+    out LogicalPackageEnumLayoutKind kind)
+    where overlap(kindText, kind)
+{
+    if (kindText == "directtag")
+    {
+        kind = LogicalPackageEnumLayoutKind.DirectTag;
+        return true;
+    }
+
+    kind = LogicalPackageEnumLayoutKind.DirectTag;
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeConcreteLayoutFieldRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] layoutNode,
+    u32[0 max] concreteLayoutRow,
+    mut borrow LogicalPackageLayoutFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] fieldsNode = 0;
+    stack mut u32[0 max] fieldCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        layoutNode,
+        "Fields",
+        fieldsNode,
+        fieldCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fieldIndex = 0;
+    while willexit (fieldIndex < fieldCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] fieldNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] offsetBytes = 0;
+        stack mut u32[0 max] sizeBytes = 0;
+        stack mut u32[0 max] naturalAlignmentBytes = 0;
+        stack mut u32[0 max] effectiveAlignmentBytes = 0;
+        stack mut bool isMisaligned = false;
+        stack mut u32[0 max] fieldRow = 0;
+        if (!document.TryChildAt(fieldsNode, (u64[0 2 ** 63 - 1])fieldIndex, fieldNode)
+            || document.KindAt(fieldNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                fieldNode,
+                "Name",
+                LogicalPackageLayoutFactTextKind.ConcreteFieldName,
+                fieldIndex,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, fieldNode, "OffsetBytes", offsetBytes)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, fieldNode, "SizeBytes", sizeBytes)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                fieldNode,
+                "NaturalAlignmentBytes",
+                naturalAlignmentBytes)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                fieldNode,
+                "EffectiveAlignmentBytes",
+                effectiveAlignmentBytes)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                fieldNode,
+                "IsMisaligned",
+                isMisaligned)
+            || !LogicalPackageLayoutFactGraphAddConcreteFieldRow(
+                graph,
+                concreteLayoutRow,
+                fieldIndex,
+                nameTextRow,
+                offsetBytes,
+                sizeBytes,
+                naturalAlignmentBytes,
+                effectiveAlignmentBytes,
+                isMisaligned,
+                fieldRow))
+        {
+            return false;
+        }
+
+        fieldIndex = fieldIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeConcreteLayoutRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    out u32[0 max] concreteLayoutCount)
+{
+    concreteLayoutCount = 0;
+    stack mut u64[0 2 ** 63 - 1] layoutsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        compilerFactsNode,
+        "ConcreteLayouts",
+        layoutsNode,
+        concreteLayoutCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] layoutIndex = 0;
+    while willexit (layoutIndex < concreteLayoutCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] layoutNode = 0;
+        stack mut u32[0 max] qualifiedTypeNameTextRow = 0;
+        stack mut u32[0 max] sizeBytes = 0;
+        stack mut u32[0 max] alignmentBytes = 0;
+        stack mut u32[0 max] layoutRow = 0;
+        if (!document.TryChildAt(layoutsNode, (u64[0 2 ** 63 - 1])layoutIndex, layoutNode)
+            || document.KindAt(layoutNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                layoutNode,
+                "QualifiedTypeName",
+                LogicalPackageLayoutFactTextKind.QualifiedTypeName,
+                layoutIndex,
+                graph,
+                qualifiedTypeNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(document, layoutNode, "SizeBytes", sizeBytes)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                layoutNode,
+                "AlignmentBytes",
+                alignmentBytes)
+            || !LogicalPackageLayoutFactGraphAddConcreteLayoutRow(
+                graph,
+                moduleOrdinal,
+                layoutIndex,
+                qualifiedTypeNameTextRow,
+                sizeBytes,
+                alignmentBytes,
+                layoutRow)
+            || !LogicalPackageImageJsonMaterializeConcreteLayoutFieldRows(
+                document,
+                layoutNode,
+                layoutRow,
+                graph))
+        {
+            return false;
+        }
+
+        layoutIndex = layoutIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeEnumLayoutOrderedFieldRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] enumLayoutNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] layoutOrdinal,
+    u32[0 max] enumLayoutRow,
+    mut borrow LogicalPackageLayoutFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] fieldsNode = 0;
+    stack mut u32[0 max] fieldCount = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        enumLayoutNode,
+        "OrderedFields",
+        fieldsNode,
+        fieldCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fieldIndex = 0;
+    while willexit (fieldIndex < fieldCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] fieldNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut u32[0 max] fieldRow = 0;
+        if (!document.TryChildAt(fieldsNode, (u64[0 2 ** 63 - 1])fieldIndex, fieldNode)
+            || document.KindAt(fieldNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                fieldNode,
+                "Name",
+                LogicalPackageLayoutFactTextKind.EnumOrderedFieldName,
+                fieldIndex,
+                graph,
+                nameTextRow)
+            || !document.TryFindMember(fieldNode, "Type", typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                layoutOrdinal,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.LayoutEnumOrderedFieldType,
+                fieldIndex,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageLayoutFactGraphAddEnumOrderedFieldRow(
+                graph,
+                enumLayoutRow,
+                fieldIndex,
+                nameTextRow,
+                typeReferenceRow,
+                fieldRow))
+        {
+            return false;
+        }
+
+        fieldIndex = fieldIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeEnumLayoutVariantFieldRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] variantNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] layoutOrdinal,
+    u32[0 max] variantOrdinal,
+    u32[0 max] variantRow,
+    mut borrow LogicalPackageLayoutFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] fieldsNode = 0;
+    stack mut u32[0 max] fieldCount = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, variantNode, "Fields", fieldsNode, fieldCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fieldIndex = 0;
+    while willexit (fieldIndex < fieldCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] fieldNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut u32[0 max] sourcePosition = 0;
+        stack mut u32[0 max] sourceFieldNameTextRow = 0;
+        stack mut u32[0 max] storageFieldNameTextRow = 0;
+        stack mut u32[0 max] storageFieldIndex = 0;
+        stack mut u32[0 max] typeReferenceRow = 0;
+        stack mut u32[0 max] fieldRow = 0;
+        stack mut bool hasSourceFieldName = false;
+        if (!document.TryChildAt(fieldsNode, (u64[0 2 ** 63 - 1])fieldIndex, fieldNode)
+            || document.KindAt(fieldNode) != JsonKind.Object
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                fieldNode,
+                "SourcePosition",
+                sourcePosition)
+            || !LogicalPackageImageJsonMaterializeOptionalLayoutFactTextMemberRow(
+                document,
+                fieldNode,
+                "SourceFieldName",
+                LogicalPackageLayoutFactTextKind.EnumVariantSourceFieldName,
+                fieldIndex,
+                graph,
+                hasSourceFieldName,
+                sourceFieldNameTextRow)
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                fieldNode,
+                "StorageFieldName",
+                LogicalPackageLayoutFactTextKind.EnumVariantStorageFieldName,
+                fieldIndex,
+                graph,
+                storageFieldNameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                fieldNode,
+                "StorageFieldIndex",
+                storageFieldIndex)
+            || !document.TryFindMember(fieldNode, "Type", typeNode)
+            || document.KindAt(typeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                typeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                layoutOrdinal,
+                0,
+                variantOrdinal,
+                LogicalPackageTypedTypeReferenceSource.LayoutEnumVariantFieldType,
+                fieldIndex,
+                graph.TypeReferences,
+                typeReferenceRow)
+            || !LogicalPackageLayoutFactGraphAddEnumVariantFieldRow(
+                graph,
+                variantRow,
+                fieldIndex,
+                sourcePosition,
+                hasSourceFieldName,
+                sourceFieldNameTextRow,
+                storageFieldNameTextRow,
+                storageFieldIndex,
+                typeReferenceRow,
+                fieldRow))
+        {
+            return false;
+        }
+
+        fieldIndex = fieldIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeEnumLayoutVariantRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] enumLayoutNode,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] layoutOrdinal,
+    u32[0 max] enumLayoutRow,
+    mut borrow LogicalPackageLayoutFactGraph graph)
+{
+    stack mut u64[0 2 ** 63 - 1] variantsNode = 0;
+    stack mut u32[0 max] variantCount = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        enumLayoutNode,
+        "Variants",
+        variantsNode,
+        variantCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] variantIndex = 0;
+    while willexit (variantIndex < variantCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] variantNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] tagValue = 0;
+        stack mut bool usesNamedFields = false;
+        stack mut u32[0 max] variantRow = 0;
+        if (!document.TryChildAt(variantsNode, (u64[0 2 ** 63 - 1])variantIndex, variantNode)
+            || document.KindAt(variantNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                variantNode,
+                "Name",
+                LogicalPackageLayoutFactTextKind.EnumVariantName,
+                variantIndex,
+                graph,
+                nameTextRow)
+            || !LogicalPackageImageJsonRequiredU32MemberValue(
+                document,
+                variantNode,
+                "TagValue",
+                tagValue)
+            || !LogicalPackageImageJsonRequiredBoolMemberValue(
+                document,
+                variantNode,
+                "UsesNamedFields",
+                usesNamedFields)
+            || !LogicalPackageLayoutFactGraphAddEnumVariantRow(
+                graph,
+                enumLayoutRow,
+                variantIndex,
+                nameTextRow,
+                tagValue,
+                usesNamedFields,
+                variantRow)
+            || !LogicalPackageImageJsonMaterializeEnumLayoutVariantFieldRows(
+                document,
+                variantNode,
+                moduleOrdinal,
+                layoutOrdinal,
+                variantIndex,
+                variantRow,
+                graph))
+        {
+            return false;
+        }
+
+        variantIndex = variantIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeEnumLayoutRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    out u32[0 max] enumLayoutCount)
+{
+    enumLayoutCount = 0;
+    stack mut u64[0 2 ** 63 - 1] layoutsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        compilerFactsNode,
+        "EnumLayouts",
+        layoutsNode,
+        enumLayoutCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] layoutIndex = 0;
+    while willexit (layoutIndex < enumLayoutCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] layoutNode = 0;
+        stack mut u64[0 2 ** 63 - 1] tagFieldNode = 0;
+        stack mut u64[0 2 ** 63 - 1] tagFieldTypeNode = 0;
+        stack mut u64[0 2 ** 63 - 1] kindNode = 0;
+        stack mut u32[0 max] qualifiedTypeNameTextRow = 0;
+        stack mut u32[0 max] kindTextRow = 0;
+        stack mut u32[0 max] tagFieldNameTextRow = 0;
+        stack mut u32[0 max] tagFieldTypeReferenceRow = 0;
+        stack mut LogicalPackageEnumLayoutKind kind = LogicalPackageEnumLayoutKind.DirectTag;
+        stack mut u32[0 max] enumLayoutRow = 0;
+        if (!document.TryChildAt(layoutsNode, (u64[0 2 ** 63 - 1])layoutIndex, layoutNode)
+            || document.KindAt(layoutNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                layoutNode,
+                "QualifiedTypeName",
+                LogicalPackageLayoutFactTextKind.QualifiedTypeName,
+                layoutIndex,
+                graph,
+                qualifiedTypeNameTextRow)
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                layoutNode,
+                "Kind",
+                LogicalPackageLayoutFactTextKind.EnumLayoutKind,
+                layoutIndex,
+                graph,
+                kindTextRow)
+            || !document.TryFindMember(layoutNode, "Kind", kindNode)
+            || document.KindAt(kindNode) != JsonKind.Text
+            || !LogicalPackageImageJsonParseEnumLayoutKind(document.TextAt(kindNode), kind)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, layoutNode, "TagField", tagFieldNode)
+            || !LogicalPackageImageJsonMaterializeLayoutFactTextMemberRow(
+                document,
+                tagFieldNode,
+                "Name",
+                LogicalPackageLayoutFactTextKind.EnumTagFieldName,
+                layoutIndex,
+                graph,
+                tagFieldNameTextRow)
+            || !document.TryFindMember(tagFieldNode, "Type", tagFieldTypeNode)
+            || document.KindAt(tagFieldTypeNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+                document,
+                tagFieldTypeNode,
+                moduleOrdinal,
+                LogicalPackageTypedDeclarationKind.Type,
+                layoutIndex,
+                0,
+                0,
+                LogicalPackageTypedTypeReferenceSource.LayoutEnumTagFieldType,
+                0,
+                graph.TypeReferences,
+                tagFieldTypeReferenceRow)
+            || !LogicalPackageLayoutFactGraphAddEnumLayoutRow(
+                graph,
+                moduleOrdinal,
+                layoutIndex,
+                qualifiedTypeNameTextRow,
+                kind,
+                kindTextRow,
+                tagFieldNameTextRow,
+                tagFieldTypeReferenceRow,
+                enumLayoutRow)
+            || !LogicalPackageImageJsonMaterializeEnumLayoutOrderedFieldRows(
+                document,
+                layoutNode,
+                moduleOrdinal,
+                layoutIndex,
+                enumLayoutRow,
+                graph)
+            || !LogicalPackageImageJsonMaterializeEnumLayoutVariantRows(
+                document,
+                layoutNode,
+                moduleOrdinal,
+                layoutIndex,
+                enumLayoutRow,
+                graph))
+        {
+            return false;
+        }
+
+        layoutIndex = layoutIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeLayoutFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageLayoutFactGraph graph,
+    out u32[0 max] concreteLayoutCount,
+    out u32[0 max] enumLayoutCount)
+{
+    concreteLayoutCount = 0;
+    enumLayoutCount = 0;
+    return LogicalPackageImageJsonMaterializeConcreteLayoutRows(
+            document,
+            compilerFactsNode,
+            moduleOrdinal,
+            graph,
+            concreteLayoutCount)
+        && LogicalPackageImageJsonMaterializeEnumLayoutRows(
+            document,
+            compilerFactsNode,
+            moduleOrdinal,
+            graph,
+            enumLayoutCount);
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageLayoutFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageLayoutFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut bool usesCompilerSections = false;
+            stack mut u32[0 max] concreteLayoutCount = 0;
+            stack mut u32[0 max] enumLayoutCount = 0;
+            if (!LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    usesCompilerSections))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeLayoutFactRows(
+                document,
+                compilerFactsNode,
+                moduleOrdinal,
+                graph,
+                concreteLayoutCount,
+                enumLayoutCount);
+    }
+}
+
+internal fn MemoryStatus LogicalPackageNativeMetadataFactGraphAppendText(
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    ascii text,
+    out u32[0 max] byteOffset,
+    out u32[0 max] byteLength)
+{
+    byteOffset = 0;
+    byteLength = 0;
+    stack i64[min max] signedLength = System.Text.AsciiLength(text);
+    if (signedLength <= 0 || signedLength > (i64[min max])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    if (graph.TextBytes.Length > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || graph.TextBytes.Length + (u64[0 2 ** 63 - 1])signedLength > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    byteOffset = (u32[0 max])graph.TextBytes.Length;
+    byteLength = (u32[0 max])signedLength;
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (data == null)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        if (!graph.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            init graph.TextBytes[graph.TextBytes.Length] = *(&data[index]);
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageNativeMetadataFactGraphAddTextRow(
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    LogicalPackageNativeMetadataFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    ascii text,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u32[0 max] byteOffset = 0;
+    stack mut u32[0 max] byteLength = 0;
+    switch (LogicalPackageNativeMetadataFactGraphAppendText(graph, text, byteOffset, byteLength))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            stack LogicalPackageNativeMetadataFactTextRow row =
+                new LogicalPackageNativeMetadataFactTextRow()
+            {
+                TextKindValue = textKind,
+                TextOrdinalValue = textOrdinal,
+                ByteOffsetValue = byteOffset,
+                ByteLengthValue = byteLength
+            };
+            textRow = graph.TextRows.Add(row);
+            return textRow != 0;
+    }
+}
+
+internal fn bool LogicalPackageNativeMetadataFactGraphAddNativeDependencyRow(
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    LogicalPackageNativeDependencyKind kind,
+    u32[0 max] dependencyOrdinal,
+    u32[0 max] textRow,
+    out u32[0 max] dependencyRow)
+{
+    dependencyRow = 0;
+    if (!graph.TextRows.Contains(textRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageNativeDependencyRow row = new LogicalPackageNativeDependencyRow()
+    {
+        KindValue = kind,
+        DependencyOrdinalValue = dependencyOrdinal,
+        TextRowValue = textRow
+    };
+    dependencyRow = graph.NativeDependencyRows.Add(row);
+    return dependencyRow != 0;
+}
+
+internal fn bool LogicalPackageNativeMetadataFactGraphAddLinkageRow(
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    u32[0 max] moduleOrdinal,
+    u32[0 max] objectFileNameTextRow,
+    out u32[0 max] linkageRow)
+{
+    linkageRow = 0;
+    if (!graph.TextRows.Contains(objectFileNameTextRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageLinkageRow row = new LogicalPackageLinkageRow()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        ObjectFileNameTextRowValue = objectFileNameTextRow
+    };
+    linkageRow = graph.LinkageRows.Add(row);
+    return linkageRow != 0;
+}
+
+internal fn bool LogicalPackageNativeMetadataFactGraphAddDefinedSymbolRow(
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    u32[0 max] linkageRow,
+    u32[0 max] symbolOrdinal,
+    u32[0 max] textRow,
+    out u32[0 max] symbolRow)
+{
+    symbolRow = 0;
+    if (!graph.LinkageRows.Contains(linkageRow)
+        || !graph.TextRows.Contains(textRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageLinkageSymbolRow row = new LogicalPackageLinkageSymbolRow()
+    {
+        LinkageRowValue = linkageRow,
+        SymbolOrdinalValue = symbolOrdinal,
+        TextRowValue = textRow
+    };
+    stack u32[0 max] addedSymbolRow = graph.DefinedSymbolRows.Add(row);
+    if (addedSymbolRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageLinkageRow linkage = graph.LinkageRows.Get(linkageRow);
+    if (linkage.DefinedSymbolRowCountValue == 0)
+    {
+        linkage.FirstDefinedSymbolRowValue = addedSymbolRow;
+    }
+    else if (addedSymbolRow != linkage.FirstDefinedSymbolRowValue + linkage.DefinedSymbolRowCountValue)
+    {
+        return false;
+    }
+
+    linkage.DefinedSymbolRowCountValue = linkage.DefinedSymbolRowCountValue + 1;
+    if (!graph.LinkageRows.Replace(linkageRow, linkage))
+    {
+        return false;
+    }
+
+    symbolRow = addedSymbolRow;
+    return true;
+}
+
+internal fn bool LogicalPackageNativeMetadataFactGraphAddReferencedSymbolRow(
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    u32[0 max] linkageRow,
+    u32[0 max] symbolOrdinal,
+    u32[0 max] textRow,
+    out u32[0 max] symbolRow)
+{
+    symbolRow = 0;
+    if (!graph.LinkageRows.Contains(linkageRow)
+        || !graph.TextRows.Contains(textRow))
+    {
+        return false;
+    }
+
+    stack LogicalPackageLinkageSymbolRow row = new LogicalPackageLinkageSymbolRow()
+    {
+        LinkageRowValue = linkageRow,
+        SymbolOrdinalValue = symbolOrdinal,
+        TextRowValue = textRow
+    };
+    stack u32[0 max] addedSymbolRow = graph.ReferencedSymbolRows.Add(row);
+    if (addedSymbolRow == 0)
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageLinkageRow linkage = graph.LinkageRows.Get(linkageRow);
+    if (linkage.ReferencedSymbolRowCountValue == 0)
+    {
+        linkage.FirstReferencedSymbolRowValue = addedSymbolRow;
+    }
+    else if (addedSymbolRow != linkage.FirstReferencedSymbolRowValue + linkage.ReferencedSymbolRowCountValue)
+    {
+        return false;
+    }
+
+    linkage.ReferencedSymbolRowCountValue = linkage.ReferencedSymbolRowCountValue + 1;
+    if (!graph.LinkageRows.Replace(linkageRow, linkage))
+    {
+        return false;
+    }
+
+    symbolRow = addedSymbolRow;
+    return true;
+}
+
+public fn MemoryStatus AppendLogicalPackageNativeMetadataFactText(
+    borrow LogicalPackageNativeMetadataFactGraph graph,
+    LogicalPackageNativeMetadataFactTextRow textRow,
+    mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])textRow.ByteOffsetValue;
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])textRow.ByteLengthValue;
+    if (start + length > graph.TextBytes.Length)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        try sink.AppendByte(graph.TextBytes[start + index]);
+        index = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeNativeMetadataFactTextNodeRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] textNode,
+    LogicalPackageNativeMetadataFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    if (document.KindAt(textNode) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(textNode);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    return LogicalPackageNativeMetadataFactGraphAddTextRow(
+        graph,
+        textKind,
+        textOrdinal,
+        value,
+        textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeNativeMetadataFactTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageNativeMetadataFactTextKind textKind,
+    u32[0 max] textOrdinal,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] textRow)
+{
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member))
+    {
+        return false;
+    }
+
+    return LogicalPackageImageJsonMaterializeNativeMetadataFactTextNodeRow(
+        document,
+        member,
+        textKind,
+        textOrdinal,
+        graph,
+        textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] nativeDependenciesNode,
+    ascii memberName,
+    LogicalPackageNativeDependencyKind dependencyKind,
+    LogicalPackageNativeMetadataFactTextKind textKind,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] addedCount)
+{
+    addedCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    stack mut u32[0 max] itemCount = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        nativeDependenciesNode,
+        memberName,
+        arrayNode,
+        itemCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] itemIndex = 0;
+    while willexit (itemIndex < itemCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] itemNode = 0;
+        stack mut u32[0 max] textRow = 0;
+        stack mut u32[0 max] dependencyRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])itemIndex, itemNode)
+            || !LogicalPackageImageJsonMaterializeNativeMetadataFactTextNodeRow(
+                document,
+                itemNode,
+                textKind,
+                itemIndex,
+                graph,
+                textRow)
+            || !LogicalPackageNativeMetadataFactGraphAddNativeDependencyRow(
+                graph,
+                dependencyKind,
+                itemIndex,
+                textRow,
+                dependencyRow))
+        {
+            return false;
+        }
+
+        addedCount = addedCount + 1;
+        itemIndex = itemIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeNativeDependencyRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] manifestNode,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] nativeDependencyCount)
+{
+    nativeDependencyCount = 0;
+    stack mut u64[0 2 ** 63 - 1] nativeDependenciesNode = 0;
+    stack mut bool hasNativeDependencies = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+        document,
+        manifestNode,
+        "NativeDependencies",
+        nativeDependenciesNode,
+        hasNativeDependencies))
+    {
+        return false;
+    }
+
+    if (!hasNativeDependencies)
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] sources = 0;
+    stack mut u32[0 max] includeDirectories = 0;
+    stack mut u32[0 max] libraryDirectories = 0;
+    stack mut u32[0 max] libraries = 0;
+    stack mut u32[0 max] linkArguments = 0;
+    stack mut u32[0 max] pkgConfigPackages = 0;
+    if (!LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+            document,
+            nativeDependenciesNode,
+            "Sources",
+            LogicalPackageNativeDependencyKind.Source,
+            LogicalPackageNativeMetadataFactTextKind.NativeSource,
+            graph,
+            sources)
+        || !LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+            document,
+            nativeDependenciesNode,
+            "IncludeDirectories",
+            LogicalPackageNativeDependencyKind.IncludeDirectory,
+            LogicalPackageNativeMetadataFactTextKind.NativeIncludeDirectory,
+            graph,
+            includeDirectories)
+        || !LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+            document,
+            nativeDependenciesNode,
+            "LibraryDirectories",
+            LogicalPackageNativeDependencyKind.LibraryDirectory,
+            LogicalPackageNativeMetadataFactTextKind.NativeLibraryDirectory,
+            graph,
+            libraryDirectories)
+        || !LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+            document,
+            nativeDependenciesNode,
+            "Libraries",
+            LogicalPackageNativeDependencyKind.Library,
+            LogicalPackageNativeMetadataFactTextKind.NativeLibrary,
+            graph,
+            libraries)
+        || !LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+            document,
+            nativeDependenciesNode,
+            "LinkArguments",
+            LogicalPackageNativeDependencyKind.LinkArgument,
+            LogicalPackageNativeMetadataFactTextKind.NativeLinkArgument,
+            graph,
+            linkArguments)
+        || !LogicalPackageImageJsonMaterializeNativeDependencyArrayRows(
+            document,
+            nativeDependenciesNode,
+            "PkgConfigPackages",
+            LogicalPackageNativeDependencyKind.PkgConfigPackage,
+            LogicalPackageNativeMetadataFactTextKind.NativePkgConfigPackage,
+            graph,
+            pkgConfigPackages))
+    {
+        return false;
+    }
+
+    nativeDependencyCount =
+        sources + includeDirectories + libraryDirectories + libraries + linkArguments + pkgConfigPackages;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeLinkageDefinedSymbolRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] linkageNode,
+    u32[0 max] linkageRow,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] symbolCount)
+{
+    symbolCount = 0;
+    stack mut u64[0 2 ** 63 - 1] symbolsNode = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(
+        document,
+        linkageNode,
+        "DefinedSymbols",
+        symbolsNode,
+        symbolCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] symbolIndex = 0;
+    while willexit (symbolIndex < symbolCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] symbolNode = 0;
+        stack mut u32[0 max] textRow = 0;
+        stack mut u32[0 max] symbolRow = 0;
+        if (!document.TryChildAt(symbolsNode, (u64[0 2 ** 63 - 1])symbolIndex, symbolNode)
+            || !LogicalPackageImageJsonMaterializeNativeMetadataFactTextNodeRow(
+                document,
+                symbolNode,
+                LogicalPackageNativeMetadataFactTextKind.LinkageDefinedSymbol,
+                symbolIndex,
+                graph,
+                textRow)
+            || !LogicalPackageNativeMetadataFactGraphAddDefinedSymbolRow(
+                graph,
+                linkageRow,
+                symbolIndex,
+                textRow,
+                symbolRow))
+        {
+            return false;
+        }
+
+        symbolIndex = symbolIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeLinkageReferencedSymbolRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] linkageNode,
+    u32[0 max] linkageRow,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] symbolCount)
+{
+    symbolCount = 0;
+    stack mut u64[0 2 ** 63 - 1] symbolsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(
+        document,
+        linkageNode,
+        "ReferencedSymbols",
+        symbolsNode,
+        symbolCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] symbolIndex = 0;
+    while willexit (symbolIndex < symbolCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] symbolNode = 0;
+        stack mut u32[0 max] textRow = 0;
+        stack mut u32[0 max] symbolRow = 0;
+        if (!document.TryChildAt(symbolsNode, (u64[0 2 ** 63 - 1])symbolIndex, symbolNode)
+            || !LogicalPackageImageJsonMaterializeNativeMetadataFactTextNodeRow(
+                document,
+                symbolNode,
+                LogicalPackageNativeMetadataFactTextKind.LinkageReferencedSymbol,
+                symbolIndex,
+                graph,
+                textRow)
+            || !LogicalPackageNativeMetadataFactGraphAddReferencedSymbolRow(
+                graph,
+                linkageRow,
+                symbolIndex,
+                textRow,
+                symbolRow))
+        {
+            return false;
+        }
+
+        symbolIndex = symbolIndex + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeLinkageRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out bool hasLinkage)
+{
+    hasLinkage = false;
+    stack mut u64[0 2 ** 63 - 1] linkageNode = 0;
+    if (!LogicalPackageImageJsonOptionalObjectMember(
+        document,
+        compilerFactsNode,
+        "Linkage",
+        linkageNode,
+        hasLinkage))
+    {
+        return false;
+    }
+
+    if (!hasLinkage)
+    {
+        return true;
+    }
+
+    stack mut u32[0 max] objectFileNameTextRow = 0;
+    stack mut u32[0 max] linkageRow = 0;
+    stack mut u32[0 max] definedSymbolCount = 0;
+    stack mut u32[0 max] referencedSymbolCount = 0;
+    return LogicalPackageImageJsonMaterializeNativeMetadataFactTextMemberRow(
+            document,
+            linkageNode,
+            "ObjectFileName",
+            LogicalPackageNativeMetadataFactTextKind.LinkageObjectFileName,
+            0,
+            graph,
+            objectFileNameTextRow)
+        && LogicalPackageNativeMetadataFactGraphAddLinkageRow(
+            graph,
+            moduleOrdinal,
+            objectFileNameTextRow,
+            linkageRow)
+        && LogicalPackageImageJsonMaterializeLinkageDefinedSymbolRows(
+            document,
+            linkageNode,
+            linkageRow,
+            graph,
+            definedSymbolCount)
+        && LogicalPackageImageJsonMaterializeLinkageReferencedSymbolRows(
+            document,
+            linkageNode,
+            linkageRow,
+            graph,
+            referencedSymbolCount);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeNativeMetadataFactRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] manifestNode,
+    u64[0 2 ** 63 - 1] compilerFactsNode,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph,
+    out u32[0 max] nativeDependencyCount,
+    out bool hasLinkage)
+{
+    nativeDependencyCount = 0;
+    hasLinkage = false;
+    return LogicalPackageImageJsonMaterializeNativeDependencyRows(
+            document,
+            manifestNode,
+            graph,
+            nativeDependencyCount)
+        && LogicalPackageImageJsonMaterializeLinkageRows(
+            document,
+            compilerFactsNode,
+            moduleOrdinal,
+            graph,
+            hasLinkage);
+}
+
+public unsafe fn bool TryMaterializeLogicalPackageNativeMetadataFactJsonGraph(
+    ascii manifestJson,
+    u32[0 max] moduleOrdinal,
+    mut borrow LogicalPackageNativeMetadataFactGraph graph)
+{
+    switch (ParseText(manifestJson))
+    {
+        case JsonResult<JsonDocument>.Err(var parseError):
+            return false;
+        case JsonResult<JsonDocument>.Ok(var parsed):
+            stack mut JsonDocument document = parsed;
+            stack mut u64[0 2 ** 63 - 1] moduleNode = 0;
+            stack mut u64[0 2 ** 63 - 1] compilerFactsNode = 0;
+            stack mut bool usesCompilerSections = false;
+            stack mut u32[0 max] nativeDependencyCount = 0;
+            stack mut bool hasLinkage = false;
+            if (document.KindAt(0) != JsonKind.Object
+                || !LogicalPackageImageJsonModuleNode(document, moduleOrdinal, moduleNode)
+                || !LogicalPackageImageJsonEffectiveCompilerFactsNode(
+                    document,
+                    moduleNode,
+                    compilerFactsNode,
+                    usesCompilerSections))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonMaterializeNativeMetadataFactRows(
+                document,
+                0,
+                compilerFactsNode,
+                moduleOrdinal,
+                graph,
+                nativeDependencyCount,
+                hasLinkage);
+    }
+}

@@ -1,0 +1,8 @@
+export import Compiler.Ssa.Model
+export import Compiler.Ssa.Validation
+export import Compiler.Ssa.Lowering
+module Compiler.Ssa
+
+
+// Stage 1's SSA package facade. Keep the dense artifact model independent from
+// optimization passes so those passes can remain split into focused modules.

@@ -82,12 +82,30 @@ internal fn MemoryStatus EmitLlvmRangeAttribute(MirType type, ValueFacts facts, 
     return MemoryStatus.Ok;
 }
 
+internal enum FunctionInlinePreference
+{
+    Default,
+    Inline,
+    InlineHint,
+    NoInline,
+}
+
 internal struct FunctionEffectFacts
 {
     bool IsLaw;
     bool LawMayReadMemory;
     bool IsFinite;
     bool IsNoRecurse;
+    bool NoSync;
+    bool NoFree;
+    bool NoUnwind;
+    bool WillReturn;
+    bool MustProgress;
+    bool IsHot;
+    bool IsCold;
+    bool IsStrictFp;
+    bool BackendIsOpaque;
+    FunctionInlinePreference InlinePreference;
 
     FunctionEffectFacts()
     {
@@ -95,6 +113,16 @@ internal struct FunctionEffectFacts
         self.LawMayReadMemory = false;
         self.IsFinite = false;
         self.IsNoRecurse = false;
+        self.NoSync = false;
+        self.NoFree = false;
+        self.NoUnwind = false;
+        self.WillReturn = false;
+        self.MustProgress = false;
+        self.IsHot = false;
+        self.IsCold = false;
+        self.IsStrictFp = false;
+        self.BackendIsOpaque = false;
+        self.InlinePreference = FunctionInlinePreference.Default;
     }
 }
 
@@ -127,12 +155,64 @@ internal fn MemoryStatus EmitLlvmFunctionEffectAttributes(FunctionEffectFacts fa
             try sink.AppendConstAscii(" memory(none)");
         }
 
-        try sink.AppendConstAscii(" nosync nofree");
     }
 
-    if (facts.IsFinite)
+    if (facts.IsLaw || facts.NoSync)
     {
-        try sink.AppendConstAscii(" willreturn mustprogress");
+        try sink.AppendConstAscii(" nosync");
+    }
+
+    if (facts.IsLaw || facts.NoFree)
+    {
+        try sink.AppendConstAscii(" nofree");
+    }
+
+    if (facts.IsFinite || facts.WillReturn)
+    {
+        try sink.AppendConstAscii(" willreturn");
+    }
+
+    if (facts.IsFinite || facts.MustProgress)
+    {
+        try sink.AppendConstAscii(" mustprogress");
+    }
+
+    if (facts.NoUnwind)
+    {
+        try sink.AppendConstAscii(" nounwind");
+    }
+
+    if (facts.IsHot)
+    {
+        try sink.AppendConstAscii(" hot");
+    }
+
+    if (facts.IsCold)
+    {
+        try sink.AppendConstAscii(" cold");
+    }
+
+    if (facts.IsStrictFp)
+    {
+        try sink.AppendConstAscii(" strictfp");
+    }
+
+    if (facts.BackendIsOpaque)
+    {
+        try sink.AppendConstAscii(" optnone noinline");
+    }
+    else
+    {
+        switch (facts.InlinePreference)
+        {
+            case FunctionInlinePreference.Inline:
+                try sink.AppendConstAscii(" alwaysinline");
+            case FunctionInlinePreference.InlineHint:
+                try sink.AppendConstAscii(" inlinehint");
+            case FunctionInlinePreference.NoInline:
+                try sink.AppendConstAscii(" noinline");
+            case FunctionInlinePreference.Default:
+        }
     }
 
     if (facts.IsNoRecurse)
@@ -489,13 +569,27 @@ internal fn MemoryStatus EmitLlvmGlobalSection(GlobalSectionFacts facts, mut bor
 internal struct FunctionCallingConventionFacts
 {
     bool HasFfiAbi;
+    bool UsesFastCallingConvention;
     Compiler.TargetFacts.StarkFfiAbi FfiAbi;
 
     FunctionCallingConventionFacts()
     {
         self.HasFfiAbi = false;
+        self.UsesFastCallingConvention = false;
         self.FfiAbi = Compiler.TargetFacts.StarkFfiAbi.C;
     }
+}
+
+internal fn void SetFastCallingConvention(mut borrow FunctionCallingConventionFacts facts)
+{
+    facts.UsesFastCallingConvention = true;
+}
+
+internal fn FunctionCallingConventionFacts FastCallingConventionFacts()
+{
+    stack mut FunctionCallingConventionFacts facts = new();
+    facts.UsesFastCallingConvention = true;
+    return facts;
 }
 
 internal fn void SetFfiCallingConvention(mut borrow FunctionCallingConventionFacts facts, Compiler.TargetFacts.StarkFfiAbi abi)
@@ -533,6 +627,11 @@ internal fn MemoryStatus EmitLlvmDefinitionCallingConvention(bool isTailCallable
         }
     }
 
+    else if (facts.UsesFastCallingConvention)
+    {
+        try sink.AppendConstAscii(" fastcc");
+    }
+
     return MemoryStatus.Ok;
 }
 
@@ -557,6 +656,11 @@ internal fn MemoryStatus EmitLlvmCallCallingConvention(
             try sink.AppendAscii(convention);
             try sink.AppendConstAscii(" ");
         }
+    }
+
+    else if (facts.UsesFastCallingConvention)
+    {
+        try sink.AppendConstAscii("fastcc ");
     }
 
     return MemoryStatus.Ok;

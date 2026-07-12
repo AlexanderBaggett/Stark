@@ -1,0 +1,2137 @@
+import Compiler.Ir
+import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
+import Compiler.Mir.PackageImage.Models
+import Compiler.Mir.PackageImage.Shared.TypeCodec
+import System.Json
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Loader.TypedInterfaceTypeReferenceLoader
+
+// Typed-interface node lookup and iterative type-reference graph
+// materialization. Stable child/source ordinals flow directly into model rows.
+
+internal fn bool LogicalPackageImageJsonTypedInterfaceCounts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typedInterfaceNode,
+    out u32[0 max] functionCount,
+    out u32[0 max] typeCount,
+    out u32[0 max] globalCount,
+    out u32[0 max] typeAliasCount,
+    out u32[0 max] importCount)
+{
+    functionCount = 0;
+    typeCount = 0;
+    globalCount = 0;
+    typeAliasCount = 0;
+    importCount = 0;
+    return LogicalPackageImageJsonRequiredArrayMemberCount(document, typedInterfaceNode, "Functions", functionCount)
+        && LogicalPackageImageJsonRequiredArrayMemberCount(document, typedInterfaceNode, "Types", typeCount)
+        && LogicalPackageImageJsonRequiredArrayMemberCount(document, typedInterfaceNode, "Globals", globalCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, typedInterfaceNode, "TypeAliases", typeAliasCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, typedInterfaceNode, "Imports", importCount);
+}
+
+internal fn bool LogicalPackageImageJsonEffectiveTypedInterfaceNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] moduleNode,
+    out u64[0 2 ** 63 - 1] typedInterfaceNode,
+    out bool usesCompilerSections)
+{
+    typedInterfaceNode = 0;
+    usesCompilerSections = false;
+    stack mut u64[0 2 ** 63 - 1] directTypedInterfaceNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsNode = 0;
+    stack mut u64[0 2 ** 63 - 1] compilerSectionsTypedInterfaceNode = 0;
+    stack mut bool hasDirectTypedInterface = false;
+    stack mut bool hasCompilerSections = false;
+    stack mut bool hasCompilerSectionsTypedInterface = false;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "TypedInterface", directTypedInterfaceNode, hasDirectTypedInterface)
+        || !LogicalPackageImageJsonOptionalObjectMember(document, moduleNode, "CompilerSections", compilerSectionsNode, hasCompilerSections))
+    {
+        return false;
+    }
+
+    if (hasCompilerSections)
+    {
+        if (!LogicalPackageImageJsonOptionalObjectMember(
+            document,
+            compilerSectionsNode,
+            "TypedInterface",
+            compilerSectionsTypedInterfaceNode,
+            hasCompilerSectionsTypedInterface))
+        {
+            return false;
+        }
+    }
+
+    if (hasCompilerSectionsTypedInterface)
+    {
+        typedInterfaceNode = compilerSectionsTypedInterfaceNode;
+        usesCompilerSections = true;
+        return true;
+    }
+
+    if (hasDirectTypedInterface)
+    {
+        typedInterfaceNode = directTypedInterfaceNode;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationArrayNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typedInterfaceNode,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    out u64[0 2 ** 63 - 1] declarationsNode,
+    out u32[0 max] declarationCount)
+{
+    declarationsNode = 0;
+    declarationCount = 0;
+    switch (declarationKind)
+    {
+        case LogicalPackageTypedDeclarationKind.TypeAlias:
+            return LogicalPackageImageJsonOptionalArrayMember(document, typedInterfaceNode, "TypeAliases", declarationsNode, declarationCount);
+        case LogicalPackageTypedDeclarationKind.Type:
+            return LogicalPackageImageJsonRequiredArrayMember(document, typedInterfaceNode, "Types", declarationsNode, declarationCount);
+        case LogicalPackageTypedDeclarationKind.Function:
+            return LogicalPackageImageJsonRequiredArrayMember(document, typedInterfaceNode, "Functions", declarationsNode, declarationCount);
+        case LogicalPackageTypedDeclarationKind.Global:
+            return LogicalPackageImageJsonRequiredArrayMember(document, typedInterfaceNode, "Globals", declarationsNode, declarationCount);
+    }
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typedInterfaceNode,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    out u64[0 2 ** 63 - 1] declarationNode)
+{
+    declarationNode = 0;
+    stack mut u64[0 2 ** 63 - 1] declarationsNode = 0;
+    stack mut u32[0 max] declarationCount = 0;
+    if (!LogicalPackageImageJsonTypedDeclarationArrayNode(document, typedInterfaceNode, declarationKind, declarationsNode, declarationCount)
+        || declarationOrdinal >= declarationCount)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!document.TryChildAt(declarationsNode, (u64[0 2 ** 63 - 1])declarationOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    declarationNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonTypedCallableNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typedInterfaceNode,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    out u64[0 2 ** 63 - 1] callableNode)
+{
+    callableNode = 0;
+    switch (callableKind)
+    {
+        case LogicalPackageTypedCallableKind.Function:
+            if (methodOrdinal != 0)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonTypedDeclarationNode(
+                document,
+                typedInterfaceNode,
+                LogicalPackageTypedDeclarationKind.Function,
+                declarationOrdinal,
+                callableNode);
+        case LogicalPackageTypedCallableKind.Method:
+            stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+            stack mut u64[0 2 ** 63 - 1] methodsNode = 0;
+            stack mut u32[0 max] methodCount = 0;
+            stack mut u64[0 2 ** 63 - 1] found = 0;
+            if (!LogicalPackageImageJsonTypedDeclarationNode(
+                    document,
+                    typedInterfaceNode,
+                    LogicalPackageTypedDeclarationKind.Type,
+                    declarationOrdinal,
+                    typeNode)
+                || !LogicalPackageImageJsonOptionalArrayMember(document, typeNode, "Methods", methodsNode, methodCount)
+                || methodOrdinal >= methodCount
+                || !document.TryChildAt(methodsNode, (u64[0 2 ** 63 - 1])methodOrdinal, found)
+                || document.KindAt(found) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            callableNode = found;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonTypedCallableParameterNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    u32[0 max] parameterOrdinal,
+    out u64[0 2 ** 63 - 1] parameterNode)
+{
+    parameterNode = 0;
+    stack mut u64[0 2 ** 63 - 1] parametersNode = 0;
+    stack mut u32[0 max] parameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    if (!LogicalPackageImageJsonRequiredArrayMember(document, callableNode, "Parameters", parametersNode, parameterCount)
+        || parameterOrdinal >= parameterCount
+        || !document.TryChildAt(parametersNode, (u64[0 2 ** 63 - 1])parameterOrdinal, found)
+        || document.KindAt(found) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    parameterNode = found;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationTypeReferenceNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationNode,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    out u64[0 2 ** 63 - 1] typeReferenceNode)
+{
+    typeReferenceNode = 0;
+    stack mut u64[0 2 ** 63 - 1] payloadArrayNode = 0;
+    stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+    stack mut u32[0 max] payloadCount = 0;
+    switch (source)
+    {
+        case LogicalPackageTypedTypeReferenceSource.TypeAliasTarget:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.TypeAlias
+                || payloadOrdinal != 0)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "TargetType", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.TypeAliasComptimeGenericParameterType:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.TypeAlias
+                || !LogicalPackageImageJsonOptionalArrayMember(
+                    document,
+                    declarationNode,
+                    "ComptimeGenericParameters",
+                    payloadArrayNode,
+                    payloadCount)
+                || payloadOrdinal >= payloadCount
+                || !document.TryChildAt(payloadArrayNode, (u64[0 2 ** 63 - 1])payloadOrdinal, payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "Type", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.FunctionReturn:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Function
+                || payloadOrdinal != 0)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "ReturnType", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.FunctionParameter:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Function
+                || !LogicalPackageImageJsonRequiredArrayMember(document, declarationNode, "Parameters", payloadArrayNode, payloadCount)
+                || payloadOrdinal >= payloadCount
+                || !document.TryChildAt(payloadArrayNode, (u64[0 2 ** 63 - 1])payloadOrdinal, payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "Type", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.MethodReturn:
+        case LogicalPackageTypedTypeReferenceSource.MethodParameter:
+        case LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType:
+        case LogicalPackageTypedTypeReferenceSource.CallableTypeParameterConstraintBoundTrait:
+        case LogicalPackageTypedTypeReferenceSource.CallableThreadSafetyLawPredicateType:
+        case LogicalPackageTypedTypeReferenceSource.GlobalConstantInitializerType:
+            return false;
+        case LogicalPackageTypedTypeReferenceSource.GlobalType:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Global
+                || payloadOrdinal != 0)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "Type", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.TypeField:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Type
+                || !LogicalPackageImageJsonRequiredArrayMember(document, declarationNode, "Fields", payloadArrayNode, payloadCount)
+                || payloadOrdinal >= payloadCount
+                || !document.TryChildAt(payloadArrayNode, (u64[0 2 ** 63 - 1])payloadOrdinal, payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "Type", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.TypeAssociatedTypeTarget:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Type
+                || !LogicalPackageImageJsonRequiredArrayMember(document, declarationNode, "AssociatedTypes", payloadArrayNode, payloadCount)
+                || payloadOrdinal >= payloadCount
+                || !document.TryChildAt(payloadArrayNode, (u64[0 2 ** 63 - 1])payloadOrdinal, payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "TargetType", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.TypeImplementedTrait:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Type
+                || !LogicalPackageImageJsonRequiredArrayMember(document, declarationNode, "ImplementedTraitTypes", payloadArrayNode, payloadCount)
+                || payloadOrdinal >= payloadCount
+                || !document.TryChildAt(payloadArrayNode, (u64[0 2 ** 63 - 1])payloadOrdinal, payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object)
+            {
+                return false;
+            }
+
+            typeReferenceNode = payloadNode;
+            return true;
+        case LogicalPackageTypedTypeReferenceSource.TypeThreadSafetyLawAttributeConditionType:
+            if (declarationKind != LogicalPackageTypedDeclarationKind.Type
+                || !LogicalPackageImageJsonRequiredArrayMember(
+                    document,
+                    declarationNode,
+                    "ThreadSafetyLawAttributes",
+                    payloadArrayNode,
+                    payloadCount)
+                || payloadOrdinal >= payloadCount
+                || !document.TryChildAt(payloadArrayNode, (u64[0 2 ** 63 - 1])payloadOrdinal, payloadNode)
+                || document.KindAt(payloadNode) != JsonKind.Object
+                || !LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "Condition", payloadNode))
+            {
+                return false;
+            }
+
+            return LogicalPackageImageJsonRequiredObjectMember(document, payloadNode, "Type", typeReferenceNode);
+        case LogicalPackageTypedTypeReferenceSource.TypeEnumVariantPayloadType:
+        case LogicalPackageTypedTypeReferenceSource.TypeEnumVariantAbsorbsErrorType:
+        case LogicalPackageTypedTypeReferenceSource.FunctionOwnershipEventPlaceType:
+        case LogicalPackageTypedTypeReferenceSource.FunctionOwnershipRootType:
+        case LogicalPackageTypedTypeReferenceSource.AbiFunctionSourceReturn:
+        case LogicalPackageTypedTypeReferenceSource.AbiFunctionLlvmReturn:
+        case LogicalPackageTypedTypeReferenceSource.AbiParameterSourceType:
+        case LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmType:
+        case LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmCarrierType:
+        case LogicalPackageTypedTypeReferenceSource.LayoutEnumTagFieldType:
+        case LogicalPackageTypedTypeReferenceSource.LayoutEnumOrderedFieldType:
+        case LogicalPackageTypedTypeReferenceSource.LayoutEnumVariantFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementTraversalIndexType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementTraversalElementType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionTypeArgument:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionComptimeValueArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationTypeArgument:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredTypeInstantiationType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateLocalDeclarationType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateConversionTargetType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateFieldAccessFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationReturnType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationSuccessPayloadType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandFailurePayloadType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationEnclosingFailurePayloadType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectCreationCreatedType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectInitializerMemberFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorEnumType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorMemberFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumCallEnumType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumValueEnumType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternEnumType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternMemberFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternMemberFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallReturnType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallParameterType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallTypeArgument:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallComptimeValueArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallReturnType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallParameterType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallTypeArgument:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallComptimeValueArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTargetType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressReturnType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressParameterType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTypeArgument:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressComptimeValueArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationResultType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReturnType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationParameterType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTypeArgument:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationComptimeValueArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentParameterType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentArgumentType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReceiverType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationFunctionPointerType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationClosureType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSourceType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTargetType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCreatedType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationConstructorParameterType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationObjectInitializerMemberFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumMemberFieldType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationLayoutQueryTargetType:
+        case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSwitchType:
+            return false;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonTypedCallableTypeReferenceNode(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typedInterfaceNode,
+    LogicalPackageTypedCallableKind callableKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    out u64[0 2 ** 63 - 1] typeReferenceNode)
+{
+    typeReferenceNode = 0;
+    stack mut u64[0 2 ** 63 - 1] callableNode = 0;
+    stack mut u64[0 2 ** 63 - 1] parameterNode = 0;
+    stack mut u64[0 2 ** 63 - 1] payloadArrayNode = 0;
+    stack mut u64[0 2 ** 63 - 1] payloadNode = 0;
+    stack mut u32[0 max] payloadCount = 0;
+    switch (callableKind)
+    {
+        case LogicalPackageTypedCallableKind.Function:
+            if (methodOrdinal != 0)
+            {
+                return false;
+            }
+
+            switch (source)
+            {
+                case LogicalPackageTypedTypeReferenceSource.FunctionReturn:
+                    if (payloadOrdinal != 0
+                        || !LogicalPackageImageJsonTypedCallableNode(
+                            document,
+                            typedInterfaceNode,
+                            callableKind,
+                            declarationOrdinal,
+                            methodOrdinal,
+                            callableNode))
+                    {
+                        return false;
+                    }
+
+                    return LogicalPackageImageJsonRequiredObjectMember(
+                        document,
+                        callableNode,
+                        "ReturnType",
+                        typeReferenceNode);
+                case LogicalPackageTypedTypeReferenceSource.FunctionParameter:
+                    if (!LogicalPackageImageJsonTypedCallableNode(
+                            document,
+                            typedInterfaceNode,
+                            callableKind,
+                            declarationOrdinal,
+                            methodOrdinal,
+                            callableNode)
+                        || !LogicalPackageImageJsonTypedCallableParameterNode(
+                            document,
+                            callableNode,
+                            payloadOrdinal,
+                            parameterNode))
+                    {
+                        return false;
+                    }
+
+                    return LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeReferenceNode);
+                case LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType:
+                    if (!LogicalPackageImageJsonTypedCallableNode(
+                            document,
+                            typedInterfaceNode,
+                            callableKind,
+                            declarationOrdinal,
+                            methodOrdinal,
+                            callableNode)
+                        || !LogicalPackageImageJsonOptionalArrayMember(
+                            document,
+                            callableNode,
+                            "ComptimeGenericParameters",
+                            payloadArrayNode,
+                            payloadCount)
+                        || payloadOrdinal >= payloadCount
+                        || !document.TryChildAt(
+                            payloadArrayNode,
+                            (u64[0 2 ** 63 - 1])payloadOrdinal,
+                            payloadNode)
+                        || document.KindAt(payloadNode) != JsonKind.Object)
+                    {
+                        return false;
+                    }
+
+                    return LogicalPackageImageJsonRequiredObjectMember(
+                        document,
+                        payloadNode,
+                        "Type",
+                        typeReferenceNode);
+                case LogicalPackageTypedTypeReferenceSource.TypeAliasTarget:
+                case LogicalPackageTypedTypeReferenceSource.TypeAliasComptimeGenericParameterType:
+                case LogicalPackageTypedTypeReferenceSource.MethodReturn:
+                case LogicalPackageTypedTypeReferenceSource.MethodParameter:
+                case LogicalPackageTypedTypeReferenceSource.CallableTypeParameterConstraintBoundTrait:
+                case LogicalPackageTypedTypeReferenceSource.CallableThreadSafetyLawPredicateType:
+                case LogicalPackageTypedTypeReferenceSource.GlobalType:
+                case LogicalPackageTypedTypeReferenceSource.GlobalConstantInitializerType:
+                case LogicalPackageTypedTypeReferenceSource.TypeField:
+                case LogicalPackageTypedTypeReferenceSource.TypeAssociatedTypeTarget:
+                case LogicalPackageTypedTypeReferenceSource.TypeImplementedTrait:
+                case LogicalPackageTypedTypeReferenceSource.TypeThreadSafetyLawAttributeConditionType:
+                case LogicalPackageTypedTypeReferenceSource.TypeEnumVariantPayloadType:
+                case LogicalPackageTypedTypeReferenceSource.TypeEnumVariantAbsorbsErrorType:
+                case LogicalPackageTypedTypeReferenceSource.FunctionOwnershipEventPlaceType:
+                case LogicalPackageTypedTypeReferenceSource.FunctionOwnershipRootType:
+                case LogicalPackageTypedTypeReferenceSource.AbiFunctionSourceReturn:
+                case LogicalPackageTypedTypeReferenceSource.AbiFunctionLlvmReturn:
+                case LogicalPackageTypedTypeReferenceSource.AbiParameterSourceType:
+                case LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmType:
+                case LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmCarrierType:
+                case LogicalPackageTypedTypeReferenceSource.LayoutEnumTagFieldType:
+                case LogicalPackageTypedTypeReferenceSource.LayoutEnumOrderedFieldType:
+                case LogicalPackageTypedTypeReferenceSource.LayoutEnumVariantFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementTraversalIndexType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementTraversalElementType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredTypeInstantiationType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateLocalDeclarationType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateConversionTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFieldAccessFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationSuccessPayloadType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandFailurePayloadType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationEnclosingFailurePayloadType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectCreationCreatedType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectInitializerMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumCallEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumValueEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationResultType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReceiverType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationFunctionPointerType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationClosureType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSourceType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCreatedType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationConstructorParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationObjectInitializerMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationLayoutQueryTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSwitchType:
+                    return false;
+            }
+        case LogicalPackageTypedCallableKind.Method:
+            switch (source)
+            {
+                case LogicalPackageTypedTypeReferenceSource.MethodReturn:
+                    if (payloadOrdinal != 0
+                        || !LogicalPackageImageJsonTypedCallableNode(
+                            document,
+                            typedInterfaceNode,
+                            callableKind,
+                            declarationOrdinal,
+                            methodOrdinal,
+                            callableNode))
+                    {
+                        return false;
+                    }
+
+                    return LogicalPackageImageJsonRequiredObjectMember(
+                        document,
+                        callableNode,
+                        "ReturnType",
+                        typeReferenceNode);
+                case LogicalPackageTypedTypeReferenceSource.MethodParameter:
+                    if (!LogicalPackageImageJsonTypedCallableNode(
+                            document,
+                            typedInterfaceNode,
+                            callableKind,
+                            declarationOrdinal,
+                            methodOrdinal,
+                            callableNode)
+                        || !LogicalPackageImageJsonTypedCallableParameterNode(
+                            document,
+                            callableNode,
+                            payloadOrdinal,
+                            parameterNode))
+                    {
+                        return false;
+                    }
+
+                    return LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeReferenceNode);
+                case LogicalPackageTypedTypeReferenceSource.CallableComptimeGenericParameterType:
+                    if (!LogicalPackageImageJsonTypedCallableNode(
+                            document,
+                            typedInterfaceNode,
+                            callableKind,
+                            declarationOrdinal,
+                            methodOrdinal,
+                            callableNode)
+                        || !LogicalPackageImageJsonOptionalArrayMember(
+                            document,
+                            callableNode,
+                            "ComptimeGenericParameters",
+                            payloadArrayNode,
+                            payloadCount)
+                        || payloadOrdinal >= payloadCount
+                        || !document.TryChildAt(
+                            payloadArrayNode,
+                            (u64[0 2 ** 63 - 1])payloadOrdinal,
+                            payloadNode)
+                        || document.KindAt(payloadNode) != JsonKind.Object)
+                    {
+                        return false;
+                    }
+
+                    return LogicalPackageImageJsonRequiredObjectMember(
+                        document,
+                        payloadNode,
+                        "Type",
+                        typeReferenceNode);
+                case LogicalPackageTypedTypeReferenceSource.TypeAliasTarget:
+                case LogicalPackageTypedTypeReferenceSource.TypeAliasComptimeGenericParameterType:
+                case LogicalPackageTypedTypeReferenceSource.FunctionReturn:
+                case LogicalPackageTypedTypeReferenceSource.FunctionParameter:
+                case LogicalPackageTypedTypeReferenceSource.CallableTypeParameterConstraintBoundTrait:
+                case LogicalPackageTypedTypeReferenceSource.CallableThreadSafetyLawPredicateType:
+                case LogicalPackageTypedTypeReferenceSource.GlobalType:
+                case LogicalPackageTypedTypeReferenceSource.GlobalConstantInitializerType:
+                case LogicalPackageTypedTypeReferenceSource.TypeField:
+                case LogicalPackageTypedTypeReferenceSource.TypeAssociatedTypeTarget:
+                case LogicalPackageTypedTypeReferenceSource.TypeImplementedTrait:
+                case LogicalPackageTypedTypeReferenceSource.TypeThreadSafetyLawAttributeConditionType:
+                case LogicalPackageTypedTypeReferenceSource.TypeEnumVariantPayloadType:
+                case LogicalPackageTypedTypeReferenceSource.TypeEnumVariantAbsorbsErrorType:
+                case LogicalPackageTypedTypeReferenceSource.FunctionOwnershipEventPlaceType:
+                case LogicalPackageTypedTypeReferenceSource.FunctionOwnershipRootType:
+                case LogicalPackageTypedTypeReferenceSource.AbiFunctionSourceReturn:
+                case LogicalPackageTypedTypeReferenceSource.AbiFunctionLlvmReturn:
+                case LogicalPackageTypedTypeReferenceSource.AbiParameterSourceType:
+                case LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmType:
+                case LogicalPackageTypedTypeReferenceSource.AbiParameterLlvmCarrierType:
+                case LogicalPackageTypedTypeReferenceSource.LayoutEnumTagFieldType:
+                case LogicalPackageTypedTypeReferenceSource.LayoutEnumOrderedFieldType:
+                case LogicalPackageTypedTypeReferenceSource.LayoutEnumVariantFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementTraversalIndexType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateStatementTraversalElementType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateExpressionComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredFunctionInstantiationComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDeferredTypeInstantiationType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateLocalDeclarationType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateConversionTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFieldAccessFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationSuccessPayloadType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationOperandFailurePayloadType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateTryPropagationEnclosingFailurePayloadType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectCreationCreatedType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateObjectInitializerMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumConstructorMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumCallEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumValueEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateEnumPatternMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateAggregatePatternMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateDirectCallComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateMemberCallComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateFunctionAddressComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationResultType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReturnType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTypeArgument:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationComptimeValueArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCallArgumentArgumentType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationReceiverType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationFunctionPointerType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationClosureType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSourceType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationCreatedType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationConstructorParameterType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationObjectInitializerMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationEnumMemberFieldType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationLayoutQueryTargetType:
+                case LogicalPackageTypedTypeReferenceSource.GenericTemplateBoundOperationSwitchType:
+                    return false;
+            }
+    }
+}
+
+internal fn bool LogicalPackageTypeReferenceWorkListAdd(
+    mut borrow IrTable<LogicalPackageTypeReferenceWorkItem> work,
+    u64[0 2 ** 63 - 1] node,
+    u32[0 max] parentTypeReferenceRow,
+    LogicalPackageTypeReferenceChildKind parentChildKind,
+    u32[0 max] parentChildOrdinal)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypeReferenceWorkItem item = new LogicalPackageTypeReferenceWorkItem()
+    {
+        NodeValue = node,
+        ParentTypeReferenceRowValue = parentTypeReferenceRow,
+        ParentChildKindValue = parentChildKind,
+        ParentChildOrdinalValue = parentChildOrdinal
+    };
+    return work.Add(item) != 0;
+}
+
+internal fn bool LogicalPackageTypedConstantInitializerWorkListAdd(
+    mut borrow IrTable<LogicalPackageTypedConstantInitializerWorkItem> work,
+    u64[0 2 ** 63 - 1] node,
+    u32[0 max] parentInitializerRow,
+    u32[0 max] parentChildOrdinal)
+{
+    if (node == 0)
+    {
+        return false;
+    }
+
+    stack LogicalPackageTypedConstantInitializerWorkItem item =
+        new LogicalPackageTypedConstantInitializerWorkItem()
+    {
+        NodeValue = node,
+        ParentInitializerRowValue = parentInitializerRow,
+        ParentChildOrdinalValue = parentChildOrdinal
+    };
+    return work.Add(item) != 0;
+}
+
+internal fn bool LogicalPackageImageJsonAppendTypedDeclarationHeaderText(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationNode,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii manifestKind,
+    out bool hasManifestKind)
+{
+    hasManifestKind = false;
+    if (!LogicalPackageImageJsonAppendRequiredTextMember(document, declarationNode, "Name", name)
+        || !LogicalPackageImageJsonAppendRequiredTextMember(document, declarationNode, "QualifiedName", qualifiedName)
+        || !LogicalPackageImageJsonAppendRequiredTextMember(document, declarationNode, "Visibility", visibility))
+    {
+        return false;
+    }
+
+    switch (declarationKind)
+    {
+        case LogicalPackageTypedDeclarationKind.TypeAlias:
+            return true;
+        case LogicalPackageTypedDeclarationKind.Type:
+        case LogicalPackageTypedDeclarationKind.Function:
+        case LogicalPackageTypedDeclarationKind.Global:
+            if (!LogicalPackageImageJsonAppendRequiredTextMember(document, declarationNode, "Kind", manifestKind))
+            {
+                return false;
+            }
+
+            hasManifestKind = true;
+            return true;
+    }
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationTypeAliasFacts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationNode,
+    out u32[0 max] genericParameterCount,
+    out u32[0 max] comptimeGenericParameterCount)
+{
+    genericParameterCount = 0;
+    comptimeGenericParameterCount = 0;
+    stack mut u64[0 2 ** 63 - 1] targetTypeNode = 0;
+    return LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "TargetType", targetTypeNode)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "GenericParameters", genericParameterCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ComptimeGenericParameters", comptimeGenericParameterCount);
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationTypeFacts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationNode,
+    out u32[0 max] genericParameterCount,
+    out u32[0 max] comptimeGenericParameterCount,
+    out u32[0 max] fieldCount,
+    out u32[0 max] variantCount,
+    out u32[0 max] methodCount,
+    out u32[0 max] constructorCount,
+    out u32[0 max] associatedTypeCount,
+    out u32[0 max] implementedTraitCount,
+    out u32[0 max] threadSafetyLawAttributeCount,
+    out bool hasBackendOptimizationMode,
+    out bool hasStructLayout,
+    out bool hasPackBytes,
+    out bool hasAlignBytes,
+    out bool isDynTrait)
+{
+    genericParameterCount = 0;
+    comptimeGenericParameterCount = 0;
+    fieldCount = 0;
+    variantCount = 0;
+    methodCount = 0;
+    constructorCount = 0;
+    associatedTypeCount = 0;
+    implementedTraitCount = 0;
+    threadSafetyLawAttributeCount = 0;
+    hasBackendOptimizationMode = false;
+    hasStructLayout = false;
+    hasPackBytes = false;
+    hasAlignBytes = false;
+    isDynTrait = false;
+    stack mut u64[0 2 ** 63 - 1] backendOptimizationModeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] structLayoutNode = 0;
+    hasBackendOptimizationMode = LogicalPackageImageJsonMemberHasValue(document, declarationNode, "BackendOptimizationMode");
+    hasStructLayout = LogicalPackageImageJsonMemberHasValue(document, declarationNode, "StructLayout");
+    return LogicalPackageImageJsonRequiredArrayMemberCount(document, declarationNode, "Fields", fieldCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "GenericParameters", genericParameterCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ComptimeGenericParameters", comptimeGenericParameterCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "Variants", variantCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "Methods", methodCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "Constructors", constructorCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "AssociatedTypes", associatedTypeCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ImplementedTraits", implementedTraitCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ThreadSafetyLawAttributes", threadSafetyLawAttributeCount)
+        && (!document.TryFindMember(declarationNode, "BackendOptimizationMode", backendOptimizationModeNode)
+            || document.KindAt(backendOptimizationModeNode) == JsonKind.Null
+            || document.KindAt(backendOptimizationModeNode) == JsonKind.Text)
+        && (!document.TryFindMember(declarationNode, "StructLayout", structLayoutNode)
+            || document.KindAt(structLayoutNode) == JsonKind.Null
+            || document.KindAt(structLayoutNode) == JsonKind.Text)
+        && LogicalPackageImageJsonMemberIsPresentNumber(document, declarationNode, "PackBytes", hasPackBytes)
+        && LogicalPackageImageJsonMemberIsPresentNumber(document, declarationNode, "AlignBytes", hasAlignBytes)
+        && LogicalPackageImageJsonOptionalBoolMemberValue(document, declarationNode, "IsDynTrait", isDynTrait);
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationFunctionFacts(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationNode,
+    out u32[0 max] genericParameterCount,
+    out u32[0 max] comptimeGenericParameterCount,
+    out u32[0 max] parameterCount,
+    out u32[0 max] threadSafetyLawPredicateCount,
+    out u32[0 max] typeParameterConstraintCount,
+    out u32[0 max] valueContractCount,
+    out bool hasBackendOptimizationMode,
+    out bool isFfi,
+    out bool isStrictFp,
+    out bool usesFastCallingConvention,
+    out bool hasGenericTemplateBody)
+{
+    genericParameterCount = 0;
+    comptimeGenericParameterCount = 0;
+    parameterCount = 0;
+    threadSafetyLawPredicateCount = 0;
+    typeParameterConstraintCount = 0;
+    valueContractCount = 0;
+    hasBackendOptimizationMode = false;
+    isFfi = false;
+    isStrictFp = false;
+    usesFastCallingConvention = false;
+    hasGenericTemplateBody = false;
+    stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] symbolNameNode = 0;
+    stack mut u64[0 2 ** 63 - 1] backendOptimizationModeNode = 0;
+    hasBackendOptimizationMode = LogicalPackageImageJsonMemberHasValue(document, declarationNode, "BackendOptimizationMode");
+    return LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "ReturnType", returnTypeNode)
+        && document.TryFindMember(declarationNode, "SymbolName", symbolNameNode)
+        && document.KindAt(symbolNameNode) == JsonKind.Text
+        && System.Text.AsciiLength(document.TextAt(symbolNameNode)) > 0
+        && LogicalPackageImageJsonRequiredArrayMemberCount(document, declarationNode, "Parameters", parameterCount)
+        && LogicalPackageImageJsonRequiredBoolMemberValue(document, declarationNode, "IsFfi", isFfi)
+        && LogicalPackageImageJsonRequiredBoolMemberValue(document, declarationNode, "IsStrictFp", isStrictFp)
+        && LogicalPackageImageJsonRequiredBoolMemberValue(document, declarationNode, "UseFastCallingConvention", usesFastCallingConvention)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "GenericParameters", genericParameterCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ComptimeGenericParameters", comptimeGenericParameterCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ThreadSafetyLawPredicates", threadSafetyLawPredicateCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "TypeParameterConstraints", typeParameterConstraintCount)
+        && LogicalPackageImageJsonOptionalArrayMemberCount(document, declarationNode, "ValueContracts", valueContractCount)
+        && LogicalPackageImageJsonOptionalBoolMemberValue(document, declarationNode, "HasGenericTemplateBody", hasGenericTemplateBody)
+        && (!document.TryFindMember(declarationNode, "BackendOptimizationMode", backendOptimizationModeNode)
+            || document.KindAt(backendOptimizationModeNode) == JsonKind.Null
+            || document.KindAt(backendOptimizationModeNode) == JsonKind.Text);
+}
+
+internal fn bool LogicalPackageImageJsonAppendTypedCallableText(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    LogicalPackageTypedCallableKind callableKind,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii qualifiedName,
+    mut borrow OwnedAscii visibility,
+    mut borrow OwnedAscii symbolName,
+    mut borrow OwnedAscii manifestKind,
+    mut borrow OwnedAscii qualifiedResolvedName,
+    mut borrow OwnedAscii publishedOverloadKey,
+    mut borrow OwnedAscii inlinePreference,
+    mut borrow OwnedAscii ffiAbi,
+    mut borrow OwnedAscii backendOptimizationMode,
+    mut borrow OwnedAscii linkName,
+    out bool hasVisibility,
+    out bool hasQualifiedResolvedName,
+    out bool hasPublishedOverloadKey,
+    out bool hasInlinePreference,
+    out bool hasFfiAbi,
+    out bool hasBackendOptimizationMode,
+    out bool hasLinkName)
+{
+    hasVisibility = false;
+    hasQualifiedResolvedName = false;
+    hasPublishedOverloadKey = false;
+    hasInlinePreference = false;
+    hasFfiAbi = false;
+    hasBackendOptimizationMode = false;
+    hasLinkName = false;
+    if (!LogicalPackageImageJsonAppendRequiredTextMember(document, callableNode, "Name", name)
+        || !LogicalPackageImageJsonAppendRequiredTextMember(document, callableNode, "QualifiedName", qualifiedName)
+        || !LogicalPackageImageJsonAppendRequiredTextMember(document, callableNode, "SymbolName", symbolName)
+        || !LogicalPackageImageJsonAppendRequiredTextMember(document, callableNode, "Kind", manifestKind))
+    {
+        return false;
+    }
+
+    switch (callableKind)
+    {
+        case LogicalPackageTypedCallableKind.Function:
+            if (!LogicalPackageImageJsonAppendRequiredTextMember(document, callableNode, "Visibility", visibility))
+            {
+                return false;
+            }
+
+            hasVisibility = true;
+        case LogicalPackageTypedCallableKind.Method:
+            if (!LogicalPackageImageJsonAppendOptionalTextMember(document, callableNode, "Visibility", visibility, hasVisibility))
+            {
+                return false;
+            }
+    }
+
+    if (!LogicalPackageImageJsonAppendOptionalTextMember(
+            document,
+            callableNode,
+            "QualifiedResolvedName",
+            qualifiedResolvedName,
+            hasQualifiedResolvedName)
+        || !LogicalPackageImageJsonAppendOptionalTextMember(
+            document,
+            callableNode,
+            "PublishedOverloadKey",
+            publishedOverloadKey,
+            hasPublishedOverloadKey)
+        || !LogicalPackageImageJsonAppendOptionalTextMember(
+            document,
+            callableNode,
+            "InlinePreference",
+            inlinePreference,
+            hasInlinePreference)
+        || !LogicalPackageImageJsonAppendOptionalTextMember(document, callableNode, "FfiAbi", ffiAbi, hasFfiAbi)
+        || !LogicalPackageImageJsonAppendOptionalTextMember(
+            document,
+            callableNode,
+            "BackendOptimizationMode",
+            backendOptimizationMode,
+            hasBackendOptimizationMode))
+    {
+        return false;
+    }
+
+    if (callableKind == LogicalPackageTypedCallableKind.Function)
+    {
+        return LogicalPackageImageJsonAppendOptionalTextMember(document, callableNode, "LinkName", linkName, hasLinkName);
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonTypedCallableFacts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] callableNode,
+    LogicalPackageTypedCallableKind callableKind,
+    out u32[0 max] genericParameterCount,
+    out u32[0 max] comptimeGenericParameterCount,
+    out u32[0 max] parameterCount,
+    out u32[0 max] threadSafetyLawPredicateCount,
+    out u32[0 max] typeParameterConstraintCount,
+    out u32[0 max] valueContractCount,
+    out u32[0 max] disjointParameterGroupCount,
+    out u32[0 max] overlapParameterGroupCount,
+    out u32[0 max] sameParameterGroupCount,
+    out u32[0 max] pointeeDeadOnReturnParameterNameCount,
+    out bool hasAsm,
+    out bool isFfi,
+    out bool isStrictFp,
+    out bool usesFastCallingConvention,
+    out bool hasGenericTemplateBody,
+    out bool isHot,
+    out bool isCold,
+    out bool hasExplicitInlinePreference,
+    out bool isStatic,
+    out bool isUnsafe,
+    out bool isVarargs,
+    out bool isTailCallable,
+    out bool hasBody)
+{
+    genericParameterCount = 0;
+    comptimeGenericParameterCount = 0;
+    parameterCount = 0;
+    threadSafetyLawPredicateCount = 0;
+    typeParameterConstraintCount = 0;
+    valueContractCount = 0;
+    disjointParameterGroupCount = 0;
+    overlapParameterGroupCount = 0;
+    sameParameterGroupCount = 0;
+    pointeeDeadOnReturnParameterNameCount = 0;
+    hasAsm = false;
+    isFfi = false;
+    isStrictFp = false;
+    usesFastCallingConvention = false;
+    hasGenericTemplateBody = false;
+    isHot = false;
+    isCold = false;
+    hasExplicitInlinePreference = false;
+    isStatic = false;
+    isUnsafe = false;
+    isVarargs = false;
+    isTailCallable = false;
+    hasBody = true;
+    stack mut u64[0 2 ** 63 - 1] returnTypeNode = 0;
+    if (!LogicalPackageImageJsonRequiredObjectMember(document, callableNode, "ReturnType", returnTypeNode)
+        || !LogicalPackageImageJsonRequiredArrayMemberCount(document, callableNode, "Parameters", parameterCount)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(document, callableNode, "IsFfi", isFfi)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(document, callableNode, "IsStrictFp", isStrictFp)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(
+            document,
+            callableNode,
+            "UseFastCallingConvention",
+            usesFastCallingConvention)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, callableNode, "GenericParameters", genericParameterCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "ComptimeGenericParameters",
+            comptimeGenericParameterCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "ThreadSafetyLawPredicates",
+            threadSafetyLawPredicateCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "TypeParameterConstraints",
+            typeParameterConstraintCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(document, callableNode, "ValueContracts", valueContractCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "DisjointParameterGroups",
+            disjointParameterGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "OverlapParameterGroups",
+            overlapParameterGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "SameParameterGroups",
+            sameParameterGroupCount)
+        || !LogicalPackageImageJsonOptionalArrayMemberCount(
+            document,
+            callableNode,
+            "PointeeDeadOnReturnParameterNames",
+            pointeeDeadOnReturnParameterNameCount)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            callableNode,
+            "HasGenericTemplateBody",
+            hasGenericTemplateBody)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, callableNode, "IsHot", isHot)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, callableNode, "IsCold", isCold)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(
+            document,
+            callableNode,
+            "HasExplicitInlinePreference",
+            hasExplicitInlinePreference)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, callableNode, "IsStatic", isStatic)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, callableNode, "IsUnsafe", isUnsafe)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, callableNode, "IsVarargs", isVarargs)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, callableNode, "IsTailCallable", isTailCallable)
+        || !LogicalPackageImageJsonOptionalBoolMemberValueWithDefault(document, callableNode, "HasBody", true, hasBody))
+    {
+        return false;
+    }
+
+    if (callableKind == LogicalPackageTypedCallableKind.Function)
+    {
+        stack mut u64[0 2 ** 63 - 1] asmNode = 0;
+        return LogicalPackageImageJsonOptionalObjectMember(document, callableNode, "Asm", asmNode, hasAsm);
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonAppendTypedCallableParameterText(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parameterNode,
+    mut borrow OwnedAscii name,
+    mut borrow OwnedAscii rawPointerElementCountExpression,
+    out bool hasRawPointerElementCountExpression)
+{
+    hasRawPointerElementCountExpression = false;
+    return LogicalPackageImageJsonAppendRequiredTextMember(document, parameterNode, "Name", name)
+        && LogicalPackageImageJsonAppendOptionalTextMember(
+            document,
+            parameterNode,
+            "RawPointerElementCountExpression",
+            rawPointerElementCountExpression,
+            hasRawPointerElementCountExpression);
+}
+
+internal fn bool LogicalPackageImageJsonTypedCallableParameterFacts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] parameterNode,
+    out bool isDisjoint,
+    out bool isConst)
+{
+    isDisjoint = false;
+    isConst = false;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    return LogicalPackageImageJsonRequiredObjectMember(document, parameterNode, "Type", typeNode)
+        && LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsDisjoint", isDisjoint)
+        && LogicalPackageImageJsonOptionalBoolMemberValue(document, parameterNode, "IsConst", isConst);
+}
+
+internal fn bool LogicalPackageImageJsonTypedDeclarationGlobalFacts(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] declarationNode,
+    out bool isMutable,
+    out bool hasConstantInitializer)
+{
+    isMutable = false;
+    hasConstantInitializer = false;
+    stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+    stack mut u64[0 2 ** 63 - 1] initializerNode = 0;
+    if (!LogicalPackageImageJsonRequiredObjectMember(document, declarationNode, "Type", typeNode)
+        || !LogicalPackageImageJsonRequiredBoolMemberValue(document, declarationNode, "IsMutable", isMutable))
+    {
+        return false;
+    }
+
+    if (!document.TryFindMember(declarationNode, "ConstantInitializer", initializerNode)
+        || document.KindAt(initializerNode) == JsonKind.Null)
+    {
+        return true;
+    }
+
+    if (document.KindAt(initializerNode) != JsonKind.Object)
+    {
+        return false;
+    }
+
+    hasConstantInitializer = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    bool required,
+    LogicalPackageTypeReferenceTextKind textKind,
+    u32[0 max] textOrdinal,
+    u32[0 max] typeReferenceRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out bool present,
+    out u32[0 max] textRow)
+{
+    present = false;
+    textRow = 0;
+    stack mut u64[0 2 ** 63 - 1] member = 0;
+    if (!document.TryFindMember(objectNode, memberName, member)
+        || document.KindAt(member) == JsonKind.Null)
+    {
+        return !required;
+    }
+
+    if (document.KindAt(member) != JsonKind.Text)
+    {
+        return false;
+    }
+
+    stack ascii value = document.TextAt(member);
+    if (System.Text.AsciiLength(value) <= 0)
+    {
+        return false;
+    }
+
+    if (!LogicalPackageTypeReferenceGraphAddTextRowWithId(
+        graph,
+        typeReferenceRow,
+        textKind,
+        textOrdinal,
+        value,
+        textRow))
+    {
+        return false;
+    }
+
+    present = true;
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    bool required,
+    LogicalPackageTypeReferenceTextKind textKind,
+    u32[0 max] textOrdinal,
+    u32[0 max] typeReferenceRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out bool present)
+{
+    stack mut u32[0 max] textRow = 0;
+    return LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+        document,
+        objectNode,
+        memberName,
+        required,
+        textKind,
+        textOrdinal,
+        typeReferenceRow,
+        graph,
+        present,
+        textRow);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeOptionalTypeReferenceTextArray(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypeReferenceTextKind textKind,
+    bool allowNullItems,
+    u32[0 max] typeReferenceRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] itemCount)
+{
+    itemCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, objectNode, memberName, arrayNode, itemCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < itemCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] itemNode = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, itemNode))
+        {
+            return false;
+        }
+
+        stack JsonKind kind = document.KindAt(itemNode);
+        if (kind == JsonKind.Null && allowNullItems)
+        {
+            index = index + 1;
+            continue;
+        }
+
+        if (kind != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii value = document.TextAt(itemNode);
+        if (System.Text.AsciiLength(value) <= 0
+            || !LogicalPackageTypeReferenceGraphAddTextRow(graph, typeReferenceRow, textKind, index, value))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonEnqueueOptionalTypeReferenceObjectChild(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypeReferenceChildKind childKind,
+    u32[0 max] parentTypeReferenceRow,
+    mut borrow IrTable<LogicalPackageTypeReferenceWorkItem> work,
+    out bool present)
+{
+    present = false;
+    stack mut u64[0 2 ** 63 - 1] childNode = 0;
+    if (!LogicalPackageImageJsonOptionalObjectMember(document, objectNode, memberName, childNode, present))
+    {
+        return false;
+    }
+
+    if (!present)
+    {
+        return true;
+    }
+
+    return LogicalPackageTypeReferenceWorkListAdd(work, childNode, parentTypeReferenceRow, childKind, 0);
+}
+
+internal fn bool LogicalPackageImageJsonEnqueueOptionalTypeReferenceArrayChildren(
+    borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    ascii memberName,
+    LogicalPackageTypeReferenceChildKind childKind,
+    u32[0 max] parentTypeReferenceRow,
+    mut borrow IrTable<LogicalPackageTypeReferenceWorkItem> work,
+    out u32[0 max] childCount)
+{
+    childCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, objectNode, memberName, arrayNode, childCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < childCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] childNode = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, childNode)
+            || document.KindAt(childNode) != JsonKind.Object
+            || !LogicalPackageTypeReferenceWorkListAdd(work, childNode, parentTypeReferenceRow, childKind, index))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeParameterGroupNameRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupNode,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] groupRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] nameCount)
+{
+    nameCount = 0;
+    stack mut u64[0 2 ** 63 - 1] namesNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, groupNode, "ParameterNames", namesNode, nameCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < nameCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] nameNode = 0;
+        stack mut u32[0 max] nameTextRow = 0;
+        stack mut u32[0 max] nameRow = 0;
+        if (!document.TryChildAt(namesNode, (u64[0 2 ** 63 - 1])index, nameNode)
+            || document.KindAt(nameNode) != JsonKind.Text)
+        {
+            return false;
+        }
+
+        stack ascii value = document.TextAt(nameNode);
+        if (System.Text.AsciiLength(value) <= 0
+            || !LogicalPackageTypeReferenceGraphAddTextRowWithId(
+                graph,
+                typeReferenceRow,
+                LogicalPackageTypeReferenceTextKind.ParameterGroupParameterName,
+                index,
+                value,
+                nameTextRow)
+            || !LogicalPackageTypeReferenceGraphAddParameterGroupNameRow(
+                graph,
+                groupRow,
+                index,
+                nameTextRow,
+                nameRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeParameterGroupRegionRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] groupNode,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] groupRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] regionCount)
+{
+    regionCount = 0;
+    stack mut u64[0 2 ** 63 - 1] regionsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, groupNode, "Regions", regionsNode, regionCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < regionCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] regionNode = 0;
+        stack mut bool hasParameterName = false;
+        stack mut bool hasStartExpression = false;
+        stack mut bool hasCountExpression = false;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] startExpressionTextRow = 0;
+        stack mut u32[0 max] countExpressionTextRow = 0;
+        stack mut u32[0 max] regionRow = 0;
+        if (!document.TryChildAt(regionsNode, (u64[0 2 ** 63 - 1])index, regionNode)
+            || document.KindAt(regionNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+                document,
+                regionNode,
+                "ParameterName",
+                true,
+                LogicalPackageTypeReferenceTextKind.ParameterGroupRegionParameterName,
+                index,
+                typeReferenceRow,
+                graph,
+                hasParameterName,
+                parameterNameTextRow)
+            || !hasParameterName
+            || !LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+                document,
+                regionNode,
+                "StartExpression",
+                false,
+                LogicalPackageTypeReferenceTextKind.ParameterGroupRegionStartExpression,
+                index,
+                typeReferenceRow,
+                graph,
+                hasStartExpression,
+                startExpressionTextRow)
+            || !LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+                document,
+                regionNode,
+                "CountExpression",
+                false,
+                LogicalPackageTypeReferenceTextKind.ParameterGroupRegionCountExpression,
+                index,
+                typeReferenceRow,
+                graph,
+                hasCountExpression,
+                countExpressionTextRow)
+            || !LogicalPackageTypeReferenceGraphAddParameterGroupRegionRow(
+                graph,
+                groupRow,
+                index,
+                parameterNameTextRow,
+                hasStartExpression,
+                startExpressionTextRow,
+                hasCountExpression,
+                countExpressionTextRow,
+                regionRow))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeParameterGroupRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeReferenceNode,
+    ascii memberName,
+    LogicalPackageTypeReferenceParameterGroupKind groupKind,
+    u32[0 max] typeReferenceRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] groupCount)
+{
+    groupCount = 0;
+    stack mut u64[0 2 ** 63 - 1] groupsNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, typeReferenceNode, memberName, groupsNode, groupCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < groupCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] groupNode = 0;
+        stack mut u32[0 max] groupRow = 0;
+        stack mut u32[0 max] nameCount = 0;
+        stack mut u32[0 max] regionCount = 0;
+        if (!document.TryChildAt(groupsNode, (u64[0 2 ** 63 - 1])index, groupNode)
+            || document.KindAt(groupNode) != JsonKind.Object
+            || !LogicalPackageTypeReferenceGraphAddParameterGroupRow(
+                graph,
+                typeReferenceRow,
+                groupKind,
+                index,
+                groupRow)
+            || !LogicalPackageImageJsonMaterializeParameterGroupNameRows(
+                document,
+                groupNode,
+                typeReferenceRow,
+                groupRow,
+                graph,
+                nameCount)
+            || !LogicalPackageImageJsonMaterializeParameterGroupRegionRows(
+                document,
+                groupNode,
+                typeReferenceRow,
+                groupRow,
+                graph,
+                regionCount))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeComptimeValueArgumentRows(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] objectNode,
+    u32[0 max] parentTypeReferenceRow,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    mut borrow IrTable<LogicalPackageTypeReferenceWorkItem> work,
+    out u32[0 max] argumentCount)
+{
+    argumentCount = 0;
+    stack mut u64[0 2 ** 63 - 1] arrayNode = 0;
+    if (!LogicalPackageImageJsonOptionalArrayMember(document, objectNode, "ComptimeValueArguments", arrayNode, argumentCount))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] index = 0;
+    while willexit (index < argumentCount)
+    {
+        stack mut u64[0 2 ** 63 - 1] argumentNode = 0;
+        stack mut u64[0 2 ** 63 - 1] typeNode = 0;
+        stack mut bool hasParameterName = false;
+        stack mut bool hasIntegerValue = false;
+        stack mut bool hasSymbolicSourceName = false;
+        stack mut bool isSymbolic = false;
+        stack mut u32[0 max] parameterNameTextRow = 0;
+        stack mut u32[0 max] integerValueTextRow = 0;
+        stack mut u32[0 max] symbolicSourceNameTextRow = 0;
+        stack mut u32[0 max] argumentRow = 0;
+        if (!document.TryChildAt(arrayNode, (u64[0 2 ** 63 - 1])index, argumentNode)
+            || document.KindAt(argumentNode) != JsonKind.Object
+            || !LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+                document,
+                argumentNode,
+                "ParameterName",
+                true,
+                LogicalPackageTypeReferenceTextKind.ComptimeValueArgumentParameterName,
+                index,
+                parentTypeReferenceRow,
+                graph,
+                hasParameterName,
+                parameterNameTextRow)
+            || !hasParameterName
+            || !LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+                document,
+                argumentNode,
+                "IntegerValue",
+                true,
+                LogicalPackageTypeReferenceTextKind.ComptimeValueArgumentIntegerValue,
+                index,
+                parentTypeReferenceRow,
+                graph,
+                hasIntegerValue,
+                integerValueTextRow)
+            || !hasIntegerValue
+            || !LogicalPackageImageJsonMaterializeTypeReferenceTextMemberRow(
+                document,
+                argumentNode,
+                "SymbolicSourceName",
+                false,
+                LogicalPackageTypeReferenceTextKind.ComptimeValueArgumentSymbolicSourceName,
+                index,
+                parentTypeReferenceRow,
+                graph,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow)
+            || !LogicalPackageImageJsonOptionalBoolMemberValue(document, argumentNode, "IsSymbolic", isSymbolic)
+            || !LogicalPackageTypeReferenceGraphAddComptimeValueArgumentRow(
+                graph,
+                parentTypeReferenceRow,
+                index,
+                parameterNameTextRow,
+                integerValueTextRow,
+                isSymbolic,
+                hasSymbolicSourceName,
+                symbolicSourceNameTextRow,
+                argumentRow)
+            || !LogicalPackageImageJsonRequiredObjectMember(document, argumentNode, "Type", typeNode)
+            || !LogicalPackageTypeReferenceWorkListAdd(
+                work,
+                typeNode,
+                parentTypeReferenceRow,
+                LogicalPackageTypeReferenceChildKind.ComptimeValueArgumentType,
+                index))
+        {
+            return false;
+        }
+
+        index = index + 1;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeReferenceRow(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] typeReferenceNode,
+    u32[0 max] typeReferenceRow,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] variantOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    mut borrow IrTable<LogicalPackageTypeReferenceWorkItem> work)
+{
+    if (!graph.TypeReferenceRows.Contains(typeReferenceRow)
+        || graph.TextRows.Count() >= (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstTextRow = (u32[0 max])(graph.TextRows.Count() + 1);
+    stack mut u32[0 max] typeArgumentCount = 0;
+    stack mut u32[0 max] comptimeValueArgumentCount = 0;
+    stack mut u32[0 max] parameterTypeCount = 0;
+    stack mut u32[0 max] parameterRawPointerElementCountExpressionCount = 0;
+    stack mut u32[0 max] disjointParameterGroupCount = 0;
+    stack mut u32[0 max] overlapParameterGroupCount = 0;
+    stack mut u32[0 max] sameParameterGroupCount = 0;
+    stack mut u32[0 max] pointeeDeadOnReturnParameterNameCount = 0;
+    stack mut u32[0 max] bitWidth = 0;
+    stack mut u32[0 max] fixedLength = 0;
+    stack mut bool hasName = false;
+    stack mut bool hasBitWidth = false;
+    stack mut bool hasRangeMin = false;
+    stack mut bool hasRangeMax = false;
+    stack mut bool hasIsUnsigned = false;
+    stack mut bool isUnsigned = false;
+    stack mut bool isMutablePointer = false;
+    stack mut bool hasBorrowKind = false;
+    stack mut bool hasAccessKind = false;
+    stack mut bool hasInitializationKind = false;
+    stack mut bool isMutableView = false;
+    stack mut bool hasFixedLength = false;
+    stack mut bool hasFixedLengthParameterName = false;
+    stack mut bool hasElementType = false;
+    stack mut bool hasFunctionKind = false;
+    stack mut bool hasFunctionAbi = false;
+    stack mut bool hasFunctionIsUnsafe = false;
+    stack mut bool functionIsUnsafe = false;
+    stack mut bool hasFunctionIsTailCallable = false;
+    stack mut bool functionIsTailCallable = false;
+    stack mut bool hasClosureStorageKind = false;
+    stack mut bool hasClosureCallCapability = false;
+    stack mut bool hasDynTraitStorageKind = false;
+    stack mut bool hasReturnType = false;
+    stack mut bool hasAssociatedOwnerType = false;
+    stack mut bool hasAssociatedTypeName = false;
+    stack mut bool hasSourceAliasName = false;
+    if (!LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "Kind",
+            true,
+            LogicalPackageTypeReferenceTextKind.Kind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasName)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "Name",
+            false,
+            LogicalPackageTypeReferenceTextKind.Name,
+            0,
+            typeReferenceRow,
+            graph,
+            hasName)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(document, typeReferenceNode, "BitWidth", hasBitWidth, bitWidth)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "RangeMin",
+            false,
+            LogicalPackageTypeReferenceTextKind.RangeMin,
+            0,
+            typeReferenceRow,
+            graph,
+            hasRangeMin)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "RangeMax",
+            false,
+            LogicalPackageTypeReferenceTextKind.RangeMax,
+            0,
+            typeReferenceRow,
+            graph,
+            hasRangeMax))
+    {
+        return false;
+    }
+
+    hasIsUnsigned = LogicalPackageImageJsonMemberHasValue(document, typeReferenceNode, "IsUnsigned");
+    if (!LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "IsUnsigned", isUnsigned)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "IsMutablePointer", isMutablePointer)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "BorrowKind",
+            false,
+            LogicalPackageTypeReferenceTextKind.BorrowKind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasBorrowKind)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "AccessKind",
+            false,
+            LogicalPackageTypeReferenceTextKind.AccessKind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasAccessKind)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "InitializationKind",
+            false,
+            LogicalPackageTypeReferenceTextKind.InitializationKind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasInitializationKind)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "IsMutableView", isMutableView)
+        || !LogicalPackageImageJsonOptionalU32MemberValue(
+            document,
+            typeReferenceNode,
+            "FixedLength",
+            hasFixedLength,
+            fixedLength)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "FixedLengthParameterName",
+            false,
+            LogicalPackageTypeReferenceTextKind.FixedLengthParameterName,
+            0,
+            typeReferenceRow,
+            graph,
+            hasFixedLengthParameterName)
+        || !LogicalPackageImageJsonEnqueueOptionalTypeReferenceObjectChild(
+            document,
+            typeReferenceNode,
+            "ElementType",
+            LogicalPackageTypeReferenceChildKind.ElementType,
+            typeReferenceRow,
+            work,
+            hasElementType)
+        || !LogicalPackageImageJsonEnqueueOptionalTypeReferenceArrayChildren(
+            document,
+            typeReferenceNode,
+            "TypeArguments",
+            LogicalPackageTypeReferenceChildKind.TypeArgument,
+            typeReferenceRow,
+            work,
+            typeArgumentCount)
+        || !LogicalPackageImageJsonMaterializeComptimeValueArgumentRows(
+            document,
+            typeReferenceNode,
+            typeReferenceRow,
+            graph,
+            work,
+            comptimeValueArgumentCount)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "FunctionKind",
+            false,
+            LogicalPackageTypeReferenceTextKind.FunctionKind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasFunctionKind)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "FunctionAbi",
+            false,
+            LogicalPackageTypeReferenceTextKind.FunctionAbi,
+            0,
+            typeReferenceRow,
+            graph,
+            hasFunctionAbi))
+    {
+        return false;
+    }
+
+    hasFunctionIsUnsafe = LogicalPackageImageJsonMemberHasValue(document, typeReferenceNode, "FunctionIsUnsafe");
+    hasFunctionIsTailCallable = LogicalPackageImageJsonMemberHasValue(document, typeReferenceNode, "FunctionIsTailCallable");
+    if (!LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "FunctionIsUnsafe", functionIsUnsafe)
+        || !LogicalPackageImageJsonOptionalBoolMemberValue(document, typeReferenceNode, "FunctionIsTailCallable", functionIsTailCallable)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "ClosureStorageKind",
+            false,
+            LogicalPackageTypeReferenceTextKind.ClosureStorageKind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasClosureStorageKind)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "ClosureCallCapability",
+            false,
+            LogicalPackageTypeReferenceTextKind.ClosureCallCapability,
+            0,
+            typeReferenceRow,
+            graph,
+            hasClosureCallCapability)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "DynTraitStorageKind",
+            false,
+            LogicalPackageTypeReferenceTextKind.DynTraitStorageKind,
+            0,
+            typeReferenceRow,
+            graph,
+            hasDynTraitStorageKind)
+        || !LogicalPackageImageJsonEnqueueOptionalTypeReferenceObjectChild(
+            document,
+            typeReferenceNode,
+            "ReturnType",
+            LogicalPackageTypeReferenceChildKind.ReturnType,
+            typeReferenceRow,
+            work,
+            hasReturnType)
+        || !LogicalPackageImageJsonEnqueueOptionalTypeReferenceArrayChildren(
+            document,
+            typeReferenceNode,
+            "ParameterTypes",
+            LogicalPackageTypeReferenceChildKind.ParameterType,
+            typeReferenceRow,
+            work,
+            parameterTypeCount)
+        || !LogicalPackageImageJsonMaterializeOptionalTypeReferenceTextArray(
+            document,
+            typeReferenceNode,
+            "ParameterRawPointerElementCountExpressions",
+            LogicalPackageTypeReferenceTextKind.ParameterRawPointerElementCountExpression,
+            true,
+            typeReferenceRow,
+            graph,
+            parameterRawPointerElementCountExpressionCount)
+        || !LogicalPackageImageJsonMaterializeParameterGroupRows(
+            document,
+            typeReferenceNode,
+            "DisjointParameterGroups",
+            LogicalPackageTypeReferenceParameterGroupKind.Disjoint,
+            typeReferenceRow,
+            graph,
+            disjointParameterGroupCount)
+        || !LogicalPackageImageJsonMaterializeParameterGroupRows(
+            document,
+            typeReferenceNode,
+            "OverlapParameterGroups",
+            LogicalPackageTypeReferenceParameterGroupKind.Overlap,
+            typeReferenceRow,
+            graph,
+            overlapParameterGroupCount)
+        || !LogicalPackageImageJsonMaterializeParameterGroupRows(
+            document,
+            typeReferenceNode,
+            "SameParameterGroups",
+            LogicalPackageTypeReferenceParameterGroupKind.Same,
+            typeReferenceRow,
+            graph,
+            sameParameterGroupCount)
+        || !LogicalPackageImageJsonMaterializeOptionalTypeReferenceTextArray(
+            document,
+            typeReferenceNode,
+            "PointeeDeadOnReturnParameterNames",
+            LogicalPackageTypeReferenceTextKind.PointeeDeadOnReturnParameterName,
+            false,
+            typeReferenceRow,
+            graph,
+            pointeeDeadOnReturnParameterNameCount)
+        || !LogicalPackageImageJsonEnqueueOptionalTypeReferenceObjectChild(
+            document,
+            typeReferenceNode,
+            "AssociatedOwnerType",
+            LogicalPackageTypeReferenceChildKind.AssociatedOwnerType,
+            typeReferenceRow,
+            work,
+            hasAssociatedOwnerType)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "AssociatedTypeName",
+            false,
+            LogicalPackageTypeReferenceTextKind.AssociatedTypeName,
+            0,
+            typeReferenceRow,
+            graph,
+            hasAssociatedTypeName)
+        || !LogicalPackageImageJsonMaterializeTypeReferenceTextMember(
+            document,
+            typeReferenceNode,
+            "SourceAliasName",
+            false,
+            LogicalPackageTypeReferenceTextKind.SourceAliasName,
+            0,
+            typeReferenceRow,
+            graph,
+            hasSourceAliasName))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] textRowsWritten = graph.TextRows.Count() - (u64[0 2 ** 63 - 1])(firstTextRow - 1);
+    if (textRowsWritten == 0 || textRowsWritten > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    stack mut LogicalPackageTypeReferenceRow row = graph.TypeReferenceRows.Get(typeReferenceRow);
+    row.SummaryValue = new LogicalPackageTypeReferenceSummary()
+    {
+        ModuleOrdinalValue = moduleOrdinal,
+        DeclarationOrdinalValue = declarationOrdinal,
+        MethodOrdinalValue = methodOrdinal,
+        VariantOrdinalValue = variantOrdinal,
+        DeclarationKindValue = declarationKind,
+        SourceValue = source,
+        PayloadOrdinalValue = payloadOrdinal,
+        TypeArgumentCountValue = typeArgumentCount,
+        ComptimeValueArgumentCountValue = comptimeValueArgumentCount,
+        ParameterTypeCountValue = parameterTypeCount,
+        ParameterRawPointerElementCountExpressionCountValue = parameterRawPointerElementCountExpressionCount,
+        DisjointParameterGroupCountValue = disjointParameterGroupCount,
+        OverlapParameterGroupCountValue = overlapParameterGroupCount,
+        SameParameterGroupCountValue = sameParameterGroupCount,
+        PointeeDeadOnReturnParameterNameCountValue = pointeeDeadOnReturnParameterNameCount,
+        BitWidthValue = bitWidth,
+        FixedLengthValue = fixedLength,
+        HasNameValue = hasName,
+        HasBitWidthValue = hasBitWidth,
+        HasRangeMinValue = hasRangeMin,
+        HasRangeMaxValue = hasRangeMax,
+        HasIsUnsignedValue = hasIsUnsigned,
+        IsUnsignedValue = isUnsigned,
+        IsMutablePointerValue = isMutablePointer,
+        HasBorrowKindValue = hasBorrowKind,
+        HasAccessKindValue = hasAccessKind,
+        HasInitializationKindValue = hasInitializationKind,
+        IsMutableViewValue = isMutableView,
+        HasFixedLengthValue = hasFixedLength,
+        HasFixedLengthParameterNameValue = hasFixedLengthParameterName,
+        HasElementTypeValue = hasElementType,
+        HasFunctionKindValue = hasFunctionKind,
+        HasFunctionAbiValue = hasFunctionAbi,
+        HasFunctionIsUnsafeValue = hasFunctionIsUnsafe,
+        FunctionIsUnsafeValue = functionIsUnsafe,
+        HasFunctionIsTailCallableValue = hasFunctionIsTailCallable,
+        FunctionIsTailCallableValue = functionIsTailCallable,
+        HasClosureStorageKindValue = hasClosureStorageKind,
+        HasClosureCallCapabilityValue = hasClosureCallCapability,
+        HasDynTraitStorageKindValue = hasDynTraitStorageKind,
+        HasReturnTypeValue = hasReturnType,
+        HasAssociatedOwnerTypeValue = hasAssociatedOwnerType,
+        HasAssociatedTypeNameValue = hasAssociatedTypeName,
+        HasSourceAliasNameValue = hasSourceAliasName
+    };
+    row.FirstTextRowValue = firstTextRow;
+    row.TextRowCountValue = (u32[0 max])textRowsWritten;
+    return graph.TypeReferenceRows.Replace(typeReferenceRow, row);
+}
+
+internal fn bool LogicalPackageImageJsonMaterializeTypeReferenceGraph(
+    mut borrow JsonDocument document,
+    u64[0 2 ** 63 - 1] rootTypeReferenceNode,
+    u32[0 max] moduleOrdinal,
+    LogicalPackageTypedDeclarationKind declarationKind,
+    u32[0 max] declarationOrdinal,
+    u32[0 max] methodOrdinal,
+    u32[0 max] variantOrdinal,
+    LogicalPackageTypedTypeReferenceSource source,
+    u32[0 max] payloadOrdinal,
+    mut borrow LogicalPackageTypeReferenceGraph graph,
+    out u32[0 max] rootTypeReferenceRow)
+{
+    rootTypeReferenceRow = 0;
+    stack mut IrTable<LogicalPackageTypeReferenceWorkItem> work = new();
+    if (!LogicalPackageTypeReferenceWorkListAdd(
+        work,
+        rootTypeReferenceNode,
+        0,
+        LogicalPackageTypeReferenceChildKind.Root,
+        0))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] workCursor = 1;
+    while willexit (workCursor <= work.Count())
+    {
+        if (workCursor > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+        {
+            return false;
+        }
+
+        stack LogicalPackageTypeReferenceWorkItem item = work.Get((u32[0 max])workCursor);
+        stack LogicalPackageTypeReferenceRow placeholder = new LogicalPackageTypeReferenceRow()
+        {
+            ParentTypeReferenceRowValue = item.ParentTypeReferenceRowValue,
+            ParentChildKindValue = item.ParentChildKindValue,
+            ParentChildOrdinalValue = item.ParentChildOrdinalValue
+        };
+        stack u32[0 max] typeReferenceRow = graph.TypeReferenceRows.Add(placeholder);
+        if (typeReferenceRow == 0)
+        {
+            return false;
+        }
+
+        if (rootTypeReferenceRow == 0)
+        {
+            rootTypeReferenceRow = typeReferenceRow;
+        }
+
+        if (item.ParentTypeReferenceRowValue != 0
+            && !LogicalPackageTypeReferenceGraphAddChildRow(
+                graph,
+                item.ParentTypeReferenceRowValue,
+                typeReferenceRow,
+                item.ParentChildKindValue,
+                item.ParentChildOrdinalValue))
+        {
+            return false;
+        }
+
+        if (!LogicalPackageImageJsonMaterializeTypeReferenceRow(
+            document,
+            item.NodeValue,
+            typeReferenceRow,
+            moduleOrdinal,
+            declarationKind,
+            declarationOrdinal,
+            methodOrdinal,
+            variantOrdinal,
+            source,
+            payloadOrdinal,
+            graph,
+            work))
+        {
+            return false;
+        }
+
+        workCursor = workCursor + 1;
+    }
+
+    return rootTypeReferenceRow != 0;
+}

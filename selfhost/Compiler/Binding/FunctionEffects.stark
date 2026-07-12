@@ -192,6 +192,17 @@ public struct TypedFunctionEffectSummaryTable
         return token;
     }
 
+    public law u32[0 max] KeywordTokenAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            token = self.KeywordTokens[index];
+        }
+
+        return token;
+    }
+
     public law u32[0 max] BodyOpenTokenAt(borrow TypedFunctionEffectSummaryTable self, u64[0 2 ** 63 - 1] index)
     {
         stack mut u32[0 max] token = 0;

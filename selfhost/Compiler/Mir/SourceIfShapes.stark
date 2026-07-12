@@ -1,0 +1,229 @@
+import Compiler.Ir
+import Compiler.Lexing
+import Compiler.Parsing
+import Compiler.Mir.Builder
+import Compiler.Mir.EnumLayout
+import Compiler.Mir.Facts
+import Compiler.Mir.LlvmBlocks
+import Compiler.Mir.LlvmFacts
+import Compiler.Mir.LlvmFunctions
+import Compiler.Mir.Model
+import Compiler.Mir.SourceExpressions
+import Compiler.Mir.SourceExpressionLowering
+import Compiler.Mir.SourceFunctionContext
+import Compiler.Mir.SourceLocalLowering
+import Compiler.Mir.SourceMemberFacts
+import Compiler.Mir.SourceModuleFacts
+import Compiler.Mir.SourceRangeFacts
+import Compiler.Mir.SourceSemanticProbes
+import Compiler.Mir.SourceSymbols
+import Compiler.Typing.TypedEnumLayoutModel
+import System.Memory
+import System.Text
+module Compiler.Mir.SourceIfShapes
+
+internal fn bool FunctionBodyHasLocalPrefixedTerminalIf(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack mut bool sawPrefix = false;
+    while willexit (cursor < limit && TokenStartsSelfHostedLocal(stream.KindAt(cursor)))
+    {
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, statementEnd))
+        {
+            return false;
+        }
+
+        sawPrefix = true;
+        cursor = statementEnd + 1;
+    }
+
+    while willexit (cursor < limit && stream.KindAt(cursor) != TokenKind.If)
+    {
+        stack TokenKind kind = stream.KindAt(cursor);
+        if (kind == TokenKind.Return
+            || kind == TokenKind.Become
+            || kind == TokenKind.RBrace
+            || kind == TokenKind.EndOfFile)
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, limit, statementEnd))
+        {
+            return false;
+        }
+
+        sawPrefix = true;
+        cursor = statementEnd + 1;
+    }
+
+    return sawPrefix && cursor < limit && stream.KindAt(cursor) == TokenKind.If;
+}
+
+internal fn bool FunctionBodyStartsWithIfStatement(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    return stream.KindAt((u64[0 2 ** 63 - 1])braceIndex + 1) == TokenKind.If;
+}
+
+internal fn bool FunctionBodyStartsWithReturnIfExpression(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0 && braceIndex >= nextFnIndex)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] bodyStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    return stream.KindAt(bodyStart) == TokenKind.Return
+        && stream.KindAt(bodyStart + 1) == TokenKind.If;
+}
+
+internal fn bool FunctionBodyStartsWithReturnedLocalIfExpression(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack u64[0 2 ** 63 - 1] bodyStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (bodyStart >= limit || stream.KindAt(bodyStart) != TokenKind.Var)
+    {
+        return false;
+    }
+
+    if (stream.KindAt(bodyStart + 1) != TokenKind.Identifier
+        || stream.KindAt(bodyStart + 2) != TokenKind.Assign
+        || stream.KindAt(bodyStart + 3) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] initializerEnd = bodyStart;
+    stack mut u64[0 2 ** 63 - 1] scan = bodyStart;
+    stack mut u32[0 max] parenDepth = 0;
+    stack mut u32[0 max] bracketDepth = 0;
+    while willexit (scan < limit && stream.KindAt(scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen)
+        {
+            parenDepth = parenDepth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            if (parenDepth > 0)
+            {
+                parenDepth = parenDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            bracketDepth = bracketDepth + 1;
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (bracketDepth > 0)
+            {
+                bracketDepth = bracketDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.Semi && parenDepth == 0 && bracketDepth == 0)
+        {
+            initializerEnd = scan;
+            break;
+        }
+
+        scan = scan + 1;
+    }
+
+    if (initializerEnd == bodyStart)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] returnIndex = initializerEnd + 1;
+    if (stream.KindAt(returnIndex) != TokenKind.Return || stream.KindAt(returnIndex + 1) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] afterReturn = returnIndex + 2;
+    if (stream.KindAt(afterReturn) == TokenKind.Semi)
+    {
+        afterReturn = afterReturn + 1;
+    }
+
+    return stream.KindAt(afterReturn) == TokenKind.RBrace;
+}
+
+internal fn bool FunctionBodyStartsWithLocalIfExpressionInitializer(borrow TokenStream stream, u64[0 2 ** 63 - 1] fnIndex)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] limit = stream.Count();
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0)
+    {
+        if (braceIndex >= nextFnIndex)
+        {
+            return false;
+        }
+
+        limit = (u64[0 2 ** 63 - 1])nextFnIndex;
+    }
+
+    stack u64[0 2 ** 63 - 1] bodyStart = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    if (bodyStart >= limit)
+    {
+        return false;
+    }
+
+    return stream.KindAt(bodyStart) == TokenKind.Var
+        && stream.KindAt(bodyStart + 1) == TokenKind.Identifier
+        && stream.KindAt(bodyStart + 2) == TokenKind.Assign
+        && stream.KindAt(bodyStart + 3) == TokenKind.If;
+}

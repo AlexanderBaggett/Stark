@@ -2,6 +2,7 @@ import Compiler.Ir
 import Compiler.Mir.Builder
 import Compiler.Mir.PackageImage.Loader.CompilerFactsSectionLoader
 import Compiler.Mir.PackageImage.Loader.GenericTemplateSectionLoader
+import Compiler.Mir.PackageImage.Loader.GenericTemplateValueLoader
 import Compiler.Mir.PackageImage.Loader.ManifestJsonReader
 import Compiler.Mir.PackageImage.Loader.SourceSurfaceSectionLoader
 import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader

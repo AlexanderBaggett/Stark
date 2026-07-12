@@ -1,0 +1,1110 @@
+import Compiler.Ir
+import Compiler.Mir.Model
+import Compiler.Ssa.Model
+module Compiler.Ssa.Validation
+
+
+// Stable first-failure categories for the dense SSA phase boundary. Keeping the
+// validator allocation-free makes it suitable for every optimization boundary,
+// including release builds where malformed facts must never reach LLVM.
+public enum SsaValidationStatus
+{
+    Ok,
+    AllocationFailed,
+    ValueFactCountMismatch,
+    FunctionRangeInvalid,
+    FunctionOwnershipNotContiguous,
+    BlockInstructionRangesRequired,
+    EntryBlockInvalid,
+    BlockUnterminated,
+    BlockTargetInvalid,
+    TerminatorValueInvalid,
+    ConditionTypeMismatch,
+    TailCallPayloadInvalid,
+    OperandInvalid,
+    OperandOutsideFunction,
+    OperandDoesNotDefineValue,
+    UseBeforeDefinition,
+    OperandTypeMismatch,
+    ResultTypeMismatch,
+    InvalidIntegerConversion,
+    InvalidAlignment,
+    InvalidAllocationSize,
+    PhiBlockInvalid,
+    PhiPredecessorsDuplicate,
+    CalleeInvalid,
+    CallArgumentChainInvalid,
+    BackendFactTypeMismatch,
+    BackendFactValueInvalid,
+}
+
+public inline finite law bool SsaValidationSucceeded(SsaValidationStatus status)
+{
+    return status == SsaValidationStatus.Ok;
+}
+
+internal finite law bool SsaTypeIsInteger(MirType type)
+{
+    return type == MirType.I1
+        || type == MirType.I8
+        || type == MirType.I16
+        || type == MirType.I32
+        || type == MirType.I64;
+}
+
+internal finite law bool SsaTypeIsFloat(MirType type)
+{
+    return type == MirType.F32 || type == MirType.F64;
+}
+
+internal finite law bool SsaTypeIsNumeric(MirType type)
+{
+    return SsaTypeIsInteger(type) || SsaTypeIsFloat(type);
+}
+
+internal finite law u32[0 max] SsaIntegerTypeWidth(MirType type)
+{
+    switch (type)
+    {
+        case MirType.I1:
+            return 1;
+        case MirType.I8:
+            return 8;
+        case MirType.I16:
+            return 16;
+        case MirType.I32:
+            return 32;
+        case MirType.I64:
+            return 64;
+        default:
+            return 0;
+    }
+}
+
+internal finite law bool SsaPowerOfTwo(u32[0 max] value)
+{
+    if (value == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] remaining = value;
+    while willexit (remaining % 2 == 0)
+    {
+        remaining = remaining / 2;
+    }
+
+    return remaining == 1;
+}
+
+internal finite law bool SsaInstructionDefinesValue(MirOp op)
+{
+    switch (op)
+    {
+        case MirOp.StoreGlobal:
+        case MirOp.StorePtr:
+        case MirOp.StoreEnumPtr:
+        case MirOp.ArenaFrameEnter:
+        case MirOp.ArenaDynamicStorageReserve:
+        case MirOp.ArenaFrameLeave:
+        case MirOp.CallArg:
+        case MirOp.TailCall:
+        case MirOp.TailCallWide:
+        case MirOp.Return:
+            return false;
+        default:
+            return true;
+    }
+}
+
+internal finite law bool SsaFunctionOwnsValue(SsaFunction function, u32[0 max] valueIndex)
+{
+    if (valueIndex == 0 || function.OwnedInstructionCount() == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 max] first = (u64[0 max])function.FirstInstructionIndex();
+    stack u64[0 max] count = (u64[0 max])function.OwnedInstructionCount();
+    stack u64[0 max] value = (u64[0 max])valueIndex;
+    return value >= first && value < first + count;
+}
+
+internal finite law bool SsaFunctionOwnsBlock(SsaFunction function, u32[0 max] blockIndex)
+{
+    if (blockIndex == 0 || function.OwnedBlockCount() == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 max] first = (u64[0 max])function.FirstBlockIndex();
+    stack u64[0 max] count = (u64[0 max])function.OwnedBlockCount();
+    stack u64[0 max] block = (u64[0 max])blockIndex;
+    return block >= first && block < first + count;
+}
+
+internal fn SsaValidationStatus ValidateSsaOperand(
+    borrow IrTable<SsaInstruction> instructions,
+    SsaFunction function,
+    u32[0 max] useIndex,
+    u32[0 max] operandIndex,
+    bool allowForwardReference)
+{
+    if (!instructions.Contains(operandIndex))
+    {
+        return SsaValidationStatus.OperandInvalid;
+    }
+
+    if (!SsaFunctionOwnsValue(function, operandIndex))
+    {
+        return SsaValidationStatus.OperandOutsideFunction;
+    }
+
+    stack SsaInstruction definition = instructions.Get(operandIndex);
+    if (!SsaInstructionDefinesValue(definition.Opcode()))
+    {
+        return SsaValidationStatus.OperandDoesNotDefineValue;
+    }
+
+    if (!allowForwardReference && operandIndex >= useIndex)
+    {
+        return SsaValidationStatus.UseBeforeDefinition;
+    }
+
+    return SsaValidationStatus.Ok;
+}
+
+internal fn SsaValidationStatus ValidateOptionalSsaOperand(
+    borrow IrTable<SsaInstruction> instructions,
+    SsaFunction function,
+    u32[0 max] useIndex,
+    u32[0 max] operandIndex)
+{
+    if (operandIndex == 0)
+    {
+        return SsaValidationStatus.Ok;
+    }
+
+    return ValidateSsaOperand(instructions, function, useIndex, operandIndex, false);
+}
+
+internal fn SsaValidationStatus ValidateSsaBinaryOperands(
+    borrow IrTable<SsaInstruction> instructions,
+    SsaFunction function,
+    u32[0 max] useIndex,
+    SsaInstruction instruction,
+    bool integerOnly)
+{
+    stack SsaValidationStatus leftStatus = ValidateSsaOperand(
+        instructions,
+        function,
+        useIndex,
+        instruction.OperandA().Index(),
+        false);
+    if (leftStatus != SsaValidationStatus.Ok)
+    {
+        return leftStatus;
+    }
+
+    stack SsaValidationStatus rightStatus = ValidateSsaOperand(
+        instructions,
+        function,
+        useIndex,
+        instruction.OperandB().Index(),
+        false);
+    if (rightStatus != SsaValidationStatus.Ok)
+    {
+        return rightStatus;
+    }
+
+    stack MirType leftType = instructions.Get(instruction.OperandA().Index()).ResultType();
+    stack MirType rightType = instructions.Get(instruction.OperandB().Index()).ResultType();
+    if (leftType != rightType || leftType != instruction.ResultType())
+    {
+        return SsaValidationStatus.OperandTypeMismatch;
+    }
+
+    if ((integerOnly && !SsaTypeIsInteger(instruction.ResultType()))
+        || (!integerOnly && !SsaTypeIsNumeric(instruction.ResultType())))
+    {
+        return SsaValidationStatus.ResultTypeMismatch;
+    }
+
+    return SsaValidationStatus.Ok;
+}
+
+internal fn SsaValidationStatus ValidateSsaComparison(
+    borrow IrTable<SsaInstruction> instructions,
+    SsaFunction function,
+    u32[0 max] useIndex,
+    SsaInstruction instruction,
+    bool equalityComparison)
+{
+    if (instruction.ResultType() != MirType.I1)
+    {
+        return SsaValidationStatus.ResultTypeMismatch;
+    }
+
+    stack SsaValidationStatus leftStatus = ValidateSsaOperand(
+        instructions,
+        function,
+        useIndex,
+        instruction.OperandA().Index(),
+        false);
+    if (leftStatus != SsaValidationStatus.Ok)
+    {
+        return leftStatus;
+    }
+
+    stack SsaValidationStatus rightStatus = ValidateSsaOperand(
+        instructions,
+        function,
+        useIndex,
+        instruction.OperandB().Index(),
+        false);
+    if (rightStatus != SsaValidationStatus.Ok)
+    {
+        return rightStatus;
+    }
+
+    stack MirType leftType = instructions.Get(instruction.OperandA().Index()).ResultType();
+    stack MirType rightType = instructions.Get(instruction.OperandB().Index()).ResultType();
+    if (leftType != rightType)
+    {
+        return SsaValidationStatus.OperandTypeMismatch;
+    }
+
+    if (!SsaTypeIsNumeric(leftType)
+        && !(equalityComparison && leftType == MirType.Ptr))
+    {
+        return SsaValidationStatus.OperandTypeMismatch;
+    }
+
+    return SsaValidationStatus.Ok;
+}
+
+internal fn SsaValidationStatus ValidateSsaPhi(
+    borrow IrTable<SsaInstruction> instructions,
+    SsaFunction function,
+    u32[0 max] useIndex,
+    SsaInstruction instruction)
+{
+    stack SsaValidationStatus leftStatus = ValidateSsaOperand(
+        instructions,
+        function,
+        useIndex,
+        instruction.OperandA().Index(),
+        true);
+    if (leftStatus != SsaValidationStatus.Ok)
+    {
+        return leftStatus;
+    }
+
+    stack SsaValidationStatus rightStatus = ValidateSsaOperand(
+        instructions,
+        function,
+        useIndex,
+        instruction.OperandB().Index(),
+        true);
+    if (rightStatus != SsaValidationStatus.Ok)
+    {
+        return rightStatus;
+    }
+
+    stack MirType leftType = instructions.Get(instruction.OperandA().Index()).ResultType();
+    stack MirType rightType = instructions.Get(instruction.OperandB().Index()).ResultType();
+    if (leftType != rightType || leftType != instruction.ResultType())
+    {
+        return SsaValidationStatus.OperandTypeMismatch;
+    }
+
+    stack i64[min max] packed = instruction.Immediate();
+    if (packed < 0)
+    {
+        return SsaValidationStatus.PhiBlockInvalid;
+    }
+
+    stack u32[0 max] block0 = (u32[0 max])(packed % 4294967296);
+    stack u32[0 max] block1 = (u32[0 max])(packed / 4294967296);
+    if (!SsaFunctionOwnsBlock(function, block0) || !SsaFunctionOwnsBlock(function, block1))
+    {
+        return SsaValidationStatus.PhiBlockInvalid;
+    }
+
+    if (block0 == block1)
+    {
+        return SsaValidationStatus.PhiPredecessorsDuplicate;
+    }
+
+    return SsaValidationStatus.Ok;
+}
+
+internal fn SsaValidationStatus ValidateSsaCallOperands(
+    borrow IrTable<SsaInstruction> instructions,
+    borrow IrTable<SsaFunction> functions,
+    SsaFunction function,
+    u32[0 max] useIndex,
+    SsaInstruction instruction)
+{
+    if (instruction.Immediate() <= 0
+        || !functions.Contains((u32[0 max])instruction.Immediate()))
+    {
+        return SsaValidationStatus.CalleeInvalid;
+    }
+
+    if (instruction.Opcode() == MirOp.CallWide || instruction.Opcode() == MirOp.TailCallWide)
+    {
+        stack mut u32[0 max] link = instruction.OperandA().Index();
+        stack mut u32[0 max] remaining = instruction.OperandB().Index();
+        while willexit (remaining > 0)
+        {
+            stack SsaValidationStatus linkStatus = ValidateSsaOperand(
+                instructions,
+                function,
+                useIndex,
+                link,
+                false);
+            if (linkStatus != SsaValidationStatus.OperandDoesNotDefineValue
+                && linkStatus != SsaValidationStatus.Ok)
+            {
+                return linkStatus;
+            }
+
+            if (!instructions.Contains(link))
+            {
+                return SsaValidationStatus.CallArgumentChainInvalid;
+            }
+
+            stack SsaInstruction argument = instructions.Get(link);
+            if (argument.Opcode() != MirOp.CallArg)
+            {
+                return SsaValidationStatus.CallArgumentChainInvalid;
+            }
+
+            stack SsaValidationStatus valueStatus = ValidateSsaOperand(
+                instructions,
+                function,
+                link,
+                argument.OperandA().Index(),
+                false);
+            if (valueStatus != SsaValidationStatus.Ok)
+            {
+                return valueStatus;
+            }
+
+            if (argument.Immediate() < 0)
+            {
+                return SsaValidationStatus.CallArgumentChainInvalid;
+            }
+
+            link = (u32[0 max])argument.Immediate();
+            remaining = remaining - 1;
+        }
+
+        if (link != 0)
+        {
+            return SsaValidationStatus.CallArgumentChainInvalid;
+        }
+
+        return SsaValidationStatus.Ok;
+    }
+
+    stack SsaValidationStatus a = ValidateOptionalSsaOperand(instructions, function, useIndex, instruction.OperandA().Index());
+    if (a != SsaValidationStatus.Ok)
+    {
+        return a;
+    }
+
+    stack SsaValidationStatus b = ValidateOptionalSsaOperand(instructions, function, useIndex, instruction.OperandB().Index());
+    if (b != SsaValidationStatus.Ok)
+    {
+        return b;
+    }
+
+    stack SsaValidationStatus c = ValidateOptionalSsaOperand(instructions, function, useIndex, instruction.OperandC().Index());
+    if (c != SsaValidationStatus.Ok)
+    {
+        return c;
+    }
+
+    return ValidateOptionalSsaOperand(instructions, function, useIndex, instruction.OperandD().Index());
+}
+
+internal fn SsaValidationStatus ValidateSsaInstructionTypes(
+    borrow IrTable<SsaInstruction> instructions,
+    borrow IrTable<SsaFunction> functions,
+    SsaFunction function,
+    u32[0 max] index)
+{
+    stack SsaInstruction instruction = instructions.Get(index);
+    switch (instruction.Opcode())
+    {
+        case MirOp.Add:
+        case MirOp.Sub:
+        case MirOp.Mul:
+        case MirOp.SDiv:
+        case MirOp.UDiv:
+        case MirOp.SRem:
+            return ValidateSsaBinaryOperands(instructions, function, index, instruction, false);
+        case MirOp.WrappingAdd:
+        case MirOp.WrappingSub:
+        case MirOp.WrappingMul:
+        case MirOp.SaturatingAdd:
+        case MirOp.SaturatingSub:
+        case MirOp.SaturatingMul:
+        case MirOp.And:
+        case MirOp.Or:
+        case MirOp.Xor:
+        case MirOp.Shl:
+        case MirOp.AShr:
+            return ValidateSsaBinaryOperands(instructions, function, index, instruction, true);
+        case MirOp.CmpEq:
+        case MirOp.CmpNe:
+            return ValidateSsaComparison(instructions, function, index, instruction, true);
+        case MirOp.CmpLt:
+        case MirOp.CmpLe:
+        case MirOp.CmpGt:
+        case MirOp.CmpGe:
+            return ValidateSsaComparison(instructions, function, index, instruction, false);
+        case MirOp.ZExt:
+            stack SsaValidationStatus zextOperand = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (zextOperand != SsaValidationStatus.Ok)
+            {
+                return zextOperand;
+            }
+
+            stack MirType sourceType = instructions.Get(instruction.OperandA().Index()).ResultType();
+            if (!SsaTypeIsInteger(sourceType)
+                || !SsaTypeIsInteger(instruction.ResultType())
+                || SsaIntegerTypeWidth(sourceType) >= SsaIntegerTypeWidth(instruction.ResultType()))
+            {
+                return SsaValidationStatus.InvalidIntegerConversion;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.SliceValue:
+            stack SsaValidationStatus sliceBase = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (sliceBase != SsaValidationStatus.Ok)
+            {
+                return sliceBase;
+            }
+
+            stack SsaValidationStatus sliceLength = ValidateSsaOperand(instructions, function, index, instruction.OperandB().Index(), false);
+            if (sliceLength != SsaValidationStatus.Ok)
+            {
+                return sliceLength;
+            }
+
+            if (instruction.ResultType() != MirType.Ptr
+                || instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.Ptr
+                || !SsaTypeIsInteger(instructions.Get(instruction.OperandB().Index()).ResultType()))
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.PtrOffset:
+        case MirOp.LoadPtr:
+        case MirOp.FixedArrayLoad:
+        case MirOp.StructValueLoad:
+        case MirOp.LoadEnumPtr:
+            stack SsaValidationStatus pointer = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (pointer != SsaValidationStatus.Ok)
+            {
+                return pointer;
+            }
+
+            if (instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.Ptr)
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            if ((instruction.Opcode() == MirOp.PtrOffset && instruction.ResultType() != MirType.Ptr)
+                || (instruction.Opcode() == MirOp.LoadEnumPtr && instruction.ResultType() != MirType.EnumValue))
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.PtrIndexOffset:
+        case MirOp.PtrIndexOffsetUnbounded:
+            stack SsaValidationStatus indexedBase = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (indexedBase != SsaValidationStatus.Ok)
+            {
+                return indexedBase;
+            }
+
+            stack SsaValidationStatus indexedValue = ValidateSsaOperand(instructions, function, index, instruction.OperandB().Index(), false);
+            if (indexedValue != SsaValidationStatus.Ok)
+            {
+                return indexedValue;
+            }
+
+            if (instruction.ResultType() != MirType.Ptr
+                || instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.Ptr
+                || !SsaTypeIsInteger(instructions.Get(instruction.OperandB().Index()).ResultType()))
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            if (instruction.OperandC().Index() == 0)
+            {
+                return SsaValidationStatus.InvalidAllocationSize;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.StorePtr:
+        case MirOp.StoreEnumPtr:
+            stack SsaValidationStatus storeAddress = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (storeAddress != SsaValidationStatus.Ok)
+            {
+                return storeAddress;
+            }
+
+            stack SsaValidationStatus storedValue = ValidateSsaOperand(instructions, function, index, instruction.OperandB().Index(), false);
+            if (storedValue != SsaValidationStatus.Ok)
+            {
+                return storedValue;
+            }
+
+            if (instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.Ptr
+                || instructions.Get(instruction.OperandB().Index()).ResultType() != instruction.ResultType()
+                || (instruction.Opcode() == MirOp.StoreEnumPtr && instruction.ResultType() != MirType.EnumValue))
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.StackAlloc:
+        case MirOp.HeapAlloc:
+        case MirOp.ArenaAlloc:
+            if (instruction.ResultType() != MirType.Ptr)
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            if (instruction.Immediate() <= 0)
+            {
+                return SsaValidationStatus.InvalidAllocationSize;
+            }
+
+            if (!SsaPowerOfTwo(instruction.OperandA().Index()))
+            {
+                return SsaValidationStatus.InvalidAlignment;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.Phi:
+            return ValidateSsaPhi(instructions, function, index, instruction);
+        case MirOp.Call:
+        case MirOp.CallWide:
+        case MirOp.TailCall:
+        case MirOp.TailCallWide:
+            return ValidateSsaCallOperands(instructions, functions, function, index, instruction);
+        case MirOp.CallArg:
+            stack SsaValidationStatus argumentValue = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (argumentValue != SsaValidationStatus.Ok)
+            {
+                return argumentValue;
+            }
+
+            if (instruction.Immediate() < 0)
+            {
+                return SsaValidationStatus.CallArgumentChainInvalid;
+            }
+
+            return ValidateOptionalSsaOperand(instructions, function, index, (u32[0 max])instruction.Immediate());
+        case MirOp.EnumPayloadInsert:
+            stack SsaValidationStatus enumValue = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (enumValue != SsaValidationStatus.Ok)
+            {
+                return enumValue;
+            }
+
+            stack SsaValidationStatus payloadValue = ValidateSsaOperand(instructions, function, index, instruction.OperandB().Index(), false);
+            if (payloadValue != SsaValidationStatus.Ok)
+            {
+                return payloadValue;
+            }
+
+            if (instruction.ResultType() != MirType.EnumValue
+                || instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.EnumValue)
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.EnumTagRead:
+        case MirOp.EnumPayloadExtract:
+            stack SsaValidationStatus enumSource = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (enumSource != SsaValidationStatus.Ok)
+            {
+                return enumSource;
+            }
+
+            if (instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.EnumValue)
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.StoreGlobal:
+            stack SsaValidationStatus globalValue = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (globalValue != SsaValidationStatus.Ok)
+            {
+                return globalValue;
+            }
+
+            if (instruction.Immediate() <= 0
+                || instructions.Get(instruction.OperandA().Index()).ResultType() != instruction.ResultType())
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.ArenaDynamicStorageReserve:
+        case MirOp.ArenaDynamicStorageTryReserve:
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            stack SsaValidationStatus owner = ValidateSsaOperand(instructions, function, index, instruction.OperandA().Index(), false);
+            if (owner != SsaValidationStatus.Ok)
+            {
+                return owner;
+            }
+
+            if (instructions.Get(instruction.OperandA().Index()).ResultType() != MirType.Ptr)
+            {
+                return SsaValidationStatus.OperandTypeMismatch;
+            }
+
+            if ((instruction.Opcode() == MirOp.ArenaDynamicStorageTryReserve
+                    || instruction.Opcode() == MirOp.ArenaDynamicStorageTryReserveCapacity)
+                && instruction.ResultType() != MirType.I1)
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.ConstInt:
+            if (!SsaTypeIsInteger(instruction.ResultType())
+                && !(instruction.ResultType() == MirType.Ptr && instruction.Immediate() == 0))
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.SliceParamBase:
+        case MirOp.TextConstantValue:
+        case MirOp.FixedArrayParamSlot:
+        case MirOp.ArenaDynamicStorageInit:
+            if (instruction.ResultType() != MirType.Ptr)
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.SliceParamLength:
+            if (instruction.ResultType() != MirType.I64)
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.FloatConstantValue:
+            if (!SsaTypeIsFloat(instruction.ResultType()))
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.LoadGlobal:
+            if (instruction.Immediate() <= 0)
+            {
+                return SsaValidationStatus.OperandInvalid;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.EnumVariantTag:
+            if (instruction.ResultType() != MirType.EnumValue)
+            {
+                return SsaValidationStatus.ResultTypeMismatch;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirOp.Param:
+        case MirOp.FixedArrayParamElement:
+        case MirOp.StructParamField:
+        case MirOp.ArenaFrameEnter:
+        case MirOp.ArenaFrameLeave:
+        case MirOp.Return:
+            return SsaValidationStatus.Ok;
+    }
+}
+
+internal fn SsaValidationStatus ValidateSsaValueBackendFacts(
+    borrow IrTable<SsaInstruction> instructions,
+    borrow IrTable<ValueFacts> valueFacts,
+    u32[0 max] valueIndex,
+    SsaInstruction instruction,
+    ValueFacts facts)
+{
+    if (facts.HasAlignment())
+    {
+        if (instruction.ResultType() != MirType.Ptr)
+        {
+            return SsaValidationStatus.BackendFactTypeMismatch;
+        }
+
+        if (!SsaPowerOfTwo(facts.AlignmentBytes()))
+        {
+            return SsaValidationStatus.BackendFactValueInvalid;
+        }
+    }
+
+    if ((facts.HasNoAlias() || facts.HasNullability() || facts.HasTextConstant())
+        && instruction.ResultType() != MirType.Ptr)
+    {
+        return SsaValidationStatus.BackendFactTypeMismatch;
+    }
+
+    if (facts.KnownNull() && facts.KnownNonNull())
+    {
+        return SsaValidationStatus.BackendFactValueInvalid;
+    }
+
+    if (facts.HasIntegerRange())
+    {
+        if (!SsaTypeIsInteger(instruction.ResultType()))
+        {
+            return SsaValidationStatus.BackendFactTypeMismatch;
+        }
+
+        if (facts.IntegerRangeLower() >= facts.IntegerRangeUpperExclusive())
+        {
+            return SsaValidationStatus.BackendFactValueInvalid;
+        }
+    }
+
+    if (facts.HasCallingAbi() && instruction.ResultType() != MirType.Ptr)
+    {
+        return SsaValidationStatus.BackendFactTypeMismatch;
+    }
+
+    switch (instruction.Opcode())
+    {
+        case MirOp.StackAlloc:
+        case MirOp.HeapAlloc:
+        case MirOp.ArenaAlloc:
+            if (!facts.HasAlignment()
+                || facts.AlignmentBytes() != instruction.OperandA().Index()
+                || !facts.HasNoAlias()
+                || !facts.KnownNonNull())
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.FixedArrayParamSlot:
+            if (!facts.HasAlignment()
+                || facts.AlignmentBytes() != instruction.OperandC().Index()
+                || !facts.HasNoAlias()
+                || !facts.KnownNonNull())
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.ArenaDynamicStorageInit:
+            if (!facts.HasAlignment()
+                || facts.AlignmentBytes() != 8
+                || !facts.HasNoAlias()
+                || !facts.KnownNonNull())
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.TextConstantValue:
+            if (!facts.HasTextConstant()
+                || facts.TextConstantRowIndex() != instruction.OperandA().Index()
+                || facts.TextConstantPayloadStart() != instruction.OperandB().Index()
+                || facts.TextConstantPayloadByteLength() != instruction.OperandC().Index()
+                || facts.TextConstantCodePointLength() != instruction.OperandD().Index()
+                || facts.TextConstantStorageEncodingCode() != (u32[0 max])instruction.Immediate())
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.PtrOffset:
+        case MirOp.PtrIndexOffset:
+        case MirOp.PtrIndexOffsetUnbounded:
+            stack ValueFacts baseFacts = valueFacts.Get(instruction.OperandA().Index());
+            stack mut u32[0 max] expectedAlignment = instruction.OperandB().Index();
+            if (instruction.Opcode() == MirOp.PtrIndexOffset
+                || instruction.Opcode() == MirOp.PtrIndexOffsetUnbounded)
+            {
+                expectedAlignment = instruction.OperandD().Index();
+            }
+
+            if (expectedAlignment != 0
+                && (!facts.HasAlignment() || facts.AlignmentBytes() != expectedAlignment))
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+
+            if (baseFacts.HasNoAlias() && !facts.HasNoAlias())
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+
+            if (instruction.Opcode() != MirOp.PtrIndexOffsetUnbounded
+                && baseFacts.KnownNonNull()
+                && !facts.KnownNonNull())
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.CmpEq:
+        case MirOp.CmpNe:
+        case MirOp.CmpLt:
+        case MirOp.CmpLe:
+        case MirOp.CmpGt:
+        case MirOp.CmpGe:
+        case MirOp.ArenaDynamicStorageTryReserve:
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            if (!facts.HasIntegerRange()
+                || facts.IntegerRangeLower() != 0
+                || facts.IntegerRangeUpperExclusive() != 2)
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.ConstInt:
+            if (instruction.ResultType() == MirType.Ptr)
+            {
+                if (instruction.Immediate() != 0 || !facts.KnownNull())
+                {
+                    return SsaValidationStatus.BackendFactValueInvalid;
+                }
+            }
+            else if (instruction.Immediate() < (i64[min max])(2 ** 63 - 1)
+                && (!facts.HasIntegerRange()
+                    || facts.IntegerRangeLower() != instruction.Immediate()
+                    || facts.IntegerRangeUpperExclusive() != instruction.Immediate() + 1))
+            {
+                return SsaValidationStatus.BackendFactValueInvalid;
+            }
+        case MirOp.Phi:
+            stack ValueFacts leftFacts = valueFacts.Get(instruction.OperandA().Index());
+            stack ValueFacts rightFacts = valueFacts.Get(instruction.OperandB().Index());
+            if (leftFacts.HasIntegerRange() && rightFacts.HasIntegerRange())
+            {
+                stack mut i64[min max] expectedLower = leftFacts.IntegerRangeLower();
+                if (rightFacts.IntegerRangeLower() < expectedLower)
+                {
+                    expectedLower = rightFacts.IntegerRangeLower();
+                }
+
+                stack mut i64[min max] expectedUpper = leftFacts.IntegerRangeUpperExclusive();
+                if (rightFacts.IntegerRangeUpperExclusive() > expectedUpper)
+                {
+                    expectedUpper = rightFacts.IntegerRangeUpperExclusive();
+                }
+
+                if (!facts.HasIntegerRange()
+                    || facts.IntegerRangeLower() != expectedLower
+                    || facts.IntegerRangeUpperExclusive() != expectedUpper)
+                {
+                    return SsaValidationStatus.BackendFactValueInvalid;
+                }
+            }
+        default:
+    }
+
+    return SsaValidationStatus.Ok;
+}
+
+internal fn SsaValidationStatus ValidateSsaBlock(
+    borrow IrTable<SsaInstruction> instructions,
+    borrow IrTable<SsaBlock> blocks,
+    SsaFunction function,
+    SsaBlock block)
+{
+    switch (block.Terminator())
+    {
+        case MirTermKind.Unterminated:
+            return SsaValidationStatus.BlockUnterminated;
+        case MirTermKind.Return:
+            if (!SsaFunctionOwnsValue(function, block.Slot0Index())
+                || !instructions.Contains(block.Slot0Index())
+                || !SsaInstructionDefinesValue(instructions.Get(block.Slot0Index()).Opcode()))
+            {
+                return SsaValidationStatus.TerminatorValueInvalid;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirTermKind.ReturnVoid:
+            if (block.Slot0Index() != 0 || block.Slot1Index() != 0 || block.Slot2Index() != 0)
+            {
+                return SsaValidationStatus.TerminatorValueInvalid;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirTermKind.Branch:
+            if (!blocks.Contains(block.Slot0Index()) || !SsaFunctionOwnsBlock(function, block.Slot0Index()))
+            {
+                return SsaValidationStatus.BlockTargetInvalid;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirTermKind.CondBranch:
+            if (!instructions.Contains(block.Slot0Index())
+                || !SsaFunctionOwnsValue(function, block.Slot0Index()))
+            {
+                return SsaValidationStatus.TerminatorValueInvalid;
+            }
+
+            if (instructions.Get(block.Slot0Index()).ResultType() != MirType.I1)
+            {
+                return SsaValidationStatus.ConditionTypeMismatch;
+            }
+
+            if (!blocks.Contains(block.Slot1Index())
+                || !blocks.Contains(block.Slot2Index())
+                || !SsaFunctionOwnsBlock(function, block.Slot1Index())
+                || !SsaFunctionOwnsBlock(function, block.Slot2Index()))
+            {
+                return SsaValidationStatus.BlockTargetInvalid;
+            }
+
+            return SsaValidationStatus.Ok;
+        case MirTermKind.TailCall:
+            if (!instructions.Contains(block.Slot0Index())
+                || !SsaFunctionOwnsValue(function, block.Slot0Index()))
+            {
+                return SsaValidationStatus.TerminatorValueInvalid;
+            }
+
+            stack MirOp payloadOp = instructions.Get(block.Slot0Index()).Opcode();
+            if (payloadOp != MirOp.TailCall && payloadOp != MirOp.TailCallWide)
+            {
+                return SsaValidationStatus.TailCallPayloadInvalid;
+            }
+
+            return SsaValidationStatus.Ok;
+    }
+}
+
+public fn SsaValidationStatus ValidateSsaModule(
+    borrow IrTable<SsaInstruction> instructions,
+    borrow IrTable<SsaBlock> blocks,
+    borrow IrTable<SsaFunction> functions,
+    borrow IrTable<ValueFacts> valueFacts)
+{
+    if (valueFacts.Count() != instructions.Count())
+    {
+        return SsaValidationStatus.ValueFactCountMismatch;
+    }
+
+    stack mut u64[0 max] nextBlock = 1;
+    stack mut u64[0 max] nextInstruction = 1;
+    stack u64[0 2 ** 63 - 1] functionCount = functions.Count();
+    stack mut u32[0 max] functionIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionIndex <= functionCount)
+    {
+        stack SsaFunction function = functions.Get(functionIndex);
+        if (function.OwnedBlockCount() == 0 && function.OwnedInstructionCount() == 0)
+        {
+            if (function.EntryBlock().IsValid()
+                || function.FirstBlockIndex() != 0
+                || function.FirstInstructionIndex() != 0)
+            {
+                return SsaValidationStatus.FunctionRangeInvalid;
+            }
+
+            functionIndex = functionIndex + 1;
+            continue;
+        }
+
+        if (function.OwnedBlockCount() != 1)
+        {
+            return SsaValidationStatus.BlockInstructionRangesRequired;
+        }
+
+        if ((u64[0 max])function.FirstBlockIndex() != nextBlock)
+        {
+            return SsaValidationStatus.FunctionOwnershipNotContiguous;
+        }
+
+        if (function.OwnedInstructionCount() == 0)
+        {
+            if (function.FirstInstructionIndex() != 0)
+            {
+                return SsaValidationStatus.FunctionRangeInvalid;
+            }
+        }
+        else if ((u64[0 max])function.FirstInstructionIndex() != nextInstruction)
+        {
+            return SsaValidationStatus.FunctionOwnershipNotContiguous;
+        }
+
+        stack u64[0 max] lastBlock = nextBlock + (u64[0 max])function.OwnedBlockCount() - 1;
+        stack mut u64[0 max] lastInstruction = nextInstruction - 1;
+        if (function.OwnedInstructionCount() != 0)
+        {
+            lastInstruction = nextInstruction + (u64[0 max])function.OwnedInstructionCount() - 1;
+        }
+
+        if (lastBlock > (u64[0 max])blocks.Count()
+            || (function.OwnedInstructionCount() != 0
+                && lastInstruction > (u64[0 max])instructions.Count()))
+        {
+            return SsaValidationStatus.FunctionRangeInvalid;
+        }
+
+        if (function.EntryBlock().Index() != function.FirstBlockIndex())
+        {
+            return SsaValidationStatus.EntryBlockInvalid;
+        }
+
+        stack mut u32[0 max] valueIndex = function.FirstInstructionIndex();
+        stack mut u32[0 max] valueRemaining = function.OwnedInstructionCount();
+        while willexit (valueRemaining > 0)
+        {
+            stack SsaValidationStatus typeStatus = ValidateSsaInstructionTypes(
+                instructions,
+                functions,
+                function,
+                valueIndex);
+            if (typeStatus != SsaValidationStatus.Ok)
+            {
+                return typeStatus;
+            }
+
+            stack SsaInstruction instruction = instructions.Get(valueIndex);
+            stack ValueFacts facts = valueFacts.Get(valueIndex);
+            stack SsaValidationStatus factStatus = ValidateSsaValueBackendFacts(
+                instructions,
+                valueFacts,
+                valueIndex,
+                instruction,
+                facts);
+            if (factStatus != SsaValidationStatus.Ok)
+            {
+                return factStatus;
+            }
+
+            valueIndex = valueIndex + 1;
+            valueRemaining = valueRemaining - 1;
+        }
+
+        stack SsaBlock entry = blocks.Get(function.FirstBlockIndex());
+        stack SsaValidationStatus blockStatus = ValidateSsaBlock(instructions, blocks, function, entry);
+        if (blockStatus != SsaValidationStatus.Ok)
+        {
+            return blockStatus;
+        }
+
+        nextBlock = lastBlock + 1;
+        nextInstruction = lastInstruction + 1;
+        functionIndex = functionIndex + 1;
+    }
+
+    if (nextBlock != (u64[0 max])blocks.Count() + 1
+        || nextInstruction != (u64[0 max])instructions.Count() + 1)
+    {
+        return SsaValidationStatus.FunctionOwnershipNotContiguous;
+    }
+
+    return SsaValidationStatus.Ok;
+}
