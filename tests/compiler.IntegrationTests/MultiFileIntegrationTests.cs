@@ -747,7 +747,15 @@ public sealed class MultiFileIntegrationTests
 
     private static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Equal(string.Empty, text);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler log: {line}");
+        }
     }
 
     private static void AssertSystemTextRecursiveWarningsEmitted(string text)

@@ -303,7 +303,7 @@ internal unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
 
 public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint(
     u64[0 2 ** 63 - 1] count,
-    rawptr<u8[0 max]> source,
+    rawptr<u8[0 max]>[count] source,
     init u8[0 max][] destination)
     {
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)

@@ -4214,7 +4214,7 @@ internal sealed class TypeChecker
             {
                 // Use the raw resolver: imported modules may reference their own
                 // package-visible types, which root-context resolution would reject.
-                var resolved = _typeResolver.ResolveType(typeContext, genericParameters, module.SyntaxModel.ModuleName);
+                var resolved = _typeResolver!.ResolveType(typeContext, genericParameters, module.SyntaxModel.ModuleName);
                 MaterializeImportedInstantiationSymbol(resolved, typeContext.Start, module, genericParameters);
             }
 
@@ -4349,7 +4349,7 @@ internal sealed class TypeChecker
                 return;
             }
 
-            argumentSymbols.Add(_typeResolver.ResolveType(argumentType, genericParameters, module.SyntaxModel.ModuleName));
+            argumentSymbols.Add(_typeResolver!.ResolveType(argumentType, genericParameters, module.SyntaxModel.ModuleName));
         }
 
         var typeName = genericName.qualifiedName().GetText();

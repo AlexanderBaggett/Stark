@@ -16,7 +16,8 @@ public sealed record CompilerOptions(
     IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null,
     int MaximumCompileTimeLoopIterations = CompileTimeFunctionEvaluator.DefaultMaximumCompileTimeLoopIterations,
     SharedSourceModuleParseCache? SharedSourceModuleParseCache = null,
-    bool PruneUnusedLoweredFunctions = false);
+    bool PruneUnusedLoweredFunctions = false,
+    string? SdkManifestIdentity = null);
 
 public readonly record struct ArtifactKey<T>(string Name);
 

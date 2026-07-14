@@ -1854,7 +1854,7 @@ internal static partial class PackageImageLoader
 
                 localBuilder.Append(statement.IsConstant
                     ? RenderConstLocalType(statement.Type)
-                    : statement.Type.DisplayName);
+                    : RenderTypedTemplateType(statement.Type));
                 localBuilder.Append(' ');
                 localBuilder.Append(statement.Name);
                 localBuilder.Append(" = ");
@@ -2254,7 +2254,7 @@ internal static partial class PackageImageLoader
                 fieldAccessesByOrdinal,
                 memberCallsByOrdinal),
             ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType && expression.Args.Count == 1
-                ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                ? $"({RenderTypedTemplateType(conversionType)}){RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.TryPropagation => expression.Args.Count == 1
                 ? $"try {RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
@@ -2281,7 +2281,7 @@ internal static partial class PackageImageLoader
                 ? $"comptime ({RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)})"
                 : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.TypeLayout => expression.Type is not null && expression.Name is not null
-                ? $"{expression.Name}({expression.Type.DisplayName})"
+                ? $"{expression.Name}({RenderTypedTemplateType(expression.Type)})"
                 : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.ObjectCreation => expression.Ordinal is { } objectCreationOrdinal && objectCreationsByOrdinal.TryGetValue(objectCreationOrdinal, out var objectCreation)
                 ? RenderObjectCreation(objectCreation, expression, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)
@@ -2540,9 +2540,7 @@ internal static partial class PackageImageLoader
     {
         var arguments = (typeArguments ?? [])
             .Select(RenderTypeReference)
-            .Concat((comptimeValueArguments ?? []).Select(static argument => argument.IsSymbolic
-                ? $"comptime {argument.SymbolicSourceName ?? argument.ParameterName}"
-                : argument.IntegerValue))
+            .Concat((comptimeValueArguments ?? []).Select(RenderComptimeValueArgument))
             .ToArray();
         return arguments.Length == 0
             ? string.Empty
@@ -2587,10 +2585,60 @@ internal static partial class PackageImageLoader
         var sourceName = memberCall.QualifiedSourceName ?? memberCall.QualifiedResolvedName;
         var lastDot = sourceName.LastIndexOf('.');
         var memberName = lastDot >= 0 ? sourceName[(lastDot + 1)..] : sourceName;
-        var genericArguments = RenderGenericArgumentList(memberCall.TypeArguments, memberCall.ComptimeValueArguments);
+        var receiverType = memberCall.Parameters.FirstOrDefault()?.Type;
+        var methodTypeArguments = RemoveMatchingOwnerTypeArgumentPrefix(
+            memberCall.TypeArguments,
+            receiverType?.TypeArguments);
+        var methodComptimeValueArguments = RemoveMatchingOwnerComptimeArgumentPrefix(
+            memberCall.ComptimeValueArguments,
+            receiverType?.ComptimeValueArguments);
+        var genericArguments = RenderGenericArgumentList(methodTypeArguments, methodComptimeValueArguments);
         return genericArguments.Length == 0
             ? memberName
             : $"{memberName}<{genericArguments}>";
+    }
+
+    private static IReadOnlyList<StarkPackageTypeReference>? RemoveMatchingOwnerTypeArgumentPrefix(
+        IReadOnlyList<StarkPackageTypeReference>? callArguments,
+        IReadOnlyList<StarkPackageTypeReference>? ownerArguments)
+    {
+        if (callArguments is not { Count: > 0 }
+            || ownerArguments is not { Count: > 0 }
+            || callArguments.Count < ownerArguments.Count
+            || !callArguments.Take(ownerArguments.Count)
+                .Select(RenderTypeReference)
+                .SequenceEqual(ownerArguments.Select(RenderTypeReference), StringComparer.Ordinal))
+        {
+            return callArguments;
+        }
+
+        var methodArguments = callArguments.Skip(ownerArguments.Count).ToArray();
+        return methodArguments.Length == 0 ? null : methodArguments;
+    }
+
+    private static IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? RemoveMatchingOwnerComptimeArgumentPrefix(
+        IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? callArguments,
+        IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? ownerArguments)
+    {
+        if (callArguments is not { Count: > 0 }
+            || ownerArguments is not { Count: > 0 }
+            || callArguments.Count < ownerArguments.Count
+            || !callArguments.Take(ownerArguments.Count)
+                .Select(RenderComptimeValueArgument)
+                .SequenceEqual(ownerArguments.Select(RenderComptimeValueArgument), StringComparer.Ordinal))
+        {
+            return callArguments;
+        }
+
+        var methodArguments = callArguments.Skip(ownerArguments.Count).ToArray();
+        return methodArguments.Length == 0 ? null : methodArguments;
+    }
+
+    private static string RenderComptimeValueArgument(StarkPackageComptimeValueArgumentManifest argument)
+    {
+        return argument.IsSymbolic
+            ? $"comptime {argument.SymbolicSourceName ?? argument.ParameterName}"
+            : argument.IntegerValue;
     }
 
     private static bool CanOmitBridgeBodyText(StarkPackageTypedTemplateBodyManifest typedBody)
@@ -3218,7 +3266,16 @@ internal static partial class PackageImageLoader
             && type.BitWidth is int width
             && type.ElementType is null
             ? $"{(type.IsUnsigned ? "u" : "i")}{width}"
-            : type.DisplayName;
+            : RenderTypedTemplateType(type);
+    }
+
+    private static string RenderTypedTemplateType(StarkTypeSymbol type)
+    {
+        // StarkTypeSymbol.DisplayName intentionally canonicalizes full-range
+        // integers to `iN`/`uN`.  That is useful for identity, but `iN` is not
+        // valid source syntax outside a const declaration: reconstructed casts
+        // and pointer element types must retain their explicit ranges.
+        return RenderTypeReference(PackageImageBuilder.BuildSourceTypeReference(type));
     }
 
 }

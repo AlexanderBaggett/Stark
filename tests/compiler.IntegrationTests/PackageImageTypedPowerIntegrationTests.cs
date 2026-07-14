@@ -83,7 +83,7 @@ public sealed class PackageImageTypedPowerIntegrationTests
                     .ToArray()
             };
 
-            await File.WriteAllTextAsync(manifestPath, typedOnlyManifest.ToJson());
+            await File.WriteAllBytesAsync(manifestPath, PackageImageBinaryFormat.Encode(typedOnlyManifest));
             File.Delete(facadeSourcePath);
 
             await File.WriteAllTextAsync(

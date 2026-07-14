@@ -9,7 +9,8 @@ internal sealed record StarkPackageManifest(
     IReadOnlyList<StarkPackageModuleManifest> Modules,
     StarkPackageNativeDependencyManifest? NativeDependencies = null,
     StarkPackageTargetManifest? Target = null,
-    StarkPackageBuildProfileManifest? BuildProfile = null)
+    StarkPackageBuildProfileManifest? BuildProfile = null,
+    StarkPackageIdentityManifest? Identity = null)
 {
     internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -49,6 +50,17 @@ public sealed record StarkPackageAggregateLayoutManifest(
 
 public sealed record StarkPackageBuildProfileManifest(
     string Name);
+
+public sealed record StarkPackageIdentityManifest(
+    string PackageId,
+    string ApiHash,
+    string ContentHash,
+    IReadOnlyList<StarkPackageDependencyIdentityManifest> Dependencies);
+
+public sealed record StarkPackageDependencyIdentityManifest(
+    string PackageId,
+    string ApiHash,
+    string ContentHash);
 
 internal sealed record StarkPackageNativeDependencyManifest(
     IReadOnlyList<string>? Sources = null,

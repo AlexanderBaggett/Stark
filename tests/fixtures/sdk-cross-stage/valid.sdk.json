@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "kind": "development",
+  "sdkVersion": "cross-stage-fixture",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64",
+    "llvmTriple": "arm64-apple-macosx11.0.0",
+    "architecture": "arm64",
+    "operatingSystem": "macos",
+    "abi": "darwin",
+    "pointerBitWidth": 64,
+    "endianness": "little",
+    "dataLayout": "e-m:o-i64:64-i128:128-n32:64-S128",
+    "baselineCpu": "apple-m2",
+    "baselineFeatures": ["+aes", "+neon"],
+    "relocationModel": "pic",
+    "codeModel": "small",
+    "cDataModel": "lp64",
+    "minimumOperatingSystemVersion": "11.0"
+  },
+  "modules": [
+    { "name": "System.Core", "package": "System" },
+    { "name": "Vendor.Raylib", "package": "Vendor.Raylib" }
+  ],
+  "packages": [
+    {
+      "id": "System",
+      "version": "1.0.0",
+      "profile": "release",
+      "image": "packages/System.starkpkg",
+      "library": "packages/libSystem.a",
+      "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "imageSha256": "eb5e62389dcf56b4f96fb6cec14f22f9d91a3d0171ec9e4899b3468d25bce75a",
+      "librarySha256": "871d51b0133f244a0f056702bd9716b694b7092122a48b4e51a461eee871a58b",
+      "dependencies": [],
+      "native": {
+        "artifacts": [],
+        "includeDirectories": [],
+        "libraryDirectories": [],
+        "runtimeFiles": [],
+        "licenseFiles": [],
+        "fileChecksums": [],
+        "libraries": [],
+        "linkArguments": []
+      }
+    },
+    {
+      "id": "Vendor.Raylib",
+      "version": "6.0.0",
+      "profile": "release",
+      "image": "packages/Vendor.Raylib.starkpkg",
+      "library": "packages/libVendor.Raylib.a",
+      "apiHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "contentHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "imageSha256": "c7f309115004c10e1412f166f85616ea183c9761b460388ae7186718e6117b35",
+      "librarySha256": "228c0803b5ee05b914336af795c9ec1e4c4b61d42274d4d0cd64452376e695ed",
+      "dependencies": [
+        {
+          "id": "System",
+          "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "native": {
+        "artifacts": ["vendor/native/libraylib.a"],
+        "includeDirectories": ["vendor/include"],
+        "libraryDirectories": ["vendor/native"],
+        "runtimeFiles": ["vendor/runtime/libraylib.dylib"],
+        "licenseFiles": ["vendor/LICENSE"],
+        "fileChecksums": [
+          {
+            "path": "vendor/LICENSE",
+            "sha256": "6aa8cc56a249be8ad6ab99c7306f8a0e2a1ab677b62d7ba5ebec3b2d6a59ea63"
+          },
+          {
+            "path": "vendor/native/libraylib.a",
+            "sha256": "5495e8e044f0bebd9575cee94c783473f078fdbae0859860a6bb21a2e4d75a02"
+          },
+          {
+            "path": "vendor/runtime/libraylib.dylib",
+            "sha256": "b053875b714e95f7e1c41e1636bd1285ce33ab1b48098ab08150868bea62cd39"
+          }
+        ],
+        "libraries": ["raylib"],
+        "linkArguments": ["-framework", "Cocoa"]
+      }
+    }
+  ],
+  "developmentSourceRoots": ["stdlib/src", "vendor/src"]
+}

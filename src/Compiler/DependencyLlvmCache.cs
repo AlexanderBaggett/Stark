@@ -76,6 +76,10 @@ public static class DependencyLlvmCache
             .Append(rootOptions.InternalizeModulePrivate ? '1' : '0')
             .Append(rootOptions.EnforceIntegerRangeStorageRules ? '1' : '0')
             .Append('\n');
+        if (!string.IsNullOrWhiteSpace(rootOptions.SdkManifestIdentity))
+        {
+            builder.Append("sdk:").Append(rootOptions.SdkManifestIdentity).Append('\n');
+        }
 
         if (importedInlineCloneSeedFunctions is not null)
         {
@@ -118,6 +122,29 @@ public static class DependencyLlvmCache
         }
 
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
+    }
+
+    /// <summary>
+    /// Captures the active SDK once per compiler invocation. Do not use the
+    /// package-manifest hash cache here: one long-lived host process can select
+    /// a rewritten development SDK on a later invocation.
+    /// </summary>
+    internal static string ComputeSdkManifestIdentity(string manifestPath)
+    {
+        var fullPath = Path.GetFullPath(manifestPath);
+        try
+        {
+            using var stream = File.OpenRead(fullPath);
+            return $"{fullPath}|{Convert.ToHexStringLower(SHA256.HashData(stream))}";
+        }
+        catch (IOException)
+        {
+            return $"{fullPath}|unreadable";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return $"{fullPath}|unreadable";
+        }
     }
 
     public static bool TryGet(string cacheDirectory, string key, out string llvmText)

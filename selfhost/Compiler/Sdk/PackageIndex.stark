@@ -1,0 +1,406 @@
+import Compiler.Sdk.Diagnostics
+import Compiler.Sdk.ManifestModel
+import System.Collections
+import System.Memory
+import System.Text
+module Compiler.Sdk.PackageIndex
+
+// Allocation-once lookup tables for an owned SDK manifest. Keys are copied
+// into the index, while values remain compact manifest-order indices. Lookup
+// is exact and case-sensitive and does not allocate a temporary string.
+public struct SdkPackageIndex
+{
+    internal Dictionary<OwnedAscii, u64[0 2 ** 63 - 1]> PackageIndices;
+    internal Dictionary<OwnedAscii, u64[0 2 ** 63 - 1]> ModulePackageIndices;
+    internal u64[0 2 ** 63 - 1] ManifestPackageCount;
+    internal u64[0 2 ** 63 - 1] ValidModuleCount;
+
+    SdkPackageIndex()
+    {
+        self.PackageIndices = new();
+        self.ModulePackageIndices = new();
+        self.ManifestPackageCount = 0;
+        self.ValidModuleCount = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] PackageCount(borrow SdkPackageIndex self)
+    {
+        return self.PackageIndices.Count();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ModuleCount(borrow SdkPackageIndex self)
+    {
+        return self.ValidModuleCount;
+    }
+
+    public inline fn bool TryGetPackageIndex(
+        borrow SdkPackageIndex self,
+        ascii packageId,
+        out u64[0 2 ** 63 - 1] packageIndex)
+        where overlap(self, packageId),
+              overlap(packageId, packageIndex)
+    {
+        return System.Text.TryGetAsciiKey(self.PackageIndices, packageId, packageIndex);
+    }
+
+    public inline fn bool TryGetPackageIndexForModule(
+        borrow SdkPackageIndex self,
+        ascii moduleName,
+        out u64[0 2 ** 63 - 1] packageIndex)
+        where overlap(self, moduleName),
+              overlap(moduleName, packageIndex)
+    {
+        return System.Text.TryGetAsciiKey(self.ModulePackageIndices, moduleName, packageIndex)
+            && packageIndex < self.ManifestPackageCount;
+    }
+}
+
+internal fn MemoryStatus SdkIndexSet(
+    mut borrow Dictionary<OwnedAscii, u64[0 2 ** 63 - 1]> destination,
+    ascii key,
+    u64[0 2 ** 63 - 1] value)
+    where overlap(destination, key)
+{
+    stack mut OwnedAscii ownedKey = new();
+    switch (ownedKey.AppendAscii(key))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    return destination.Set(ownedKey, value);
+}
+
+internal fn MemoryStatus SdkAppendIndex(
+    mut borrow dynamic u64[0 2 ** 63 - 1] destination,
+    u64[0 2 ** 63 - 1] value)
+{
+    if (!destination.TryReserve(1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    init destination[destination.Length] = value;
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus SdkAppendVisitState(
+    mut borrow dynamic u8[0 2] destination,
+    u8[0 2] value)
+{
+    if (!destination.TryReserve(1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    init destination[destination.Length] = value;
+    return MemoryStatus.Ok;
+}
+
+// Cycle detection reserves and initializes these sparse work arrays before
+// mutation. Centralize the proof here so MIR lowering sees a direct dynamic
+// place instead of an unsupported assignment through a temporary slice.
+internal inline fn void SdkIndexSetState(
+    mut borrow dynamic u8[0 2] destination,
+    u64[0 2 ** 63 - 1] index,
+    u8[0 2] value)
+{
+    unsafe
+    {
+        destination[index] = value;
+    }
+    return;
+}
+
+internal inline fn void SdkIndexSetU64(
+    mut borrow dynamic u64[0 2 ** 63 - 1] destination,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] value)
+{
+    unsafe
+    {
+        destination[index] = value;
+    }
+    return;
+}
+
+internal fn MemoryStatus SdkValidatePackageDependencies(
+    mut borrow SdkManifest manifest,
+    borrow SdkPackageIndex index,
+    mut borrow SdkDiagnosticList diagnostics)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] packageIndex = 0;
+        packageIndex < manifest.PackageCount();
+        packageIndex += 1)
+    {
+        stack ascii packageId = manifest.PackageAt(packageIndex).Id();
+        for willexit (stack mut u64[0 2 ** 63 - 1] dependencyIndex = 0;
+            dependencyIndex < manifest.PackageAt(packageIndex).DependencyCount();
+            dependencyIndex += 1)
+        {
+            stack ascii dependencyId =
+                manifest.PackageAt(packageIndex).DependencyAt(dependencyIndex).PackageId();
+            stack mut u64[0 2 ** 63 - 1] resolvedIndex = 0;
+            if (!index.TryGetPackageIndex(dependencyId, resolvedIndex))
+            {
+                switch (diagnostics.Append(
+                    SdkDiagnosticCode.DependencyMissing,
+                    "SDK package dependency does not name an indexed package.",
+                    dependencyId))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+            }
+            else if (System.Text.Equals(packageId, dependencyId))
+            {
+                switch (diagnostics.Append(
+                    SdkDiagnosticCode.SelfDependency,
+                    "SDK package must not depend on itself.",
+                    dependencyId))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Iterative depth-first traversal avoids making manifest size a call-stack
+// concern. Package and dependency order are retained, so the first reported
+// back edge is deterministic for identical manifest bytes.
+internal fn MemoryStatus SdkValidateDependencyCycles(
+    mut borrow SdkManifest manifest,
+    borrow SdkPackageIndex index,
+    mut borrow SdkDiagnosticList diagnostics)
+{
+    stack mut dynamic u8[0 2] states = new();
+    if (!states.TryReserve(manifest.PackageCount()))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+    for willexit (stack mut u64[0 2 ** 63 - 1] stateIndex = 0;
+        stateIndex < manifest.PackageCount();
+        stateIndex += 1)
+    {
+        switch (SdkAppendVisitState(states, 0))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+    }
+
+    stack mut dynamic u64[0 2 ** 63 - 1] packageStack = new();
+    stack mut dynamic u64[0 2 ** 63 - 1] dependencyStack = new();
+    if (!packageStack.TryReserve(manifest.PackageCount())
+        || !dependencyStack.TryReserve(manifest.PackageCount()))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+    for willexit (stack mut u64[0 2 ** 63 - 1] rootIndex = 0;
+        rootIndex < manifest.PackageCount();
+        rootIndex += 1)
+    {
+        if (states[0, states.Length][rootIndex] != 0)
+        {
+            continue;
+        }
+
+        SdkIndexSetState(states, rootIndex, 1);
+        switch (SdkAppendIndex(packageStack, rootIndex))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+        switch (SdkAppendIndex(dependencyStack, 0))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+
+        while willexit (packageStack.Length > 0)
+        {
+            stack u64[0 2 ** 63 - 1] stackIndex =
+                (u64[0 2 ** 63 - 1])(packageStack.Length - 1);
+            stack u64[0 2 ** 63 - 1] currentIndex = packageStack[0, packageStack.Length][stackIndex];
+            stack u64[0 2 ** 63 - 1] nextDependency = dependencyStack[0, dependencyStack.Length][stackIndex];
+            if (nextDependency >= manifest.PackageAt(currentIndex).DependencyCount())
+            {
+                SdkIndexSetState(states, currentIndex, 2);
+                stack u64[0 2 ** 63 - 1] finishedPackage = packageStack.MoveLast();
+                stack u64[0 2 ** 63 - 1] finishedDependency = dependencyStack.MoveLast();
+                continue;
+            }
+
+            SdkIndexSetU64(
+                dependencyStack,
+                stackIndex,
+                nextDependency + 1);
+            stack ascii dependencyId =
+                manifest.PackageAt(currentIndex).DependencyAt(nextDependency).PackageId();
+            stack mut u64[0 2 ** 63 - 1] dependencyPackageIndex = 0;
+            if (!index.TryGetPackageIndex(dependencyId, dependencyPackageIndex)
+                || dependencyPackageIndex == currentIndex)
+            {
+                continue;
+            }
+
+            if (states[0, states.Length][dependencyPackageIndex] == 1)
+            {
+                switch (diagnostics.Append(
+                    SdkDiagnosticCode.DependencyCycle,
+                    "SDK package dependency graph contains a cycle.",
+                    dependencyId))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+                continue;
+            }
+
+            if (states[0, states.Length][dependencyPackageIndex] == 0)
+            {
+                SdkIndexSetState(states, dependencyPackageIndex, 1);
+                switch (SdkAppendIndex(packageStack, dependencyPackageIndex))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+                switch (SdkAppendIndex(dependencyStack, 0))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Rebuilds destination from manifest. Semantic errors are appended in stable
+// manifest order while allocation failures are returned to the caller.
+public fn MemoryStatus BuildSdkPackageIndex(
+    mut borrow SdkPackageIndex destination,
+    mut borrow SdkManifest manifest,
+    mut borrow SdkDiagnosticList diagnostics)
+{
+    destination.PackageIndices.Clear();
+    destination.ModulePackageIndices.Clear();
+    destination.ManifestPackageCount = manifest.PackageCount();
+    destination.ValidModuleCount = 0;
+
+    switch (destination.PackageIndices.Reserve(manifest.PackageCount()))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (destination.ModulePackageIndices.Reserve(manifest.ModuleCount()))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] packageIndex = 0;
+        packageIndex < manifest.PackageCount();
+        packageIndex += 1)
+    {
+        stack ascii packageId = manifest.PackageAt(packageIndex).Id();
+        if (System.Text.ContainsAsciiKey(destination.PackageIndices, packageId))
+        {
+            switch (diagnostics.Append(
+                SdkDiagnosticCode.DuplicatePackageId,
+                "SDK package id is declared more than once.",
+                packageId))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+            continue;
+        }
+
+        switch (SdkIndexSet(destination.PackageIndices, packageId, packageIndex))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] moduleIndex = 0;
+        moduleIndex < manifest.ModuleCount();
+        moduleIndex += 1)
+    {
+        stack ascii moduleName = manifest.ModuleAt(moduleIndex).ModuleName();
+        stack ascii packageId = manifest.ModuleAt(moduleIndex).PackageId();
+        if (System.Text.ContainsAsciiKey(destination.ModulePackageIndices, moduleName))
+        {
+            switch (diagnostics.Append(
+                SdkDiagnosticCode.DuplicateModuleOwner,
+                "SDK module has more than one declared owner.",
+                moduleName))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+            continue;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] packageIndex = 0;
+        if (!destination.TryGetPackageIndex(packageId, packageIndex))
+        {
+            switch (SdkIndexSet(
+                destination.ModulePackageIndices,
+                moduleName,
+                destination.ManifestPackageCount))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+            switch (diagnostics.Append(
+                SdkDiagnosticCode.ModulePackageMissing,
+                "SDK module owner does not name an indexed package.",
+                moduleName))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+            continue;
+        }
+
+        switch (SdkIndexSet(destination.ModulePackageIndices, moduleName, packageIndex))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+        destination.ValidModuleCount += 1;
+    }
+
+    switch (SdkValidatePackageDependencies(manifest, destination, diagnostics))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    return SdkValidateDependencyCycles(manifest, destination, diagnostics);
+}

@@ -1,0 +1,79 @@
+import Compiler.Sdk
+import System.IO
+import System.IO.File
+import System.Memory
+import System.Testing
+import System.Text
+[Collection("sdk")]
+module SdkGoldenTests
+
+unsafe fn bool SharedSdkManifestFailureMatches(
+    ascii fixturePath,
+    SdkDiagnosticCode expectedCode,
+    ascii expectedIdentifier)
+{
+    unsafe
+    {
+        switch (LoadSdkManifestFile(fixturePath))
+        {
+            case SdkManifestLoadResult.Ok(var manifest):
+                return false;
+            case SdkManifestLoadResult.Err(var value):
+                stack mut SdkDiagnosticList diagnostics = value;
+                return diagnostics.Count() == 1
+                    && diagnostics.CodeAt(0) == expectedCode
+                    && System.Text.Equals(
+                        SdkDiagnosticIdentifier(diagnostics.CodeAt(0)),
+                        expectedIdentifier);
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool SharedManifestFixtureMatchesStage1NormalizedSummary()
+{
+    unsafe
+    {
+        switch (LoadSdkManifestFile("../../tests/fixtures/sdk-cross-stage/valid.sdk.json"))
+        {
+            case SdkManifestLoadResult.Err(var diagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var value):
+                stack mut SdkManifest manifest = value;
+                stack mut OwnedAscii actual = new();
+                if (AppendNormalizedSdkManifestSummary(manifest, actual) != MemoryStatus.Ok)
+                {
+                    return false;
+                }
+
+                switch (System.IO.File.ReadAllText("../../tests/fixtures/sdk-cross-stage/valid.summary.txt"))
+                {
+                    case System.IO.IOResult<OwnedAscii>.Err(var error):
+                        return false;
+                    case System.IO.IOResult<OwnedAscii>.Ok(var loaded):
+                        stack mut OwnedAscii expected = loaded;
+                        return System.Text.Equals(actual.View(), expected.View());
+                }
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool SharedManifestFailuresMatchStage1DiagnosticIdentifiers()
+{
+    unsafe
+    {
+        return SharedSdkManifestFailureMatches(
+            "../../tests/fixtures/sdk-cross-stage/missing.sdk.json",
+            SdkDiagnosticCode.ManifestMissing,
+            "STK7400")
+            && SharedSdkManifestFailureMatches(
+            "../../tests/fixtures/sdk-cross-stage/malformed.sdk.json",
+            SdkDiagnosticCode.ManifestMalformed,
+            "STK7401")
+            && SharedSdkManifestFailureMatches(
+                "../../tests/fixtures/sdk-cross-stage/schema-v2.sdk.json",
+                SdkDiagnosticCode.SchemaIncompatible,
+                "STK7402");
+    }
+}

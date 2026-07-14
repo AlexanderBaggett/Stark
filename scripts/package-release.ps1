@@ -34,6 +34,52 @@ $ErrorActionPreference = "Stop"
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 
+function Assert-PortablePathSegment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Value,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Name
+    )
+
+    if ($Value -notmatch '^[A-Za-z0-9][A-Za-z0-9._+\-]{0,127}$') {
+        throw "$Name '$Value' is not a portable single path segment."
+    }
+}
+
+function Test-IsSameOrDescendantPath {
+    param([string] $Path, [string] $Root)
+
+    $candidate = [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($Path))
+    $rootPath = [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($Root))
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    return [string]::Equals($candidate, $rootPath, $comparison) `
+        -or $candidate.StartsWith($rootPath + [System.IO.Path]::DirectorySeparatorChar, $comparison)
+}
+
+function Assert-NoReparsePointPath {
+    param([string] $Path)
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
+    $currentPath = $rootPath
+    foreach ($segment in $fullPath.Substring($rootPath.Length).Split(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [StringSplitOptions]::RemoveEmptyEntries)) {
+        $currentPath = Join-Path $currentPath $segment
+        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item -and
+            (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw "Release output path '$fullPath' traverses symbolic link or reparse point '$currentPath'."
+        }
+    }
+}
+
+Assert-PortablePathSegment -Value $Version -Name "Version"
+Assert-PortablePathSegment -Value $AssetSuffix -Name "Asset suffix"
+Assert-PortablePathSegment -Value $LlvmVersion -Name "LLVM version"
+
 function Resolve-InputPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -106,6 +152,74 @@ function Copy-TreeFiltered {
         }
 
         Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $Destination $item.Name) -Force
+    }
+}
+
+function Restore-ToolchainHardLinks {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $ToolchainRoot
+    )
+
+    $manifestPath = Join-Path $ToolchainRoot "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $aliasProperty = $manifest.PSObject.Properties["hardlinkAliases"]
+    if ($null -eq $aliasProperty) {
+        return
+    }
+
+    $aliases = @($aliasProperty.Value)
+    if ($aliases.Count -eq 0) {
+        return
+    }
+
+    if ($IsWindows) {
+        throw "Toolchain manifest requests hard-link aliases on Windows, which is not configured."
+    }
+
+    foreach ($alias in $aliases) {
+        $relativePath = [string]$alias.path
+        $targetRelativePath = [string]$alias.target
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or
+            [string]::IsNullOrWhiteSpace($targetRelativePath) -or
+            [System.IO.Path]::IsPathRooted($relativePath) -or
+            [System.IO.Path]::IsPathRooted($targetRelativePath)) {
+            throw "Toolchain manifest contains an invalid hard-link alias."
+        }
+
+        $path = [System.IO.Path]::GetFullPath((Join-Path $ToolchainRoot $relativePath))
+        $targetPath = [System.IO.Path]::GetFullPath((Join-Path $ToolchainRoot $targetRelativePath))
+        if (-not (Test-IsSameOrDescendantPath -Path $path -Root $ToolchainRoot) -or
+            -not (Test-IsSameOrDescendantPath -Path $targetPath -Root $ToolchainRoot)) {
+            throw "Toolchain hard-link alias '$relativePath' escapes '$ToolchainRoot'."
+        }
+
+        Assert-NoReparsePointPath -Path $path
+        Assert-NoReparsePointPath -Path $targetPath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+            throw "Toolchain hard-link alias '$relativePath' or target '$targetRelativePath' is missing."
+        }
+
+        $pathFile = Get-Item -LiteralPath $path
+        $targetFile = Get-Item -LiteralPath $targetPath
+        if ($pathFile.Length -ne $targetFile.Length -or
+            -not [string]::Equals(
+                (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash,
+                (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash,
+                [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Toolchain hard-link alias '$relativePath' is not byte-identical to '$targetRelativePath'."
+        }
+
+        Remove-Item -LiteralPath $path -Force
+        & /bin/ln $targetPath $path
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to restore toolchain hard-link alias '$relativePath'."
+        }
     }
 }
 
@@ -217,24 +331,24 @@ function Write-InstallDocument {
 # Stark __VERSION__ Installation
 
 1. Extract this archive.
-2. Add the extracted archive root to PATH.
+2. Add the extracted archive's bin directory to PATH.
 3. Open a new shell.
 4. Run stark doctor.
 5. Compile or check a Stark program.
 
 macOS/Linux shell example:
 
-    export PATH="/path/to/__ARCHIVE_ROOT__:$PATH"
+    export PATH="/path/to/__ARCHIVE_ROOT__/bin:$PATH"
     stark doctor
 
 Windows PowerShell example:
 
-    $env:Path = "C:\path\to\__ARCHIVE_ROOT__;$env:Path"
+    $env:Path = "C:\path\to\__ARCHIVE_ROOT__\bin;$env:Path"
     stark doctor
 
 No Stark environment variable is required for ordinary use. STARK_PATH,
-STARK_TOOLCHAIN_DIR, --toolchain-dir, --linker, and --archiver are
-developer overrides.
+STARK_SDK_ROOT, --sdk-root, STARK_TOOLCHAIN_DIR, --toolchain-dir, --linker,
+and --archiver are advanced developer overrides.
 
 macOS requires locally installed Xcode or Command Line Tools SDK content. Linux
 Stark-owned runtime and standard-library code is syscall-backed and no-libc;
@@ -274,7 +388,8 @@ LLVM version: $LlvmVersion
 Toolchain: $toolchainText
 
 Included roots:
-- stark command at archive root
+- bin/stark[.exe] command and compiler runtime support files
+- sdk.json runtime SDK manifest
 - stdlib/
 - vendor/
 - licenses/
@@ -291,7 +406,7 @@ function Write-ReleaseJson {
     param(
         [string] $Path,
         [string] $Commit,
-        [string] $CommandName,
+        [string] $CompilerRelativePath,
         [string] $ToolchainRelativePath,
         [object[]] $StdlibArtifacts,
         [object[]] $VendorArtifacts
@@ -312,7 +427,8 @@ function Write-ReleaseJson {
         llvmVersion = $LlvmVersion
         archiveKind = $ArchiveKind
         paths = [ordered]@{
-            compiler = $CommandName
+            compiler = $CompilerRelativePath
+            sdk = "sdk.json"
             stdlib = "stdlib"
             vendor = "vendor"
             toolchain = $toolchainPath
@@ -332,37 +448,78 @@ $vendorRootPath = Resolve-InputPath -Path $VendorRoot -Name "Vendor"
 $toolchainSourcePath = Resolve-OptionalInputPath -Path $ToolchainDir -Name "Toolchain"
 
 if ([System.IO.Path]::IsPathRooted($OutputDir)) {
-    $outputPath = $OutputDir
+    $outputPath = [System.IO.Path]::GetFullPath($OutputDir)
 } else {
-    $outputPath = Join-Path $repositoryRoot $OutputDir
+    $outputPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $OutputDir))
+}
+
+Assert-NoReparsePointPath -Path $outputPath
+$repositoryArtifactsRoot = Join-Path $repositoryRoot "artifacts"
+if ((Test-IsSameOrDescendantPath -Path $outputPath -Root $repositoryRoot) -and
+    -not (Test-IsSameOrDescendantPath -Path $outputPath -Root $repositoryArtifactsRoot)) {
+    throw "Release output '$outputPath' must be under the repository artifacts directory or outside the repository."
 }
 
 $assetBase = "stark-$Version-$AssetSuffix"
 $stageParent = Join-Path $outputPath "stage"
 $stageRoot = Join-Path $stageParent $assetBase
+$stageMarkerPath = "$stageRoot.stark-stage-marker"
+
+if (-not (Test-IsSameOrDescendantPath -Path $stageRoot -Root $outputPath)) {
+    throw "Release stage '$stageRoot' escapes output root '$outputPath'."
+}
 
 if (Test-Path -LiteralPath $stageRoot) {
+    Assert-NoReparsePointPath -Path $stageRoot
+    Assert-NoReparsePointPath -Path $stageMarkerPath
+    if (-not (Test-Path -LiteralPath $stageMarkerPath -PathType Leaf) -or
+        -not [string]::Equals(
+            (Get-Content -LiteralPath $stageMarkerPath -Raw).Trim(),
+            $assetBase,
+            [StringComparison]::Ordinal)) {
+        throw "Existing release stage '$stageRoot' is not owned by this packaging invocation; refusing recursive replacement."
+    }
+
+    Assert-NoReparsePointPath -Path $stageRoot
     Remove-Item -LiteralPath $stageRoot -Recurse -Force
 }
 
+Assert-NoReparsePointPath -Path $stageRoot
 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+Assert-NoReparsePointPath -Path $stageMarkerPath
+[System.IO.File]::WriteAllText($stageMarkerPath, $assetBase, [System.Text.UTF8Encoding]::new($false))
 
-Copy-TreeFiltered -Source $publishPath -Destination $stageRoot -ExcludedDirectoryNames @()
-$commandName = Normalize-CompilerCommand -Root $stageRoot
+$compilerBinRoot = Join-Path $stageRoot "bin"
+Copy-TreeFiltered -Source $publishPath -Destination $compilerBinRoot -ExcludedDirectoryNames @()
+$commandName = Normalize-CompilerCommand -Root $compilerBinRoot
+$compilerRelativePath = "bin/$commandName"
 
 $stdlibRoot = Join-Path $stageRoot "stdlib"
 Copy-OptionalFile -Source (Join-Path $repositoryRoot "stdlib/Stark.toml") -Destination (Join-Path $stdlibRoot "Stark.toml")
 Copy-OptionalTree -Source (Join-Path $repositoryRoot "stdlib/src") -Destination (Join-Path $stdlibRoot "src")
 Copy-OptionalTree -Source (Join-Path $repositoryRoot "stdlib/templates") -Destination (Join-Path $stdlibRoot "templates")
-Copy-TreeFiltered -Source $stdlibPackagePath -Destination (Join-Path $stdlibRoot "dist") -ExcludedDirectoryNames @()
+$stdlibDistRoot = Join-Path $stdlibRoot "dist"
+$stdlibTargetDist = Join-Path $stdlibDistRoot $AssetSuffix
+Copy-TreeFiltered -Source $stdlibPackagePath -Destination $stdlibTargetDist -ExcludedDirectoryNames @()
 
 Copy-TreeFiltered -Source $vendorRootPath -Destination (Join-Path $stageRoot "vendor")
 
 $toolchainRelativePath = ""
 if ($null -ne $toolchainSourcePath) {
     $toolchainRelativePath = "toolchain/llvm-$LlvmVersion"
-    Copy-TreeFiltered -Source $toolchainSourcePath -Destination (Join-Path $stageRoot $toolchainRelativePath) -ExcludedDirectoryNames @()
+    $stagedToolchainRoot = Join-Path $stageRoot $toolchainRelativePath
+    Copy-TreeFiltered -Source $toolchainSourcePath -Destination $stagedToolchainRoot -ExcludedDirectoryNames @()
+    Restore-ToolchainHardLinks -ToolchainRoot $stagedToolchainRoot
 }
+
+& (Join-Path $PSScriptRoot "assemble-sdk-manifest.ps1") `
+    -SdkRoot $stageRoot `
+    -CompilerPath (Join-Path $compilerBinRoot $commandName) `
+    -StdlibDist $stdlibDistRoot `
+    -VendorDist (Join-Path $stageRoot "vendor/dist") `
+    -Version $Version `
+    -AssetSuffix $AssetSuffix `
+    -TargetTriple $TargetTriple
 
 Copy-OptionalTree -Source (Join-Path $repositoryRoot "docs") -Destination (Join-Path $stageRoot "docs")
 Copy-OptionalFile -Source (Join-Path $repositoryRoot "README.md") -Destination (Join-Path $stageRoot "README.md")
@@ -380,7 +537,7 @@ Write-ReleaseText -Path (Join-Path $stageRoot "RELEASE.txt") -Commit $commit -To
 Write-ReleaseJson `
     -Path (Join-Path $stageRoot "release.json") `
     -Commit $commit `
-    -CommandName $commandName `
+    -CompilerRelativePath $compilerRelativePath `
     -ToolchainRelativePath $toolchainRelativePath `
     -StdlibArtifacts (Get-FileManifest -Root (Join-Path $stdlibRoot "dist")) `
     -VendorArtifacts (Get-FileManifest -Root (Join-Path $stageRoot "vendor/dist"))
@@ -389,23 +546,30 @@ New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
 if ($ArchiveKind -eq "zip") {
     $archivePath = Join-Path $outputPath "$assetBase.zip"
+    Assert-NoReparsePointPath -Path $archivePath
     if (Test-Path -LiteralPath $archivePath) {
+        Assert-NoReparsePointPath -Path $archivePath
         Remove-Item -LiteralPath $archivePath -Force
     }
 
+    Assert-NoReparsePointPath -Path $archivePath
     Compress-Archive -LiteralPath $stageRoot -DestinationPath $archivePath -Force
 } else {
     $archivePath = Join-Path $outputPath "$assetBase.tar.gz"
+    Assert-NoReparsePointPath -Path $archivePath
     if (Test-Path -LiteralPath $archivePath) {
+        Assert-NoReparsePointPath -Path $archivePath
         Remove-Item -LiteralPath $archivePath -Force
     }
 
+    Assert-NoReparsePointPath -Path $archivePath
     tar -czf $archivePath -C $stageParent $assetBase
 }
 
 $archiveFileName = Split-Path -Leaf $archivePath
 $checksum = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
 $checksumPath = "$archivePath.sha256"
+Assert-NoReparsePointPath -Path $checksumPath
 Set-Content -LiteralPath $checksumPath -Value "$checksum  $archiveFileName" -Encoding ascii
 
 if ($env:GITHUB_OUTPUT) {

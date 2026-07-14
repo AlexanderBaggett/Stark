@@ -10,14 +10,23 @@ namespace compiler.StandardLibraryTests;
 /// </summary>
 public static class SharedStdlibPackage
 {
-    private static readonly Lazy<Task<string>> PackageDirectory = new(
+    private static readonly Lazy<Task<SharedStdlibPackageArtifact>> Package = new(
         BuildAsync,
         LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public static Task<string> GetDirectoryAsync() => PackageDirectory.Value;
+    public static Task<SharedStdlibPackageArtifact> GetAsync() => Package.Value;
 
-    private static async Task<string> BuildAsync()
+    public static async Task<string> GetDirectoryAsync() =>
+        (await GetAsync().ConfigureAwait(false)).DirectoryPath;
+
+    private static async Task<SharedStdlibPackageArtifact> BuildAsync()
     {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            throw new InvalidOperationException(
+                "Unable to detect the active target for the shared standard-library package.");
+        }
+
         var repositoryRoot = FindRepositoryRoot();
         var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var directory = Path.Combine(
@@ -42,7 +51,12 @@ public static class SharedStdlibPackage
         var stdout = new StringWriter();
         var stderr = new StringWriter();
         var exitCode = await CompilerCli.RunAsync(
-            [systemPath, "--emit-lib", "-o", Path.Combine(directory, libraryFileName)],
+            [
+                systemPath,
+                "--emit-lib",
+                "--target", targetInfo.Triple,
+                "-o", Path.Combine(directory, libraryFileName)
+            ],
             new StringReader(string.Empty),
             stdout,
             stderr);
@@ -53,7 +67,7 @@ public static class SharedStdlibPackage
                 + $"{Environment.NewLine}{stdout}{Environment.NewLine}{stderr}");
         }
 
-        return directory;
+        return new SharedStdlibPackageArtifact(directory, targetInfo);
     }
 
     private static string FindRepositoryRoot()
@@ -74,3 +88,7 @@ public static class SharedStdlibPackage
             "Unable to locate the Stark repository root for the shared stdlib package build.");
     }
 }
+
+public sealed record SharedStdlibPackageArtifact(
+    string DirectoryPath,
+    LlvmTargetInfo TargetInfo);

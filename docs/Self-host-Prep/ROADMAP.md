@@ -8,7 +8,8 @@ Ephemerality policy: every document in `docs/Self-host-Prep` — this file,
 TASKS.md, the ledgers, and the numbered companions — exists to
 coordinate the port and is retired when the self-hosted compiler is complete.
 Durable content migrates to [docs/Userfacing](../Userfacing) or
-[docs/Internals](../Internals) at cutover (tracked in TASKS.md section 10).
+[docs/Internals](../Internals) when self-host prep is retired (tracked in
+TASKS.md section 10).
 New documentation with lasting value should be written in Userfacing or
 Internals directly, not added here.
 
@@ -195,16 +196,16 @@ user-facing examples consistent.
 - [ ] Port CLI, project driver, manifest handling, native-toolchain driver, and build entry points. See [05-port-checklist.md](05-port-checklist.md) and [03-tooling-gaps.md](03-tooling-gaps.md).
 - [ ] Port small fact helpers and assembly metadata helpers as leaf modules. See [05-port-checklist.md](05-port-checklist.md).
 
-## Bootstrap And Cutover
+## Bootstrap And Self-Hosted Release Adoption
 
 - [ ] Build the first Stark compiler with the C# host compiler. See [06-roadmap.md](06-roadmap.md).
 - [ ] Build the next Stark compiler with the first Stark compiler. See [06-roadmap.md](06-roadmap.md).
 - [ ] Compare stage outputs, package images, diagnostics, and native artifacts for determinism. See [06-roadmap.md](06-roadmap.md).
 - [ ] Run the ported Stark test suite against the self-hosted compiler. See [06-roadmap.md](06-roadmap.md).
-- [ ] Keep the C# host compiler as the Stage0 builder until the Stark compiler can build itself. See [06-roadmap.md](06-roadmap.md).
-- [ ] Update release archives to ship the Stark compiler, stdlib package, and required native tooling after cutover. See [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
-- [ ] Document the migration bootstrap flow: C# host builds Stage1, Stage1 builds Stage2, then Stage2 becomes the trusted self-hosted compiler once tests and comparisons pass. See [06-roadmap.md](06-roadmap.md).
-- [ ] During cutover, move the C# host compiler from `/src` to `/old_src`, let the Stark compiler own `/src`, and remove or demote the C# host from the normal build path while keeping an emergency recovery path. See [06-roadmap.md](06-roadmap.md).
+- [ ] Keep the C# compiler in `/src` as the retained Stage0 builder and keep the Stark compiler in `/selfhost`; do not make source-directory moves part of bootstrap or release adoption. See [06-roadmap.md](06-roadmap.md).
+- [ ] Re-establish or update release builds to ship the qualified self-hosted compiler, stdlib package, and required native tooling while retaining an explicit Stage0 build path. See [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
+- [ ] Document the bootstrap and release-selection flow: C# Stage0 builds Stage1, Stage1 builds Stage2, then release builds select the qualified self-hosted compiler once tests, comparisons, and benchmarks pass. See [06-roadmap.md](06-roadmap.md).
+- [ ] Add release and CI smoke coverage proving the self-hosted compiler is selected for published artifacts and the retained Stage0 compiler remains buildable when explicitly requested. See [06-roadmap.md](06-roadmap.md).
 
 ## Open Decisions To Close
 

@@ -98,7 +98,8 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
     public async Task PackagedStdLibNetFoundationTypesWorkWithoutSource()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-net-foundation-");
-        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
+        var sharedPackage = await SharedStdlibPackage.GetAsync();
+        var packageDirectory = sharedPackage.DirectoryPath;
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
         var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
@@ -175,6 +176,7 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                 new CompilationInput(appSource, appPath),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    TargetInfo: sharedPackage.TargetInfo,
                     StopAfterPassId: "enum-layout"));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

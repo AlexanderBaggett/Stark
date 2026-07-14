@@ -282,7 +282,8 @@ public sealed class SystemTextStandardLibraryTests
     public async Task PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-text-package-");
-        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
+        var sharedPackage = await SharedStdlibPackage.GetAsync();
+        var packageDirectory = sharedPackage.DirectoryPath;
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
         var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
@@ -711,7 +712,9 @@ public sealed class SystemTextStandardLibraryTests
 
             var result = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(appSource, appPath),
-                new CompilerOptions(ModuleResolver: new FileSystemModuleResolver(packageDirectory)));
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    TargetInfo: sharedPackage.TargetInfo));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         }

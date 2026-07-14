@@ -13,8 +13,8 @@ self-hosted compiler can build itself and pass the ported tests.
 | M3 | Close stdlib blockers | S01, S02, S06, S07, S09-S14, S17 |
 | M4 | Close tooling blockers | T02-T11, T14 |
 | M5 | Port compiler subsystems leaf-first | `05-port-checklist.md` compiler rows |
-| M6 | Bootstrap | Stage1/Stage2 compiler equivalence, tests pass |
-| M7 | Cutover and host removal | T02, T14, release smoke check |
+| M6 | Bootstrap and qualification | Stage1/Stage2 compiler equivalence, tests and benchmarks pass |
+| M7 | Self-hosted release adoption | T02, T14, release smoke check, Stage0 remains available |
 
 ## M0 - Test Infrastructure First
 
@@ -81,20 +81,20 @@ self-hosted compiler can build itself and pass the ported tests.
 | Field | Details |
 |---|---|
 | Entry Criteria | Stage1 Stark compiler builds with the C# host; M5 core compiler and CLI are ported enough to build the compiler project. |
-| Work | Build Stage1 with host. Use Stage1 to build Stage2. Compare Stage1/Stage2 outputs enough to trust stability. Run the Stark test suite against Stage2. |
-| Exit Criteria | Self-hosted compiler builds itself; ported tests pass; generated artifacts and diagnostics are stable for the supported platform set. |
-| Key Risks | Non-deterministic package image/order output, native toolchain drift, stage-specific stdlib/package discovery, hidden host-only behavior in tests. |
-| Parallel Workstreams | Determinism checks; artifact comparison; stage-specific build scripts; native smoke tests; stdlib package rebuild verification. |
+| Work | Build Stage1 with the C# Stage0 compiler. Use Stage1 to build Stage2. Compare Stage1 and Stage2 outputs enough to trust stability, run the Stark test suite against Stage2, and benchmark Stage0/Stage1/Stage2. Keep Stage0 available throughout qualification as an oracle, recovery path, and comparison compiler. |
+| Exit Criteria | The self-hosted compiler builds itself; ported tests pass; generated artifacts and diagnostics are stable for the supported platform set; benchmark results are understood well enough to qualify the self-hosted compiler for release use. |
+| Key Risks | Non-deterministic package image/order output, native toolchain drift, stage-specific stdlib/package discovery, hidden host-only behavior in tests, and performance regressions hidden by functional parity. |
+| Parallel Workstreams | Determinism checks; artifact and benchmark comparison; stage-specific build scripts; native smoke tests; stdlib package rebuild verification. |
 
-## M7 - Cutover And Drop Host Compiler
+## M7 - Adopt The Self-Hosted Compiler For Releases
 
 | Field | Details |
 |---|---|
 | Entry Criteria | M6 passes repeatedly; minimal release packaging T14 and `stark doctor` work for the platforms being published. |
-| Work | Use the existing C# host as Stage0 until the Stark compiler can build itself. After M6 passes, update release archives, document the migration bootstrap flow, rename the current C# `/src` tree to `/old_src` when the Stark `/src` tree takes over, and remove or demote the C# host from the normal build path. |
-| Exit Criteria | Stark release can be installed from an archive, `stark doctor` passes, stdlib package exists, compiler builds itself, and the host compiler is no longer required for ordinary development. |
-| Key Risks | Platform SDK/legal bundling constraints, unsupported cross-targets, editor/tooling drift T13, hidden dependency on `/old_src` after cutover. |
-| Parallel Workstreams | Minimal release packaging T14; docs; release smoke checks; syntax/editor updates for syntax that actually changed; removal of C# host from ordinary build/test paths. |
+| Work | Re-establish or update the currently absent or non-maintained release builds so they publish the qualified self-hosted compiler, its stdlib package, and required native tooling. Keep the C# compiler in `/src` and the Stark compiler in `/selfhost`; do not move source directories or remove the Stage0 implementation. Make CI and release scripts select their compiler stage explicitly, document the bootstrap flow, and retain Stage0 builds for comparison, recovery, and maintenance. |
+| Exit Criteria | A self-hosted Stark release can be installed from an archive, `stark doctor` passes, the stdlib package exists, release builds and smoke tests use the qualified self-hosted compiler, and the retained Stage0 compiler remains buildable when explicitly selected. |
+| Key Risks | Platform SDK/legal bundling constraints, unsupported cross-targets, editor/tooling drift T13, release jobs accidentally selecting the wrong stage, and unintentional behavioral drift between the retained compilers. |
+| Parallel Workstreams | Minimal release packaging T14; explicit CI/release stage selection; docs; release smoke checks; Stage0 maintenance smoke; syntax/editor updates for syntax that actually changed. |
 
 ## Recommended First Three Concrete Actions
 

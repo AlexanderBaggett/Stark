@@ -196,6 +196,24 @@ public static class DefaultCompilerPipeline
             }
 
             context.Artifacts.Set(CompilerArtifactKeys.SyntaxModel, buildResult.Model);
+
+            if (context.Options.ModuleResolver is IRootModuleDiagnosticProvider rootModuleDiagnosticProvider
+                && rootModuleDiagnosticProvider.TryGetRootModuleDiagnostic(
+                    buildResult.Model.ModuleName,
+                    context.Input.FilePath,
+                    out var rootDiagnosticCode,
+                    out var rootDiagnosticMessage))
+            {
+                var moduleDeclaration = parseResult.Root.moduleDeclaration();
+                context.Diagnostics.Error(
+                    rootDiagnosticCode,
+                    rootDiagnosticMessage,
+                    Id,
+                    new SourceLocation(
+                        context.Input.FilePath,
+                        moduleDeclaration.Start.Line,
+                        moduleDeclaration.Start.Column + 1));
+            }
         }
     }
 
@@ -449,10 +467,21 @@ public static class DefaultCompilerPipeline
                 }
                 else
                 {
-                    context.Diagnostics.Error(
-                        "STK2000",
-                        $"Unable to resolve imported module '{importName}'.",
-                        Id);
+                    if (resolver is IModuleResolutionDiagnosticProvider diagnosticProvider
+                        && diagnosticProvider.TryGetUnresolvedModuleDiagnostic(
+                            importName,
+                            out var diagnosticCode,
+                            out var diagnosticMessage))
+                    {
+                        context.Diagnostics.Error(diagnosticCode, diagnosticMessage, Id);
+                    }
+                    else
+                    {
+                        context.Diagnostics.Error(
+                            "STK2000",
+                            $"Unable to resolve imported module '{importName}'.",
+                            Id);
+                    }
 
                     imports.Add(new ModuleImportEdge(
                         fromModule,

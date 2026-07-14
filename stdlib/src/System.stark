@@ -11,6 +11,7 @@ export import System.BitOperations
 export import System.Collections
 export import System.C
 export import System.Compiler.IntegerFacts
+export import System.Cryptography.Sha256
 export import System.FileSystem
 export import System.IO
 export import System.IO.File

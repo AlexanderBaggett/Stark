@@ -87,7 +87,7 @@ internal sealed class AbiLowerer
         FunctionEffectProfile effects,
         IReadOnlySet<string> ffiSymbolNames)
     {
-        var (moduleName, sourceName, visibility) = ResolveFunctionIdentity(function.Name);
+        var (moduleName, sourceName, visibility, isPackageBacked) = ResolveFunctionIdentity(function.Name);
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
         CAbiAggregateClassification? ffiReturnClassification = null;
@@ -103,7 +103,12 @@ internal sealed class AbiLowerer
         var returnsIndirect = hasFfiReturnClassification
             ? ffiReturnClassification!.PassKind == CAbiAggregatePassKind.Indirect
             : !isFfi && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
-        var isOverloaded = !string.Equals(function.Name, function.DisplaySourceName, StringComparison.Ordinal);
+        // Source/qualified names naturally differ for imported declarations,
+        // especially methods (`Counter.Reset` vs `Facade.Counter.Reset`).  Only
+        // the resolved overload suffix identifies a real overload.  Treating
+        // every imported-name difference as an overload returns before the
+        // defining-module prefix is restored in ComputeSymbolName.
+        var isOverloaded = function.Name.Contains("#(", StringComparison.Ordinal);
         var symbolName = ComputeSymbolName(
             function.Name,
             moduleName,
@@ -111,6 +116,7 @@ internal sealed class AbiLowerer
             visibility,
             isFfi,
             isOverloaded,
+            isPackageBacked,
             function.ExternalLinkName,
             ffiSymbolNames);
 
@@ -144,8 +150,11 @@ internal sealed class AbiLowerer
                     ? AbiParameterKind.IndirectIn
                     : AbiParameterKind.Direct;
 
+            var ffiParameterTypes = hasFfiParameterClassification
+                ? ffiParameterClassification!.EffectiveLlvmParameterTypes
+                : null;
             var llvmType = hasFfiParameterClassification
-                ? ffiParameterClassification!.LlvmType
+                ? ffiParameterTypes![0]
                 : LowerAbiValueType(parameter.Type, isFfi, forReturnValue: false);
 
             parameters.Add(new AbiParameterSymbol(
@@ -157,9 +166,9 @@ internal sealed class AbiLowerer
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
                 Kind: kind,
                 RawPointerElementCountExpression: parameter.RawPointerElementCountExpression,
-                LlvmParameterTypes: kind == AbiParameterKind.Direct && hasFfiParameterClassification
-                    && ffiParameterClassification!.EffectiveLlvmParameterTypes.Count > 1
-                    ? ffiParameterClassification.EffectiveLlvmParameterTypes
+                LlvmParameterTypes: kind == AbiParameterKind.Direct
+                    && ffiParameterTypes is { Count: > 1 }
+                    ? ffiParameterTypes
                     : null));
         }
 
@@ -230,7 +239,7 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            var (_, sourceName, _) = ResolveFunctionIdentity(functionName);
+            var (_, sourceName, _, _) = ResolveFunctionIdentity(functionName);
             if (_typeModel.Functions.TryGetValue(functionName, out var function)
                 && !string.IsNullOrWhiteSpace(function.ExternalLinkName))
             {
@@ -248,7 +257,7 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            var (_, sourceName, _) = ResolveFunctionIdentity(function.Name);
+            var (_, sourceName, _, _) = ResolveFunctionIdentity(function.Name);
             symbols.Add(function.Signature.ExternalLinkName ?? sourceName);
         }
 
@@ -291,20 +300,20 @@ internal sealed class AbiLowerer
         };
     }
 
-    private (string ModuleName, string SourceName, StarkVisibility Visibility) ResolveFunctionIdentity(string functionName)
+    private (string ModuleName, string SourceName, StarkVisibility Visibility, bool IsPackageBacked) ResolveFunctionIdentity(string functionName)
     {
         if (_functionIdentities.TryGetValue(functionName, out var identity))
         {
-            return (identity.ModuleName, identity.SourceName, identity.Visibility);
+            return (identity.ModuleName, identity.SourceName, identity.Visibility, identity.IsPackageBacked);
         }
 
         var separator = functionName.LastIndexOf('.');
         if (separator < 0)
         {
-            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module);
+            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module, false);
         }
 
-        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module);
+        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module, false);
     }
 
     private static Dictionary<string, FunctionIdentity> BuildFunctionIdentityIndex(LoadedModuleSet loadedModules)
@@ -326,7 +335,13 @@ internal sealed class AbiLowerer
 
                 identities.TryAdd(
                     resolvedName,
-                    new FunctionIdentity(module.SyntaxModel.ModuleName, declaration.Name, declaration.Visibility));
+                    new FunctionIdentity(
+                        module.SyntaxModel.ModuleName,
+                        declaration.Name,
+                        declaration.Visibility,
+                        module.PackageImageFacts is not null
+                        || module.Reference.ManifestPath is not null
+                        || module.Reference.LibraryPath is not null));
             }
         }
 
@@ -356,7 +371,8 @@ internal sealed class AbiLowerer
     private readonly record struct FunctionIdentity(
         string ModuleName,
         string SourceName,
-        StarkVisibility Visibility);
+        StarkVisibility Visibility,
+        bool IsPackageBacked);
 
     private readonly record struct FfiLinkageKey(StarkFfiAbi Abi, string SymbolName)
     {
@@ -384,6 +400,7 @@ internal sealed class AbiLowerer
         StarkVisibility visibility,
         bool isFfi,
         bool isOverloaded,
+        bool isPackageBacked,
         string? externalLinkName,
         IReadOnlySet<string> ffiSymbolNames)
     {
@@ -438,7 +455,7 @@ internal sealed class AbiLowerer
             // declares/calls reference a symbol the archive never exported
             // (`@Counter_Reset` vs `@Facade_Counter_Reset`).
             return !string.IsNullOrEmpty(moduleName)
-                   && !string.Equals(moduleName, _syntaxModel.ModuleName, StringComparison.Ordinal)
+                   && (isPackageBacked || !string.Equals(moduleName, _syntaxModel.ModuleName, StringComparison.Ordinal))
                    && !qualifiedName.StartsWith($"{moduleName}.", StringComparison.Ordinal)
                 ? $"{moduleName}.{qualifiedName}"
                 : qualifiedName;

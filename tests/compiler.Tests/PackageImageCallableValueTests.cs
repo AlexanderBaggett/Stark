@@ -1365,6 +1365,7 @@ public sealed class PackageImageCallableValueTests
         try
         {
             var pipeline = DefaultCompilerPipeline.Create();
+            var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
             var libraryResult = pipeline.Run(new CompilationInput(
                 """
                 module Facade
@@ -1388,7 +1389,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+                    TargetInfo: targetInfo));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
@@ -1411,6 +1412,7 @@ public sealed class PackageImageCallableValueTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
+                    TargetInfo: targetInfo,
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(Environment.NewLine, consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

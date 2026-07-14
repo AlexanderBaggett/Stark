@@ -856,8 +856,10 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         Assert.DoesNotContain("snapshot", appendCodePointsDisjointBody, StringComparison.Ordinal);
         Assert.Contains("@MoveBytesInfallible", moveBytesBody, StringComparison.Ordinal);
         Assert.Contains("@MoveCodePointsInfallible", moveCodePointsBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ult ptr", moveBytesInfallibleBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ult ptr", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memmove.p0.p0.i64(", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memmove.p0.p0.i64(", moveCodePointsInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("i1 false)", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.Contains("i1 false)", moveCodePointsInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_alloc", moveBytesInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_alloc", moveCodePointsInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_try_realloc", moveBytesInfallibleBody, StringComparison.Ordinal);

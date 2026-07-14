@@ -1,0 +1,108 @@
+import Compiler.Sdk.Diagnostics
+import Compiler.Sdk.IntegrityValidation
+import Compiler.Sdk.ManifestLoading
+import Compiler.Sdk.ManifestModel
+import System.Memory
+import System.Testing
+import System.Text
+[Collection("sdk-hashing")]
+module SdkHashingTests
+
+fn bool HashDiagnosticsMatch(
+    borrow SdkDiagnosticList diagnostics,
+    SdkDiagnosticCode first,
+    SdkDiagnosticCode second)
+{
+    return diagnostics.Count() == 2
+        && diagnostics.CodeAt(0) == first
+        && diagnostics.CodeAt(1) == second;
+}
+
+[Fact]
+unsafe fn bool SelectedSystemHashingIgnoresCorruptUnusedVendor()
+{
+    unsafe
+    {
+        switch (LoadSdkManifestFile("../../tests/fixtures/sdk-sha256/sdk.json"))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var loaded):
+                stack mut SdkManifest manifest = loaded;
+                stack mut SdkDiagnosticList diagnostics = new();
+                stack mut bool found = false;
+                return ValidateSdkPackagePayloadAt(
+                        "../../tests/fixtures/sdk-sha256",
+                        manifest,
+                        0,
+                        diagnostics,
+                        found) == MemoryStatus.Ok
+                    && found
+                    && diagnostics.Count() == 0;
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool SelectedVendorHashingPreservesPackageAndNativeMismatchCodes()
+{
+    unsafe
+    {
+        switch (LoadSdkManifestFile("../../tests/fixtures/sdk-sha256/sdk.json"))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var loaded):
+                stack mut SdkManifest manifest = loaded;
+                stack mut SdkDiagnosticList diagnostics = new();
+                stack mut bool found = false;
+                return ValidateSdkPackagePayloadAt(
+                        "../../tests/fixtures/sdk-sha256",
+                        manifest,
+                        1,
+                        diagnostics,
+                        found) == MemoryStatus.Ok
+                    && found
+                    && HashDiagnosticsMatch(
+                        diagnostics,
+                        SdkDiagnosticCode.PackageChecksumMismatch,
+                        SdkDiagnosticCode.NativeChecksumMismatch)
+                    && System.Text.Equals(
+                        SdkDiagnosticIdentifier(diagnostics.CodeAt(0)),
+                        "STK7468")
+                    && System.Text.Equals(
+                        SdkDiagnosticIdentifier(diagnostics.CodeAt(1)),
+                        "STK7475")
+                    && System.Text.Equals(
+                        diagnostics.PathAt(0),
+                        "packages/Vendor.Raylib.starkpkg")
+                    && System.Text.Equals(
+                        diagnostics.PathAt(1),
+                        "vendor/native/libraylib.a");
+        }
+    }
+}
+
+[Fact]
+unsafe fn bool EagerHashingFindsTheSameCorruptVendorBytes()
+{
+    unsafe
+    {
+        switch (LoadSdkManifestFile("../../tests/fixtures/sdk-sha256/sdk.json"))
+        {
+            case SdkManifestLoadResult.Err(var loadDiagnostics):
+                return false;
+            case SdkManifestLoadResult.Ok(var loaded):
+                stack mut SdkManifest manifest = loaded;
+                stack mut SdkDiagnosticList diagnostics = new();
+                return ValidateSdkPackagePayloads(
+                        "../../tests/fixtures/sdk-sha256",
+                        manifest,
+                        diagnostics) == MemoryStatus.Ok
+                    && HashDiagnosticsMatch(
+                        diagnostics,
+                        SdkDiagnosticCode.PackageChecksumMismatch,
+                        SdkDiagnosticCode.NativeChecksumMismatch);
+        }
+    }
+}

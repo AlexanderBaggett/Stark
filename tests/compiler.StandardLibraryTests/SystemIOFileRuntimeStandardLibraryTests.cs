@@ -558,6 +558,14 @@ public sealed class SystemIOFileRuntimeStandardLibraryTests : StandardLibraryTes
                                     return false;
                                 case System.IO.IOError.DiskFull:
                                     return false;
+                                case System.IO.IOError.NotADirectory:
+                                    return false;
+                                case System.IO.IOError.IsADirectory:
+                                    return false;
+                                case System.IO.IOError.DirectoryNotEmpty:
+                                    return false;
+                                case System.IO.IOError.TooManyLinks:
+                                    return false;
                                 case System.IO.IOError.Unknown(var code):
                                     return false;
                             }

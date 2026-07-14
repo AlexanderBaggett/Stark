@@ -13,6 +13,7 @@ legitimately needs raw pointers, add it here with a rationale and to the test's
 | `System/C.stark` | C string interop: borrowed/owned null-terminated views, foreign-owned copy/dispose, and C primitive aliases are raw-pointer shaped by definition. |
 | `System/Collections.stark` | Owned container internals address dynamic storage payloads directly. |
 | `System/Console.stark` | Console reads/writes hand fixed buffers to platform write/read primitives. |
+| `System/Cryptography/Sha256.stark` | SHA-256 bridges an `ascii` view to a bounded byte slice and forms bounded views over its fixed streaming file buffer inside narrow audited `unsafe` blocks; no raw pointer appears in its public API. |
 | `System/FileSystem.stark` | Directory iteration and metadata calls pass platform structs and paths. |
 | `System/IO/File.stark` | Owned file handles exchange buffers with platform read/write/seek calls. |
 | `System/IO/Path.stark` | Path shaping fills caller-provided fixed buffers through platform queries. |
@@ -38,6 +39,14 @@ Public APIs may expose raw pointers only in explicitly `unsafe` low-level
 compatibility surfaces. The audit allowlists:
 
 - `System/Text.stark`: bounded fixed-buffer `TryConcat` / `TryFormat` helpers.
+- `System/Memory.stark`: only
+  `InitializeUnsignedBytesFromPointerDisjoint(count, source[count], destination)`.
+  The separately packaged `Vendor.STB.Image` binding uses this unsafe helper to
+  copy exactly the decoded `byteLength` bytes from STB's native allocation into
+  initialized Stark-owned dynamic storage before calling `stbi_image_free`.
+  The `[count]` source extent preserves that native-region fact for checking and
+  backend optimization; no other public `System.Memory` raw-pointer API is
+  allowlisted.
 - `System/C.stark`: the C string compatibility surface (`CStr`, `OwnedCStr`,
   `ForeignOwnedCStr`, `CStringDisposer`) — exposing C-shaped pointers is this
   module's purpose (see

@@ -1334,10 +1334,10 @@ public sealed class SystemCollectionsHashSetSortStandardLibraryTests : StandardL
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
         Assert.NotNull(llvm);
-        Assert.Contains("@Symbol_Hash", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("@Symbol_Equals", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i64 @Symbol_Hash", llvm.Text, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i1 @Symbol_Equals", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef range(i64 0, 4294967296) i64 @Symbol_Hash(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @Symbol_Equals(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @Symbol_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @Symbol_Equals", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__Symbol", llvm.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__Symbol", llvm.Text, StringComparison.Ordinal);
 
@@ -1351,7 +1351,10 @@ public sealed class SystemCollectionsHashSetSortStandardLibraryTests : StandardL
             llvm.Text,
             "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_HashSet_FindIndex__Symbol",
             "Expected custom-key HashSet.FindIndex specialization to be emitted.");
-        Assert.Contains("@Symbol_Equals", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("load i32", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("zext i32", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i32", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("!tbaa", findIndexBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Hash", findIndexBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Equals", findIndexBody, StringComparison.Ordinal);
     }

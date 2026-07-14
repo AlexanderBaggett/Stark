@@ -134,7 +134,7 @@ public sealed class DynTraitObjectRuntimeTests
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
+            Assert.True(exitCode == 0, stderr.ToString());
             Assert.Contains("Emitted executable:", stdout.ToString());
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));

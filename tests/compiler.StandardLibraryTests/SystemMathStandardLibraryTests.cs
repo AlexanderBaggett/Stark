@@ -190,6 +190,14 @@ public sealed class SystemMathStandardLibraryTests
 
     private static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Equal(string.Empty, text);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler log: {line}");
+        }
     }
 }

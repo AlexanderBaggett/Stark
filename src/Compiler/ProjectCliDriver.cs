@@ -328,7 +328,7 @@ internal static class ProjectCliDriver
         switch (command)
         {
             case ProjectCommand.Build:
-                await stdout.WriteLineAsync("Usage: stark build [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>] [--package-image-json]");
+                await stdout.WriteLineAsync("Usage: stark build [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>] [--sdk-root <dir>] [--package-image-json]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build the current Stark project or solution.");
                 await stdout.WriteLineAsync("- In a project directory, `stark build` builds that project.");
@@ -338,12 +338,12 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("- `--package-image-json` writes explicit package inspection views under `artifacts/pkg/`.");
                 return;
             case ProjectCommand.Run:
-                await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
+                await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>] [--sdk-root <dir>]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build and run the current Stark executable project or solution run target.");
                 return;
             case ProjectCommand.Test:
-                await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
+                await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>] [--sdk-root <dir>]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build and run Stark test projects.");
                 await stdout.WriteLineAsync("- In a test project directory, `stark test` runs that project.");
@@ -355,7 +355,7 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("- `--test-timeout <seconds>` kills the test process after the deadline and reports the timeout explicitly.");
                 return;
             case ProjectCommand.Clean:
-                await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>]");
+                await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0] [--toolchain-dir <dir>] [--sdk-root <dir>]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Clean the formal `build/<profile>/<target-triple>/<stage>/` tree.");
                 await stdout.WriteLineAsync("- Default scope is `stage`.");
@@ -595,6 +595,12 @@ internal static class ProjectCliDriver
         {
             compileArgs.Add("--toolchain-dir");
             compileArgs.Add(session.ToolchainDirectory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.SdkRootDirectory))
+        {
+            compileArgs.Add("--sdk-root");
+            compileArgs.Add(session.SdkRootDirectory);
         }
 
         var intermediateDirectory = GetIntermediateDirectory(project, session);
@@ -1124,8 +1130,9 @@ internal static class ProjectCliDriver
     // output — its sources and manifest, bundled-library search-path inputs, each
     // dependency's own stamp (so transitive source changes propagate), the build
     // configuration and test filters, and the compiler binary itself (so a rebuilt
-    // host compiler invalidates everything). File identity uses (path, mtime, size),
-    // which is cheap and flips whenever an editor rewrites a file.
+    // host compiler invalidates everything). Ordinary file identity uses (path,
+    // mtime, size); an explicit SDK also includes its canonical root and the
+    // sdk.json content hash so changing SDKs cannot reuse stale outputs.
     private static string ComputeProjectInputStamp(
         ProjectManifest project,
         BuildSession session,
@@ -1139,6 +1146,15 @@ internal static class ProjectCliDriver
         builder.Append("stage=").Append(session.StageName).Append('\n');
         builder.Append("kind=").Append(project.Kind).Append('\n');
         builder.Append("output=").Append(project.OutputName).Append('\n');
+        if (!string.IsNullOrWhiteSpace(session.SdkRootDirectory))
+        {
+            builder.Append("sdk-root=").Append(session.SdkRootDirectory).Append('\n');
+            AppendFileContentStamp(
+                builder,
+                "sdk-manifest",
+                Path.Combine(session.SdkRootDirectory, SdkRootResolver.ManifestFileName));
+        }
+
         if (project.Kind == ProjectKind.Test)
         {
             builder.Append("filters=").Append(string.Join("", session.TestFilters)).Append('\n');
@@ -1169,7 +1185,7 @@ internal static class ProjectCliDriver
 
         var stampedBundledLibraryPaths = new HashSet<string>(StringComparer.Ordinal);
         foreach (var bundledDirectory in GetBundledLibrarySearchPaths(session)
-                     .Where(static path => path.IncludeInCompilerSearch))
+                     .Where(static path => path.IncludeInBuildInputs))
         {
             if (stampedBundledLibraryPaths.Add(bundledDirectory.Path))
             {
@@ -1236,6 +1252,29 @@ internal static class ProjectCliDriver
                     .Append('|').Append(info.LastWriteTimeUtc.Ticks)
                     .Append('|').Append(info.Length).Append('\n');
             }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void AppendFileContentStamp(StringBuilder builder, string label, string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists)
+            {
+                return;
+            }
+
+            using var file = info.OpenRead();
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            builder.Append(label).Append('=').Append(Path.GetFullPath(path))
+                .Append('|').Append(info.LastWriteTimeUtc.Ticks)
+                .Append('|').Append(info.Length)
+                .Append('|').Append(Convert.ToHexString(sha.ComputeHash(file)))
+                .Append('\n');
         }
         catch
         {
@@ -1415,8 +1454,8 @@ internal static class ProjectCliDriver
 
         foreach (var searchPath in bundledLibrarySearchPaths)
         {
-            if (!searchPath.IncludeInCompilerSearch
-                || !string.Equals(searchPath.State, "package images", StringComparison.Ordinal))
+            if (!searchPath.IncludeInBuildInputs
+                || searchPath.ArtifactKind != BundledLibraryArtifactKind.PackageImages)
             {
                 continue;
             }
@@ -1483,8 +1522,8 @@ internal static class ProjectCliDriver
     private static bool TryResolveBundledSourceManifestPath(BundledLibrarySearchPath searchPath, out string manifestPath)
     {
         manifestPath = string.Empty;
-        if (!searchPath.IncludeInCompilerSearch
-            || !string.Equals(searchPath.State, "source tree", StringComparison.Ordinal))
+        if (!searchPath.IncludeInBuildInputs
+            || searchPath.ArtifactKind != BundledLibraryArtifactKind.SourceTree)
         {
             return false;
         }
@@ -1843,7 +1882,8 @@ internal static class ProjectCliDriver
 
         var toolchainResolutionOptions = new NativeToolchainResolutionOptions(
             CliToolchainDirectory: options.ToolchainDirectory,
-            UserConfigToolchainDirectory: userConfig.ToolchainDirectory);
+            UserConfigToolchainDirectory: userConfig.ToolchainDirectory,
+            SdkRootDirectory: options.SdkRootDirectory);
         var targetToolchain = NativeToolchain.Resolve(toolchainResolutionOptions);
         var forwardedToolchainDirectory = ResolveForwardedToolchainDirectory(options, userConfig);
 
@@ -1869,6 +1909,14 @@ internal static class ProjectCliDriver
             return false;
         }
 
+        var stageRootDirectory = GetStageRootDirectory(
+            buildRootDirectory,
+            options.Profile,
+            targetTriple.Trim(),
+            options.StageName);
+        var forwardedSdkRootDirectory = ResolveForwardedSdkRootDirectory(options, stageRootDirectory);
+        var forwardedSdkManifest = TryLoadForwardedSdkManifest(forwardedSdkRootDirectory);
+
         session = new BuildSession(
             Profile: options.Profile,
             BuildRootDirectory: buildRootDirectory,
@@ -1876,6 +1924,8 @@ internal static class ProjectCliDriver
             TargetDataLayout: targetDataLayout,
             StageName: options.StageName,
             ToolchainDirectory: forwardedToolchainDirectory,
+            SdkRootDirectory: forwardedSdkRootDirectory,
+            SdkManifest: forwardedSdkManifest,
             EmitPackageImageJsonInspection: options.EmitPackageImageJsonInspection,
             UserConfig: userConfig,
             DefaultProfiles: defaultProfiles,
@@ -1904,6 +1954,74 @@ internal static class ProjectCliDriver
         return string.IsNullOrWhiteSpace(userConfig.ToolchainDirectory) ? null : userConfig.ToolchainDirectory;
     }
 
+    private static string? ResolveForwardedSdkRootDirectory(
+        ProjectCommandOptions options,
+        string stageRootDirectory)
+    {
+        if (!string.IsNullOrWhiteSpace(options.SdkRootDirectory))
+        {
+            return options.SdkRootDirectory;
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(
+                    Environment.GetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName)))
+            {
+                return SdkRootResolver.Resolve().RootPath;
+            }
+
+            var stageManifestPath = Path.Combine(stageRootDirectory, SdkRootResolver.ManifestFileName);
+            if (File.Exists(stageManifestPath))
+            {
+                var stageManifest = SdkManifestLoader.Load(stageRootDirectory);
+                if (stageManifest.Succeeded
+                    && stageManifest.Manifest?.Kind == SdkDistributionKind.Stage)
+                {
+                    return stageManifest.SdkRoot;
+                }
+            }
+
+            var executableRoot = SdkRootResolver.Resolve();
+            return File.Exists(executableRoot.ManifestPath) ? executableRoot.RootPath : null;
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or PathTooLongException
+            or UnauthorizedAccessException)
+        {
+            // The nested compiler owns the user-facing SDK diagnostic. Avoid
+            // turning project-session creation into a second resolution path.
+            return null;
+        }
+    }
+
+    private static SdkManifestLoadResult? TryLoadForwardedSdkManifest(string? sdkRootDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(sdkRootDirectory))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = SdkManifestLoader.Load(sdkRootDirectory);
+            return result.Succeeded ? result : null;
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or PathTooLongException
+            or UnauthorizedAccessException)
+        {
+            // The nested compiler reports the authoritative SDK diagnostic.
+            return null;
+        }
+    }
+
     private static bool TryCreateCleanSession(
         ProjectCommandOptions options,
         string buildRootDirectory,
@@ -1921,7 +2039,8 @@ internal static class ProjectCliDriver
             targetTriple = options.TargetTriple;
             var targetToolchain = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
                 CliToolchainDirectory: options.ToolchainDirectory,
-                UserConfigToolchainDirectory: userConfig.ToolchainDirectory));
+                UserConfigToolchainDirectory: userConfig.ToolchainDirectory,
+                SdkRootDirectory: options.SdkRootDirectory));
             if (string.IsNullOrWhiteSpace(targetTriple)
                 && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo, targetToolchain))
             {
@@ -2018,200 +2137,113 @@ internal static class ProjectCliDriver
         BundledLibraryRoot root,
         List<BundledLibrarySearchPath> paths)
     {
-        var stageDirectory = GetStageBundledLibraryDirectory(session, root);
-        paths.Add(new BundledLibrarySearchPath(
-            root,
-            "stage/build-local",
-            Path.GetFullPath(stageDirectory),
-            IncludeInCompilerSearch: true,
-            Directory.Exists(stageDirectory) ? "present" : "missing"));
-        AddDevelopmentBundledLibrarySearchPaths(session.BuildRootDirectory, root, session.TargetTriple, paths);
-        AddInstalledBundledLibrarySearchPaths(AppContext.BaseDirectory, root, session.TargetTriple, paths);
-    }
-
-    private static void AddDevelopmentBundledLibrarySearchPaths(
-        string buildRootDirectory,
-        BundledLibraryRoot root,
-        string targetTriple,
-        List<BundledLibrarySearchPath> paths)
-    {
-        foreach (var rootDirectory in GetDevelopmentBundledLibraryRootCandidates(buildRootDirectory, root))
+        // Preserve the legacy bootstrap scan until a stage has an explicit
+        // manifest-produced replacement. Once a valid stage SDK is selected,
+        // its exact module/package index is authoritative and unmanifested
+        // files below the conventional stage directories are not build inputs.
+        if (session.SdkManifest?.Manifest?.Kind != SdkDistributionKind.Stage)
         {
-            if (IsDevelopmentBundledLibraryDirectory(rootDirectory))
-            {
-                AddBundledLibrarySearchDirectories(rootDirectory, root, "repo development", targetTriple, paths);
-                return;
-            }
-
+            var stageDirectory = GetStageBundledLibraryDirectory(session, root);
             paths.Add(new BundledLibrarySearchPath(
                 root,
-                "repo development",
-                Path.GetFullPath(rootDirectory),
-                IncludeInCompilerSearch: false,
-                Directory.Exists(rootDirectory) ? $"not a {root.DirectoryName} project" : "missing"));
+                "stage/build-local legacy fallback",
+                Path.GetFullPath(stageDirectory),
+                IncludeInCompilerSearch: true,
+                IncludeInBuildInputs: true,
+                BundledLibraryArtifactKind.PackageImages,
+                Directory.Exists(stageDirectory) ? "present" : "missing"));
         }
+
+        AddSdkDeclaredBundledLibrarySearchPaths(session, root, paths);
     }
 
-    private static bool IsDevelopmentBundledLibraryDirectory(string path)
-    {
-        return File.Exists(Path.Combine(path, ProjectManifestFileName))
-            && (Directory.Exists(Path.Combine(path, "dist"))
-                || Directory.Exists(Path.Combine(path, "src")));
-    }
-
-    private static IEnumerable<string> GetDevelopmentBundledLibraryRootCandidates(
-        string buildRootDirectory,
-        BundledLibraryRoot root)
-    {
-        var yielded = new HashSet<string>(StringComparer.Ordinal);
-        var directory = new DirectoryInfo(Path.GetFullPath(buildRootDirectory));
-        while (directory is not null)
-        {
-            if (string.Equals(directory.Name, root.DirectoryName, StringComparison.OrdinalIgnoreCase)
-                && TryYieldDirectory(directory.FullName, yielded, out var self))
-            {
-                yield return self;
-            }
-
-            var childRootDirectory = Path.Combine(directory.FullName, root.DirectoryName);
-            if (TryYieldDirectory(childRootDirectory, yielded, out var child))
-            {
-                yield return child;
-            }
-
-            directory = directory.Parent;
-        }
-    }
-
-    private static void AddInstalledBundledLibrarySearchPaths(
-        string compilerBaseDirectory,
+    private static void AddSdkDeclaredBundledLibrarySearchPaths(
+        BuildSession session,
         BundledLibraryRoot root,
-        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
-        foreach (var rootDirectory in GetInstalledBundledLibraryRootCandidates(compilerBaseDirectory, root))
+        if (session.SdkManifest?.Manifest is not { } manifest
+            || session.SdkManifest.PackageIndex is not { } packageIndex)
         {
-            AddBundledLibrarySearchDirectories(rootDirectory, root, "installed bundle", targetTriple, paths);
-        }
-    }
-
-    private static IEnumerable<string> GetInstalledBundledLibraryRootCandidates(
-        string compilerBaseDirectory,
-        BundledLibraryRoot root)
-    {
-        var baseDirectory = Path.GetFullPath(compilerBaseDirectory);
-        yield return Path.Combine(baseDirectory, root.DirectoryName);
-
-        var parentDirectory = Directory.GetParent(baseDirectory);
-        if (parentDirectory is not null)
-        {
-            yield return Path.Combine(parentDirectory.FullName, root.DirectoryName);
-        }
-    }
-
-    private static void AddBundledLibrarySearchDirectories(
-        string rootDirectory,
-        BundledLibraryRoot root,
-        string tier,
-        string targetTriple,
-        List<BundledLibrarySearchPath> paths)
-    {
-        if (!Directory.Exists(rootDirectory))
-        {
-            paths.Add(new BundledLibrarySearchPath(
-                root,
-                tier,
-                Path.GetFullPath(rootDirectory),
-                IncludeInCompilerSearch: false,
-                "missing"));
             return;
         }
 
-        var includedAny = false;
-        var distDirectory = Path.Combine(rootDirectory, "dist");
-
-        var targetDistDirectory = Path.Combine(distDirectory, NormalizeBuildPathSegment(targetTriple));
-        if (ContainsPackageImages(targetDistDirectory))
+        var packageIds = manifest.Modules
+            .Where(module => IsInBundledNamespace(module.ModuleName, root.ImportRoot))
+            .Select(static module => module.PackageId)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var package in manifest.Packages.Where(package => packageIds.Contains(package.Id)))
         {
-            AddDistinctSearchPath(paths, root, tier, targetDistDirectory, "target package images");
-            includedAny = true;
-        }
-        else if (Directory.Exists(targetDistDirectory))
-        {
-            paths.Add(new BundledLibrarySearchPath(
+            var imagePath = packageIndex.GetPackageImagePath(package);
+            var packageDirectory = Path.GetDirectoryName(imagePath) ?? packageIndex.SdkRoot;
+            AddDistinctSdkBuildInput(
+                paths,
                 root,
-                tier,
-                Path.GetFullPath(targetDistDirectory),
-                IncludeInCompilerSearch: false,
-                "no target package images"));
+                packageDirectory,
+                BundledLibraryArtifactKind.PackageImages,
+                $"package '{package.Id}' declared by sdk.json");
         }
 
-        if (ContainsPackageImages(distDirectory, SearchOption.TopDirectoryOnly))
+        if (manifest.Kind != SdkDistributionKind.Development)
         {
-            AddDistinctSearchPath(paths, root, tier, distDirectory, includedAny ? "flat fallback package images" : "package images");
-            includedAny = true;
-        }
-        else if (Directory.Exists(distDirectory))
-        {
-            paths.Add(new BundledLibrarySearchPath(
-                root,
-                tier,
-                Path.GetFullPath(distDirectory),
-                IncludeInCompilerSearch: false,
-                "no package images"));
+            return;
         }
 
-        if (ContainsPackageImages(rootDirectory, SearchOption.TopDirectoryOnly))
+        var declaredRootDirectory = Path.Combine(packageIndex.SdkRoot, root.DirectoryName);
+        foreach (var relativeSourceRoot in manifest.DevelopmentSourceRoots)
         {
-            AddDistinctSearchPath(paths, root, tier, rootDirectory, "package images");
-            includedAny = true;
-        }
-
-        var sourceDirectory = Path.Combine(rootDirectory, "src");
-        if (Directory.Exists(sourceDirectory))
-        {
-            AddDistinctSearchPath(paths, root, tier, sourceDirectory, "source tree");
-            includedAny = true;
-        }
-
-        if (!includedAny && !Directory.Exists(distDirectory) && !Directory.Exists(sourceDirectory))
-        {
-            paths.Add(new BundledLibrarySearchPath(
-                root,
-                tier,
-                Path.GetFullPath(rootDirectory),
-                IncludeInCompilerSearch: false,
-                "no dist package images or src tree"));
+            var sourceRoot = packageIndex.ResolvePath(relativeSourceRoot);
+            if (IsSameOrDescendantPath(sourceRoot, declaredRootDirectory))
+            {
+                AddDistinctSdkBuildInput(
+                    paths,
+                    root,
+                    sourceRoot,
+                    BundledLibraryArtifactKind.SourceTree,
+                    "source root declared by development sdk.json");
+            }
         }
     }
 
-    private static bool ContainsPackageImages(string directory, SearchOption searchOption = SearchOption.AllDirectories)
-    {
-        return Directory.Exists(directory)
-            && (Directory.EnumerateFiles(directory, "*.starkpkg", searchOption).Any(static path => PackageImageBinaryFormat.HasBinaryFileName(path))
-                || Directory.EnumerateFiles(directory, "*.starkpkg.json", searchOption).Any());
-    }
-
-    private static void AddDistinctSearchPath(
+    private static void AddDistinctSdkBuildInput(
         List<BundledLibrarySearchPath> paths,
         BundledLibraryRoot root,
-        string tier,
         string directory,
+        BundledLibraryArtifactKind artifactKind,
         string state)
     {
         var fullPath = Path.GetFullPath(directory);
-        if (!paths.Any(path => string.Equals(path.Path, fullPath, StringComparison.Ordinal)
-                               && path.IncludeInCompilerSearch))
+        if (paths.Any(path => string.Equals(path.Path, fullPath, GetPathComparison())
+                              && path.ArtifactKind == artifactKind))
         {
-            paths.Add(new BundledLibrarySearchPath(root, tier, fullPath, IncludeInCompilerSearch: true, state));
+            return;
         }
+
+        paths.Add(new BundledLibrarySearchPath(
+            root,
+            "sdk manifest",
+            fullPath,
+            IncludeInCompilerSearch: false,
+            IncludeInBuildInputs: true,
+            artifactKind,
+            Directory.Exists(fullPath) ? state : $"missing {state}"));
     }
 
-    private static bool TryYieldDirectory(string directory, HashSet<string> yielded, out string fullPath)
+    private static bool IsInBundledNamespace(string moduleName, string importRoot) =>
+        string.Equals(moduleName, importRoot, StringComparison.Ordinal)
+        || moduleName.StartsWith($"{importRoot}.", StringComparison.Ordinal);
+
+    private static bool IsSameOrDescendantPath(string path, string root)
     {
-        fullPath = Path.GetFullPath(directory);
-        return yielded.Add(fullPath);
+        var relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
+        return !Path.IsPathRooted(relative)
+            && !string.Equals(relative, "..", StringComparison.Ordinal)
+            && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+            && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
     }
+
+    private static StringComparison GetPathComparison() =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private static bool TryGetBundledLibraryDiscoveryFailureRoot(
         string compilerStderr,
@@ -2220,7 +2252,9 @@ internal static class ProjectCliDriver
         foreach (var candidate in BundledLibraryRoots)
         {
             if (compilerStderr.Contains($"Unable to resolve imported module '{candidate.ImportRoot}.", StringComparison.Ordinal)
-                || compilerStderr.Contains($"Unable to resolve imported module \"{candidate.ImportRoot}.", StringComparison.Ordinal))
+                || compilerStderr.Contains($"Unable to resolve imported module \"{candidate.ImportRoot}.", StringComparison.Ordinal)
+                || compilerStderr.Contains($"Official module '{candidate.ImportRoot}.", StringComparison.Ordinal)
+                || compilerStderr.Contains($"Official module \"{candidate.ImportRoot}.", StringComparison.Ordinal))
             {
                 root = candidate;
                 return true;
@@ -2243,18 +2277,35 @@ internal static class ProjectCliDriver
 
         foreach (var path in paths)
         {
-            var marker = path.IncludeInCompilerSearch ? "included" : "checked";
+            var marker = path.IncludeInCompilerSearch
+                ? "included"
+                : path.IncludeInBuildInputs
+                    ? "declared by sdk.json"
+                    : "checked";
             await session.Stderr.WriteLineAsync($"  - {path.Tier}: {path.Path} ({marker}, {path.State})");
         }
     }
 
     private static string GetStageRootDirectory(BuildSession session)
     {
-        return Path.Combine(
-            GetBuildDirectory(session.BuildRootDirectory),
-            session.Profile == BuildProfile.Release ? "release" : "dev",
-            NormalizeBuildPathSegment(session.TargetTriple),
+        return GetStageRootDirectory(
+            session.BuildRootDirectory,
+            session.Profile,
+            session.TargetTriple,
             session.StageName);
+    }
+
+    private static string GetStageRootDirectory(
+        string buildRootDirectory,
+        BuildProfile profile,
+        string targetTriple,
+        string stageName)
+    {
+        return Path.Combine(
+            GetBuildDirectory(buildRootDirectory),
+            profile == BuildProfile.Release ? "release" : "dev",
+            NormalizeBuildPathSegment(targetTriple),
+            stageName);
     }
 
     private static string GetCleanPath(CleanSession session, CleanScope scope)
@@ -2701,6 +2752,8 @@ internal static class ProjectCliDriver
         string? TargetDataLayout,
         string StageName,
         string? ToolchainDirectory,
+        string? SdkRootDirectory,
+        SdkManifestLoadResult? SdkManifest,
         bool EmitPackageImageJsonInspection,
         UserConfig UserConfig,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> DefaultProfiles,
@@ -2743,7 +2796,16 @@ internal static class ProjectCliDriver
         string Tier,
         string Path,
         bool IncludeInCompilerSearch,
+        bool IncludeInBuildInputs,
+        BundledLibraryArtifactKind ArtifactKind,
         string State);
+
+    private enum BundledLibraryArtifactKind
+    {
+        None,
+        PackageImages,
+        SourceTree
+    }
 
     private sealed record ProjectManifest(
         string ManifestPath,
@@ -2832,6 +2894,7 @@ internal static class ProjectCliDriver
         string? TargetTriple,
         string StageName,
         string? ToolchainDirectory,
+        string? SdkRootDirectory,
         bool EmitPackageImageJsonInspection,
         bool ShowHelp,
         IReadOnlyList<string> TestFilters,
@@ -2846,6 +2909,7 @@ internal static class ProjectCliDriver
             string? targetName = null;
             string? targetTriple = null;
             string? toolchainDirectory = null;
+            string? sdkRootDirectory = null;
             var stageName = "stage0";
             var emitPackageImageJsonInspection = false;
             var showHelp = false;
@@ -2900,6 +2964,19 @@ internal static class ProjectCliDriver
                         }
 
                         if (!TryNormalizeToolchainDirectory(args[++index], stderr, out toolchainDirectory))
+                        {
+                            return null;
+                        }
+
+                        break;
+                    case "--sdk-root":
+                        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                        {
+                            stderr.WriteLine("--sdk-root requires a non-empty directory path.");
+                            return null;
+                        }
+
+                        if (!TryNormalizeSdkRootDirectory(args[++index], stderr, out sdkRootDirectory))
                         {
                             return null;
                         }
@@ -3021,6 +3098,16 @@ internal static class ProjectCliDriver
                             break;
                         }
 
+                        if (argument.StartsWith("--sdk-root=", StringComparison.Ordinal))
+                        {
+                            if (!TryNormalizeSdkRootDirectory(argument["--sdk-root=".Length..], stderr, out sdkRootDirectory))
+                            {
+                                return null;
+                            }
+
+                            break;
+                        }
+
                         if (argument.StartsWith("--filter=", StringComparison.Ordinal))
                         {
                             if (command != ProjectCommand.Test)
@@ -3063,6 +3150,7 @@ internal static class ProjectCliDriver
                 targetTriple,
                 stageName,
                 toolchainDirectory,
+                sdkRootDirectory,
                 emitPackageImageJsonInspection,
                 showHelp,
                 testFilters,
@@ -3090,6 +3178,38 @@ internal static class ProjectCliDriver
 
             toolchainDirectory = fullPath;
             return true;
+        }
+
+        private static bool TryNormalizeSdkRootDirectory(string value, TextWriter stderr, out string? sdkRootDirectory)
+        {
+            sdkRootDirectory = null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                stderr.WriteLine("--sdk-root requires a non-empty directory path.");
+                return false;
+            }
+
+            try
+            {
+                var fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(value.Trim()));
+                if (!Directory.Exists(fullPath))
+                {
+                    stderr.WriteLine($"SDK root '{fullPath}' was not found.");
+                    return false;
+                }
+
+                sdkRootDirectory = SdkRootResolver.CanonicalizeRootPath(fullPath);
+                return true;
+            }
+            catch (Exception exception) when (exception is ArgumentException
+                or IOException
+                or NotSupportedException
+                or PathTooLongException
+                or UnauthorizedAccessException)
+            {
+                stderr.WriteLine($"SDK root path '{value.Trim()}' is invalid: {exception.Message}");
+                return false;
+            }
         }
 
         private static bool TryParseStageName(string value, TextWriter stderr, out string stageName)

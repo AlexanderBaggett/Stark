@@ -1,0 +1,8 @@
+[project]
+name = "stdlib-cryptography-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "Sha256Tests.stark"
+output = "stdlib-cryptography-tests"

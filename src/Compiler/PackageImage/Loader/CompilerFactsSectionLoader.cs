@@ -536,7 +536,8 @@ internal static partial class PackageImageLoader
             loadedLinkage,
             backendOptimizationMode,
             module.Manifest.Target,
-            module.Manifest.BuildProfile);
+            module.Manifest.BuildProfile,
+            module.Manifest.Identity);
         return true;
     }
 

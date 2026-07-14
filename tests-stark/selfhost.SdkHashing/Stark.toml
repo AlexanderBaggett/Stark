@@ -1,0 +1,11 @@
+[project]
+name = "selfhost-sdk-hashing-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "SdkHashingTests.stark"
+output = "selfhost-sdk-hashing-tests"
+
+[dependencies]
+stark-compiler = { path = "../../selfhost" }

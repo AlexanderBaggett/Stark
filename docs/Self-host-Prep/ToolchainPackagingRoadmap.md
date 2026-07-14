@@ -53,9 +53,9 @@ bootstrap investigation.
         `stark-<version>-linux-x64.tar.gz`,
         `stark-<version>-windows-x64.zip`, and
         `stark-<version>-macos-arm64.tar.gz`.
-  - [x] Put `stark[.exe]` at the archive root, with `stdlib/`, `vendor/`,
-        `toolchain/`, `licenses/`, `INSTALL.md`, `RELEASE.txt`, and
-        `release.json` as root siblings.
+  - [x] Put `stark[.exe]` and its runtime support files under `bin/`, with
+        `sdk.json`, `stdlib/`, `vendor/`, `toolchain/`, `licenses/`,
+        `INSTALL.md`, `RELEASE.txt`, and `release.json` at the SDK root.
   - [x] Include standard library source files by default for debugging,
         reference, and package rebuild scenarios.
   - [x] Define vendor library layout and required package/image artifacts.
@@ -115,9 +115,10 @@ bootstrap investigation.
 - [x] Choose publish mode.
   - Decision: ship relocatable per-platform archives containing a compiled
     compiler binary plus any runtime files it needs. Archives must not require a
-    separate .NET runtime install. For the current C# Stage0 compiler this means
-    runtime-specific self-contained publish output; after cutover this means the
-    native self-hosted compiler binary and its required support files.
+    separate .NET runtime install. For the retained C# Stage0 compiler this
+    means runtime-specific self-contained publish output; self-hosted release
+    builds instead contain the native self-hosted compiler binary and its
+    required support files.
   - [ ] Evaluate single-file versus normal directory publish only as an
         implementation detail; prefer the simpler reliable shape.
   - [ ] Evaluate trimming only if it does not risk reflection/resource breakage.
@@ -195,11 +196,21 @@ bootstrap investigation.
     pieces, are inconsistent across target platforms, or create a concrete
     archive-size problem.
   - [x] Use official LLVM release archives where suitable.
-  - [ ] Build custom trimmed LLVM toolchains where official archives are too large or inconsistent.
+  - [~] Build custom trimmed LLVM toolchains where official archives are too large or inconsistent.
+        The official LLVM 22.1.8 macOS arm64 archive has the required Clang,
+        LLD, archive tools, and Clang resources, but it exposes LLVM only as
+        static component archives. Stage0 release acquisition now trims that
+        verified asset to the tools its textual-LLVM backend actually uses.
+        A reproducible macOS build that supplies a loadable `libLLVM` remains
+        required before the direct Stage1 backend can be released.
   - [x] Prefer reproducible scripted acquisition over manual downloads.
 
-- [x] Define the minimum bundled binary set.
-  - [x] `libLLVM` shared library for primary in-process object emission.
+- [~] Define the minimum bundled binary set.
+  - [~] `libLLVM` shared library for primary in-process object emission.
+        It is required by the Linux/Windows asset contracts but has not yet
+        passed final cross-platform qualification, and it is not present in
+        the official macOS arm64 asset; static component archives are not
+        mislabeled as a loadable backend library.
   - [x] `clang` for native C/shim compilation.
   - [x] `clang++` only if needed for native dependencies.
   - [x] `ld.lld` for ELF linking and ThinLTO.
@@ -211,8 +222,8 @@ bootstrap investigation.
 
 - [ ] Define required resource directories.
   - [ ] libLLVM shared-library location and runtime search-path strategy.
-  - [ ] Clang builtin headers.
-  - [ ] Clang runtime resource directory.
+  - [x] Clang builtin headers.
+  - [x] Clang runtime resource directory.
   - [ ] LTO plugin/resources if required by the selected toolchain.
   - [ ] Platform-specific support libraries that may be redistributed.
 
@@ -239,7 +250,8 @@ bootstrap investigation.
         external platform SDKs, CRTs, or Command Line Tools; those remain
         platform requirements diagnosed separately by `stark doctor`.
   - [x] `STARK_TOOLCHAIN_DIR`.
-  - [x] Bundled toolchain beside the compiler executable.
+  - [x] Bundled toolchain under the active SDK root selected from
+        `bin/stark[.exe]`.
   - [x] `PATH` fallback.
 
 - [x] Add new CLI/config surface.
@@ -273,48 +285,66 @@ bootstrap investigation.
 
 ## Phase 5: Standard And Vendor Library Bundling
 
-- [ ] Define standard library release contents.
-  - [ ] Static library artifact.
-  - [ ] Binary package image artifact for compiler loading.
+- [~] Define standard library release contents.
+  - [x] Static library artifact.
+  - [x] Binary package image artifact for compiler loading.
   - [ ] Inspector support to generate deterministic JSON/text package-image views
         on demand.
   - [x] Source tree for reference/debugging/rebuilds.
   - [ ] Optional generated docs/signature metadata.
 
-- [ ] Define vendor library release contents.
-  - [ ] Official vendor library source tree.
-  - [ ] Binary package image artifacts for compiler loading where applicable.
-  - [ ] Native/static library artifacts or metadata required by bundled bindings.
-  - [ ] License files for bundled bindings and redistributed native pieces.
-  - [ ] Deterministic generated metadata, if the vendor library needs compiler
+- [x] Define vendor library release contents.
+  - [x] Official vendor library source tree.
+  - [x] Binary package image artifacts for compiler loading where applicable.
+  - [x] Native/static library artifacts or metadata required by bundled bindings.
+  - [x] License files for bundled bindings and redistributed native pieces.
+  - [x] Deterministic generated metadata, if the vendor library needs compiler
         inspection without reparsing source.
 
-- [ ] Make ordinary builds discover bundled stdlib artifacts.
-  - [ ] Add a dedicated stdlib discovery resolver with explicit inputs for target triple, profile, compiler stage, current project root, repo root, build root, compiler distribution root, and user config.
-  - [ ] Implement explicit overrides first: CLI flags, project manifest fields, solution manifest fields, user config, and existing `-I`, `-L`, package library override behavior.
-  - [x] Implement stage/build-local lookup for bootstrap artifacts under `build/<profile>/<target-triple>/<stage>/stdlib/` from [25-build-artifact-layout.md](25-build-artifact-layout.md).
-  - [x] Implement source-tree development lookup through repo `stdlib/Stark.toml` and `stdlib/dist` artifacts without requiring release layout.
-  - [x] Implement installed bundled lookup relative to the active compiler distribution.
-  - [ ] Validate discovered stdlib binary package image, native library, target triple, data layout, profile, and compiler/package compatibility before use.
+- [x] Make ordinary builds discover bundled stdlib and official vendor artifacts.
+  - [x] Use the compiler-core `sdk.json` index as the single installed-library
+        resolver for direct-file and project commands.
+  - [x] Implement explicit `--sdk-root`, `STARK_SDK_ROOT`, then bounded
+        canonical compiler-executable-relative precedence: the parent SDK root
+        for `bin/stark[.exe]`, with sibling-manifest compatibility limited to
+        the generated repository development launcher.
+  - [x] Retain stage/build-local bootstrap inputs under
+        `build/<profile>/<target-triple>/<stage>/` while stage SDK manifests are
+        completed.
+  - [x] Implement source-tree development only through manifest-declared
+        `developmentSourceRoots`; do not walk application ancestors.
+  - [x] Implement installed lookup only through the manifest at the parent of
+        `bin/`; do not probe arbitrary compiler parents or unmanifested
+        `stdlib`/`vendor` directories.
+  - [x] Validate package image, native library, target/data-layout/profile,
+        compiler compatibility, package format, and required checksums.
   - [x] Keep ordinary discovery free of hidden global package search and network access.
-  - [x] When discovery fails, report every searched stdlib path and the active target/profile/stage.
+  - [x] Include SDK manifest identity in project incremental stamps and
+        dependency LLVM cache keys.
+  - [x] When discovery fails, report the selected SDK/stage context and active
+        target/profile/stage.
 
-- [ ] Add stdlib package generation to release scripts.
-  - [ ] Build with the same bundled toolchain selected for the release.
-  - [ ] Ensure target triple and data layout match the platform package.
-  - [ ] Emit deterministic binary package images.
+- [x] Add stdlib package generation to release scripts.
+  - [x] Build with the same selected release toolchain.
+  - [x] Ensure target triple and data layout match the SDK descriptor.
+  - [x] Emit deterministic binary package images and `sdk.json`.
 
 - [ ] Add compatibility tests.
   - [ ] Explicit stdlib override wins over all discovered candidates.
   - [ ] Stage/build-local stdlib artifacts are selected during bootstrap builds.
-  - [x] Source-tree development builds work from repo `stdlib/` and `stdlib/dist` without release layout.
-  - [x] Installed release builds find bundled stdlib artifacts next to the compiler without source-tree paths.
-  - [ ] Discovery rejects target/profile/package-metadata mismatches with clear diagnostics.
-  - [x] Discovery failure reports every searched path and active target/profile/stage.
+  - [x] Source-tree development builds work through the generated repository
+        development SDK manifest.
+  - [x] Installed release builds find bundled stdlib artifacts from the SDK
+        manifest without source-tree paths.
+  - [x] Discovery rejects target/profile/package-metadata mismatches with clear diagnostics.
+  - [x] Discovery failure reports SDK/stage context and active target/profile/stage.
   - [x] Discovery does not silently use global or network package locations.
-  - [ ] Fresh release archive can compile a hello-world executable using `System.Console`.
-  - [ ] Fresh release archive can compile a library package.
-  - [ ] Fresh release archive can consume a compiled standard library package without source-tree paths.
+  - [~] Fresh release archive can compile a hello-world executable using
+        `System.Console` (macOS arm64 proven; remaining platform gates open).
+  - [~] Fresh release archive can compile a library package (remaining platform
+        gates open).
+  - [~] Fresh release archive can consume a compiled standard library package
+        without source-tree paths (macOS arm64 proven; remaining platforms open).
 
 ## Phase 6: Minimal Release Assembly
 
@@ -397,15 +427,18 @@ concrete.
 
 ## Phase 9: Documentation And Publishing
 
-- [ ] Update user installation docs.
-  - [ ] Download archive.
-  - [ ] Add the archive root to `PATH`.
-  - [ ] Document any supported Stark environment variables.
-  - [ ] Run `stark doctor`.
-  - [ ] Compile hello world.
-  - [ ] Explain platform SDK expectations.
+- [x] Update user installation docs.
+  - [x] Download and keep the complete archive together.
+  - [x] Add the SDK's `bin` directory to `PATH`.
+  - [x] Document SDK overrides as advanced/development-only inputs.
+  - [x] Run `stark doctor`.
+  - [x] Compile hello world.
+  - [x] Explain that non-redistributable platform prerequisites are diagnosed
+        separately by `doctor`.
 
-- [ ] Update contributor docs.
+- [~] Update contributor docs.
+  - [x] Document SDK layout, root precedence, development manifests, reserved
+        namespaces, and cache identity.
   - [ ] How to build release archives.
   - [ ] How to run the manual release workflow.
   - [ ] How to update bundled LLVM.

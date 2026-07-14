@@ -12,7 +12,7 @@ require from what source builds need today.
 The intended beginner path is:
 
 1. Download the Stark compiler archive for your platform from the [Releases page](/releases/).
-2. Put the `stark` executable on `PATH`.
+2. Extract the complete SDK and add its `bin` directory to `PATH`.
 3. Run `stark --version`.
 4. Compile and run a small program.
 

@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "raylibVersion": "6.0",
+  "releaseTag": "6.0",
+  "releaseUrl": "https://github.com/raysan5/raylib/releases/tag/6.0",
+  "releaseApiUrl": "https://api.github.com/repos/raysan5/raylib/releases/tags/6.0",
+  "license": "Zlib",
+  "platforms": {
+    "linux-x64": {
+      "runtimeIdentifier": "linux-x64",
+      "hostOperatingSystem": "linux",
+      "hostArchitecture": "x64",
+      "targetTriple": "x86_64-unknown-linux-gnu",
+      "archive": {
+        "name": "raylib-6.0_linux_amd64.tar.gz",
+        "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz",
+        "sha256": "b64ba618a19e7da9e9c0e09bb398ecfd477a77d2d7231901bafc8739d27c08d2",
+        "size": 1793706,
+        "payloadRoot": "raylib-6.0_linux_amd64"
+      },
+      "staticLibrary": "lib/libraylib.a",
+      "nativeLibraryFile": "libraylib.a",
+      "starkLibraryFile": "libVendorRaylib.a",
+      "libraries": [
+        "raylib",
+        "GL",
+        "m",
+        "pthread",
+        "dl",
+        "rt",
+        "X11",
+        "Xrandr",
+        "Xi",
+        "Xcursor",
+        "Xinerama"
+      ],
+      "linkArguments": []
+    },
+    "windows-x64": {
+      "runtimeIdentifier": "win-x64",
+      "hostOperatingSystem": "windows",
+      "hostArchitecture": "x64",
+      "targetTriple": "x86_64-pc-windows-msvc",
+      "archive": {
+        "name": "raylib-6.0_win64_msvc16.zip",
+        "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_msvc16.zip",
+        "sha256": "c93c7dc74576e00e3ee57fa2bd5fd109fbfc5aca87e12046dd7ec2c2268b3f78",
+        "size": 2597715,
+        "payloadRoot": "raylib-6.0_win64_msvc16"
+      },
+      "staticLibrary": "lib/raylib.lib",
+      "nativeLibraryFile": "raylib.lib",
+      "starkLibraryFile": "VendorRaylib.lib",
+      "libraries": [
+        "raylib",
+        "opengl32",
+        "gdi32",
+        "winmm"
+      ],
+      "linkArguments": []
+    },
+    "macos-arm64": {
+      "runtimeIdentifier": "osx-arm64",
+      "hostOperatingSystem": "macos",
+      "hostArchitecture": "arm64",
+      "targetTriple": "arm64-apple-macosx11.0.0",
+      "archive": {
+        "name": "raylib-6.0_macos.tar.gz",
+        "url": "https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_macos.tar.gz",
+        "sha256": "6ae5947fbd36aee4c280e3a2b3e1893316c433e292bda6e94e0f2b037498ad70",
+        "size": 3432078,
+        "payloadRoot": "raylib-6.0_macos"
+      },
+      "staticLibrary": "lib/libraylib.a",
+      "nativeLibraryFile": "libraylib.a",
+      "starkLibraryFile": "libVendorRaylib.a",
+      "libraries": [
+        "raylib"
+      ],
+      "linkArguments": [
+        "-framework",
+        "CoreVideo",
+        "-framework",
+        "IOKit",
+        "-framework",
+        "Cocoa",
+        "-framework",
+        "GLUT",
+        "-framework",
+        "OpenGL"
+      ]
+    }
+  }
+}

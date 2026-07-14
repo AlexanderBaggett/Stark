@@ -283,7 +283,211 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
-    public async Task BuildUsesRepoStdlibSourceTreeDiscovery()
+    public async Task BuildSelectsStageSdkManifestAndIgnoresUnmanifestedStageSources()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var originalSdkRoot = Environment.GetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName);
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-stage-sdk-");
+
+        try
+        {
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, null);
+            var stageRoot = BuildStagePath(tempDirectory.FullName, targetInfo.Triple);
+            var packageDirectory = Path.Combine(stageRoot, "stdlib", "packages");
+            var packageSourceDirectory = Path.Combine(tempDirectory.FullName, "stage-package-source");
+            Directory.CreateDirectory(packageDirectory);
+            Directory.CreateDirectory(packageSourceDirectory);
+
+            var packageSourcePath = Path.Combine(packageSourceDirectory, "StageManifestProbe.stark");
+            var packageLibraryPath = Path.Combine(packageDirectory, LibraryFileName("StageManifestProbe"));
+            var packageImagePath = Path.Combine(packageDirectory, "StageManifestProbe.starkpkg");
+            await File.WriteAllTextAsync(
+                packageSourcePath,
+                """
+                module System.StageManifestProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            var packageStdout = new StringWriter();
+            var packageStderr = new StringWriter();
+            var packageExitCode = await CompilerCli.RunAsync(
+                [
+                    packageSourcePath,
+                    "--emit-lib",
+                    "--target", targetInfo.Triple,
+                    "--package-profile", "dev",
+                    "--package-image-output", packageImagePath,
+                    "--no-stark-path",
+                    "-o", packageLibraryPath
+                ],
+                new StringReader(string.Empty),
+                packageStdout,
+                packageStderr);
+            Assert.True(packageExitCode == 0, packageStderr.ToString());
+
+            var writerStdout = new StringWriter();
+            var writerStderr = new StringWriter();
+            var writerExitCode = await CompilerCli.RunAsync(
+                [StageSdkManifestWriter.CommandOption, stageRoot, "stage0"],
+                new StringReader(string.Empty),
+                writerStdout,
+                writerStderr);
+            Assert.True(writerExitCode == 0, writerStderr.ToString());
+            Assert.Equal(string.Empty, writerStderr.ToString());
+
+            var stageManifest = SdkManifestLoader.Load(stageRoot);
+            Assert.True(stageManifest.Succeeded, string.Join(
+                Environment.NewLine,
+                stageManifest.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+            Assert.Equal(SdkDistributionKind.Stage, stageManifest.Manifest!.Kind);
+            Assert.Contains(
+                stageManifest.Manifest.Modules,
+                static module => module.ModuleName == "System.StageManifestProbe");
+            Assert.True(PackageImageLoader.TryLoadManifest(packageImagePath, out var packageManifest));
+            var packageTarget = Assert.IsType<StarkPackageTargetManifest>(packageManifest.Target);
+            Assert.Equal(packageTarget.Triple, stageManifest.Manifest.Target.LlvmTriple);
+            Assert.Equal(packageTarget.DataLayout, stageManifest.Manifest.Target.DataLayout);
+            Assert.Equal(packageTarget.Cpu, stageManifest.Manifest.Target.BaselineCpu);
+            Assert.Equal(packageTarget.Features ?? [], stageManifest.Manifest.Target.BaselineFeatures);
+            Assert.Equal(packageTarget.RelocationModel, stageManifest.Manifest.Target.RelocationModel);
+            Assert.Equal(packageTarget.CodeModel, stageManifest.Manifest.Target.CodeModel);
+            Assert.Equal(
+                packageTarget.CDataModel?.Kind,
+                stageManifest.Manifest.Target.CDataModel,
+                ignoreCase: true);
+
+            var packageIdentity = Assert.IsType<StarkPackageIdentityManifest>(packageManifest.Identity);
+            var sdkPackage = Assert.Single(stageManifest.Manifest.Packages);
+            Assert.Equal(packageIdentity.PackageId, sdkPackage.Id);
+            Assert.Equal(packageIdentity.ApiHash, sdkPackage.ApiHash);
+            Assert.Equal(packageIdentity.ContentHash, sdkPackage.ContentHash);
+            Assert.Equal("dev", sdkPackage.Profile);
+            Assert.Equal(Path.GetFileName(packageImagePath), Path.GetFileName(sdkPackage.ImagePath));
+            Assert.Equal(Path.GetFileName(packageLibraryPath), Path.GetFileName(sdkPackage.LibraryPath));
+
+            var manifestPath = Path.Combine(stageRoot, SdkRootResolver.ManifestFileName);
+            var firstManifestText = await File.ReadAllTextAsync(manifestPath);
+            var repeatedWriterStderr = new StringWriter();
+            var repeatedWriterExitCode = await CompilerCli.RunAsync(
+                [StageSdkManifestWriter.CommandOption, stageRoot, "stage0"],
+                new StringReader(string.Empty),
+                new StringWriter(),
+                repeatedWriterStderr);
+            Assert.True(repeatedWriterExitCode == 0, repeatedWriterStderr.ToString());
+            Assert.Equal(firstManifestText, await File.ReadAllTextAsync(manifestPath));
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "stage-sdk-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "stage-sdk-app"
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import System.StageManifestProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return System.StageManifestProbe.Value();
+                }
+                """);
+
+            var unmanifestedDirectory = Path.Combine(stageRoot, "stdlib", "System");
+            var unmanifestedSourcePath = Path.Combine(unmanifestedDirectory, "UnmanifestedProbe.stark");
+            Directory.CreateDirectory(unmanifestedDirectory);
+            await File.WriteAllTextAsync(
+                unmanifestedSourcePath,
+                """
+                module System.UnmanifestedProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 1;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+            var firstStdout = new StringWriter();
+            var firstStderr = new StringWriter();
+            var firstExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                firstStdout,
+                firstStderr);
+            Assert.True(firstExitCode == 0, firstStderr.ToString());
+            Assert.Contains("Emitted executable:", firstStdout.ToString(), StringComparison.Ordinal);
+
+            var stampPath = Assert.Single(Directory.GetFiles(
+                Path.Combine(stageRoot, "bin", "stage-sdk-app"),
+                ".stark-build-stamp",
+                SearchOption.TopDirectoryOnly));
+            var firstStamp = await File.ReadAllTextAsync(stampPath);
+
+            await File.AppendAllTextAsync(unmanifestedSourcePath, Environment.NewLine);
+            var secondStdout = new StringWriter();
+            var secondStderr = new StringWriter();
+            var secondExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                secondStdout,
+                secondStderr);
+            Assert.True(secondExitCode == 0, secondStderr.ToString());
+            Assert.Equal(firstStamp, await File.ReadAllTextAsync(stampPath));
+
+            var overrideSdkRoot = Path.Combine(tempDirectory.FullName, "explicit-sdk-override");
+            Directory.CreateDirectory(overrideSdkRoot);
+            var overrideManifestPath = Path.Combine(overrideSdkRoot, SdkRootResolver.ManifestFileName);
+            await File.WriteAllTextAsync(overrideManifestPath, "{");
+
+            var explicitStderr = new StringWriter();
+            var explicitExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple, "--sdk-root", overrideSdkRoot],
+                new StringReader(string.Empty),
+                new StringWriter(),
+                explicitStderr);
+            Assert.Equal(1, explicitExitCode);
+            Assert.Contains("STK7401", explicitStderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains(overrideManifestPath, explicitStderr.ToString(), StringComparison.Ordinal);
+
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, overrideSdkRoot);
+            var environmentStderr = new StringWriter();
+            var environmentExitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                new StringWriter(),
+                environmentStderr);
+            Assert.Equal(1, environmentExitCode);
+            Assert.Contains("STK7401", environmentStderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains(overrideManifestPath, environmentStderr.ToString(), StringComparison.Ordinal);
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, null);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Environment.SetEnvironmentVariable(SdkRootResolver.EnvironmentVariableName, originalSdkRoot);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildDoesNotDiscoverProjectLocalStdlibSourceTreeWithoutSdk()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -355,10 +559,11 @@ public sealed class ProjectCliTests
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "repo-stdlib-source-app", ExecutableFileName("repo-stdlib-source-app"))));
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.RepoSourceProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(stdlibSourceDirectory, stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -368,7 +573,7 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
-    public async Task BuildUsesRepoVendorSourceTreeDiscovery()
+    public async Task BuildDoesNotDiscoverProjectLocalVendorSourceTreeWithoutSdk()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -440,10 +645,11 @@ public sealed class ProjectCliTests
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "repo-vendor-source-app", ExecutableFileName("repo-vendor-source-app"))));
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.RepoSourceProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(vendorSourceDirectory, stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -453,7 +659,7 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
-    public async Task BuildUsesRepoVendorSourceNativeMetadata()
+    public async Task BuildDoesNotUseProjectLocalVendorSourceNativeMetadataWithoutSdk()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -545,12 +751,11 @@ public sealed class ProjectCliTests
                 stdout,
                 stderr);
 
-            Assert.True(
-                exitCode == 0,
-                $"Expected repo vendor native metadata to build successfully. Exit: {exitCode}{Environment.NewLine}STDOUT:{Environment.NewLine}{stdout}{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
-            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "repo-vendor-native-app", ExecutableFileName("repo-vendor-native-app"))));
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.NativeProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(vendorSourceDirectory, stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -560,7 +765,7 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
-    public async Task BuildReportsRepoVendorSourceNativeMetadataDiagnostics()
+    public async Task BuildDoesNotDiscoverAncestorVendorSourceNativeMetadata()
     {
         var originalDirectory = Environment.CurrentDirectory;
         var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-native-diag-");
@@ -640,8 +845,10 @@ public sealed class ProjectCliTests
             var stderrText = stderr.ToString();
             Assert.Equal(1, exitCode);
             Assert.Equal(string.Empty, stdout.ToString());
-            Assert.Contains("Project 'vendor-native-probe' needs native path 'native.paths.native-probe-include' to build on this machine.", stderrText, StringComparison.Ordinal);
-            Assert.Contains("Add it under [native.paths] in Stark.user.toml or ~/.config/stark/config.toml.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.NativeProbe'", stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain("native.paths.native-probe-include", stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(vendorSourceDirectory, stderrText, StringComparison.Ordinal);
         }
         finally
         {
@@ -651,7 +858,7 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
-    public async Task RunPrefersRepoStdlibDistPackageBeforeRepoSource()
+    public async Task RunPrefersProjectLocalStdlibDistPackageBeforeProjectLocalSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -715,7 +922,7 @@ public sealed class ProjectCliTests
 
             Assert.True(
                 exitCode == 0,
-                $"Expected repo stdlib dist package to run successfully. Exit: {exitCode}{Environment.NewLine}STDOUT:{Environment.NewLine}{stdout}{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
+                $"Expected project-local stdlib dist package to run successfully. Exit: {exitCode}{Environment.NewLine}STDOUT:{Environment.NewLine}{stdout}{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
             Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
         }
@@ -727,7 +934,7 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
-    public async Task BuildUsesInstalledBundledStdlibPackageWhenNoRepoStdlibExists()
+    public async Task BuildDoesNotProbeCompilerParentStdlibWithoutSdkManifest()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -775,12 +982,11 @@ public sealed class ProjectCliTests
                 stdout,
                 stderr);
 
-            Assert.True(
-                exitCode == 0,
-                $"Expected installed bundled stdlib package to build successfully. Exit: {exitCode}{Environment.NewLine}STDOUT:{Environment.NewLine}{stdout}{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
-            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "installed-stdlib-app", ExecutableFileName("installed-stdlib-app"))));
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("STK7496", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.InstalledProbe'", stderr.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(installedPackage.DistDirectory, stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -837,12 +1043,13 @@ public sealed class ProjectCliTests
             var stderrText = stderr.ToString();
             Assert.Equal(1, exitCode);
             Assert.Equal(string.Empty, stdout.ToString());
-            Assert.Contains("Unable to resolve imported module 'System.DoesNotExist'.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.DoesNotExist'", stderrText, StringComparison.Ordinal);
             Assert.Contains("Stark stdlib discovery failed while resolving a System.* import.", stderrText, StringComparison.Ordinal);
             Assert.Contains("Active stdlib context: profile=dev, target=test-triple, stage=stage0", stderrText, StringComparison.Ordinal);
             Assert.Contains(BuildStagePath(tempDirectory.FullName, targetTriple), stderrText, StringComparison.Ordinal);
-            Assert.Contains(Path.Combine(tempDirectory.FullName, "stdlib"), stderrText, StringComparison.Ordinal);
-            Assert.Contains(Path.Combine(AppContext.BaseDirectory, "stdlib"), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(tempDirectory.FullName, "stdlib"), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(AppContext.BaseDirectory, "stdlib"), stderrText, StringComparison.Ordinal);
         }
         finally
         {
@@ -898,11 +1105,13 @@ public sealed class ProjectCliTests
             var stderrText = stderr.ToString();
             Assert.Equal(1, exitCode);
             Assert.Equal(string.Empty, stdout.ToString());
-            Assert.Contains("Unable to resolve imported module 'Vendor.DoesNotExist'.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'Vendor.DoesNotExist'", stderrText, StringComparison.Ordinal);
             Assert.Contains("Stark vendor library discovery failed while resolving a Vendor.* import.", stderrText, StringComparison.Ordinal);
             Assert.Contains("Active vendor library context: profile=dev, target=test-triple, stage=stage0", stderrText, StringComparison.Ordinal);
-            Assert.Contains(Path.Combine(tempDirectory.FullName, "vendor"), stderrText, StringComparison.Ordinal);
-            Assert.Contains(Path.Combine(AppContext.BaseDirectory, "vendor"), stderrText, StringComparison.Ordinal);
+            Assert.Contains(BuildStagePath(tempDirectory.FullName, targetTriple), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(tempDirectory.FullName, "vendor"), stderrText, StringComparison.Ordinal);
+            Assert.DoesNotContain(Path.Combine(AppContext.BaseDirectory, "vendor"), stderrText, StringComparison.Ordinal);
         }
         finally
         {
@@ -974,7 +1183,8 @@ public sealed class ProjectCliTests
             var stderrText = stderr.ToString();
             Assert.Equal(1, exitCode);
             Assert.Equal(string.Empty, stdout.ToString());
-            Assert.Contains("Unable to resolve imported module 'System.GlobalProbe'.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("STK7496", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Official module 'System.GlobalProbe'", stderrText, StringComparison.Ordinal);
             Assert.Contains("Stark stdlib discovery failed while resolving a System.* import.", stderrText, StringComparison.Ordinal);
             Assert.DoesNotContain(globalSearchDirectory, stderrText, StringComparison.Ordinal);
         }
@@ -1324,8 +1534,8 @@ public sealed class ProjectCliTests
 
             var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
             Assert.Contains("import System.Testing", generatedRunner, StringComparison.Ordinal);
-            Assert.Contains("System.Testing.RunFact(\"AddsNumbers\", AddsNumbers())", generatedRunner, StringComparison.Ordinal);
-            Assert.DoesNotContain("System.Testing.RunFact(\"FailsByDesign\", FailsByDesign())", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("\"AddsNumbers\", AddsNumbers())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"FailsByDesign\", FailsByDesign())", generatedRunner, StringComparison.Ordinal);
         }
         finally
         {
@@ -1458,9 +1668,9 @@ public sealed class ProjectCliTests
             Assert.True(File.Exists(generatedRunnerPath));
 
             var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
-            Assert.Contains("System.Testing.RunFact(\"RunsHere\", RunsHere())", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("\"RunsHere\", RunsHere())", generatedRunner, StringComparison.Ordinal);
             Assert.Contains(
-                "System.Testing.RunFact(\"CurrentPlatformGroup.GroupRunsHere\", CurrentPlatformGroup.GroupRunsHere())",
+                "\"CurrentPlatformGroup.GroupRunsHere\", CurrentPlatformGroup.GroupRunsHere())",
                 generatedRunner,
                 StringComparison.Ordinal);
             Assert.Contains(
@@ -1475,10 +1685,10 @@ public sealed class ProjectCliTests
                 "System.Testing.SkipFact(\"OtherPlatformGroup.GroupSkipsElsewhere\", \"target does not match [Platform]\")",
                 generatedRunner,
                 StringComparison.Ordinal);
-            Assert.DoesNotContain("System.Testing.RunFact(\"SkipsElsewhere\", SkipsElsewhere())", generatedRunner, StringComparison.Ordinal);
-            Assert.DoesNotContain("System.Testing.RunFact(\"SkipsCurrent\", SkipsCurrent())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"SkipsElsewhere\", SkipsElsewhere())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"SkipsCurrent\", SkipsCurrent())", generatedRunner, StringComparison.Ordinal);
             Assert.DoesNotContain(
-                "System.Testing.RunFact(\"OtherPlatformGroup.GroupSkipsElsewhere\", OtherPlatformGroup.GroupSkipsElsewhere())",
+                "\"OtherPlatformGroup.GroupSkipsElsewhere\", OtherPlatformGroup.GroupSkipsElsewhere())",
                 generatedRunner,
                 StringComparison.Ordinal);
         }
@@ -1566,14 +1776,14 @@ public sealed class ProjectCliTests
             var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
             AssertInOrder(
                 generatedRunner,
-                "System.Testing.RunFact(\"Before\", Before())",
+                "\"Before\", Before())",
                 "    // Test collection: Toolchain",
-                "System.Testing.RunFact(\"ToolchainA\", ToolchainA())",
-                "System.Testing.RunFact(\"ToolchainB\", ToolchainB())",
-                "System.Testing.RunFact(\"Between\", Between())",
+                "\"ToolchainA\", ToolchainA())",
+                "\"ToolchainB\", ToolchainB())",
+                "\"Between\", Between())",
                 "    // Test collection: Serial",
-                "System.Testing.RunFact(\"SerialGroup.First\", SerialGroup.First())",
-                "System.Testing.RunFact(\"SerialGroup.Second\", SerialGroup.Second())");
+                "\"SerialGroup.First\", SerialGroup.First())",
+                "\"SerialGroup.Second\", SerialGroup.Second())");
         }
         finally
         {
@@ -1631,11 +1841,11 @@ public sealed class ProjectCliTests
             Assert.True(File.Exists(generatedRunnerPath));
 
             var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
-            Assert.Contains("System.Testing.RunFact(\"Adds(1, 2, 3)\", Adds(1, 2, 3))", generatedRunner, StringComparison.Ordinal);
-            Assert.Contains("System.Testing.RunFact(\"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("\"Adds(1, 2, 3)\", Adds(1, 2, 3))", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("\"Adds(-2, 5, 3)\", Adds(-2, 5, 3))", generatedRunner, StringComparison.Ordinal);
             Assert.Contains("    // Test collection: TextCases", generatedRunner, StringComparison.Ordinal);
             Assert.Contains(
-                "System.Testing.RunFact(\"TextCase(\\\"stark\\\", true)\", TextCase(\"stark\", true))",
+                "\"TextCase(\\\"stark\\\", true)\", TextCase(\"stark\", true))",
                 generatedRunner,
                 StringComparison.Ordinal);
         }
@@ -1701,12 +1911,12 @@ public sealed class ProjectCliTests
             var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
             Assert.Contains("stack AddRow __stark_member_data_0 = AddRows(0);", generatedRunner, StringComparison.Ordinal);
             Assert.Contains(
-                "System.Testing.RunFact(\"Adds[AddRows:0]\", Adds(__stark_member_data_0.Left, __stark_member_data_0.Right, __stark_member_data_0.Expected))",
+                "\"Adds[AddRows:0]\", Adds(__stark_member_data_0.Left, __stark_member_data_0.Right, __stark_member_data_0.Expected))",
                 generatedRunner,
                 StringComparison.Ordinal);
             Assert.Contains("stack AddRow __stark_member_data_1 = AddRows(1);", generatedRunner, StringComparison.Ordinal);
             Assert.Contains(
-                "System.Testing.RunFact(\"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
+                "\"Adds[AddRows:1]\", Adds(__stark_member_data_1.Left, __stark_member_data_1.Right, __stark_member_data_1.Expected))",
                 generatedRunner,
                 StringComparison.Ordinal);
         }
@@ -2112,6 +2322,15 @@ public sealed class ProjectCliTests
                 }
 
                 return 1;
+            }
+
+            public fn void BeginFact(bool progress, ascii name)
+            {
+            }
+
+            public fn u8[0 1] RunFactCounted(bool progress, u32[0 2 ** 31 - 1] ordinal, u32[0 2 ** 31 - 1] total, ascii name, bool assertion)
+            {
+                return RunFact(name, assertion);
             }
 
             public fn u8[0 1] SkipFact(ascii name, ascii reason)

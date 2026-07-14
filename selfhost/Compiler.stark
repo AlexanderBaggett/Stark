@@ -14,6 +14,7 @@ export import Compiler.Llvm
 export import Compiler.AsmFacts
 export import Compiler.TargetFacts
 export import Compiler.NativeFacts
+export import Compiler.Sdk
 export import Compiler.TestRunner
 export import Compiler.TestDriver
 module Compiler

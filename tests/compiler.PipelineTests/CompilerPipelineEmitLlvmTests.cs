@@ -99,7 +99,7 @@ public sealed class CompilerPipelineEmitLlvmTests
     }
 
     [Fact]
-    public void SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
+    public void SourceBackedImportedInlineFunctionsFoldModulePrivateConstsIntoClone()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-const-llvm-pipeline-");
         var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
@@ -152,14 +152,9 @@ public sealed class CompilerPipelineEmitLlvmTests
             var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
             Assert.Contains("; closed-world imported inline body: Lib.AddOffset", llvm, StringComparison.Ordinal);
-            Assert.Contains("; imported inline const definition: Lib.Offset", llvm, StringComparison.Ordinal);
-            Assert.True(
-                System.Text.RegularExpressions.Regex.IsMatch(
-                    llvm,
-                    @"@Lib_Offset = internal (?:unnamed_addr )?constant i\d+ 7",
-                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
-                "Expected the imported inline clone to bring in the module-private const definition it references.");
-            Assert.Contains("ptr @Lib_Offset", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("; imported inline const definition: Lib.Offset", llvm, StringComparison.Ordinal);
+            Assert.Matches(@"add nsw i32 [^,\r\n]+, 7", llvm);
+            Assert.DoesNotContain("ptr @Lib_Offset", llvm, StringComparison.Ordinal);
         }
         finally
         {
@@ -190,9 +185,9 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 const Offset = 7;
 
-                fn u8[0 100] ApplyOffset(u8[0 93] value)
+                fn u8[0 max] ApplyOffset(u8[0 93] value)
                 {
-                    stack mut u8[0 100] total = value;
+                    stack mut u8[0 max] total = value;
                     stack mut i32[min max] step = 0;
                     while willexit (step < 2)
                     {
@@ -206,7 +201,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     return total;
                 }
 
-                export inline fn u8[0 100] AddOffset(u8[0 93] value)
+                export inline fn u8[0 max] AddOffset(u8[0 93] value)
                 {
                     return ApplyOffset(value);
                 }
@@ -218,7 +213,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Lib
                     module Demo
 
-                    fn u8[0 100] Run(u8[0 93] value)
+                    fn u8[0 max] Run(u8[0 93] value)
                     {
                         return Lib.AddOffset(value);
                     }

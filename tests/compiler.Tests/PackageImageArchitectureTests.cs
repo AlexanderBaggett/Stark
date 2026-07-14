@@ -145,6 +145,10 @@ public sealed class PackageImageArchitectureTests
             var dependencyManifest = PackageImageBuilder.Create(
                 dependencyResult,
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Dependency.lib" : "libDependency.a"));
+            var dependencyIdentity = Assert.IsType<StarkPackageIdentityManifest>(dependencyManifest.Identity);
+            Assert.Equal("Dependency", dependencyIdentity.PackageId);
+            Assert.True(PackageImageIdentity.IsSha256(dependencyIdentity.ApiHash));
+            Assert.True(PackageImageIdentity.IsSha256(dependencyIdentity.ContentHash));
             File.WriteAllBytes(dependencyPackagePath, PackageImageBinaryFormat.Encode(dependencyManifest));
 
             var consumerSourcePath = Path.Combine(tempDirectory.FullName, "Consumer.stark");
@@ -171,6 +175,11 @@ public sealed class PackageImageArchitectureTests
                 Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Consumer.lib" : "libConsumer.a"));
             var consumerModule = Assert.Single(consumerManifest.Modules);
             Assert.Equal("Consumer", consumerModule.ModuleName);
+            var consumerIdentity = Assert.IsType<StarkPackageIdentityManifest>(consumerManifest.Identity);
+            var dependency = Assert.Single(consumerIdentity.Dependencies);
+            Assert.Equal(dependencyIdentity.PackageId, dependency.PackageId);
+            Assert.Equal(dependencyIdentity.ApiHash, dependency.ApiHash);
+            Assert.Equal(dependencyIdentity.ContentHash, dependency.ContentHash);
 
             var typedImport = Assert.Single(consumerModule.CompilerSections?.TypedInterface?.Imports ?? []);
             Assert.Equal("Dependency", typedImport.ModuleName);
@@ -1480,6 +1489,7 @@ public sealed class PackageImageArchitectureTests
             var sourcePath = Path.Combine(tempDirectory.FullName, "NativeRect.stark");
             var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeRect.starkpkg.json" : "libNativeRect.starkpkg.json");
             var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeRect.lib" : "libNativeRect.a");
+            var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
             var result = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(
                     """
@@ -1498,7 +1508,9 @@ public sealed class PackageImageArchitectureTests
                     public unsafe ffi(c) fn void Draw(Rectangle rec);
                     """,
                     sourcePath),
-                new CompilerOptions(StopAfterPassId: "lower-abi"));
+                new CompilerOptions(
+                    StopAfterPassId: "lower-abi",
+                    TargetInfo: targetInfo));
 
             Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
 
@@ -1535,6 +1547,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "App.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
+                    TargetInfo: targetInfo,
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -3369,7 +3382,7 @@ public sealed class PackageImageArchitectureTests
             Assert.Contains("public alias BorrowedInt = borrow mut i32[min max];", sourceText, StringComparison.Ordinal);
             Assert.Contains("public finite law u8[0 max] Forward<comptime u8[1 8] N>()", sourceText, StringComparison.Ordinal);
             Assert.Contains("public finite law u8[0 max] Pick<comptime u8[1 8] N>()", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return Facade.Pick<comptime N>();", sourceText, StringComparison.Ordinal);
+            Assert.Contains("return Facade.Pick<comptime N>();", sourceText, StringComparison.Ordinal);
 
             Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
             var factHolder = facts.NamedTypes["Facade.Holder"];
@@ -4448,6 +4461,7 @@ public sealed class PackageImageArchitectureTests
         }
     }
 
+    [Fact]
     public void PackageImagePublishesEmptyImportedModulesToKeepManifestModuleGraphClosed()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-empty-import-");

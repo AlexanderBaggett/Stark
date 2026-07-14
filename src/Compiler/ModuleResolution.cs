@@ -15,6 +15,26 @@ public interface IModuleDocumentResolver : IModuleResolver
     bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document);
 }
 
+internal interface IModuleResolutionDiagnosticProvider
+{
+    bool TryGetUnresolvedModuleDiagnostic(string moduleName, out string code, out string message);
+}
+
+/// <summary>
+/// Applies resolver-specific ownership policy to the source file that starts a
+/// compilation. Root files do not pass through <see cref="IModuleResolver"/>,
+/// so namespace reservations must be checked explicitly after their module
+/// declaration has been parsed.
+/// </summary>
+internal interface IRootModuleDiagnosticProvider
+{
+    bool TryGetRootModuleDiagnostic(
+        string moduleName,
+        string? sourcePath,
+        out string code,
+        out string message);
+}
+
 public sealed class EmptyModuleResolver : IModuleResolver
 {
     public static EmptyModuleResolver Instance { get; } = new();
@@ -86,6 +106,7 @@ public sealed record ModuleResolutionNote(
 public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private readonly IReadOnlyList<string> _searchDirectories;
+    private readonly IReadOnlySet<string> _implicitSearchDirectories;
     private readonly string? _targetTriple;
     private readonly string? _normalizedTargetTriple;
     private readonly object _manifestIndexLock = new();
@@ -121,11 +142,17 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
         LlvmTargetInfo? targetInfo,
         IEnumerable<string>? implicitSearchDirectories)
     {
+        var pathComparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
         _searchDirectories = searchDirectories
             .Select(Path.GetFullPath)
-            .Distinct(StringComparer.Ordinal)
+            .Distinct(pathComparer)
             .DefaultIfEmpty(Environment.CurrentDirectory)
             .ToArray();
+        _implicitSearchDirectories = (implicitSearchDirectories ?? [])
+            .Select(Path.GetFullPath)
+            .ToHashSet(pathComparer);
         _targetTriple = string.IsNullOrWhiteSpace(targetInfo?.Triple)
             ? null
             : targetInfo.Triple.Trim();
@@ -136,14 +163,40 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
     public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
     {
-        if (TryResolveSourceModule(moduleName, out module))
+        // Explicit roots are authoritative as a group: prefer their source
+        // surfaces, then their package images. Only then consult implicit
+        // roots such as the input directory and STARK_PATH. This preserves the
+        // source-over-stale-package rule without letting an ambient developer
+        // source tree defeat an explicitly selected distributable package.
+        if (TryResolveSourceModule(moduleName, implicitTier: false, out module)
+            || TryResolvePackageModule(moduleName, implicitTier: false, out module)
+            || TryResolveSourceModule(moduleName, implicitTier: true, out module))
         {
             return true;
         }
 
+        return TryResolvePackageModule(moduleName, implicitTier: true, out module);
+    }
+
+    internal bool TryResolvePackageModule(string moduleName, out ResolvedModuleReference module)
+    {
+        return TryResolvePackageModule(moduleName, implicitTier: false, out module)
+            || TryResolvePackageModule(moduleName, implicitTier: true, out module);
+    }
+
+    private bool TryResolvePackageModule(
+        string moduleName,
+        bool implicitTier,
+        out ResolvedModuleReference module)
+    {
         EnsureManifestIndex();
         foreach (var searchDirectory in _searchDirectories)
         {
+            if (_implicitSearchDirectories.Contains(searchDirectory) != implicitTier)
+            {
+                continue;
+            }
+
             if (!Directory.Exists(searchDirectory))
             {
                 continue;
@@ -172,10 +225,18 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
         return false;
     }
 
-    private bool TryResolveSourceModule(string moduleName, out ResolvedModuleReference module)
+    private bool TryResolveSourceModule(
+        string moduleName,
+        bool implicitTier,
+        out ResolvedModuleReference module)
     {
         foreach (var searchDirectory in _searchDirectories)
         {
+            if (_implicitSearchDirectories.Contains(searchDirectory) != implicitTier)
+            {
+                continue;
+            }
+
             var filePath = ResolvePath(searchDirectory, moduleName);
             if (!File.Exists(filePath))
             {
@@ -497,7 +558,11 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
     }
 }
 
-public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
+public sealed class TargetAwareStdLibModuleResolver :
+    IModuleSourceResolver,
+    IModuleDocumentResolver,
+    IModuleResolutionDiagnosticProvider,
+    IRootModuleDiagnosticProvider
 {
     private const string PlatformModuleName = "System.Runtime.Platform";
     private const string LinuxDispatchTemplateRelativePath = "templates/System.Runtime.Platform.LinuxDispatch.stark";
@@ -560,6 +625,37 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IMo
         }
 
         document = default!;
+        return false;
+    }
+
+    bool IModuleResolutionDiagnosticProvider.TryGetUnresolvedModuleDiagnostic(
+        string moduleName,
+        out string code,
+        out string message)
+    {
+        if (_inner is IModuleResolutionDiagnosticProvider provider)
+        {
+            return provider.TryGetUnresolvedModuleDiagnostic(moduleName, out code, out message);
+        }
+
+        code = string.Empty;
+        message = string.Empty;
+        return false;
+    }
+
+    bool IRootModuleDiagnosticProvider.TryGetRootModuleDiagnostic(
+        string moduleName,
+        string? sourcePath,
+        out string code,
+        out string message)
+    {
+        if (_inner is IRootModuleDiagnosticProvider provider)
+        {
+            return provider.TryGetRootModuleDiagnostic(moduleName, sourcePath, out code, out message);
+        }
+
+        code = string.Empty;
+        message = string.Empty;
         return false;
     }
 

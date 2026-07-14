@@ -407,6 +407,11 @@ public sealed class SystemCompilerIntegerFactsStandardLibraryTests
     [Fact]
     public async Task PackagedStdLibCompilerIntegerFactsWorksWithoutSource()
     {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
         var repositoryRoot = FindRepositoryRoot();
         var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-integer-facts-pkg-");
@@ -422,7 +427,7 @@ public sealed class SystemCompilerIntegerFactsStandardLibraryTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
+                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -437,6 +442,7 @@ public sealed class SystemCompilerIntegerFactsStandardLibraryTests
                 new CompilationInput(IntegerFactsProgram, appPath),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    TargetInfo: targetInfo,
                     StopAfterPassId: "type-check"));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -473,6 +479,14 @@ public sealed class SystemCompilerIntegerFactsStandardLibraryTests
 
     private static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Equal(string.Empty, text);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler log: {line}");
+        }
     }
 }

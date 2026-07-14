@@ -384,6 +384,11 @@ public sealed class CompilerPipelineLoadModulesTests
                 public struct Box
                 {
                     i32[min max] Value;
+
+                    drop
+                    {
+                        ;
+                    }
                 }
 
                 public fn void Consume(Box value)

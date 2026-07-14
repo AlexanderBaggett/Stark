@@ -1,0 +1,379 @@
+import Compiler.Sdk
+import System.Cryptography.Sha256
+import System.Memory
+import System.Testing
+import System.Text
+[Collection("sdk")]
+module SdkCacheIdentityTests
+
+fn ascii CacheIdentityManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "release",
+  "sdkVersion": "31.0.0",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64",
+    "llvmTriple": "arm64-apple-macosx11.0.0",
+    "architecture": "arm64",
+    "operatingSystem": "macos",
+    "abi": "darwin",
+    "pointerBitWidth": 64,
+    "endianness": "little",
+    "dataLayout": "e-m:o-i64:64-i128:128-n32:64-S128",
+    "baselineCpu": "apple-m2",
+    "baselineFeatures": ["+aes", "+neon"],
+    "relocationModel": "pic",
+    "codeModel": "small",
+    "cDataModel": "lp64",
+    "minimumOperatingSystemVersion": "11.0"
+  },
+  "modules": [
+    { "name": "System", "package": "System" },
+    { "name": "Vendor.Raylib", "package": "Vendor.Raylib" }
+  ],
+  "packages": [
+    {
+      "id": "System",
+      "version": "31.0.0",
+      "profile": "release",
+      "image": "packages/System.starkpkg",
+      "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "imageSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "dependencies": [],
+      "native": null
+    },
+    {
+      "id": "Vendor.Raylib",
+      "version": "6.0.0",
+      "profile": "release",
+      "image": "packages/Vendor.Raylib.starkpkg",
+      "library": "packages/libVendor.Raylib.a",
+      "apiHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "contentHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "imageSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "librarySha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "dependencies": [
+        {
+          "id": "System",
+          "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "native": {
+        "artifacts": ["native/libraylib.a"],
+        "includeDirectories": ["native/include"],
+        "libraryDirectories": ["native/lib"],
+        "runtimeFiles": ["native/libraylib.dylib"],
+        "licenseFiles": ["licenses/raylib.txt"],
+        "fileChecksums": [
+          {
+            "path": "native/libraylib.a",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ],
+        "libraries": ["raylib", "m"],
+        "linkArguments": ["-framework", "Cocoa"]
+      }
+    }
+  ],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn ascii CacheIdentityDifferentBackendManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "release",
+  "sdkVersion": "31.0.0",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64",
+    "llvmTriple": "arm64-apple-macosx11.0.0",
+    "architecture": "arm64",
+    "operatingSystem": "macos",
+    "abi": "darwin",
+    "pointerBitWidth": 64,
+    "endianness": "little",
+    "dataLayout": "e-m:o-i64:64-n32:64-S128",
+    "baselineCpu": "apple-m2",
+    "baselineFeatures": ["+aes", "+neon"],
+    "relocationModel": "pic",
+    "codeModel": "small",
+    "cDataModel": "lp64",
+    "minimumOperatingSystemVersion": "11.0"
+  },
+  "modules": [
+    { "name": "System", "package": "System" },
+    { "name": "Vendor.Raylib", "package": "Vendor.Raylib" }
+  ],
+  "packages": [
+    {
+      "id": "System",
+      "version": "31.0.0",
+      "profile": "release",
+      "image": "packages/System.starkpkg",
+      "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "imageSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "dependencies": []
+    },
+    {
+      "id": "Vendor.Raylib",
+      "version": "6.0.0",
+      "profile": "release",
+      "image": "packages/Vendor.Raylib.starkpkg",
+      "library": "packages/libVendor.Raylib.a",
+      "apiHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "contentHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "imageSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "librarySha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "dependencies": [
+        {
+          "id": "System",
+          "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "native": {
+        "artifacts": ["native/libraylib.a"],
+        "includeDirectories": ["native/include"],
+        "libraryDirectories": ["native/lib"],
+        "runtimeFiles": ["native/libraylib.dylib"],
+        "licenseFiles": ["licenses/raylib.txt"],
+        "fileChecksums": [
+          {
+            "path": "native/libraylib.a",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ],
+        "libraries": ["raylib", "m"],
+        "linkArguments": ["-framework", "Cocoa"]
+      }
+    }
+  ],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn ascii CacheIdentitySystemOnlyManifestText()
+{
+    return raw"""
+{
+  "schemaVersion": 1,
+  "kind": "release",
+  "sdkVersion": "31.0.0",
+  "compilerCompatibility": "stark-sdk-v1",
+  "packageFormatVersion": 2,
+  "target": {
+    "id": "macos-arm64",
+    "llvmTriple": "arm64-apple-macosx11.0.0",
+    "architecture": "arm64",
+    "operatingSystem": "macos",
+    "abi": "darwin",
+    "pointerBitWidth": 64,
+    "endianness": "little",
+    "dataLayout": "e-m:o-i64:64-i128:128-n32:64-S128",
+    "baselineCpu": "apple-m2",
+    "baselineFeatures": ["+aes", "+neon"],
+    "relocationModel": "pic",
+    "codeModel": "small",
+    "cDataModel": "lp64",
+    "minimumOperatingSystemVersion": "11.0"
+  },
+  "modules": [{ "name": "System", "package": "System" }],
+  "packages": [{
+    "id": "System",
+    "version": "31.0.0",
+    "profile": "release",
+    "image": "packages/System.starkpkg",
+    "apiHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "imageSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "dependencies": [],
+    "native": null
+  }],
+  "developmentSourceRoots": []
+}
+""";
+}
+
+fn bool TryBuildCacheIdentity(
+    ascii manifestText,
+    ascii digestText,
+    ascii importedModule,
+    out OwnedAscii destination)
+    where overlap(manifestText, digestText),
+          overlap(manifestText, importedModule),
+          overlap(digestText, importedModule)
+{
+    destination = new();
+    switch (HashSha256Ascii(digestText))
+    {
+        case Sha256Result.Err(var hashError):
+            return false;
+        case Sha256Result.Ok(var digest):
+            unsafe
+            {
+                switch (ParseSdkManifestText(manifestText, "sdk.json"))
+                {
+                    case SdkManifestLoadResult.Err(var loadDiagnostics):
+                        return false;
+                    case SdkManifestLoadResult.Ok(var loaded):
+                        stack mut SdkManifest manifest = loaded;
+                        stack mut SdkPackageIndex index = new();
+                        stack mut SdkDiagnosticList diagnostics = new();
+                        if (BuildSdkPackageIndex(index, manifest, diagnostics) != MemoryStatus.Ok
+                            || diagnostics.Count() != 0)
+                        {
+                            return false;
+                        }
+
+                        stack ascii[1] importedStorage = { importedModule };
+                        stack ascii[] imports = importedStorage;
+                        stack mut SdkPackageLinkPlan plan = new();
+                        if (BuildSelectedSdkPackageLinkPlan(
+                            plan,
+                            manifest,
+                            index,
+                            imports,
+                            diagnostics) != MemoryStatus.Ok
+                            || diagnostics.Count() != 0)
+                        {
+                            return false;
+                        }
+
+                        switch (BuildStage1SdkCacheIdentity(digest, manifest, plan))
+                        {
+                            case SdkCacheIdentityResult.Err(var error):
+                                return false;
+                            case SdkCacheIdentityResult.Ok(var built):
+                                stack mut SdkCacheIdentity identity = built;
+                                return destination.AppendAscii(identity.Sha256()) == MemoryStatus.Ok;
+                        }
+                }
+            }
+    }
+}
+
+[Fact]
+fn bool SdkCacheIdentityIsDeterministicAndVersioned()
+{
+    stack ascii source = CacheIdentityManifestText();
+    stack mut OwnedAscii first = new();
+    stack mut OwnedAscii second = new();
+    if (!TryBuildCacheIdentity(source, source, "Vendor.Raylib", first)
+        || !TryBuildCacheIdentity(source, source, "Vendor.Raylib", second))
+    {
+        return false;
+    }
+
+    return System.Text.Equals(
+            Stage1SdkCacheIdentityAlgorithm(),
+            "stark-stage1-sdk-cache-v1")
+        && SdkSha256TextIsCanonical(first.View())
+        && System.Text.Equals(first.View(), second.View())
+        && System.Text.Equals(
+            first.View(),
+            "0d07c4072b80aef567e80d562b4b12d0abbd2da55236bae3c97555caf2c05223");
+}
+
+[Fact]
+fn bool SdkCacheIdentityIncludesManifestBackendAndSelectedPackageFacts()
+{
+    stack ascii source = CacheIdentityManifestText();
+    stack ascii differentBackend = CacheIdentityDifferentBackendManifestText();
+    stack mut OwnedAscii vendor = new();
+    stack mut OwnedAscii systemOnly = new();
+    stack mut OwnedAscii changedManifestDigest = new();
+    stack mut OwnedAscii changedBackend = new();
+    if (!TryBuildCacheIdentity(source, source, "Vendor.Raylib", vendor)
+        || !TryBuildCacheIdentity(source, source, "System", systemOnly)
+        || !TryBuildCacheIdentity(source, "different-sdk-json-bytes", "Vendor.Raylib", changedManifestDigest)
+        // Deliberately reuse the original digest so this comparison proves the
+        // data layout is also carried explicitly, not only through sdk.json.
+        || !TryBuildCacheIdentity(differentBackend, source, "Vendor.Raylib", changedBackend))
+    {
+        return false;
+    }
+
+    return !System.Text.Equals(vendor.View(), systemOnly.View())
+        && !System.Text.Equals(vendor.View(), changedManifestDigest.View())
+        && !System.Text.Equals(vendor.View(), changedBackend.View());
+}
+
+[Fact]
+fn bool SdkCacheIdentityRejectsPlanIndicesFromAnotherManifest()
+{
+    stack ascii source = CacheIdentityManifestText();
+    switch (HashSha256Ascii(source))
+    {
+        case Sha256Result.Err(var hashError):
+            return false;
+        case Sha256Result.Ok(var digest):
+            unsafe
+            {
+                switch (ParseSdkManifestText(source, "sdk.json"))
+                {
+                    case SdkManifestLoadResult.Err(var loadDiagnostics):
+                        return false;
+                    case SdkManifestLoadResult.Ok(var loaded):
+                        stack mut SdkManifest manifest = loaded;
+                        stack mut SdkPackageIndex index = new();
+                        stack mut SdkDiagnosticList diagnostics = new();
+                        if (BuildSdkPackageIndex(index, manifest, diagnostics) != MemoryStatus.Ok
+                            || diagnostics.Count() != 0)
+                        {
+                            return false;
+                        }
+
+                        stack ascii[1] importedStorage = { "Vendor.Raylib" };
+                        stack ascii[] imports = importedStorage;
+                        stack mut SdkPackageLinkPlan plan = new();
+                        if (BuildSelectedSdkPackageLinkPlan(
+                            plan,
+                            manifest,
+                            index,
+                            imports,
+                            diagnostics) != MemoryStatus.Ok
+                            || plan.PackageCount() != 2)
+                        {
+                            return false;
+                        }
+
+                        // The package plan is dependent-before-dependency
+                        // (Vendor index 1, then System index 0). Reusing it
+                        // with a one-package manifest must reject index 1
+                        // rather than silently omitting facts.
+                        stack ascii shortenedText =
+                            CacheIdentitySystemOnlyManifestText();
+                        switch (ParseSdkManifestText(shortenedText, "sdk.json"))
+                        {
+                            case SdkManifestLoadResult.Err(var shortDiagnostics):
+                                return false;
+                            case SdkManifestLoadResult.Ok(var shortened):
+                                stack mut SdkManifest onePackage = shortened;
+                                switch (BuildStage1SdkCacheIdentity(
+                                    digest,
+                                    onePackage,
+                                    plan))
+                                {
+                                    case SdkCacheIdentityResult.Ok(var identity):
+                                        return false;
+                                    case SdkCacheIdentityResult.Err(var error):
+                                        return error == SdkCacheIdentityError.SelectedPackageIndexOutOfRange;
+                                }
+                        }
+                }
+            }
+    }
+}

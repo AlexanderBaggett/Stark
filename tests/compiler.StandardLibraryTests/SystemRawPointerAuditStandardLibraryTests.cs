@@ -7,6 +7,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
         "stdlib/src/System/C.stark",
         "stdlib/src/System/Collections.stark",
         "stdlib/src/System/Console.stark",
+        "stdlib/src/System/Cryptography/Sha256.stark",
         "stdlib/src/System/FileSystem.stark",
         "stdlib/src/System/IO/File.stark",
         "stdlib/src/System/IO/Path.stark",
@@ -30,7 +31,13 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
     private static readonly string[] PublicRawPointerSurfaceFiles =
     [
         "stdlib/src/System/C.stark",
+        "stdlib/src/System/Memory.stark",
         "stdlib/src/System/Text.stark"
+    ];
+
+    private static readonly string[] SystemMemoryAllowedPublicRawPointerPrefixes =
+    [
+        "public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint("
     ];
 
     private static readonly string[] SystemTextAllowedPublicRawPointerPrefixes =
@@ -103,6 +110,12 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
                     && !SystemTextAllowedPublicRawPointerPrefixes.Any(prefix => declaration.Text.TrimStart().StartsWith(prefix, StringComparison.Ordinal)))
                 {
                     violations.Add($"{relativePath}:{declaration.Line}: System.Text public raw pointer surface must stay limited to fixed-buffer concat/format helpers: {declaration.Text.Trim()}");
+                }
+
+                if (relativePath.Equals("stdlib/src/System/Memory.stark", StringComparison.OrdinalIgnoreCase)
+                    && !SystemMemoryAllowedPublicRawPointerPrefixes.Any(prefix => declaration.Text.TrimStart().StartsWith(prefix, StringComparison.Ordinal)))
+                {
+                    violations.Add($"{relativePath}:{declaration.Line}: System.Memory public raw pointer surface must stay limited to the bounded native-byte import helper: {declaration.Text.Trim()}");
                 }
             }
         }

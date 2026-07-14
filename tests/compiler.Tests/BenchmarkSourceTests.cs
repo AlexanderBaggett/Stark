@@ -180,11 +180,12 @@ public sealed class BenchmarkSourceTests
         // System.Runtime.Platform.Linux. Now that imported source-module bodies are
         // type-checked in the consuming build (cross-module monomorphization fix), the
         // consts fold to their literal syscall numbers (readv = 19, writev = 20) here
-        // instead of an external global load, so we assert the folded syscall directly.
-        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 19,", scatterReadVectorClone, StringComparison.Ordinal);
+        // instead of an external global load. Preserve both the folded values and their
+        // exact one-value range facts on the imported inline-clone calls.
+        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 range(i64 19, 20) 19,", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterReadVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterReadVectorClone, StringComparison.Ordinal);
-        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 20,", scatterWriteVectorClone, StringComparison.Ordinal);
+        Assert.Contains("@LinuxSyscall3HandleBuffer(i64 range(i64 20, 21) 20,", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterWriteVectorClone, StringComparison.Ordinal);
         Assert.Contains("i64 2", scatterWriteVectorClone, StringComparison.Ordinal);
     }

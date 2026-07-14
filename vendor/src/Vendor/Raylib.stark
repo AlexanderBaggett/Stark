@@ -1,5 +1,3 @@
-import Vendor.Raymath
-import Vendor.Rlgl
 export import Vendor.Raylib.Types
 export import Vendor.Raylib.Core
 export import Vendor.Raylib.Shapes

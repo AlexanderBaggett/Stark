@@ -2080,9 +2080,9 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("fn T Echo(borrow Box<T> self, T fallback);", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return self.Value;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return box.Echo(fallback);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("fn T Echo(borrow Box<T> self, T fallback)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("return self.Value;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("return box.Echo(fallback);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -2347,10 +2347,8 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains("public fn bool ObserveOrdered<T>(T tag);", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn bool ObserveEquality<T>(T tag);", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return 0 < NextOrdered() < 3;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return 1 == NextEquality() == 1;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn bool ObserveOrdered<T>(T tag)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn bool ObserveEquality<T>(T tag)", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -2611,9 +2609,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("(*ptr).First += value;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("(*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag)"), sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -2745,9 +2741,9 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("stack rawmutptr<i32> firstPtr = &buffer.First;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("stack rawmutptr<i32> slotPtr = &buffer.Values[2];", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(i32 value, T tag)"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("stack rawmutptr<i32> firstPtr = &buffer.First;"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("stack rawmutptr<i32> slotPtr = &buffer.Values[2];"), sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -3093,8 +3089,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("stack Pair pair = { First = value, Second = value + 1 };", sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag)"), sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -3749,8 +3744,8 @@ public sealed class CompilerPipelineLowerMirTests
                         typedOnlyManifest,
                         typedOnlyFacadeModule),
                     out var sourceText));
-            Assert.Contains("public fn T Identity<T>(T value);", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn T Forward<T>(T value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn T Identity<T>(T value)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn T Forward<T>(T value)", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return value;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
@@ -4977,7 +4972,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("Forward<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return box.Echo(value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("return box.Echo(value);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -5106,7 +5101,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("CallHeldEcho<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("holder.Box.Echo(value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("holder.Box.Echo(value);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -5238,7 +5233,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("CallMadeEcho<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("MakeEchoBox(1).Echo(value)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("MakeEchoBox(1).Echo(value)", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -5616,7 +5611,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("ForwardReset<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("ResetValue(box);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("ResetValue(box);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -5739,7 +5734,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("ForwardMethodReset<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("box.Reset();", sourceText, StringComparison.Ordinal);
+            Assert.Contains("box.Reset();", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -5991,8 +5986,8 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("WriteValue<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("buffer.Count = next;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("buffer.Values[index] = next;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("buffer.Count = next;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("buffer.Values[index] = next;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -6120,8 +6115,8 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("AddValue<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("buffer.Count += next;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("buffer.Values[index] += next;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("buffer.Count += next;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("buffer.Values[index] += next;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -6518,7 +6513,8 @@ public sealed class CompilerPipelineLowerMirTests
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
             Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn retborrow T Get<T>(borrow Box<T> box);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn retborrow T Get<T>(borrow Box<T> box)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("return box.Value;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
 
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
             Assert.NotNull(mir);
@@ -6859,7 +6855,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("ReadBoxSliceAt<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("box.Values[index]", sourceText, StringComparison.Ordinal);
+            Assert.Contains("box.Values[index]", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -7000,7 +6996,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var sourceText));
             Assert.Contains("GuardedReset<T>(", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("ResetValue(box);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("ResetValue(box);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -7244,7 +7240,7 @@ public sealed class CompilerPipelineLowerMirTests
                         typedFacadeModule),
                     out var importedDocument));
             Assert.DoesNotContain("return new Outer<T>();", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn Outer<T> Wrap<T>(T value, T tag);", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn Outer<T> Wrap<T>(T value, T tag)", importedDocument.ParseResult.SourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);
@@ -9853,7 +9849,7 @@ public sealed class CompilerPipelineLowerMirTests
                     out var sourceText));
             Assert.Contains("import Math", sourceText, StringComparison.Ordinal);
             Assert.Contains("public fn T Forward<T>(T value)", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return Math.Identity(value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("return Math.Identity(value);", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
             File.Delete(facadePath);

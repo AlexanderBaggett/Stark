@@ -18,8 +18,8 @@ internal static class PackageImageBinaryFormat
     public const string JsonFileExtension = ".starkpkg.json";
 
     private const string DiagnosticStage = "package-image-binary";
-    private const uint CurrentFormatVersion = 2;
-    private const uint LegacyFormatVersion = 1;
+    internal const uint CurrentFormatVersion = 2;
+    internal const uint LegacyFormatVersion = 1;
     private const uint SectionFlagsRequired = 1;
     private const uint SectionEncodingRaw = 0;
     private const uint SectionEncodingBrotliUtf8Json = 1;
@@ -58,6 +58,21 @@ internal static class PackageImageBinaryFormat
 
     public static bool HasBinaryMagic(ReadOnlySpan<byte> bytes) =>
         bytes.Length >= Magic.Length && bytes[..Magic.Length].SequenceEqual(Magic);
+
+    internal static bool IsSupportedFormatVersion(int version) =>
+        version == LegacyFormatVersion || version == CurrentFormatVersion;
+
+    internal static bool TryReadFormatVersion(ReadOnlySpan<byte> bytes, out uint version)
+    {
+        if (!HasBinaryMagic(bytes) || bytes.Length < Magic.Length + sizeof(uint))
+        {
+            version = 0;
+            return false;
+        }
+
+        version = BinaryPrimitives.ReadUInt32LittleEndian(bytes[Magic.Length..]);
+        return true;
+    }
 
     public static bool HasBinaryFileName(string path) =>
         path.EndsWith(FileExtension, StringComparison.OrdinalIgnoreCase)
@@ -282,7 +297,7 @@ internal static class PackageImageBinaryFormat
             return false;
         }
 
-        var version = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(8));
+        _ = TryReadFormatVersion(bytes, out var version);
         return version switch
         {
             LegacyFormatVersion => TryDecodeLegacy(bytes, imagePath, out manifest, out diagnostics),
@@ -290,7 +305,7 @@ internal static class PackageImageBinaryFormat
             _ => Fail(
                 out diagnostics,
                 "STK7121",
-                $"Package image binary format version {version} is not supported; expected {CurrentFormatVersion}.",
+                $"Package image binary format version {version} is not supported; expected {LegacyFormatVersion} or {CurrentFormatVersion}.",
                 imagePath)
         };
     }

@@ -60,6 +60,14 @@ internal static class CAbiAggregateClassifier
                 publishedConcreteLayouts ?? EmptyPublishedLayouts,
                 out classification),
             CAbiFamily.X86_64Win64 => TryClassifyX86_64Win64(layout, out classification),
+            CAbiFamily.AArch64Aapcs64 => TryClassifyAArch64Aapcs64(
+                normalizedType,
+                layout,
+                targetInfo,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts ?? EmptyPublishedLayouts,
+                out classification),
             _ => false
         };
     }
@@ -70,7 +78,7 @@ internal static class CAbiAggregateClassifier
         var normalizedLlvm = NormalizeType(llvmType);
         return normalizedSource != normalizedLlvm
             && normalizedSource.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray
-            && normalizedLlvm.Kind is StarkTypeKind.Integer or StarkTypeKind.Float or StarkTypeKind.LlvmVector or StarkTypeKind.LlvmStruct;
+            && normalizedLlvm.Kind is StarkTypeKind.Integer or StarkTypeKind.Float or StarkTypeKind.FixedArray or StarkTypeKind.LlvmVector or StarkTypeKind.LlvmStruct;
     }
 
     private static bool TryClassifyX86_64SysV(
@@ -123,6 +131,64 @@ internal static class CAbiAggregateClassifier
         return false;
     }
 
+    private static bool TryClassifyAArch64Aapcs64(
+        StarkTypeSymbol type,
+        ConcreteTypeLayout layout,
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
+        out CAbiAggregateClassification classification)
+    {
+        classification = null!;
+
+        // AAPCS64 homogeneous floating-point/vector aggregates use SIMD
+        // registers and require a distinct recursive HFA/HVA classifier.  Do
+        // not coerce them through general-purpose registers until that
+        // classification is implemented.  This path deliberately supports
+        // only integer-like composites whose leaves are integer, bool, or
+        // pointer storage.
+        if (!TryCollectStorageUnits(
+                type,
+                baseOffsetBytes: 0,
+                targetInfo,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts,
+                out var units)
+            || units.Any(static unit => unit.Kind != CAbiStorageKind.Integer))
+        {
+            return false;
+        }
+
+        if (layout.SizeBytes > 16)
+        {
+            classification = new CAbiAggregateClassification(
+                CAbiAggregatePassKind.Indirect,
+                StarkTypeSymbols.RawPointer(type, isMutable: false));
+            return true;
+        }
+
+        // AAPCS64 C.8: a non-HFA composite no larger than 16 bytes is copied
+        // into consecutive general-purpose parameter registers. Clang rounds
+        // a parameter of up to 8 bytes to i64 and uses [2 x i64] otherwise.
+        // Returns keep their exact integer width up to 8 bytes, then use the
+        // same two-register carrier. Keeping these two shapes distinct is
+        // required for four-byte structs such as Raylib's Color: i32 return,
+        // i64 parameter.
+        var returnCarrier = layout.SizeBytes <= 8
+            ? StarkTypeSymbols.Integer(layout.SizeBytes * 8, isUnsigned: true)
+            : StarkTypeSymbols.FixedArray(StarkTypeSymbols.Integer(64, isUnsigned: true), fixedLength: 2);
+        var parameterCarrier = layout.SizeBytes <= 8
+            ? StarkTypeSymbols.Integer(64, isUnsigned: true)
+            : returnCarrier;
+        classification = new CAbiAggregateClassification(
+            CAbiAggregatePassKind.Direct,
+            returnCarrier,
+            [parameterCarrier]);
+        return true;
+    }
+
     private static bool TryBuildX86_64SysVDirectCarriers(
         StarkTypeSymbol type,
         ConcreteTypeLayout layout,
@@ -164,13 +230,13 @@ internal static class CAbiAggregateClassifier
                 return false;
             }
 
-            if (slotUnits.Any(static unit => unit.Kind == X86_64SysVStorageKind.Integer))
+            if (slotUnits.Any(static unit => unit.Kind == CAbiStorageKind.Integer))
             {
                 result.Add(BuildIntegerCarrier(slotSize));
                 continue;
             }
 
-            if (slotUnits.Any(static unit => unit.Kind != X86_64SysVStorageKind.Sse))
+            if (slotUnits.Any(static unit => unit.Kind != CAbiStorageKind.Floating))
             {
                 return false;
             }
@@ -190,7 +256,7 @@ internal static class CAbiAggregateClassifier
     private static bool TryBuildSseCarrier(
         int slotStart,
         int slotSize,
-        IReadOnlyList<X86_64SysVStorageUnit> slotUnits,
+        IReadOnlyList<CAbiStorageUnit> slotUnits,
         out StarkTypeSymbol carrier)
     {
         carrier = StarkTypeSymbols.Error;
@@ -234,10 +300,10 @@ internal static class CAbiAggregateClassifier
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
         IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
-        out IReadOnlyList<X86_64SysVStorageUnit> units)
+        out IReadOnlyList<CAbiStorageUnit> units)
     {
         var normalizedType = NormalizeType(type);
-        var result = new List<X86_64SysVStorageUnit>();
+        var result = new List<CAbiStorageUnit>();
         if (!TryCollectStorageUnits(normalizedType, baseOffsetBytes, targetInfo, namedTypes, enumLayouts, publishedConcreteLayouts, result))
         {
             units = [];
@@ -255,24 +321,24 @@ internal static class CAbiAggregateClassifier
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
         IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts,
-        List<X86_64SysVStorageUnit> units)
+        List<CAbiStorageUnit> units)
     {
         var normalizedType = NormalizeType(type);
         switch (normalizedType.Kind)
         {
             case StarkTypeKind.Bool:
-                units.Add(new X86_64SysVStorageUnit(baseOffsetBytes, 1, X86_64SysVStorageKind.Integer, normalizedType));
+                units.Add(new CAbiStorageUnit(baseOffsetBytes, 1, CAbiStorageKind.Integer, normalizedType));
                 return true;
             case StarkTypeKind.Integer when normalizedType.BitWidth is int bitWidth:
-                units.Add(new X86_64SysVStorageUnit(baseOffsetBytes, Math.Max(1, (bitWidth + 7) / 8), X86_64SysVStorageKind.Integer, normalizedType));
+                units.Add(new CAbiStorageUnit(baseOffsetBytes, Math.Max(1, (bitWidth + 7) / 8), CAbiStorageKind.Integer, normalizedType));
                 return true;
             case StarkTypeKind.Float when normalizedType.BitWidth is 16 or 32 or 64:
-                units.Add(new X86_64SysVStorageUnit(baseOffsetBytes, Math.Max(1, (normalizedType.BitWidth.Value + 7) / 8), X86_64SysVStorageKind.Sse, normalizedType));
+                units.Add(new CAbiStorageUnit(baseOffsetBytes, Math.Max(1, (normalizedType.BitWidth.Value + 7) / 8), CAbiStorageKind.Floating, normalizedType));
                 return true;
             case StarkTypeKind.RawPointer:
             case StarkTypeKind.FunctionPointer:
             case StarkTypeKind.Null:
-                units.Add(new X86_64SysVStorageUnit(baseOffsetBytes, 8, X86_64SysVStorageKind.Integer, normalizedType));
+                units.Add(new CAbiStorageUnit(baseOffsetBytes, 8, CAbiStorageKind.Integer, normalizedType));
                 return true;
             case StarkTypeKind.FixedArray when normalizedType.ElementType is not null
                                                && normalizedType.FixedLength is int fixedLength
@@ -392,6 +458,13 @@ internal static class CAbiAggregateClassifier
     private static CAbiFamily ResolveCAbiFamily(StarkFfiAbi? abi, LlvmTargetInfo? targetInfo)
     {
         var architecture = StarkAsmArchitectureFacts.ResolveActiveArchitecture(targetInfo);
+        if (architecture == StarkAsmArchitecture.AArch64)
+        {
+            return abi is StarkFfiAbi.C or StarkFfiAbi.Aapcs64 or null
+                ? CAbiFamily.AArch64Aapcs64
+                : CAbiFamily.Unsupported;
+        }
+
         if (architecture != StarkAsmArchitecture.X86_64)
         {
             return CAbiFamily.Unsupported;
@@ -432,19 +505,20 @@ internal static class CAbiAggregateClassifier
     {
         Unsupported,
         X86_64SysV,
-        X86_64Win64
+        X86_64Win64,
+        AArch64Aapcs64
     }
 
-    private enum X86_64SysVStorageKind
+    private enum CAbiStorageKind
     {
         Integer,
-        Sse
+        Floating
     }
 
-    private readonly record struct X86_64SysVStorageUnit(
+    private readonly record struct CAbiStorageUnit(
         int OffsetBytes,
         int SizeBytes,
-        X86_64SysVStorageKind Kind,
+        CAbiStorageKind Kind,
         StarkTypeSymbol Type)
     {
         public int EndOffsetBytes => OffsetBytes + SizeBytes;

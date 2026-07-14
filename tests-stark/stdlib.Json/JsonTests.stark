@@ -132,3 +132,35 @@ fn bool NumberOutsideExactWindowReportsInvalidNumber()
         }
     }
 }
+
+[Fact]
+fn bool ForwardSiblingWalkSkipsNestedDescendants()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+{ "first": { "nested": 1 }, "second": [1, 2], "third": "done" }
+"""))
+        {
+            case JsonResult<JsonDocument>.Err(var error):
+                return false;
+            case JsonResult<JsonDocument>.Ok(var value):
+                stack mut JsonDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                stack mut u64[0 2 ** 63 - 1] second = 0;
+                stack mut u64[0 2 ** 63 - 1] third = 0;
+                stack mut u64[0 2 ** 63 - 1] pastEnd = 0;
+                if (!document.TryFirstChild(JsonRootNode, first)
+                    || !document.TryNextSibling(JsonRootNode, first, second)
+                    || !document.TryNextSibling(JsonRootNode, second, third))
+                {
+                    return false;
+                }
+
+                return System.Text.Equals(document.KeyAt(first), "first")
+                    && System.Text.Equals(document.KeyAt(second), "second")
+                    && System.Text.Equals(document.KeyAt(third), "third")
+                    && !document.TryNextSibling(JsonRootNode, third, pastEnd);
+        }
+    }
+}
