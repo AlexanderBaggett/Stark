@@ -10884,6 +10884,160 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FfiCStructLayoutArgumentsUseAArch64Aapcs64Carriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct NormalRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(C), Pack(1), Align(4)]
+            struct PackedRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(Explicit), Align(4)]
+            struct WordParts
+            {
+                [FieldOffset(0)] u32[0 max] Whole;
+                [FieldOffset(0)] u16[0 max] Low;
+                [FieldOffset(2)] u16[0 max] High;
+            }
+
+            unsafe ffi(c) fn i32[min max] stark_check_layout(
+                NormalRecord normal,
+                PackedRecord packed,
+                WordParts word);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack NormalRecord normal = new NormalRecord()
+                {
+                    Tag = 17,
+                    Length = 287454020,
+                    Code = 21862
+                };
+                stack PackedRecord packed = new PackedRecord()
+                {
+                    Tag = 34,
+                    Length = 1432778632,
+                    Code = 30600
+                };
+                stack WordParts word = new WordParts()
+                {
+                    Whole = 305419896
+                };
+
+                return stark_check_layout(normal, packed, word);
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "aarch64-unknown-linux-gnu",
+                    "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        Assert.Contains("declare i32 @stark_check_layout([2 x i64], i64, i64)", llvm, StringComparison.Ordinal);
+        Assert.Contains("load [2 x i64], ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("load i64, ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stark_check_layout([2 x i64]", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("byval(%PackedRecord)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiAArch64FourByteCStructUsesExactReturnAndRoundedParameterCarrier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
+            unsafe ffi(c) fn Color roundtrip_color(Color value);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Color input = new Color()
+                {
+                    R = 230,
+                    G = 41,
+                    B = 55,
+                    A = 255
+                };
+                stack Color output = roundtrip_color(input);
+                return (i32[min max])output.A;
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "arm64-apple-macosx11.0.0",
+                    "e-m:o-p:64:64-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        Assert.Contains("declare i32 @roundtrip_color(i64)", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @roundtrip_color(i64", mainBody, StringComparison.Ordinal);
+        Assert.Contains("store i32", mainBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiAArch64HomogeneousFloatAggregateDoesNotUseIntegerCompositeCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct FloatPair
+            {
+                f32 X;
+                f32 Y;
+            }
+
+            unsafe ffi(c) fn void consume_pair(FloatPair value);
+
+            export unsafe fn void forward_pair(FloatPair value)
+            {
+                consume_pair(value);
+                return;
+            }
+            """,
+            new CompilerOptions(
+                TargetInfo: new LlvmTargetInfo(
+                    "aarch64-unknown-linux-gnu",
+                    "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @consume_pair(%FloatPair)", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare void @consume_pair(i64)", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare void @consume_pair([2 x i64])", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TypeAliasesPreserveTheUnderlyingAggregateAbi()
     {
         var result = Compile(

@@ -28,7 +28,8 @@ internal sealed record NativeToolchainResolutionOptions(
     string? ClangTool = null,
     string? LinkerTool = null,
     string? ArchiverTool = null,
-    string? LlvmLibraryPath = null);
+    string? LlvmLibraryPath = null,
+    string? SdkRootDirectory = null);
 
 internal sealed record NativeResolvedTool(
     string Role,
@@ -107,6 +108,21 @@ internal static class NativeToolchain
             explicitOverride: null,
             environmentVariableName: null,
             searchRoots);
+        // PATH isolation is a release qualification tool, but xcrun is an OS
+        // SDK locator supplied by macOS rather than a redistributable LLVM
+        // tool. Keep the well-known host path available without adding
+        // /usr/bin to PATH, which could otherwise hide a missing bundled
+        // clang, linker, or archiver during archive smoke tests.
+        if (OperatingSystem.IsMacOS()
+            && !xcrun.IsAvailable
+            && File.Exists("/usr/bin/xcrun"))
+        {
+            xcrun = new NativeResolvedTool(
+                "xcrun",
+                "xcrun",
+                "/usr/bin/xcrun",
+                NativeToolchainResolutionSource.Path);
+        }
         var llvmLibrary = ResolveLlvmLibrary(options, searchRoots);
         var sdkRoot = ResolveMacOSSdkRoot(xcrun.Path);
 
@@ -138,6 +154,28 @@ internal static class NativeToolchain
 
     public static bool TryDetectDefaultTargetInfo(out LlvmTargetInfo targetInfo, NativeToolchainResolution? toolchain = null)
     {
+        return TryDetectTargetInfoCore(targetTriple: null, out targetInfo, toolchain);
+    }
+
+    public static bool TryDetectTargetInfo(
+        string targetTriple,
+        out LlvmTargetInfo targetInfo,
+        NativeToolchainResolution? toolchain = null)
+    {
+        if (string.IsNullOrWhiteSpace(targetTriple))
+        {
+            targetInfo = default!;
+            return false;
+        }
+
+        return TryDetectTargetInfoCore(targetTriple.Trim(), out targetInfo, toolchain);
+    }
+
+    private static bool TryDetectTargetInfoCore(
+        string? targetTriple,
+        out LlvmTargetInfo targetInfo,
+        NativeToolchainResolution? toolchain)
+    {
         targetInfo = default!;
         var resolvedToolchain = toolchain ?? Resolve();
         if (!resolvedToolchain.Clang.IsAvailable)
@@ -166,6 +204,11 @@ internal static class NativeToolchain
                 startInfo.ArgumentList.Add("-emit-llvm");
                 startInfo.ArgumentList.Add("-x");
                 startInfo.ArgumentList.Add("c");
+                if (targetTriple is not null)
+                {
+                    startInfo.ArgumentList.Add($"--target={targetTriple}");
+                }
+
                 startInfo.ArgumentList.Add(tempSourcePath);
                 startInfo.ArgumentList.Add("-o");
                 startInfo.ArgumentList.Add("-");
@@ -371,12 +414,7 @@ internal static class NativeToolchain
                 return result with { OutputPath = fullOutputPath };
             }
 
-            if (File.Exists(fullOutputPath))
-            {
-                File.Delete(fullOutputPath);
-            }
-
-            File.Move(tempOutputPath, fullOutputPath);
+            File.Move(tempOutputPath, fullOutputPath, overwrite: true);
             return result with { OutputPath = fullOutputPath };
         }
         finally
@@ -422,7 +460,7 @@ internal static class NativeToolchain
             }
         }
 
-        foreach (var root in EnumerateBundledSearchRoots())
+        foreach (var root in EnumerateBundledSearchRoots(options.SdkRootDirectory))
         {
             if (seen.Add(root.Path))
             {
@@ -431,8 +469,31 @@ internal static class NativeToolchain
         }
     }
 
-    private static IEnumerable<NativeToolchainSearchRoot> EnumerateBundledSearchRoots()
+    private static IEnumerable<NativeToolchainSearchRoot> EnumerateBundledSearchRoots(
+        string? selectedSdkRootDirectory)
     {
+        var sdkRootDirectory = ResolveBundledSdkRoot(selectedSdkRootDirectory);
+        if (!string.IsNullOrWhiteSpace(sdkRootDirectory))
+        {
+            foreach (var root in EnumerateSearchRootCandidates(
+                         Path.Combine(sdkRootDirectory, "toolchain"),
+                         NativeToolchainResolutionSource.Bundled))
+            {
+                yield return root;
+            }
+
+            foreach (var root in EnumerateSearchRootCandidates(
+                         Path.Combine(sdkRootDirectory, "toolchain", "llvm-22.1.8"),
+                         NativeToolchainResolutionSource.Bundled))
+            {
+                yield return root;
+            }
+        }
+
+        // Retain the original executable-directory lookup for repository
+        // launchers and `dotnet compiler.dll` development flows. Installed
+        // archives use <sdk>/bin/stark and are handled through the canonical
+        // SDK root above, so their toolchain remains a sibling of bin/.
         var compilerDirectory = AppContext.BaseDirectory;
         if (string.IsNullOrWhiteSpace(compilerDirectory))
         {
@@ -451,6 +512,32 @@ internal static class NativeToolchain
                      NativeToolchainResolutionSource.Bundled))
         {
             yield return root;
+        }
+    }
+
+    private static string? ResolveBundledSdkRoot(string? selectedSdkRootDirectory)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(selectedSdkRootDirectory))
+            {
+                return SdkRootResolver.Resolve(explicitRoot: selectedSdkRootDirectory).RootPath;
+            }
+
+            var discovered = SdkRootResolver.Resolve();
+            return File.Exists(discovered.ManifestPath) ? discovered.RootPath : null;
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or PathTooLongException
+            or UnauthorizedAccessException)
+        {
+            // Missing SDK discovery must not hide explicit toolchain overrides
+            // or the ordinary PATH fallback. The SDK resolver owns its own
+            // user-facing diagnostics when an SDK is actually required.
+            return null;
         }
     }
 

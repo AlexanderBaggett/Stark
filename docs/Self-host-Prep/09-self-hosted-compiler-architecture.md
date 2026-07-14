@@ -176,20 +176,21 @@ typed values rather than implicit side effects.
 
 ## Repository Layout
 
-**Decision: when the self-hosted compiler source is introduced, `/src` becomes
-the Stark compiler source root.** At that migration point, the existing C# host
-compiler directory is renamed to `/old_src`, then a fresh `/src` is created for
-the Stark implementation.
+**Decision: keep both compiler source trees in their current locations.** The
+C# Stage0 compiler remains under `/src`, and the Stark self-hosted compiler
+remains under `/selfhost`. Bootstrap qualification and release adoption do not
+rename either tree.
 
 Rules:
 
-- Do not maintain a long-lived `src-stark/` compiler tree.
-- `/old_src` preserves the host compiler for emergency recovery, comparison,
-  and historical reference.
-- `/src` remains the canonical compiler source location after cutover.
-- This decision is about source placement only. Bootstrap staging uses the
-  existing C# host as Stage0 until self-hosting succeeds, and build artifacts use
-  the `build/<profile>/<target-triple>/<stage>/` layout from
+- `/src` remains the maintained source root for the C# Stage0 implementation.
+- `/selfhost` remains the maintained source root for the Stark implementation.
+- Stage0 remains available for emergency recovery, comparison, differential
+  testing, and maintenance after self-hosted releases begin.
+- Release builds explicitly select the qualified self-hosted compiler; release
+  selection does not imply ownership of a particular source directory.
+- Build artifacts continue to use the
+  `build/<profile>/<target-triple>/<stage>/` layout from
   `25-build-artifact-layout.md`.
 
 ## Build Artifact Layout

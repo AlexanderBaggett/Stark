@@ -1,0 +1,454 @@
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.IO.Path
+import System.Memory
+import System.Text
+module Compiler.Sdk.RootResolution
+
+const SdkCanonicalPathLinkLimit = 256;
+
+public enum SdkRootOrigin
+{
+    None,
+    CommandLine,
+    Environment,
+    Stage,
+    Executable,
+}
+
+public struct SdkRootResolution
+{
+    SdkRootOrigin OriginValue;
+    OwnedAscii RootPathValue;
+    OwnedAscii ManifestPathValue;
+    OwnedAscii ExecutablePathValue;
+
+    SdkRootResolution()
+    {
+        self.OriginValue = SdkRootOrigin.None;
+        self.RootPathValue = new();
+        self.ManifestPathValue = new();
+        self.ExecutablePathValue = new();
+    }
+
+    public inline finite law SdkRootOrigin Origin(borrow SdkRootResolution self)
+    {
+        return self.OriginValue;
+    }
+
+    public fn ascii RootPath(mut borrow SdkRootResolution self)
+    {
+        return self.RootPathValue.View();
+    }
+
+    public fn ascii ManifestPath(mut borrow SdkRootResolution self)
+    {
+        return self.ManifestPathValue.View();
+    }
+
+    public fn ascii ExecutablePath(mut borrow SdkRootResolution self)
+    {
+        return self.ExecutablePathValue.View();
+    }
+}
+
+public finite law ascii Stage1SdkCompilerCompatibility()
+{
+    return "stark-sdk-v1";
+}
+
+internal fn MemoryStatus SetSdkRootResolution(
+    mut borrow SdkRootResolution destination,
+    SdkRootOrigin origin,
+    ascii root,
+    ascii executablePath)
+    where overlap_all(destination),
+          overlap(root, executablePath)
+{
+    destination.OriginValue = SdkRootOrigin.None;
+    destination.RootPathValue.Clear();
+    destination.ManifestPathValue.Clear();
+    destination.ExecutablePathValue.Clear();
+
+    switch (destination.RootPathValue.AppendAscii(root))
+    {
+        case MemoryStatus.Err(var rootError):
+            return MemoryStatus.Err(rootError);
+        case MemoryStatus.Ok:
+    }
+
+    switch (System.IO.Path.TryJoin(destination.ManifestPathValue, root, "sdk.json"))
+    {
+        case MemoryStatus.Err(var manifestError):
+            return MemoryStatus.Err(manifestError);
+        case MemoryStatus.Ok:
+    }
+
+    switch (destination.ExecutablePathValue.AppendAscii(executablePath))
+    {
+        case MemoryStatus.Err(var executableError):
+            return MemoryStatus.Err(executableError);
+        case MemoryStatus.Ok:
+    }
+
+    destination.OriginValue = origin;
+    return MemoryStatus.Ok;
+}
+
+internal finite law bool SdkPathUnitIsSeparator(ascii path, i64[min max] index)
+{
+    stack ascii unit = path[index, 1];
+    if (System.Text.Equals(unit, System.IO.Path.DirectorySeparator()))
+    {
+        return true;
+    }
+
+    stack ascii alternate = System.IO.Path.AlternateDirectorySeparator();
+    return System.Text.AsciiLength(alternate) > 0
+        && System.Text.Equals(unit, alternate);
+}
+
+// Canonicalizes every existing component through the public filesystem
+// symlink surface. Missing components retain their full lexical spelling,
+// matching Stage0's ability to report a precise missing-manifest diagnostic.
+// Work is iterative and capacity-reusing; the fixed link bound rejects cycles
+// without recursive stack growth or an unrestricted filesystem walk.
+internal fn MemoryStatus TryCanonicalizeSdkPath(
+    mut borrow OwnedAscii destination,
+    ascii path)
+    where overlap(destination, path)
+{
+    stack mut OwnedAscii pending = new();
+    switch (System.IO.Path.TryFullPath(pending, path))
+    {
+        case MemoryStatus.Err(var fullPathError):
+            return MemoryStatus.Err(fullPathError);
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii canonical = new();
+    stack mut OwnedAscii candidate = new();
+    stack mut OwnedAscii linkTarget = new();
+    stack mut OwnedAscii targetPath = new();
+    stack mut OwnedAscii rebuilt = new();
+    stack mut OwnedAscii normalized = new();
+    stack mut u64[0 2 ** 63 - 1] linksFollowed = 0;
+    stack mut bool restart = true;
+    while willexit (restart)
+    {
+        restart = false;
+        canonical.Clear();
+
+        stack ascii pendingView = pending.View();
+        stack i64[min max] pathLength = System.Text.AsciiLength(pendingView);
+        stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(pendingView);
+        stack i64[min max] rootLength = facts.RootNameLength();
+        if (pathLength <= 0 || rootLength <= 0 || rootLength > pathLength)
+        {
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        }
+
+        switch (canonical.AppendAscii(pendingView[0, rootLength]))
+        {
+            case MemoryStatus.Err(var rootError):
+                return MemoryStatus.Err(rootError);
+            case MemoryStatus.Ok:
+        }
+
+        stack mut i64[min max] index = rootLength;
+        while willexit (index < pathLength)
+        {
+            while willexit (index < pathLength
+                && SdkPathUnitIsSeparator(pendingView, index))
+            {
+                index += 1;
+            }
+            if (index >= pathLength)
+            {
+                break;
+            }
+
+            stack i64[min max] segmentStart = index;
+            while willexit (index < pathLength
+                && !SdkPathUnitIsSeparator(pendingView, index))
+            {
+                index += 1;
+            }
+
+            candidate.Clear();
+            switch (System.IO.Path.TryJoin(
+                candidate,
+                canonical.View(),
+                pendingView[segmentStart, index - segmentStart]))
+            {
+                case MemoryStatus.Err(var candidateError):
+                    return MemoryStatus.Err(candidateError);
+                case MemoryStatus.Ok:
+            }
+
+            stack mut bool isSymlink = false;
+            switch (System.FileSystem.IsSymlink(candidate.View()))
+            {
+                case System.IO.IOResult<bool>.Err(var metadataError):
+                    // Missing/unreadable components stay lexical. The
+                    // manifest loader owns the eventual IO diagnostic.
+                    isSymlink = false;
+                case System.IO.IOResult<bool>.Ok(var value):
+                    isSymlink = value;
+            }
+
+            if (!isSymlink)
+            {
+                canonical.Clear();
+                switch (canonical.AppendAscii(candidate.View()))
+                {
+                    case MemoryStatus.Err(var appendError):
+                        return MemoryStatus.Err(appendError);
+                    case MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                if (linksFollowed >= SdkCanonicalPathLinkLimit)
+                {
+                    return MemoryStatus.Err(MemoryError.InvalidLayout);
+                }
+                linksFollowed += 1;
+
+                linkTarget.Clear();
+                switch (System.FileSystem.ReadSymlink(candidate.View()))
+                {
+                    case System.IO.IOResult<OwnedAscii>.Err(var linkError):
+                        return MemoryStatus.Err(MemoryError.InvalidLayout);
+                    case System.IO.IOResult<OwnedAscii>.Ok(var value):
+                        linkTarget = value;
+                }
+
+                targetPath.Clear();
+                if (System.IO.Path.IsAbsolute(linkTarget.View()))
+                {
+                    switch (targetPath.AppendAscii(linkTarget.View()))
+                    {
+                        case MemoryStatus.Err(var targetError):
+                            return MemoryStatus.Err(targetError);
+                        case MemoryStatus.Ok:
+                    }
+                }
+                else
+                {
+                    switch (System.IO.Path.TryJoin(
+                        targetPath,
+                        canonical.View(),
+                        linkTarget.View()))
+                    {
+                        case MemoryStatus.Err(var targetError):
+                            return MemoryStatus.Err(targetError);
+                        case MemoryStatus.Ok:
+                    }
+                }
+
+                while willexit (index < pathLength
+                    && SdkPathUnitIsSeparator(pendingView, index))
+                {
+                    index += 1;
+                }
+
+                rebuilt.Clear();
+                if (index < pathLength)
+                {
+                    switch (System.IO.Path.TryJoin(
+                        rebuilt,
+                        targetPath.View(),
+                        pendingView[index, pathLength - index]))
+                    {
+                        case MemoryStatus.Err(var rebuildError):
+                            return MemoryStatus.Err(rebuildError);
+                        case MemoryStatus.Ok:
+                    }
+                }
+                else
+                {
+                    switch (rebuilt.AppendAscii(targetPath.View()))
+                    {
+                        case MemoryStatus.Err(var rebuildError):
+                            return MemoryStatus.Err(rebuildError);
+                        case MemoryStatus.Ok:
+                    }
+                }
+
+                normalized.Clear();
+                switch (System.IO.Path.TryFullPath(normalized, rebuilt.View()))
+                {
+                    case MemoryStatus.Err(var normalizeError):
+                        return MemoryStatus.Err(normalizeError);
+                    case MemoryStatus.Ok:
+                }
+
+                pending.Clear();
+                switch (pending.AppendAscii(normalized.View()))
+                {
+                    case MemoryStatus.Err(var pendingError):
+                        return MemoryStatus.Err(pendingError);
+                    case MemoryStatus.Ok:
+                }
+                restart = true;
+                break;
+            }
+        }
+
+        if (!restart)
+        {
+            return destination.AppendAscii(canonical.View());
+        }
+    }
+
+    return MemoryStatus.Err(MemoryError.InvalidLayout);
+}
+
+internal fn MemoryStatus TrySdkRootFileMarkerExists(
+    ascii root,
+    ascii fileName,
+    out bool exists)
+    where overlap(root, fileName),
+          overlap(root, exists),
+          overlap(fileName, exists)
+{
+    stack mut OwnedAscii markerPath = new();
+    switch (System.IO.Path.TryJoin(markerPath, root, fileName))
+    {
+        case MemoryStatus.Err(var markerError):
+            exists = false;
+            return MemoryStatus.Err(markerError);
+        case MemoryStatus.Ok:
+    }
+
+    switch (System.IO.File.Exists(markerPath.View()))
+    {
+        case System.IO.IOResult<bool>.Err(var existsError):
+            exists = false;
+            return MemoryStatus.Ok;
+        case System.IO.IOResult<bool>.Ok(var value):
+            exists = value;
+            return MemoryStatus.Ok;
+    }
+}
+
+// Precedence selection used by the eventual Stage1 CLI. The executable path
+// is supplied by the driver so process-image discovery remains outside the
+// manifest model and can be differential-tested against Stage0. Installed
+// layout discovery is intentionally bounded to <sdk-root>/bin/stark: first
+// prefer an adjacent sdk.json for source-tree/development compatibility, then
+// inspect exactly the immediate parent of a directory named "bin".
+public fn MemoryStatus ResolveSdkRootSelection(
+    mut borrow SdkRootResolution destination,
+    ascii commandLineRoot,
+    ascii environmentRoot,
+    ascii stageRoot,
+    ascii executablePath)
+    where overlap_all(destination)
+{
+    if (System.Text.AsciiLength(commandLineRoot) > 0)
+    {
+        return SetSdkRootResolution(
+            destination,
+            SdkRootOrigin.CommandLine,
+            commandLineRoot,
+            "");
+    }
+
+    if (System.Text.AsciiLength(environmentRoot) > 0)
+    {
+        return SetSdkRootResolution(
+            destination,
+            SdkRootOrigin.Environment,
+            environmentRoot,
+            "");
+    }
+
+    if (System.Text.AsciiLength(stageRoot) > 0)
+    {
+        return SetSdkRootResolution(
+            destination,
+            SdkRootOrigin.Stage,
+            stageRoot,
+            "");
+    }
+
+    if (System.Text.AsciiLength(executablePath) <= 0)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut OwnedAscii canonicalExecutable = new();
+    switch (TryCanonicalizeSdkPath(canonicalExecutable, executablePath))
+    {
+        case MemoryStatus.Err(var executableError):
+            return MemoryStatus.Err(executableError);
+        case MemoryStatus.Ok:
+    }
+
+    stack ascii executableDirectory =
+        System.IO.Path.DirectoryName(canonicalExecutable.View());
+    if (System.Text.AsciiLength(executableDirectory) <= 0)
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut bool adjacentManifestExists = false;
+    switch (TrySdkRootFileMarkerExists(
+        executableDirectory,
+        "sdk.json",
+        adjacentManifestExists))
+    {
+        case MemoryStatus.Err(var markerError):
+            return MemoryStatus.Err(markerError);
+        case MemoryStatus.Ok:
+    }
+
+    stack mut ascii selectedRoot = executableDirectory;
+    if (!adjacentManifestExists
+        && System.Text.Equals(
+            System.IO.Path.FileName(executableDirectory),
+            "bin"))
+    {
+        stack ascii parent = System.IO.Path.DirectoryName(executableDirectory);
+        if (System.Text.AsciiLength(parent) > 0)
+        {
+            stack mut bool parentManifestExists = false;
+            stack mut bool parentReleaseExists = false;
+            switch (TrySdkRootFileMarkerExists(
+                parent,
+                "sdk.json",
+                parentManifestExists))
+            {
+                case MemoryStatus.Err(var parentManifestError):
+                    return MemoryStatus.Err(parentManifestError);
+                case MemoryStatus.Ok:
+            }
+            if (!parentManifestExists)
+            {
+                switch (TrySdkRootFileMarkerExists(
+                    parent,
+                    "release.json",
+                    parentReleaseExists))
+                {
+                    case MemoryStatus.Err(var parentReleaseError):
+                        return MemoryStatus.Err(parentReleaseError);
+                    case MemoryStatus.Ok:
+                }
+            }
+
+            if (parentManifestExists || parentReleaseExists)
+            {
+                selectedRoot = parent;
+            }
+        }
+    }
+
+    return SetSdkRootResolution(
+        destination,
+        SdkRootOrigin.Executable,
+        selectedRoot,
+        canonicalExecutable.View());
+}

@@ -18,10 +18,15 @@
   </ItemGroup>
 
   <Target Name="WriteCompilerLauncherToRepoRoot" AfterTargets="Build" Condition="'$(WriteCompilerLauncherToRepoRoot)' != 'false'">
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; --write-development-sdk-manifest &quot;$(MSBuildProjectDirectory)/..&quot;" />
     <ItemGroup>
       <StarkUnixLauncherLine Include="#!/usr/bin/env sh" />
+      <StarkUnixLauncherLine Include="if [ -z &quot;${STARK_SDK_ROOT:-}&quot; ]; then" />
+      <StarkUnixLauncherLine Include="  export STARK_SDK_ROOT=&quot;$(MSBuildProjectDirectory)/..&quot;" />
+      <StarkUnixLauncherLine Include="fi" />
       <StarkUnixLauncherLine Include="exec dotnet &quot;$(TargetPath)&quot; &quot;$@&quot;" />
       <StarkWindowsLauncherLine Include="@echo off" />
+      <StarkWindowsLauncherLine Include="if not defined STARK_SDK_ROOT set &quot;STARK_SDK_ROOT=$(MSBuildProjectDirectory)\..&quot;" />
       <StarkWindowsLauncherLine Include="dotnet &quot;$(TargetPath)&quot; %*" />
     </ItemGroup>
     <WriteLinesToFile File="$(MSBuildProjectDirectory)/../stark" Lines="@(StarkUnixLauncherLine)" Overwrite="true" Condition="'$(OS)' != 'Windows_NT'" />

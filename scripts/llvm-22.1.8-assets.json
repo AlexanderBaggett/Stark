@@ -100,6 +100,9 @@
     },
     "macos-arm64": {
       "runtimeIdentifier": "osx-arm64",
+      "copiedRoots": [
+        "lib/clang"
+      ],
       "archive": {
         "name": "LLVM-22.1.8-macOS-ARM64.tar.xz",
         "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-macOS-ARM64.tar.xz",
@@ -122,12 +125,29 @@
         "bin/clang",
         "bin/clang++",
         "bin/ld.lld",
+        "bin/ld64.lld",
         "bin/lld",
         "bin/llvm-ar",
         "bin/llvm-ranlib"
       ],
-      "requiredPatterns": [
-        "lib/libLLVM*.dylib"
+      "requiredPatterns": [],
+      "hardlinkAliases": [
+        {
+          "path": "bin/clang++",
+          "target": "bin/clang"
+        },
+        {
+          "path": "bin/ld.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/ld64.lld",
+          "target": "bin/lld"
+        },
+        {
+          "path": "bin/llvm-ranlib",
+          "target": "bin/llvm-ar"
+        }
       ]
     }
   }

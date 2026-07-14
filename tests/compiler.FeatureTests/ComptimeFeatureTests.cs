@@ -3044,7 +3044,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 [Err] Failed
             }
 
-            finite law i64[min max] Run()
+            finite law u64[0 max] Run()
             {
                 if (comptime System.Compiler.EnumVariantIsOk<Outcome<i32[min max]>, 0>())
                 {

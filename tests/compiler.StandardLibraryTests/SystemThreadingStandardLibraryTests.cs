@@ -246,7 +246,11 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
             typeCheckModel.Lambdas,
             lambda => Assert.Equal("fnptr<fn i32()>", lambda.FunctionPointerType.DisplayName));
 
-        Assert.Equal(2, typeCheckModel.IndirectCalls.Count(indirectCall => indirectCall.FunctionPointerType.DisplayName == "fnptr<fn i32()>"));
+        Assert.Equal(
+            2,
+            typeCheckModel.IndirectCalls.Count(
+                indirectCall => indirectCall.FunctionPointerType.DisplayName == "fnptr<fn i32()>"
+                    && indirectCall.EnclosingFunctionName == "Run"));
         Assert.Contains(
             typeCheckModel.IndirectCalls,
             static indirectCall => indirectCall.FunctionPointerType.DisplayName.StartsWith("fnptr<fn i32(", StringComparison.Ordinal)

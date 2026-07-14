@@ -760,7 +760,8 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
     public async Task PackagedStdLibProcessHelpersWorkWithoutSource()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-package-");
-        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
+        var sharedPackage = await SharedStdlibPackage.GetAsync();
+        var packageDirectory = sharedPackage.DirectoryPath;
 
         var manifestPath = Path.Combine(packageDirectory, "libSystem.starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
@@ -796,13 +797,19 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 new CompilationInput(appSource, appPath),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    TargetInfo: sharedPackage.TargetInfo,
                     StopAfterPassId: "emit-llvm"));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             var stopBody = ExtractDefinedFunctionText(llvm, "define fastcc void @Stop(", "Expected packaged System.Process.Exit caller to lower as a defined function.");
+            var trapCallingConvention = sharedPackage.TargetInfo.Triple.StartsWith("aarch64", StringComparison.OrdinalIgnoreCase)
+                || sharedPackage.TargetInfo.Triple.StartsWith("arm64", StringComparison.OrdinalIgnoreCase)
+                    ? string.Empty
+                    : "coldcc ";
             Assert.Contains("call fastcc void @System_Process_Exit(", stopBody, StringComparison.Ordinal);
-            Assert.Contains("call coldcc void @__stark_unreachable_trap()", stopBody, StringComparison.Ordinal);
+            Assert.Contains($"call {trapCallingConvention}void @__stark_unreachable_trap()", stopBody, StringComparison.Ordinal);
+            Assert.Contains("  unreachable", stopBody, StringComparison.Ordinal);
             Assert.DoesNotContain("ret void", stopBody, StringComparison.Ordinal);
         }
         finally

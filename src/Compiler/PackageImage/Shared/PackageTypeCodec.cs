@@ -4,6 +4,11 @@ namespace Stark.Compiler;
 
 internal static partial class PackageImageBuilder
 {
+    internal static StarkPackageTypeReference BuildSourceTypeReference(StarkTypeSymbol type)
+    {
+        return BuildTypeReference(type, string.Empty, stripCurrentModulePrefix: false);
+    }
+
     private static StarkPackageTypeReference BuildPublishedAbiTypeReference(StarkTypeSymbol type, LoadedModuleDocument module)
     {
         return BuildPublishedAbiTypeReference(type, module.SyntaxModel.ModuleName, GetModuleLocalNamedTypes(module));
@@ -72,11 +77,16 @@ internal static partial class PackageImageBuilder
         string moduleName,
         TopLevelDeclarationModel declaration,
         string resolvedLocalName,
+        string abiSymbolName,
         bool isFfi)
     {
         if (isFfi)
         {
-            return declaration.Name;
+            // FFI symbols are an explicit part of the foreign ABI. In
+            // particular, [LinkName] may intentionally differ from the Stark
+            // declaration name, so publishing declaration.Name here loses the
+            // link contract when a consumer reloads the package image.
+            return abiSymbolName;
         }
 
         var qualifiedResolvedName = $"{moduleName}.{resolvedLocalName}";

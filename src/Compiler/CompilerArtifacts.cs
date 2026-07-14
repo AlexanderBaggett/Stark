@@ -828,7 +828,8 @@ public sealed record ResolvedModuleReference(
     bool IsExternal = false,
     bool IsRoot = false,
     string? ManifestPath = null,
-    string? LibraryPath = null);
+    string? LibraryPath = null,
+    bool IsSdkPackage = false);
 
 public sealed record ModuleImportEdge(
     string FromModule,
@@ -1422,7 +1423,8 @@ public sealed record LoadedPackageImageFacts(
     PackageImageLinkageFacts? Linkage = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
     StarkPackageTargetManifest? Target = null,
-    StarkPackageBuildProfileManifest? BuildProfile = null)
+    StarkPackageBuildProfileManifest? BuildProfile = null,
+    StarkPackageIdentityManifest? Identity = null)
 {
     public bool HasPublishedFunctionSemantics => FunctionSemantics.Count > 0;
 
@@ -2290,7 +2292,13 @@ public static class StarkTypeSymbols
 
     public static bool IsDirectBorrowViewType(StarkTypeSymbol type)
     {
-        return type.Kind is StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+        // These types already carry their complete borrowed view at runtime.
+        // In particular, `borrow dyn Trait` is the two-word { data, vtable }
+        // value itself, not a pointer to a separately stored fat pointer.
+        return type.Kind is StarkTypeKind.Slice
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode
+            or StarkTypeKind.DynTrait;
     }
 
     public static bool IsPointerBackedBorrowReturn(StarkTypeSymbol type)

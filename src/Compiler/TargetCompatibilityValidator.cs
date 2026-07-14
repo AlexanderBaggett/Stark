@@ -84,7 +84,13 @@ internal static class TargetCompatibilityValidator
             return;
         }
 
-        ComparePackageTarget(packageTarget, active, document.Reference.ModuleName, location, diagnostics);
+        ComparePackageTarget(
+            packageTarget,
+            active,
+            document.Reference.ModuleName,
+            location,
+            diagnostics,
+            document.Reference.IsSdkPackage);
     }
 
     private static void ValidateLoadedPackageBuildProfile(
@@ -94,6 +100,20 @@ internal static class TargetCompatibilityValidator
     {
         if (document.PackageImageFacts?.BuildProfile is not { } packageProfile)
         {
+            return;
+        }
+
+        if (!IsSupportedPackageBuildProfile(packageProfile.Name))
+        {
+            diagnostics.Add(new CompilerDiagnostic(
+                Code: "STK7325",
+                Severity: DiagnosticSeverity.Error,
+                Message: $"Package image module '{document.Reference.ModuleName}' was built for unsupported profile '{packageProfile.Name}'. Expected dev or release.",
+                Stage: Stage,
+                Location: new SourceLocation(
+                    document.Reference.ManifestPath ?? document.Reference.FilePath,
+                    1,
+                    1)));
             return;
         }
 
@@ -117,12 +137,12 @@ internal static class TargetCompatibilityValidator
             return;
         }
 
-        if (!string.Equals(packageProfile.Name, normalizedActiveProfile, StringComparison.Ordinal))
+        if (!IsPackageBuildProfileCompatible(packageProfile.Name, normalizedActiveProfile))
         {
             diagnostics.Add(new CompilerDiagnostic(
                 Code: "STK7325",
                 Severity: DiagnosticSeverity.Error,
-                Message: $"Package image module '{document.Reference.ModuleName}' was built for profile '{packageProfile.Name}', but the active build profile is '{normalizedActiveProfile}'. Rebuild the package for the active profile.",
+                Message: $"Package image module '{document.Reference.ModuleName}' was built for profile '{packageProfile.Name}', but the active build profile is '{normalizedActiveProfile}'. Release builds require release-built packages.",
                 Stage: Stage,
                 Location: new SourceLocation(
                     document.Reference.ManifestPath ?? document.Reference.FilePath,
@@ -130,6 +150,32 @@ internal static class TargetCompatibilityValidator
                     1)));
         }
     }
+
+    internal static bool IsPackageBuildProfileCompatible(
+        string packageBuildProfile,
+        string activeBuildProfile)
+    {
+        if (!IsSupportedPackageBuildProfile(packageBuildProfile))
+        {
+            return false;
+        }
+
+        var normalizedActiveProfile = NormalizeBuildProfile(activeBuildProfile);
+        if (normalizedActiveProfile is null)
+        {
+            return false;
+        }
+
+        // A release package is safe to reuse from either consumer profile.
+        // A dev package may contain development-only code generation choices,
+        // so it must never flow into a release build.
+        return string.Equals(packageBuildProfile, "release", StringComparison.Ordinal)
+            || string.Equals(normalizedActiveProfile, "dev", StringComparison.Ordinal);
+    }
+
+    private static bool IsSupportedPackageBuildProfile(string value) =>
+        string.Equals(value, "dev", StringComparison.Ordinal)
+        || string.Equals(value, "release", StringComparison.Ordinal);
 
     public static StarkPackageTargetManifest? CreatePackageTargetManifest(LlvmTargetInfo? targetInfo)
     {
@@ -254,6 +300,19 @@ internal static class TargetCompatibilityValidator
             return;
         }
 
+        if (!TargetFeatureFacts.TryNormalizeDistinct(
+                targetInfo.Features,
+                out _,
+                out var featureError))
+        {
+            diagnostics.Add(new CompilerDiagnostic(
+                Code: "STK7331",
+                Severity: DiagnosticSeverity.Error,
+                Message: $"Target feature switches are invalid: {featureError}.",
+                Stage: stage,
+                Location: location));
+        }
+
         if (!TryResolveArchitecture(targetInfo.Triple, out var architecture))
         {
             diagnostics.Add(new CompilerDiagnostic(
@@ -370,19 +429,27 @@ internal static class TargetCompatibilityValidator
         }
     }
 
-    private static void ComparePackageTarget(
+    internal static void ComparePackageTarget(
         StarkPackageTargetManifest packageTarget,
         StarkPackageTargetManifest active,
         string moduleName,
         SourceLocation location,
-        List<CompilerDiagnostic> diagnostics)
+        List<CompilerDiagnostic> diagnostics,
+        bool isSdkPackage = false)
     {
-        if (!StringEquals(packageTarget.Triple, active.Triple))
+        var triplesCompatible = isSdkPackage
+            ? SdkTargetCompatibility.ArePackageAndActiveTriplesCompatible(
+                packageTarget.Triple,
+                active.Triple)
+            : StringEquals(packageTarget.Triple, active.Triple);
+        if (!triplesCompatible)
         {
             diagnostics.Add(new CompilerDiagnostic(
                 Code: "STK7311",
                 Severity: DiagnosticSeverity.Error,
-                Message: $"Package image module '{moduleName}' was built for target triple '{packageTarget.Triple}', but the active target is '{active.Triple}'. Rebuild the package for the active target.",
+                Message: isSdkPackage
+                    ? $"SDK package image module '{moduleName}' was built for target triple '{packageTarget.Triple}', whose structured architecture/OS/ABI/deployment facts are incompatible with active target '{active.Triple}'. Install an SDK package compatible with the active target."
+                    : $"Package image module '{moduleName}' was built for target triple '{packageTarget.Triple}', but the active target is '{active.Triple}'. Rebuild the package for the active target.",
                 Stage: Stage,
                 Location: location));
         }
@@ -399,7 +466,8 @@ internal static class TargetCompatibilityValidator
         }
 
         if (!string.IsNullOrWhiteSpace(packageTarget.Cpu)
-            && !StringEquals(packageTarget.Cpu, active.Cpu))
+            && !StringEquals(packageTarget.Cpu, active.Cpu)
+            && !(isSdkPackage && IsGenericCpu(packageTarget.Cpu)))
         {
             diagnostics.Add(new CompilerDiagnostic(
                 Code: "STK7313",
@@ -409,15 +477,23 @@ internal static class TargetCompatibilityValidator
                 Location: location));
         }
 
-        if (packageTarget.Features is { Count: > 0 }
-            && !StringListsEqual(packageTarget.Features, active.Features))
+        if (packageTarget.Features is { Count: > 0 })
         {
-            diagnostics.Add(new CompilerDiagnostic(
-                Code: "STK7314",
-                Severity: DiagnosticSeverity.Error,
-                Message: $"Package image module '{moduleName}' was built with target features that do not match the active target.",
-                Stage: Stage,
-                Location: location));
+            var missingSdkFeatures = isSdkPackage
+                ? TargetFeatureFacts.GetMissingEnabledFeatures(packageTarget.Features, active.Features)
+                : Array.Empty<string>();
+            if ((!isSdkPackage && !StringListsEqual(packageTarget.Features, active.Features))
+                || missingSdkFeatures.Count != 0)
+            {
+                diagnostics.Add(new CompilerDiagnostic(
+                    Code: "STK7314",
+                    Severity: DiagnosticSeverity.Error,
+                    Message: isSdkPackage
+                        ? $"SDK package image module '{moduleName}' requires target features not enabled by the active target: {string.Join(", ", missingSdkFeatures)}."
+                        : $"Package image module '{moduleName}' was built with target features that do not match the active target.",
+                    Stage: Stage,
+                    Location: location));
+            }
         }
 
         if (!StringEquals(packageTarget.RelocationModel, active.RelocationModel))
@@ -727,6 +803,12 @@ internal static class TargetCompatibilityValidator
     private static bool StringEquals(string? left, string? right)
     {
         return string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGenericCpu(string? value)
+    {
+        var normalized = NormalizeOptional(value);
+        return normalized is null || string.Equals(normalized, "generic", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool DataLayoutsEqual(string? left, string? right)

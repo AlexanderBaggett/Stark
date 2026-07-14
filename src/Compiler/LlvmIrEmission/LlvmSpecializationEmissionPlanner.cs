@@ -581,6 +581,9 @@ internal static class LlvmSpecializationEmissionPlanner
                 : !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, namedTypes, enumLayouts)
                     ? AbiParameterKind.IndirectIn
                     : AbiParameterKind.Direct;
+            var ffiParameterTypes = hasFfiParameterClassification
+                ? ffiParameterClassification!.EffectiveLlvmParameterTypes
+                : null;
 
             parameters.Add(new AbiParameterSymbol(
                 SourceName: parameter.Name,
@@ -588,14 +591,14 @@ internal static class LlvmSpecializationEmissionPlanner
                 SourceType: parameter.Type,
                 LlvmType: kind == AbiParameterKind.Direct
                     ? hasFfiParameterClassification
-                        ? ffiParameterClassification!.LlvmType
+                        ? ffiParameterTypes![0]
                         : SyntheticLowerAbiValueType(parameter.Type, isFfi, forReturnValue: false)
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
                 Kind: kind,
                 RawPointerElementCountExpression: parameter.RawPointerElementCountExpression,
-                LlvmParameterTypes: kind == AbiParameterKind.Direct && hasFfiParameterClassification
-                    && ffiParameterClassification!.EffectiveLlvmParameterTypes.Count > 1
-                    ? ffiParameterClassification.EffectiveLlvmParameterTypes
+                LlvmParameterTypes: kind == AbiParameterKind.Direct
+                    && ffiParameterTypes is { Count: > 1 }
+                    ? ffiParameterTypes
                     : null));
         }
 

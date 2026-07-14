@@ -288,6 +288,71 @@ public struct JsonDocument
         return false;
     }
 
+    // Starts an allocation-free forward walk over the direct children of an
+    // array or object. Pair with TryNextSibling instead of repeated
+    // TryChildAt calls when every child is consumed: the pair visits the JSON
+    // subtree once rather than restarting a node scan for every ordinal.
+    public fn bool TryFirstChild(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] containerNode,
+        out u64[0 2 ** 63 - 1] child)
+    {
+        child = 0;
+        if (containerNode >= self.Nodes.Length)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(containerNode + 1);
+        for willexit (
+            stack mut u64[0 2 ** 63 - 1] index = parentPlusOne;
+            index < self.Nodes.Length;
+            index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne == parentPlusOne)
+            {
+                child = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public fn bool TryNextSibling(
+        borrow JsonDocument self,
+        u64[0 2 ** 63 - 1] containerNode,
+        u64[0 2 ** 63 - 1] previousChild,
+        out u64[0 2 ** 63 - 1] child)
+    {
+        child = 0;
+        if (containerNode >= self.Nodes.Length
+            || previousChild >= self.Nodes.Length)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(containerNode + 1);
+        if (self.Nodes[0, self.Nodes.Length][previousChild].ParentPlusOne != parentPlusOne)
+        {
+            return false;
+        }
+
+        for willexit (
+            stack mut u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(previousChild + 1);
+            index < self.Nodes.Length;
+            index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne == parentPlusOne)
+            {
+                child = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // Convenience: member lookup that requires a specific kind.
     public finite bool TryFindMemberOfKind(
         borrow JsonDocument self,

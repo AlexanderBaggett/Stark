@@ -52,9 +52,10 @@ The default stage names for self-hosting are:
 | `stage1` | Stark compiler built by Stage0. |
 | `stage2` | Stark compiler built by Stage1. |
 
-After cutover, ordinary non-bootstrap builds may use the active compiler stage
-selected by the driver. The layout remains stage-aware so tests, local bootstrap
-runs, and future compiler development can still isolate outputs.
+After self-hosted release adoption, ordinary non-bootstrap builds may use the
+active compiler stage selected by the driver. The layout remains stage-aware
+so tests, local bootstrap runs, and future compiler development can still
+isolate outputs, including explicit Stage0 maintenance builds.
 
 ## 2. Build Root
 

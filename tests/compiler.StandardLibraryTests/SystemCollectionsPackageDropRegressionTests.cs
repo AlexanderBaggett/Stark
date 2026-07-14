@@ -7,7 +7,8 @@ public sealed class SystemCollectionsPackageDropRegressionTests
     [Fact]
     public async Task ManifestBackedGenericFieldDropResolvesListClearFromStdlibPackage()
     {
-        var stdlibDirectory = await SharedStdlibPackage.GetDirectoryAsync();
+        var sharedPackage = await SharedStdlibPackage.GetAsync();
+        var stdlibDirectory = sharedPackage.DirectoryPath;
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-list-field-drop-");
         var facadeManifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
         var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
@@ -33,6 +34,7 @@ public sealed class SystemCollectionsPackageDropRegressionTests
                     """,
                     facadePath),
                 new CompilerOptions(
+                    TargetInfo: sharedPackage.TargetInfo,
                     ModuleResolver: new FileSystemModuleResolver([tempDirectory.FullName, stdlibDirectory])));
 
             Assert.True(facadeResult.Succeeded, string.Join(", ", facadeResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -64,6 +66,7 @@ public sealed class SystemCollectionsPackageDropRegressionTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     StopAfterPassId: "lower-mir",
+                    TargetInfo: sharedPackage.TargetInfo,
                     ModuleResolver: new FileSystemModuleResolver([tempDirectory.FullName, stdlibDirectory])));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

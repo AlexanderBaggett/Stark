@@ -281,6 +281,8 @@ public sealed class CompilerCliTests
         Assert.Contains("--toolchain-metrics <path>", text);
         Assert.Contains("--package-image-output <path>", text);
         Assert.Contains("--package-profile <dev|release>", text);
+        Assert.Contains("--format <text|json>   Select doctor/inspect-pkg output format", text);
+        Assert.Contains("--strict               Make doctor exit nonzero", text);
         Assert.Contains("--no-stark-path", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
@@ -294,6 +296,7 @@ public sealed class CompilerCliTests
         Assert.Contains("compiler app.stark", text);
         Assert.Contains("compiler app.stark --emit-llvm -o app.ll", text);
         Assert.Contains("compiler doctor", text);
+        Assert.Contains("compiler doctor --strict --format json", text);
         Assert.Contains("compiler app.stark --diagnostic-format json", text);
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
@@ -343,6 +346,46 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task DoctorDoesNotRequireLibLlvmForTheStage0TextualBackend()
+    {
+        var originalLlvmLibrary = Environment.GetEnvironmentVariable("STARK_LLVM_LIB");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-doctor-missing-libllvm-");
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "STARK_LLVM_LIB",
+                Path.Combine(tempDirectory.FullName, "missing-libLLVM.dylib"));
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "doctor",
+                    "--target",
+                    "x86_64-unknown-linux-gnu",
+                    "--target-data-layout",
+                    "e-m:e-p270:32:32-p271:32:32-p272:64:64-p:64:64-i64:64-f80:128-n8:16:32:64-S128"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.Contains(
+                "note: libLLVM: libLLVM is not bundled, but the active Stage0 textual LLVM backend does not require it",
+                stdout.ToString(),
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("warning: libLLVM:", stdout.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_LLVM_LIB", originalLlvmLibrary);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public void NativeToolchainResolverPrefersCliToolchainDirectoryBeforeEnvironment()
     {
         var originalToolchainDirectory = Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR");
@@ -389,6 +432,67 @@ public sealed class CompilerCliTests
         }
         finally
         {
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public void NativeToolchainResolverFindsBundledToolsFromSelectedSdkRoot()
+    {
+        var originalToolchainDirectory = Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-toolchain-resolver-sdk-");
+
+        try
+        {
+            var sdkRoot = Path.Combine(tempDirectory.FullName, "sdk");
+            var bundledToolchain = CreateFakeToolchain(
+                Path.Combine(sdkRoot, "toolchain"),
+                "llvm-22.1.8");
+            Directory.CreateDirectory(Path.Combine(sdkRoot, "bin"));
+            File.WriteAllText(Path.Combine(sdkRoot, "sdk.json"), "{}");
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", null);
+
+            var resolved = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+                SdkRootDirectory: sdkRoot));
+
+            var canonicalToolchain = SdkRootResolver.CanonicalizeRootPath(bundledToolchain);
+            Assert.Equal(NativeToolchainResolutionSource.Bundled, resolved.Clang.Source);
+            Assert.Equal(Path.Combine(canonicalToolchain, "bin", ToolFileName("clang")), resolved.Clang.Path);
+            Assert.Equal(NativeToolchainResolutionSource.Bundled, resolved.LlvmLibrary.Source);
+            Assert.Equal(Path.Combine(canonicalToolchain, "lib", LlvmLibraryFileName()), resolved.LlvmLibrary.Path);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public void NativeToolchainResolverKeepsMacOsSdkLocatorAvailableDuringPathIsolation()
+    {
+        if (!OperatingSystem.IsMacOS() || !File.Exists("/usr/bin/xcrun"))
+        {
+            return;
+        }
+
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        var originalToolchainDirectory = Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-toolchain-isolated-path-");
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", tempDirectory.FullName);
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", null);
+
+            var resolved = NativeToolchain.Resolve();
+
+            Assert.Equal("/usr/bin/xcrun", resolved.Xcrun.Path);
+            Assert.Equal(NativeToolchainResolutionSource.Path, resolved.Xcrun.Source);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
             Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
             Cleanup(tempDirectory);
         }
@@ -482,7 +586,9 @@ public sealed class CompilerCliTests
                 [
                     "doctor",
                     "--target",
-                    "x86_64-unknown-linux-gnu"
+                    "x86_64-unknown-linux-gnu",
+                    "--native-pkg-config",
+                    "raylib"
                 ],
                 new StringReader(string.Empty),
                 stdout,
@@ -493,7 +599,7 @@ public sealed class CompilerCliTests
 
             var text = stdout.ToString();
             Assert.Contains("warning: pkg-config: pkg-config is unavailable", text, StringComparison.Ordinal);
-            Assert.Contains("native/vendor packages that declare pkg-config metadata", text, StringComparison.Ordinal);
+            Assert.Contains("this invocation declares pkg-config packages: raylib", text, StringComparison.Ordinal);
             Assert.Contains("status: warnings", text, StringComparison.Ordinal);
         }
         finally
@@ -1277,6 +1383,11 @@ public sealed class CompilerCliTests
                 struct Box
                 {
                     i32[min max] Value;
+
+                    drop
+                    {
+                        ;
+                    }
                 }
 
                 fn void Consume(Box value)
@@ -1301,8 +1412,8 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("Move error", text, StringComparison.Ordinal);
-        Assert.Contains("19 |     Consume(box);", text, StringComparison.Ordinal);
-        Assert.Contains("20 |     return box.Value;", text, StringComparison.Ordinal);
+        Assert.Contains("24 |     Consume(box);", text, StringComparison.Ordinal);
+        Assert.Contains("25 |     return box.Value;", text, StringComparison.Ordinal);
         Assert.Contains("note [ownership-validate]", text, StringComparison.Ordinal);
         Assert.Contains("was moved here", text, StringComparison.Ordinal);
     }
@@ -1322,6 +1433,11 @@ public sealed class CompilerCliTests
                 struct Box
                 {
                     i32[min max] Value;
+
+                    drop
+                    {
+                        ;
+                    }
                 }
 
                 fn void Consume(Box value)
@@ -1353,7 +1469,7 @@ public sealed class CompilerCliTests
         Assert.Equal(
             1,
             text.Split(
-                "note [ownership-validate] at 19:13: Value 'box' was moved here.",
+                "note [ownership-validate] at 24:13: Value 'box' was moved here.",
                 StringSplitOptions.None).Length - 1);
         Assert.Contains("Failure summary: 1 error, 0 warnings, 1 info.", text, StringComparison.Ordinal);
     }
@@ -2169,7 +2285,12 @@ public sealed class CompilerCliTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [rootPath, "--emit-lib", "-o", outputPath, "--archiver", archiverPath],
+                [
+                    rootPath,
+                    "--emit-lib",
+                    "-o", outputPath,
+                    "--archiver", archiverPath
+                ],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -2231,7 +2352,12 @@ public sealed class CompilerCliTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [rootPath, "--emit-lib", "-o", outputPath, "--archiver", archiverPath],
+                [
+                    rootPath,
+                    "--emit-lib",
+                    "-o", outputPath,
+                    "--archiver", archiverPath
+                ],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -3454,6 +3580,83 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task CreateStaticLibraryReplacesExistingArchiveOnlyAfterArchiverSucceeds()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-atomic-archive-");
+        var objectPath = Path.Combine(tempDirectory.FullName, "Facade.o");
+        var outputPath = Path.Combine(tempDirectory.FullName, "libFacade.a");
+        var failingArchiverPath = Path.Combine(tempDirectory.FullName, "failing-archiver.sh");
+        var successfulArchiverPath = Path.Combine(tempDirectory.FullName, "successful-archiver.sh");
+
+        try
+        {
+            await File.WriteAllTextAsync(objectPath, "object");
+            await File.WriteAllTextAsync(outputPath, "known-good archive");
+            await File.WriteAllTextAsync(
+                failingArchiverPath,
+                """
+                #!/usr/bin/env bash
+                set -euo pipefail
+                out="${2:-}"
+                printf '%s' 'partial replacement' > "$out"
+                printf '%s\n' 'archiver failed after writing staging output' >&2
+                exit 1
+                """);
+            await File.WriteAllTextAsync(
+                successfulArchiverPath,
+                """
+                #!/usr/bin/env bash
+                set -euo pipefail
+                out="${2:-}"
+                printf '%s' 'complete replacement' > "$out"
+                """);
+            System.Diagnostics.Process.Start("chmod", $"+x {failingArchiverPath}")!.WaitForExit();
+            System.Diagnostics.Process.Start("chmod", $"+x {successfulArchiverPath}")!.WaitForExit();
+
+            var failed = NativeToolchain.CreateStaticLibrary(
+                [objectPath],
+                outputPath,
+                failingArchiverPath);
+
+            Assert.False(failed.Succeeded);
+            Assert.Equal(Path.GetFullPath(outputPath), failed.OutputPath);
+            Assert.Contains("archiver failed", failed.StandardError, StringComparison.Ordinal);
+            Assert.Equal("known-good archive", await File.ReadAllTextAsync(outputPath));
+            Assert.Empty(Directory.EnumerateFiles(
+                tempDirectory.FullName,
+                $".*.{Path.GetFileName(outputPath)}"));
+
+            var succeeded = NativeToolchain.CreateStaticLibrary(
+                [objectPath],
+                outputPath,
+                successfulArchiverPath);
+
+            Assert.True(succeeded.Succeeded);
+            Assert.Equal(Path.GetFullPath(outputPath), succeeded.OutputPath);
+            Assert.Equal("complete replacement", await File.ReadAllTextAsync(outputPath));
+            Assert.Empty(Directory.EnumerateFiles(
+                tempDirectory.FullName,
+                $".*.{Path.GetFileName(outputPath)}"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitLibraryModeSupportsCustomArchiverTool()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
@@ -3495,8 +3698,20 @@ public sealed class CompilerCliTests
             Assert.True(File.Exists(outputPath));
 
             var archiverLog = await File.ReadAllTextAsync(archiverLogPath);
-            Assert.Contains("rcs", archiverLog);
-            Assert.Contains(Path.GetFullPath(outputPath), archiverLog);
+            var archiverArguments = archiverLog.Split(
+                '\n',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            Assert.True(archiverArguments.Length >= 3);
+            Assert.Equal("rcs", archiverArguments[0]);
+
+            // The archiver must populate a same-directory staging archive so a
+            // successful invocation can replace the requested output atomically.
+            var stagingArchivePath = archiverArguments[1];
+            Assert.NotEqual(Path.GetFullPath(outputPath), stagingArchivePath);
+            Assert.Equal(tempDirectory.FullName, Path.GetDirectoryName(stagingArchivePath));
+            Assert.Matches(
+                $@"^\.[0-9a-f]{{32}}\.{System.Text.RegularExpressions.Regex.Escape(Path.GetFileName(outputPath))}$",
+                Path.GetFileName(stagingArchivePath));
         }
         finally
         {
@@ -3560,15 +3775,23 @@ public sealed class CompilerCliTests
             set -euo pipefail
             printf '%s\n' "$@" > "{{logPath}}"
             out=""
+            emit_llvm=false
             prev=""
             for arg in "$@"; do
+              if [ "$arg" = "-emit-llvm" ]; then
+                emit_llvm=true
+              fi
               if [ "$prev" = "-o" ]; then
                 out="$arg"
                 break
               fi
               prev="$arg"
             done
-            if [ -n "$out" ]; then
+            if [ "$emit_llvm" = true ] && [ "$out" = "-" ]; then
+              printf '%s\n' 'target datalayout = "e-p:64:64"' 'target triple = "x86_64-unknown-linux-gnu"'
+              exit 0
+            fi
+            if [ -n "$out" ] && [ "$out" != "-" ]; then
               : > "$out"
             fi
             """);
@@ -3586,15 +3809,23 @@ public sealed class CompilerCliTests
             set -euo pipefail
             printf '%s\n' "$*" >> "{{logPath}}"
             out=""
+            emit_llvm=false
             prev=""
             for arg in "$@"; do
+              if [ "$arg" = "-emit-llvm" ]; then
+                emit_llvm=true
+              fi
               if [ "$prev" = "-o" ]; then
                 out="$arg"
                 break
               fi
               prev="$arg"
             done
-            if [ -n "$out" ]; then
+            if [ "$emit_llvm" = true ] && [ "$out" = "-" ]; then
+              printf '%s\n' 'target datalayout = "e-p:64:64"' 'target triple = "x86_64-unknown-linux-gnu"'
+              exit 0
+            fi
+            if [ -n "$out" ] && [ "$out" != "-" ]; then
               : > "$out"
             fi
             """);

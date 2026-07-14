@@ -1531,6 +1531,11 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 struct Box
                 {
                     i32[min max] Value;
+
+                    drop
+                    {
+                        ;
+                    }
                 }
 
                 inline finite law i32[min max] AddOne(i32[min max] value)

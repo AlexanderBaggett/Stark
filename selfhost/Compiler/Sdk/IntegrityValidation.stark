@@ -1,0 +1,851 @@
+import Compiler.Sdk.Diagnostics
+import Compiler.Sdk.ManifestModel
+import System.Cryptography.Sha256
+import System.FileSystem
+import System.IO
+import System.IO.Path
+import System.Memory
+import System.Text
+module Compiler.Sdk.IntegrityValidation
+
+internal finite law bool SdkPathUnitIsWhitespace(ascii unit)
+{
+    return unit == " " || unit == "\t" || unit == "\r" || unit == "\n";
+}
+
+internal finite law bool SdkPathUnitIsAsciiLetter(ascii unit)
+{
+    return unit == "a" || unit == "b" || unit == "c" || unit == "d"
+        || unit == "e" || unit == "f" || unit == "g" || unit == "h"
+        || unit == "i" || unit == "j" || unit == "k" || unit == "l"
+        || unit == "m" || unit == "n" || unit == "o" || unit == "p"
+        || unit == "q" || unit == "r" || unit == "s" || unit == "t"
+        || unit == "u" || unit == "v" || unit == "w" || unit == "x"
+        || unit == "y" || unit == "z" || unit == "A" || unit == "B"
+        || unit == "C" || unit == "D" || unit == "E" || unit == "F"
+        || unit == "G" || unit == "H" || unit == "I" || unit == "J"
+        || unit == "K" || unit == "L" || unit == "M" || unit == "N"
+        || unit == "O" || unit == "P" || unit == "Q" || unit == "R"
+        || unit == "S" || unit == "T" || unit == "U" || unit == "V"
+        || unit == "W" || unit == "X" || unit == "Y" || unit == "Z";
+}
+
+internal fn MemoryStatus SdkAppendPathDiagnostic(
+    mut borrow SdkDiagnosticList diagnostics,
+    SdkDiagnosticCode code,
+    ascii message,
+    ascii relativePath)
+{
+    return diagnostics.Append(code, message, relativePath);
+}
+
+internal fn MemoryStatus SdkRejectLinkedPathComponents(
+    ascii canonicalRoot,
+    ascii relativePath,
+    SdkDiagnosticCode unsafeCode,
+    mut borrow SdkDiagnosticList diagnostics,
+    out bool valid)
+    where overlap(canonicalRoot, relativePath),
+          overlap(relativePath, diagnostics)
+{
+    valid = true;
+    stack mut OwnedAscii current = new();
+    switch (current.AppendAscii(canonicalRoot))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    stack i64[min max] signedLength = System.Text.AsciiLength(relativePath);
+    if (signedLength < 0)
+    {
+        valid = false;
+        return SdkAppendPathDiagnostic(
+            diagnostics,
+            unsafeCode,
+            "SDK path could not be inspected safely.",
+            relativePath);
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+    stack mut u64[0 2 ** 63 - 1] segmentStart = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index <= length; index += 1)
+    {
+        if (index < length && relativePath[index, 1] != "/")
+        {
+            continue;
+        }
+
+        stack ascii segment = relativePath[segmentStart, index - segmentStart];
+        switch (System.IO.Path.TryJoin(current, current.View(), segment))
+        {
+            case MemoryStatus.Err(var error):
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+
+        switch (System.FileSystem.IsSymlink(current.View()))
+        {
+            case System.IO.IOResult<bool>.Ok(var linked):
+                if (linked)
+                {
+                    valid = false;
+                    return SdkAppendPathDiagnostic(
+                        diagnostics,
+                        unsafeCode,
+                        "SDK path traverses a symbolic link or reparse point.",
+                        relativePath);
+                }
+            case System.IO.IOResult<bool>.Err(var ioError):
+                if (ioError != System.IO.IOError.NotFound
+                    && ioError != System.IO.IOError.NotADirectory)
+                {
+                    valid = false;
+                    return SdkAppendPathDiagnostic(
+                        diagnostics,
+                        unsafeCode,
+                        "SDK path component could not be inspected safely.",
+                        relativePath);
+                }
+        }
+
+        segmentStart = index + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus SdkValidateRelativePathFromCanonicalRoot(
+    ascii canonicalRoot,
+    ascii relativePath,
+    SdkDiagnosticCode unsafeCode,
+    mut borrow OwnedAscii resolvedPath,
+    mut borrow SdkDiagnosticList diagnostics,
+    out bool valid)
+    where overlap(canonicalRoot, relativePath),
+          overlap(relativePath, diagnostics)
+{
+    valid = false;
+    stack i64[min max] signedLength = System.Text.AsciiLength(relativePath);
+    if (signedLength <= 0)
+    {
+        return SdkAppendPathDiagnostic(
+            diagnostics,
+            SdkDiagnosticCode.PathEmpty,
+            "SDK path must not be empty.",
+            relativePath);
+    }
+
+    stack u64[1 2 ** 63 - 1] length = (u64[1 2 ** 63 - 1])signedLength;
+    if (SdkPathUnitIsWhitespace(relativePath[0, 1])
+        || SdkPathUnitIsWhitespace(relativePath[length - 1, 1]))
+    {
+        return SdkAppendPathDiagnostic(
+            diagnostics,
+            SdkDiagnosticCode.PathWhitespace,
+            "SDK path must not contain leading or trailing whitespace.",
+            relativePath);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        if (relativePath[index, 1] == "\\")
+        {
+            return SdkAppendPathDiagnostic(
+                diagnostics,
+                SdkDiagnosticCode.PathSeparator,
+                "SDK path must use forward slashes.",
+                relativePath);
+        }
+    }
+
+    if (System.IO.Path.IsAbsolute(relativePath)
+        || (length >= 2
+            && SdkPathUnitIsAsciiLetter(relativePath[0, 1])
+            && relativePath[1, 1] == ":"))
+    {
+        return SdkAppendPathDiagnostic(
+            diagnostics,
+            SdkDiagnosticCode.PathAbsolute,
+            "SDK path must be relative to the SDK root.",
+            relativePath);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] segmentStart = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index <= length; index += 1)
+    {
+        if (index < length && relativePath[index, 1] != "/")
+        {
+            continue;
+        }
+
+        stack u64[0 2 ** 63 - 1] segmentLength = index - segmentStart;
+        if (segmentLength == 0
+            || (segmentLength == 1 && relativePath[segmentStart, 1] == ".")
+            || (segmentLength == 2 && relativePath[segmentStart, 2] == ".."))
+        {
+            return SdkAppendPathDiagnostic(
+                diagnostics,
+                SdkDiagnosticCode.PathTraversal,
+                "SDK path contains an empty, current-directory, or parent-directory segment.",
+                relativePath);
+        }
+
+        segmentStart = index + 1;
+    }
+
+    stack mut OwnedAscii joined = new();
+    switch (System.IO.Path.TryJoin(joined, canonicalRoot, relativePath))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    switch (System.IO.Path.TryNormalizeLexically(resolvedPath, joined.View()))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    stack ascii resolved = resolvedPath.View();
+    stack i64[min max] signedRootLength = System.Text.AsciiLength(canonicalRoot);
+    stack i64[min max] signedResolvedLength = System.Text.AsciiLength(resolved);
+    if (signedRootLength <= 0
+        || signedResolvedLength <= signedRootLength
+        || !System.Text.StartsWith(resolved, canonicalRoot))
+    {
+        return SdkAppendPathDiagnostic(
+            diagnostics,
+            SdkDiagnosticCode.PathResolution,
+            "SDK path resolves outside the SDK root.",
+            relativePath);
+    }
+
+    stack u64[1 2 ** 63 - 1] rootLength = (u64[1 2 ** 63 - 1])signedRootLength;
+    if (!System.Text.EndsWith(canonicalRoot, System.IO.Path.DirectorySeparator())
+        && resolved[rootLength, 1] != System.IO.Path.DirectorySeparator())
+    {
+        return SdkAppendPathDiagnostic(
+            diagnostics,
+            SdkDiagnosticCode.PathResolution,
+            "SDK path resolves outside the SDK root.",
+            relativePath);
+    }
+
+    switch (SdkRejectLinkedPathComponents(
+        canonicalRoot,
+        relativePath,
+        unsafeCode,
+        diagnostics,
+        valid))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Validates an SDK-relative path lexically, proves root containment, and
+// rejects every existing child symlink/reparse component. The resolved path is
+// only usable when valid is true.
+public fn MemoryStatus ValidateSdkRelativePath(
+    ascii sdkRoot,
+    ascii relativePath,
+    mut borrow OwnedAscii resolvedPath,
+    mut borrow SdkDiagnosticList diagnostics,
+    out bool valid)
+{
+    stack mut OwnedAscii canonicalRoot = new();
+    switch (System.IO.Path.TryFullPath(canonicalRoot, sdkRoot))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    return SdkValidateRelativePathFromCanonicalRoot(
+        canonicalRoot.View(),
+        relativePath,
+        SdkDiagnosticCode.PathResolution,
+        resolvedPath,
+        diagnostics,
+        valid);
+}
+
+internal fn MemoryStatus SdkResolvePayloadPathKind(
+    ascii canonicalRoot,
+    ascii relativePath,
+    bool requireDirectory,
+    SdkDiagnosticCode missingCode,
+    mut borrow OwnedAscii resolvedPath,
+    mut borrow SdkDiagnosticList diagnostics,
+    out bool exists)
+    where overlap(canonicalRoot, relativePath),
+          overlap(relativePath, diagnostics)
+{
+    exists = false;
+    stack mut bool valid = false;
+    switch (SdkValidateRelativePathFromCanonicalRoot(
+        canonicalRoot,
+        relativePath,
+        SdkDiagnosticCode.PathUnsafe,
+        resolvedPath,
+        diagnostics,
+        valid))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    if (!valid)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    if (requireDirectory)
+    {
+        switch (System.FileSystem.IsDirectory(resolvedPath.View()))
+        {
+            case System.IO.IOResult<bool>.Ok(var present):
+                if (present)
+                {
+                    exists = true;
+                    return MemoryStatus.Ok;
+                }
+            case System.IO.IOResult<bool>.Err(var ioError):
+        }
+    }
+    else
+    {
+        switch (System.FileSystem.IsFile(resolvedPath.View()))
+        {
+            case System.IO.IOResult<bool>.Ok(var present):
+                if (present)
+                {
+                    exists = true;
+                    return MemoryStatus.Ok;
+                }
+            case System.IO.IOResult<bool>.Err(var ioError):
+        }
+    }
+
+    return diagnostics.Append(
+        missingCode,
+        requireDirectory
+            ? "SDK payload directory is missing."
+            : "SDK payload file is missing.",
+        relativePath);
+}
+
+internal fn MemoryStatus SdkValidatePayloadPathKind(
+    ascii canonicalRoot,
+    ascii relativePath,
+    bool requireDirectory,
+    SdkDiagnosticCode missingCode,
+    mut borrow SdkDiagnosticList diagnostics)
+    where overlap(canonicalRoot, relativePath),
+          overlap(relativePath, diagnostics)
+{
+    stack mut OwnedAscii resolvedPath = new();
+    stack mut bool exists = false;
+    return SdkResolvePayloadPathKind(
+        canonicalRoot,
+        relativePath,
+        requireDirectory,
+        missingCode,
+        resolvedPath,
+        diagnostics,
+        exists);
+}
+
+public finite law bool SdkSha256TextIsCanonical(ascii value)
+{
+    if (System.Text.AsciiLength(value) != 64)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u8[0 64] index = 0; index < 64; index += 1)
+    {
+        stack ascii unit = value[index, 1];
+        if (unit != "0" && unit != "1" && unit != "2" && unit != "3"
+            && unit != "4" && unit != "5" && unit != "6" && unit != "7"
+            && unit != "8" && unit != "9" && unit != "a" && unit != "b"
+            && unit != "c" && unit != "d" && unit != "e" && unit != "f")
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Retained for callers that already have an observed hexadecimal digest. File
+// payload validation below compares the streamed binary digest directly and
+// does not allocate an observed text copy.
+public fn MemoryStatus ValidateSdkObservedSha256(
+    ascii expected,
+    ascii observed,
+    ascii relativePath,
+    SdkDiagnosticCode mismatchCode,
+    mut borrow SdkDiagnosticList diagnostics,
+    out bool matches)
+    where overlap_all(expected),
+          overlap_all(observed),
+          overlap_all(relativePath)
+{
+    matches = SdkSha256TextIsCanonical(expected)
+        && SdkSha256TextIsCanonical(observed)
+        && System.Text.Equals(expected, observed);
+    if (matches)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    return diagnostics.Append(
+        mismatchCode,
+        "SDK payload SHA-256 does not match its manifest declaration.",
+        relativePath);
+}
+
+internal fn MemoryStatus SdkValidateDeclaredSha256(
+    ascii expected,
+    ascii relativePath,
+    SdkDiagnosticCode mismatchCode,
+    mut borrow SdkDiagnosticList diagnostics)
+    where overlap_all(expected),
+          overlap_all(relativePath)
+{
+    if (SdkSha256TextIsCanonical(expected))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    return diagnostics.Append(
+        mismatchCode,
+        "SDK payload SHA-256 declaration must contain 64 lowercase hexadecimal digits.",
+        relativePath);
+}
+
+internal fn MemoryStatus SdkValidateResolvedFileSha256(
+    mut borrow OwnedAscii resolvedPath,
+    ascii relativePath,
+    ascii expected,
+    SdkDiagnosticCode mismatchCode,
+    mut borrow SdkDiagnosticList diagnostics)
+    where overlap_all(relativePath),
+          overlap_all(expected)
+{
+    if (!SdkSha256TextIsCanonical(expected))
+    {
+        return SdkValidateDeclaredSha256(
+            expected,
+            relativePath,
+            mismatchCode,
+            diagnostics);
+    }
+
+    switch (System.Cryptography.Sha256.HashSha256File(resolvedPath.View()))
+    {
+        case System.Cryptography.Sha256.Sha256FileResult.Err(var hashError):
+            return diagnostics.Append(
+                mismatchCode,
+                "SDK payload SHA-256 could not be calculated.",
+                relativePath);
+        case System.Cryptography.Sha256.Sha256FileResult.Ok(var digest):
+            if (System.Cryptography.Sha256.Sha256DigestMatchesLowerHex(digest, expected))
+            {
+                return MemoryStatus.Ok;
+            }
+            return diagnostics.Append(
+                mismatchCode,
+                "SDK payload SHA-256 does not match its manifest declaration.",
+                relativePath);
+    }
+}
+
+internal fn MemoryStatus SdkValidatePayloadFileWithSha256(
+    ascii canonicalRoot,
+    ascii relativePath,
+    SdkDiagnosticCode missingCode,
+    bool hasExpected,
+    ascii expected,
+    SdkDiagnosticCode mismatchCode,
+    mut borrow SdkDiagnosticList diagnostics)
+    where overlap_all(relativePath),
+          overlap_all(expected)
+{
+    stack mut OwnedAscii resolvedPath = new();
+    stack mut bool exists = false;
+    switch (SdkResolvePayloadPathKind(
+        canonicalRoot,
+        relativePath,
+        false,
+        missingCode,
+        resolvedPath,
+        diagnostics,
+        exists))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    if (!exists || !hasExpected)
+    {
+        return MemoryStatus.Ok;
+    }
+    return SdkValidateResolvedFileSha256(
+        resolvedPath,
+        relativePath,
+        expected,
+        mismatchCode,
+        diagnostics);
+}
+
+// Native existence diagnostics have already been emitted by their exact path
+// kind. Resolve again only for checksum-bearing files, skip absent files, and
+// stream bytes without producing a duplicate missing-file diagnostic.
+internal fn MemoryStatus SdkValidateExistingPayloadFileSha256(
+    ascii canonicalRoot,
+    ascii relativePath,
+    ascii expected,
+    SdkDiagnosticCode mismatchCode,
+    mut borrow SdkDiagnosticList diagnostics)
+    where overlap_all(relativePath),
+          overlap_all(expected)
+{
+    stack mut OwnedAscii resolvedPath = new();
+    stack mut bool valid = false;
+    switch (SdkValidateRelativePathFromCanonicalRoot(
+        canonicalRoot,
+        relativePath,
+        SdkDiagnosticCode.PathUnsafe,
+        resolvedPath,
+        diagnostics,
+        valid))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    if (!valid)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    switch (System.FileSystem.IsFile(resolvedPath.View()))
+    {
+        case System.IO.IOResult<bool>.Err(var ioError):
+            return MemoryStatus.Ok;
+        case System.IO.IOResult<bool>.Ok(var exists):
+            if (!exists)
+            {
+                return MemoryStatus.Ok;
+            }
+    }
+
+    return SdkValidateResolvedFileSha256(
+        resolvedPath,
+        relativePath,
+        expected,
+        mismatchCode,
+        diagnostics);
+}
+
+internal fn MemoryStatus SdkValidatePackagePayloadRange(
+    ascii sdkRoot,
+    mut borrow SdkManifest manifest,
+    u64[0 2 ** 63 - 1] startPackageIndex,
+    u64[0 2 ** 63 - 1] endPackageIndex,
+    mut borrow SdkDiagnosticList diagnostics)
+{
+    stack mut OwnedAscii canonicalRoot = new();
+    switch (System.IO.Path.TryFullPath(canonicalRoot, sdkRoot))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] packageIndex = startPackageIndex;
+        packageIndex < endPackageIndex;
+        packageIndex += 1)
+    {
+        stack ascii imagePath = manifest.PackageAt(packageIndex).ImagePath();
+        if (manifest.PackageAt(packageIndex).HasImageSha256())
+        {
+            switch (SdkValidatePayloadFileWithSha256(
+                canonicalRoot.View(),
+                imagePath,
+                SdkDiagnosticCode.PackageImageMissing,
+                true,
+                manifest.PackageAt(packageIndex).ImageSha256(),
+                SdkDiagnosticCode.PackageChecksumMismatch,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (SdkValidatePayloadFileWithSha256(
+                canonicalRoot.View(),
+                imagePath,
+                SdkDiagnosticCode.PackageImageMissing,
+                false,
+                "",
+                SdkDiagnosticCode.PackageChecksumMismatch,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+
+        if (manifest.PackageAt(packageIndex).HasLibraryPath())
+        {
+            stack ascii libraryPath = manifest.PackageAt(packageIndex).LibraryPath();
+            if (manifest.PackageAt(packageIndex).HasLibrarySha256())
+            {
+                switch (SdkValidatePayloadFileWithSha256(
+                    canonicalRoot.View(),
+                    libraryPath,
+                    SdkDiagnosticCode.PackageLibraryMissing,
+                    true,
+                    manifest.PackageAt(packageIndex).LibrarySha256(),
+                    SdkDiagnosticCode.PackageChecksumMismatch,
+                    diagnostics))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                switch (SdkValidatePayloadFileWithSha256(
+                    canonicalRoot.View(),
+                    libraryPath,
+                    SdkDiagnosticCode.PackageLibraryMissing,
+                    false,
+                    "",
+                    SdkDiagnosticCode.PackageChecksumMismatch,
+                    diagnostics))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+            }
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] artifactIndex = 0;
+            artifactIndex < manifest.PackageAt(packageIndex).Native().ArtifactCount();
+            artifactIndex += 1)
+        {
+            switch (SdkValidatePayloadPathKind(
+                canonicalRoot.View(),
+                manifest.PackageAt(packageIndex).Native().ArtifactAt(artifactIndex),
+                false,
+                SdkDiagnosticCode.NativeArtifactMissing,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] includeIndex = 0;
+            includeIndex < manifest.PackageAt(packageIndex).Native().IncludeDirectoryCount();
+            includeIndex += 1)
+        {
+            switch (SdkValidatePayloadPathKind(
+                canonicalRoot.View(),
+                manifest.PackageAt(packageIndex).Native().IncludeDirectoryAt(includeIndex),
+                true,
+                SdkDiagnosticCode.NativeIncludeDirectoryMissing,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] directoryIndex = 0;
+            directoryIndex < manifest.PackageAt(packageIndex).Native().LibraryDirectoryCount();
+            directoryIndex += 1)
+        {
+            switch (SdkValidatePayloadPathKind(
+                canonicalRoot.View(),
+                manifest.PackageAt(packageIndex).Native().LibraryDirectoryAt(directoryIndex),
+                true,
+                SdkDiagnosticCode.NativeLibraryDirectoryMissing,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] runtimeIndex = 0;
+            runtimeIndex < manifest.PackageAt(packageIndex).Native().RuntimeFileCount();
+            runtimeIndex += 1)
+        {
+            switch (SdkValidatePayloadPathKind(
+                canonicalRoot.View(),
+                manifest.PackageAt(packageIndex).Native().RuntimeFileAt(runtimeIndex),
+                false,
+                SdkDiagnosticCode.NativeRuntimeFileMissing,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] licenseIndex = 0;
+            licenseIndex < manifest.PackageAt(packageIndex).Native().LicenseFileCount();
+            licenseIndex += 1)
+        {
+            switch (SdkValidatePayloadPathKind(
+                canonicalRoot.View(),
+                manifest.PackageAt(packageIndex).Native().LicenseFileAt(licenseIndex),
+                false,
+                SdkDiagnosticCode.NativeLicenseFileMissing,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] checksumIndex = 0;
+            checksumIndex < manifest.PackageAt(packageIndex).Native().FileChecksumCount();
+            checksumIndex += 1)
+        {
+            stack ascii checksumPath =
+                manifest.PackageAt(packageIndex).Native().FileChecksumAt(checksumIndex).Path();
+            stack mut bool declaredFile = false;
+            for willexit (stack mut u64[0 2 ** 63 - 1] artifactIndex = 0;
+                artifactIndex < manifest.PackageAt(packageIndex).Native().ArtifactCount()
+                    && !declaredFile;
+                artifactIndex += 1)
+            {
+                if (System.Text.Equals(
+                    checksumPath,
+                    manifest.PackageAt(packageIndex).Native().ArtifactAt(artifactIndex)))
+                {
+                    declaredFile = true;
+                }
+            }
+            for willexit (stack mut u64[0 2 ** 63 - 1] runtimeIndex = 0;
+                runtimeIndex < manifest.PackageAt(packageIndex).Native().RuntimeFileCount()
+                    && !declaredFile;
+                runtimeIndex += 1)
+            {
+                if (System.Text.Equals(
+                    checksumPath,
+                    manifest.PackageAt(packageIndex).Native().RuntimeFileAt(runtimeIndex)))
+                {
+                    declaredFile = true;
+                }
+            }
+            for willexit (stack mut u64[0 2 ** 63 - 1] licenseIndex = 0;
+                licenseIndex < manifest.PackageAt(packageIndex).Native().LicenseFileCount()
+                    && !declaredFile;
+                licenseIndex += 1)
+            {
+                if (System.Text.Equals(
+                    checksumPath,
+                    manifest.PackageAt(packageIndex).Native().LicenseFileAt(licenseIndex)))
+                {
+                    declaredFile = true;
+                }
+            }
+
+            if (!declaredFile)
+            {
+                switch (diagnostics.Append(
+                    SdkDiagnosticCode.NativeChecksumMismatch,
+                    "SDK native checksum path must name a declared artifact, runtime file, or license file.",
+                    checksumPath))
+                {
+                    case MemoryStatus.Err(var error):
+                        return MemoryStatus.Err(error);
+                    case MemoryStatus.Ok:
+                }
+                continue;
+            }
+
+            switch (SdkValidateExistingPayloadFileSha256(
+                canonicalRoot.View(),
+                checksumPath,
+                manifest.PackageAt(packageIndex).Native().FileChecksumAt(checksumIndex).Sha256(),
+                SdkDiagnosticCode.NativeChecksumMismatch,
+                diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return MemoryStatus.Err(error);
+                case MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Validates one selected package without touching unused SDK packages. This is
+// the lazy resolver boundary; found is false for an out-of-range manifest
+// index and no path is inspected in that case.
+public fn MemoryStatus ValidateSdkPackagePayloadAt(
+    ascii sdkRoot,
+    mut borrow SdkManifest manifest,
+    u64[0 2 ** 63 - 1] packageIndex,
+    mut borrow SdkDiagnosticList diagnostics,
+    out bool found)
+{
+    found = packageIndex < manifest.PackageCount();
+    if (!found)
+    {
+        return MemoryStatus.Ok;
+    }
+
+    return SdkValidatePackagePayloadRange(
+        sdkRoot,
+        manifest,
+        packageIndex,
+        packageIndex + 1,
+        diagnostics);
+}
+
+// Doctor/eager validation walks every declared package/native payload in
+// manifest order. The SDK root is canonicalized once, avoiding repeated
+// current-directory and lexical-normalization work across large manifests.
+public fn MemoryStatus ValidateSdkPackagePayloads(
+    ascii sdkRoot,
+    mut borrow SdkManifest manifest,
+    mut borrow SdkDiagnosticList diagnostics)
+{
+    stack u64[0 2 ** 63 - 1] packageCount = manifest.PackageCount();
+    return SdkValidatePackagePayloadRange(
+        sdkRoot,
+        manifest,
+        0,
+        packageCount,
+        diagnostics);
+}

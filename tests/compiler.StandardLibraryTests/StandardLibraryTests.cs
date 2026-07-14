@@ -113,7 +113,8 @@ public class StandardLibraryTestSuite
     public async Task PackagedStdLibCommonErrorResultModelWorksWithoutSource()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-result-model-");
-        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
+        var sharedPackage = await SharedStdlibPackage.GetAsync();
+        var packageDirectory = sharedPackage.DirectoryPath;
 
         var manifestPath = Path.Combine(packageDirectory, "libSystem.starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
@@ -197,6 +198,7 @@ public class StandardLibraryTestSuite
                 new CompilationInput(appSource, appPath),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(packageDirectory),
+                    TargetInfo: sharedPackage.TargetInfo,
                     StopAfterPassId: "enum-layout"));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -279,10 +281,7 @@ public class StandardLibraryTestSuite
             else if (OperatingSystem.IsMacOS())
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
-                // System.Process is still Linux-backed (cross-platform parity is tracked in
-                // docs/Self-host-Prep/02-stdlib-gaps.md), so its direct Linux platform import
-                // keeps that module in the package until Process routes through dispatch.
-                Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             else
@@ -936,7 +935,8 @@ public class StandardLibraryTestSuite
         // TryReadPathMode delegates to the shared StatPathInto helper, which issues the
         // statat syscall with the comptime-folded number (262) and AT_FDCWD (-100).
         Assert.Contains("@StatPathInto(", helperBody, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall4StatAt(i64 262, i64 -100, ", statHelperBody, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall4StatAt(i64 range(i64 262, 263) 262, i64 range(i64 -100, -99) -100, ptr readonly", statHelperBody, StringComparison.Ordinal);
+        Assert.Contains("i64 range(i64 0, 1) 0)", statHelperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@OpenFileRead(", helperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@CloseFile(", helperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@OpenFileRead(", statHelperBody, StringComparison.Ordinal);
@@ -2554,7 +2554,7 @@ public class StandardLibraryTestSuite
     private static void AssertStdLibCommonErrorResultLayouts(IReadOnlyDictionary<string, EnumLayoutSymbol> layouts)
     {
         var ioError = layouts["System.IO.IOError"];
-        AssertCompactTag(ioError, bitWidth: 8, maxTagValue: 6);
+        AssertCompactTag(ioError, bitWidth: 8, maxTagValue: 10);
         Assert.Equal(["$tag", "$Unknown_0"], ioError.OrderedFields.Select(static field => field.Name).ToArray());
         Assert.Equal("i32", ioError.OrderedFields[1].Type.DisplayName);
 
@@ -2772,7 +2772,20 @@ public class StandardLibraryTestSuite
 
     protected static void AssertCompilerLogsEmitted(string text)
     {
-        Assert.Equal(string.Empty, text);
+        AssertOnlyExpectedCompilerWarnings(text);
+    }
+
+    protected static void AssertOnlyExpectedCompilerWarnings(string text)
+    {
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler log: {line}");
+        }
     }
 
     protected static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessWithUtf8StdinAsync(

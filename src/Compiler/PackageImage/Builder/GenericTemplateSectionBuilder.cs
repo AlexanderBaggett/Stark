@@ -41,10 +41,9 @@ internal static partial class PackageImageBuilder
         SemanticValidationModel? validationModel,
         OwnershipValidationModel? ownershipModel)
     {
-        var literalsByLocation = typeModel.Literals
-            .Where(record => string.Equals(record.Location.FilePath, module.Reference.FilePath, StringComparison.Ordinal))
-            .GroupBy(static record => BuildTemplateLiteralLookupKey(record.Location.Line, record.Location.Column))
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var literalsByLocation = BuildTemplateLiteralLookup(
+            typeModel.Literals,
+            module.Reference.FilePath);
         var deferredTriggersByFunction = typeModel.DeferredInstantiationTriggers
             .GroupBy(static trigger => trigger.EnclosingFunctionName, StringComparer.Ordinal)
             .ToDictionary(
@@ -2200,8 +2199,11 @@ internal static partial class PackageImageBuilder
     {
         publishedExpression = null!;
 
-        if (!literalsByLocation.TryGetValue(
-                BuildTemplateLiteralLookupKey(literal.Start.Line, literal.Start.Column + 1),
+        if (!TryGetTemplateLiteralTypingRecord(
+                literalsByLocation,
+                literal.Start.Line,
+                literal.Start.Column + 1,
+                literal.GetText(),
                 out var literalRecord))
         {
             return false;
@@ -3611,8 +3613,11 @@ internal static partial class PackageImageBuilder
 
         if (postfixParts.Length == 0
             && primaryExpression?.literal() is { } literal
-            && literalsByLocation.TryGetValue(
-                BuildTemplateLiteralLookupKey(literal.Start.Line, literal.Start.Column + 1),
+            && TryGetTemplateLiteralTypingRecord(
+                literalsByLocation,
+                literal.Start.Line,
+                literal.Start.Column + 1,
+                literal.GetText(),
                 out var literalRecord))
         {
             publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
@@ -6856,9 +6861,34 @@ internal static partial class PackageImageBuilder
         return $"{line}:{column}";
     }
 
-    private static string BuildTemplateLiteralLookupKey(int line, int column)
+    internal static IReadOnlyDictionary<string, LiteralTypingRecord> BuildTemplateLiteralLookup(
+        IReadOnlyList<LiteralTypingRecord> literals,
+        string? moduleFilePath)
     {
-        return $"{line}:{column}";
+        return literals
+            .Where(record => string.Equals(record.Location.FilePath, moduleFilePath, StringComparison.Ordinal))
+            .GroupBy(static record => BuildTemplateLiteralLookupKey(
+                record.Location.Line,
+                record.Location.Column,
+                record.LiteralText))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+    }
+
+    internal static bool TryGetTemplateLiteralTypingRecord(
+        IReadOnlyDictionary<string, LiteralTypingRecord> literals,
+        int line,
+        int column,
+        string literalText,
+        out LiteralTypingRecord record)
+    {
+        return literals.TryGetValue(
+            BuildTemplateLiteralLookupKey(line, column, literalText),
+            out record!);
+    }
+
+    private static string BuildTemplateLiteralLookupKey(int line, int column, string literalText)
+    {
+        return $"{line}:{column}:{literalText}";
     }
 
     private static IReadOnlyList<StarkParser.EnumConstructorExpressionContext> CollectTemplateEnumConstructorExpressions(ParserRuleContext node)

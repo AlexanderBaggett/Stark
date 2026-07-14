@@ -1789,7 +1789,10 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                         public fn void Write(ascii text)
                         {
-                            fputs(text, stdout);
+                            unsafe
+                            {
+                                fputs(text, stdout);
+                            }
                             return;
                         }
                         """,
@@ -1797,7 +1800,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     )
                 ])));
 
-        Assert.True(result.Succeeded);
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
 
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
         Assert.NotNull(hir);
@@ -2425,7 +2428,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
             Assert.Contains("declare i64 @Syscall0(i64)", llvmModule.Text);
-            Assert.Contains("call i64 @Syscall0(i64 39)", llvmModule.Text);
+            Assert.Contains("call i64 @Syscall0(i64 range(i64 39, 40) 39)", llvmModule.Text);
             Assert.DoesNotContain("asm sideeffect", llvmModule.Text);
             Assert.DoesNotContain("; imported asm definition: Syscall.Syscall0", llvmModule.Text);
         }
@@ -9148,7 +9151,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             var forward = Assert.Single(templates, static template => template.QualifiedResolvedName == "Facade.Forward");
             var deferred = Assert.Single(forward.DeferredFunctionInstantiations!);
             Assert.Equal("Facade.Identity", deferred.CalleeTemplateName);
-            var deferredTypeArgument = Assert.Single(deferred.TypeArguments);
+            var deferredTypeArguments = Assert.IsAssignableFrom<IReadOnlyList<StarkPackageTypeReference>>(deferred.TypeArguments);
+            var deferredTypeArgument = Assert.Single(deferredTypeArguments);
             Assert.Equal("named", deferredTypeArgument.Kind);
             Assert.Equal("T", deferredTypeArgument.Name);
         }

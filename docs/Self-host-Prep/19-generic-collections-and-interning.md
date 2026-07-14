@@ -32,7 +32,7 @@ This combines option A and option C from OQ-08:
 - A is the blessed language/stdlib contract model.
 - C is the compiler's blessed hot-path representation.
 - B, specialized compiler-only dictionaries, is rejected except for temporary
-  migration shims that disappear before self-hosting cutover.
+  migration shims that disappear before self-hosted release adoption.
 
 ## 2. Public Collection Contract Model
 

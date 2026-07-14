@@ -12,6 +12,7 @@ import ImportedTemplateInitializationTests
 import ImportedTemplateLocalConstantTests
 import ImportedTemplateOperatorTests
 import ImportedTemplateSpecializationTests
+import PackageOwnershipTests
 import SourceBackendFactTests
 import SsaFoundationTests
 import System.Memory
@@ -23,6 +24,18 @@ import System.IO
 import System.Console
 [Collection("ir")]
 module IrTests
+
+[Fact]
+fn bool Stage1PackageOwnershipBoundaryPreservesVendorFacts()
+{
+    return Stage1OwnedPackageBoundaryKeepsVendorFamilyAndDependencyIdentities();
+}
+
+[Fact]
+fn bool Stage1PackageOwnershipBoundaryPreservesFlatRootsAndIdentityConsistency()
+{
+    return Stage1OwnedPackageBoundaryKeepsFlatSourceRootAndRejectsIdentityConflict();
+}
 
 [Collection("ssa")]
 [Fact]

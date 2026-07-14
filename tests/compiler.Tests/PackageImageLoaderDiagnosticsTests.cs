@@ -5,6 +5,30 @@ namespace compiler.Tests;
 public sealed class PackageImageLoaderDiagnosticsTests
 {
     [Fact]
+    public void ValidateManifestRejectsPackageIdentityAfterTypedFactsAreTampered()
+    {
+        var module = new StarkPackageModuleManifest("Demo", [], [], [], []);
+        var manifest = PackageImageIdentity.Apply(new StarkPackageManifest(
+            "Demo",
+            "libDemo.a",
+            [module]));
+        var tampered = manifest with
+        {
+            Modules =
+            [
+                module with
+                {
+                    ReExports = [new StarkPackageReExportManifest("Other")]
+                }
+            ]
+        };
+
+        var diagnostics = PackageImageLoader.ValidateManifest(tampered, "Demo.starkpkg");
+
+        Assert.Contains(diagnostics, static diagnostic => diagnostic.Code == "STK7138");
+    }
+
+    [Fact]
     public void TryParseManifestJsonReportsMalformedJson()
     {
         var success = PackageImageLoader.TryParseManifestJson(

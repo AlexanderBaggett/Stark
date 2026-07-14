@@ -151,6 +151,7 @@ internal finite law bool IsDocumentedRawPointerBoundaryFile(ascii path)
     return PathEndsWith(path, "System/C.stark", raw"System\C.stark")
         || PathEndsWith(path, "System/Collections.stark", raw"System\Collections.stark")
         || PathEndsWith(path, "System/Console.stark", raw"System\Console.stark")
+        || PathEndsWith(path, "System/Cryptography/Sha256.stark", raw"System\Cryptography\Sha256.stark")
         || PathEndsWith(path, "System/FileSystem.stark", raw"System\FileSystem.stark")
         || PathEndsWith(path, "System/IO/File.stark", raw"System\IO\File.stark")
         || PathEndsWith(path, "System/IO/Path.stark", raw"System\IO\Path.stark")
@@ -174,7 +175,13 @@ internal finite law bool IsDocumentedRawPointerBoundaryFile(ascii path)
 internal finite law bool IsPublicRawPointerSurfaceFile(ascii path)
 {
     return PathEndsWith(path, "System/C.stark", raw"System\C.stark")
+        || PathEndsWith(path, "System/Memory.stark", raw"System\Memory.stark")
         || PathEndsWith(path, "System/Text.stark", raw"System\Text.stark");
+}
+
+internal finite law bool IsSystemMemoryFile(ascii path)
+{
+    return PathEndsWith(path, "System/Memory.stark", raw"System\Memory.stark");
 }
 
 internal finite law bool IsSystemTextFile(ascii path)
@@ -192,6 +199,7 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
     where overlap(path, source)
 {
     stack bool allowlistedFile = IsPublicRawPointerSurfaceFile(path);
+    stack bool systemMemoryFile = IsSystemMemoryFile(path);
     stack bool systemTextFile = IsSystemTextFile(path);
     stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(source);
     stack mut u64[0 2 ** 63 - 1] lineStart = 0;
@@ -200,7 +208,7 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
     stack mut bool inPublicDeclaration = false;
     stack mut bool declarationHasRawPointer = false;
     stack mut bool declarationHasUnsafe = false;
-    stack mut bool declarationHasAllowedSystemTextPrefix = false;
+    stack mut bool declarationHasAllowedRestrictedPrefix = false;
 
     while willexit (lineStart < totalLength)
     {
@@ -221,10 +229,11 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
             {
                 if (RawPointerPublicDeclarationViolatesPolicy(
                     allowlistedFile,
+                    systemMemoryFile,
                     systemTextFile,
                     declarationHasRawPointer,
                     declarationHasUnsafe,
-                    declarationHasAllowedSystemTextPrefix))
+                    declarationHasAllowedRestrictedPrefix))
                 {
                     PublicSurfaceAuditViolations += 1;
                     return true;
@@ -233,7 +242,7 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
                 inPublicDeclaration = false;
                 declarationHasRawPointer = false;
                 declarationHasUnsafe = false;
-                declarationHasAllowedSystemTextPrefix = false;
+                declarationHasAllowedRestrictedPrefix = false;
             }
         }
         else if (System.Text.StartsWith(trimmed, "public "))
@@ -241,7 +250,10 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
             inPublicDeclaration = true;
             declarationHasRawPointer = SourceContainsRawPointerToken(trimmed);
             declarationHasUnsafe = ContainsUnsafeToken(trimmed);
-            declarationHasAllowedSystemTextPrefix = IsAllowedSystemTextPublicRawPointerPrefix(trimmed);
+            declarationHasAllowedRestrictedPrefix = IsAllowedPublicRawPointerPrefix(
+                trimmed,
+                systemMemoryFile,
+                systemTextFile);
 
             if (System.Text.StartsWith(trimmed, "public struct ") && System.Text.Contains(trimmed, "{"))
             {
@@ -252,10 +264,11 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
             {
                 if (RawPointerPublicDeclarationViolatesPolicy(
                     allowlistedFile,
+                    systemMemoryFile,
                     systemTextFile,
                     declarationHasRawPointer,
                     declarationHasUnsafe,
-                    declarationHasAllowedSystemTextPrefix))
+                    declarationHasAllowedRestrictedPrefix))
                 {
                     PublicSurfaceAuditViolations += 1;
                     return true;
@@ -264,7 +277,7 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
                 inPublicDeclaration = false;
                 declarationHasRawPointer = false;
                 declarationHasUnsafe = false;
-                declarationHasAllowedSystemTextPrefix = false;
+                declarationHasAllowedRestrictedPrefix = false;
             }
         }
         else if (publicStructDepth >= 0
@@ -275,10 +288,11 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
         {
             if (RawPointerPublicDeclarationViolatesPolicy(
                 allowlistedFile,
+                systemMemoryFile,
                 systemTextFile,
                 true,
                 ContainsUnsafeToken(trimmed),
-                IsAllowedSystemTextPublicRawPointerPrefix(trimmed)))
+                IsAllowedPublicRawPointerPrefix(trimmed, systemMemoryFile, systemTextFile)))
             {
                 PublicSurfaceAuditViolations += 1;
                 return true;
@@ -294,10 +308,11 @@ internal fn bool PublicSurfaceHasRawPointerViolation(ascii path, ascii source)
 
 internal fn bool RawPointerPublicDeclarationViolatesPolicy(
     bool allowlistedFile,
+    bool systemMemoryFile,
     bool systemTextFile,
     bool declarationHasRawPointer,
     bool declarationHasUnsafe,
-    bool declarationHasAllowedSystemTextPrefix)
+    bool declarationHasAllowedRestrictedPrefix)
 {
     if (!declarationHasRawPointer)
     {
@@ -310,7 +325,7 @@ internal fn bool RawPointerPublicDeclarationViolatesPolicy(
         return true;
     }
 
-    if (systemTextFile && !declarationHasAllowedSystemTextPrefix)
+    if ((systemMemoryFile || systemTextFile) && !declarationHasAllowedRestrictedPrefix)
     {
         return true;
     }
@@ -318,11 +333,22 @@ internal fn bool RawPointerPublicDeclarationViolatesPolicy(
     return false;
 }
 
-internal finite law bool IsAllowedSystemTextPublicRawPointerPrefix(ascii declaration)
+internal finite law bool IsAllowedPublicRawPointerPrefix(
+    ascii declaration,
+    bool systemMemoryFile,
+    bool systemTextFile)
 {
-    return System.Text.StartsWith(declaration, "public unsafe finite bool TryConcat")
-        || System.Text.StartsWith(declaration, "public unsafe finite bool TryFormat")
-        || System.Text.StartsWith(declaration, "public unsafe fn bool TryFormat");
+    if (systemMemoryFile)
+    {
+        return System.Text.StartsWith(
+            declaration,
+            "public unsafe inline finite MemoryStatus InitializeUnsignedBytesFromPointerDisjoint(");
+    }
+
+    return systemTextFile
+        && (System.Text.StartsWith(declaration, "public unsafe finite bool TryConcat")
+            || System.Text.StartsWith(declaration, "public unsafe finite bool TryFormat")
+            || System.Text.StartsWith(declaration, "public unsafe fn bool TryFormat"));
 }
 
 internal finite law bool ContainsUnsafeToken(ascii declaration)

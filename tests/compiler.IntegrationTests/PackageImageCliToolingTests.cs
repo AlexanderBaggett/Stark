@@ -950,7 +950,7 @@ public sealed class PackageImageCliToolingTests
     }
 
     [Fact]
-    public async Task EmitLlvmRejectsPackageImageBuiltForDifferentProfile()
+    public async Task EmitLlvmRejectsDevPackageImageInReleaseBuild()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-pkg-profile-mismatch-");
         var packageSourceDirectory = Path.Combine(tempDirectory.FullName, "src");
@@ -987,7 +987,7 @@ public sealed class PackageImageCliToolingTests
                     "--target",
                     "x86_64-unknown-linux-gnu",
                     "--package-profile",
-                    "release",
+                    "dev",
                     "-o",
                     packagePath
                 ],
@@ -1009,7 +1009,7 @@ public sealed class PackageImageCliToolingTests
                     "--target",
                     "x86_64-unknown-linux-gnu",
                     "--package-profile",
-                    "dev"
+                    "release"
                 ],
                 new StringReader(string.Empty),
                 llvmStdout,
@@ -1019,8 +1019,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Equal(string.Empty, llvmStdout.ToString());
             var diagnostics = llvmStderr.ToString();
             Assert.Contains("STK7325", diagnostics, StringComparison.Ordinal);
-            Assert.Contains("was built for profile 'release'", diagnostics, StringComparison.Ordinal);
-            Assert.Contains("active build profile is 'dev'", diagnostics, StringComparison.Ordinal);
+            Assert.Contains("was built for profile 'dev'", diagnostics, StringComparison.Ordinal);
+            Assert.Contains("active build profile is 'release'", diagnostics, StringComparison.Ordinal);
         }
         finally
         {

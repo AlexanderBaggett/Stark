@@ -1,0 +1,941 @@
+import Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+import System.Collections
+import System.IO.Path
+import System.Memory
+import System.Text
+module Compiler.Mir.PackageImage.Builder.OwnedModuleSelection
+
+// Provenance known at the package-emission boundary. Package-backed modules
+// are never republished; their exact identity remains available to the
+// selection as an external dependency.
+public enum LogicalPackageModuleOwnershipOrigin
+{
+    Source,
+    Package,
+}
+
+public enum LogicalPackageOwnedModuleSelectionStatus
+{
+    Ok,
+    OutOfMemory,
+    RootModuleMissing,
+    RootModuleNotSource,
+    InvalidImport,
+    ConflictingDependencyIdentity,
+}
+
+// An owned, allocation-once description of the modules already loaded by a
+// future Stage1 package-emission driver. Source paths must be canonical absolute
+// paths supplied by that driver. Package identities are copied once here so no
+// borrow from a package loader can escape its owning image/session.
+public struct LogicalPackageModuleOwnershipGraph
+{
+    internal dynamic OwnedAscii ModuleNames;
+    internal dynamic OwnedAscii SourcePaths;
+    internal dynamic OwnedAscii PackageIds;
+    internal dynamic OwnedAscii ApiHashes;
+    internal dynamic OwnedAscii ContentHashes;
+    internal dynamic LogicalPackageModuleOwnershipOrigin Origins;
+    internal dynamic bool HasPackageSurfaces;
+    internal dynamic u32[0 max] FirstImportRows;
+    internal dynamic u32[0 max] ImportCounts;
+    internal dynamic u32[0 max] ImportTargetIndices;
+    internal dynamic u32[0 max] NextImportRows;
+
+    LogicalPackageModuleOwnershipGraph()
+    {
+        self.ModuleNames = new();
+        self.SourcePaths = new();
+        self.PackageIds = new();
+        self.ApiHashes = new();
+        self.ContentHashes = new();
+        self.Origins = new();
+        self.HasPackageSurfaces = new();
+        self.FirstImportRows = new();
+        self.ImportCounts = new();
+        self.ImportTargetIndices = new();
+        self.NextImportRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ModuleCount(
+        borrow LogicalPackageModuleOwnershipGraph self)
+    {
+        return self.ModuleNames.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ImportCount(
+        borrow LogicalPackageModuleOwnershipGraph self)
+    {
+        return self.ImportTargetIndices.Length;
+    }
+
+    public finite law LogicalPackageModuleOwnershipOrigin OriginAt(
+        borrow LogicalPackageModuleOwnershipGraph self,
+        u32[0 max] moduleIndex)
+    {
+        if ((u64[0 2 ** 63 - 1])moduleIndex >= self.Origins.Length)
+        {
+            return LogicalPackageModuleOwnershipOrigin.Source;
+        }
+
+        return self.Origins[(u64[0 2 ** 63 - 1])moduleIndex];
+    }
+
+    public finite law bool ModuleNameEqualsAt(
+        borrow LogicalPackageModuleOwnershipGraph self,
+        u32[0 max] moduleIndex,
+        ascii expected)
+    {
+        if ((u64[0 2 ** 63 - 1])moduleIndex >= self.ModuleNames.Length)
+        {
+            return false;
+        }
+
+        return OwnedAsciiEqualsAscii(
+            self.ModuleNames[(u64[0 2 ** 63 - 1])moduleIndex],
+            expected);
+    }
+
+    public finite law bool PackageIdEqualsAt(
+        borrow LogicalPackageModuleOwnershipGraph self,
+        u32[0 max] moduleIndex,
+        ascii expected)
+    {
+        if ((u64[0 2 ** 63 - 1])moduleIndex >= self.PackageIds.Length)
+        {
+            return false;
+        }
+
+        return OwnedAsciiEqualsAscii(
+            self.PackageIds[(u64[0 2 ** 63 - 1])moduleIndex],
+            expected);
+    }
+
+    public finite law bool ApiHashEqualsAt(
+        borrow LogicalPackageModuleOwnershipGraph self,
+        u32[0 max] moduleIndex,
+        ascii expected)
+    {
+        if ((u64[0 2 ** 63 - 1])moduleIndex >= self.ApiHashes.Length)
+        {
+            return false;
+        }
+
+        return OwnedAsciiEqualsAscii(
+            self.ApiHashes[(u64[0 2 ** 63 - 1])moduleIndex],
+            expected);
+    }
+
+    public finite law bool ContentHashEqualsAt(
+        borrow LogicalPackageModuleOwnershipGraph self,
+        u32[0 max] moduleIndex,
+        ascii expected)
+    {
+        if ((u64[0 2 ** 63 - 1])moduleIndex >= self.ContentHashes.Length)
+        {
+            return false;
+        }
+
+        return OwnedAsciiEqualsAscii(
+            self.ContentHashes[(u64[0 2 ** 63 - 1])moduleIndex],
+            expected);
+    }
+}
+
+// Contains only stable indices into the owned graph above. The selection never
+// retains a text borrow and never copies a module's compiler/backend/native
+// payload, so a later driver can move or borrow those facts at the existing
+// per-module builder boundary without flattening them.
+public struct LogicalPackageOwnedModuleSelection
+{
+    internal dynamic u32[0 max] ModuleIndices;
+    internal dynamic u32[0 max] DependencyModuleIndices;
+
+    LogicalPackageOwnedModuleSelection()
+    {
+        self.ModuleIndices = new();
+        self.DependencyModuleIndices = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ModuleCount(
+        borrow LogicalPackageOwnedModuleSelection self)
+    {
+        return self.ModuleIndices.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DependencyCount(
+        borrow LogicalPackageOwnedModuleSelection self)
+    {
+        return self.DependencyModuleIndices.Length;
+    }
+
+    public finite law u32[0 max] ModuleIndexAt(
+        borrow LogicalPackageOwnedModuleSelection self,
+        u64[0 2 ** 63 - 1] ordinal)
+    {
+        if (ordinal >= self.ModuleIndices.Length)
+        {
+            return 0;
+        }
+
+        return self.ModuleIndices[ordinal];
+    }
+
+    public finite law u32[0 max] DependencyModuleIndexAt(
+        borrow LogicalPackageOwnedModuleSelection self,
+        u64[0 2 ** 63 - 1] ordinal)
+    {
+        if (ordinal >= self.DependencyModuleIndices.Length)
+        {
+            return 0;
+        }
+
+        return self.DependencyModuleIndices[ordinal];
+    }
+}
+
+internal fn MemoryStatus LogicalPackageOwnershipCopyAscii(
+    ascii source,
+    out OwnedAscii destination)
+{
+    stack mut OwnedAscii value = new();
+    switch (value.AppendAscii(source))
+    {
+        case MemoryStatus.Err(var error):
+            destination = value;
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    destination = value;
+    return MemoryStatus.Ok;
+}
+
+internal finite law bool LogicalPackageOwnershipTextPresent(ascii value)
+{
+    return AsciiLength(value) > 0;
+}
+
+internal finite law bool LogicalPackageOwnershipContainsModuleName(
+    borrow LogicalPackageModuleOwnershipGraph graph,
+    ascii moduleName)
+    where overlap(graph, moduleName)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < graph.ModuleCount();
+        index += 1)
+    {
+        if (OwnedAsciiEqualsAscii(
+            graph.ModuleNames[0, graph.ModuleNames.Length][index],
+            moduleName))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus LogicalPackageOwnershipAppendModule(
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    OwnedAscii moduleName,
+    OwnedAscii sourcePath,
+    OwnedAscii packageId,
+    OwnedAscii apiHash,
+    OwnedAscii contentHash,
+    LogicalPackageModuleOwnershipOrigin origin,
+    bool hasPackageSurface,
+    out u32[0 max] moduleIndex)
+{
+    moduleIndex = 0;
+    stack u64[0 2 ** 63 - 1] count = graph.ModuleNames.Length;
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || !graph.ModuleNames.TryReserve(1)
+        || !graph.SourcePaths.TryReserve(1)
+        || !graph.PackageIds.TryReserve(1)
+        || !graph.ApiHashes.TryReserve(1)
+        || !graph.ContentHashes.TryReserve(1)
+        || !graph.Origins.TryReserve(1)
+        || !graph.HasPackageSurfaces.TryReserve(1)
+        || !graph.FirstImportRows.TryReserve(1)
+        || !graph.ImportCounts.TryReserve(1))
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    moduleIndex = (u32[0 max])count;
+    init graph.ModuleNames[graph.ModuleNames.Length] = moduleName;
+    init graph.SourcePaths[graph.SourcePaths.Length] = sourcePath;
+    init graph.PackageIds[graph.PackageIds.Length] = packageId;
+    init graph.ApiHashes[graph.ApiHashes.Length] = apiHash;
+    init graph.ContentHashes[graph.ContentHashes.Length] = contentHash;
+    init graph.Origins[graph.Origins.Length] = origin;
+    init graph.HasPackageSurfaces[graph.HasPackageSurfaces.Length] = hasPackageSurface;
+    init graph.FirstImportRows[graph.FirstImportRows.Length] = 0;
+    init graph.ImportCounts[graph.ImportCounts.Length] = 0;
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus AddLogicalPackageSourceModuleCandidate(
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    ascii moduleName,
+    ascii canonicalSourcePath,
+    bool hasPackageSurface,
+    out u32[0 max] moduleIndex)
+    where overlap(graph, moduleName),
+          overlap(graph, canonicalSourcePath),
+          overlap(moduleName, canonicalSourcePath)
+{
+    moduleIndex = 0;
+    if (!LogicalPackageOwnershipTextPresent(moduleName)
+        || !LogicalPackageOwnershipTextPresent(canonicalSourcePath)
+        || !GetFacts(canonicalSourcePath).IsAbsolute()
+        || LogicalPackageOwnershipContainsModuleName(graph, moduleName))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut OwnedAscii ownedName = new();
+    stack mut OwnedAscii ownedPath = new();
+    switch (LogicalPackageOwnershipCopyAscii(moduleName, ownedName))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (LogicalPackageOwnershipCopyAscii(canonicalSourcePath, ownedPath))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    stack OwnedAscii emptyPackageId = new();
+    stack OwnedAscii emptyApiHash = new();
+    stack OwnedAscii emptyContentHash = new();
+    return LogicalPackageOwnershipAppendModule(
+        graph,
+        ownedName,
+        ownedPath,
+        emptyPackageId,
+        emptyApiHash,
+        emptyContentHash,
+        LogicalPackageModuleOwnershipOrigin.Source,
+        hasPackageSurface,
+        moduleIndex);
+}
+
+public fn MemoryStatus AddLogicalPackageDependencyModuleCandidate(
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    ascii moduleName,
+    ascii packageId,
+    ascii apiHash,
+    ascii contentHash,
+    out u32[0 max] moduleIndex)
+    where overlap(graph, moduleName),
+          overlap(graph, packageId),
+          overlap(graph, apiHash),
+          overlap(graph, contentHash),
+          overlap(moduleName, packageId),
+          overlap(moduleName, apiHash),
+          overlap(moduleName, contentHash),
+          overlap(packageId, apiHash),
+          overlap(packageId, contentHash),
+          overlap(apiHash, contentHash)
+{
+    moduleIndex = 0;
+    if (!LogicalPackageOwnershipTextPresent(moduleName)
+        || !LogicalPackageOwnershipTextPresent(packageId)
+        || !LogicalPackageOwnershipTextPresent(apiHash)
+        || !LogicalPackageOwnershipTextPresent(contentHash)
+        || LogicalPackageOwnershipContainsModuleName(graph, moduleName))
+    {
+        return MemoryStatus.Err(MemoryError.InvalidLayout);
+    }
+
+    stack mut OwnedAscii ownedName = new();
+    stack mut OwnedAscii ownedPackageId = new();
+    stack mut OwnedAscii ownedApiHash = new();
+    stack mut OwnedAscii ownedContentHash = new();
+    switch (LogicalPackageOwnershipCopyAscii(moduleName, ownedName))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (LogicalPackageOwnershipCopyAscii(packageId, ownedPackageId))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (LogicalPackageOwnershipCopyAscii(apiHash, ownedApiHash))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+    switch (LogicalPackageOwnershipCopyAscii(contentHash, ownedContentHash))
+    {
+        case MemoryStatus.Err(var error):
+            return MemoryStatus.Err(error);
+        case MemoryStatus.Ok:
+    }
+
+    stack OwnedAscii emptySourcePath = new();
+    return LogicalPackageOwnershipAppendModule(
+        graph,
+        ownedName,
+        emptySourcePath,
+        ownedPackageId,
+        ownedApiHash,
+        ownedContentHash,
+        LogicalPackageModuleOwnershipOrigin.Package,
+        false,
+        moduleIndex);
+}
+
+public fn bool AddLogicalPackageModuleImport(
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    u32[0 max] sourceModuleIndex,
+    u32[0 max] targetModuleIndex)
+{
+    stack u64[0 2 ** 63 - 1] moduleCount = graph.ModuleCount();
+    if ((u64[0 2 ** 63 - 1])sourceModuleIndex >= moduleCount
+        || (u64[0 2 ** 63 - 1])targetModuleIndex >= moduleCount
+        || graph.ImportTargetIndices.Length >= (u64[0 2 ** 63 - 1])(2 ** 32 - 1)
+        || !graph.ImportTargetIndices.TryReserve(1)
+        || !graph.NextImportRows.TryReserve(1))
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] source = (u64[0 2 ** 63 - 1])sourceModuleIndex;
+    stack u32[0 max] next =
+        graph.FirstImportRows[0, graph.FirstImportRows.Length][source];
+    stack u32[0 max] row = (u32[0 max])graph.ImportTargetIndices.Length + 1;
+    init graph.ImportTargetIndices[graph.ImportTargetIndices.Length] = targetModuleIndex;
+    init graph.NextImportRows[graph.NextImportRows.Length] = next;
+    graph.FirstImportRows[0, graph.FirstImportRows.Length][source] = row;
+    graph.ImportCounts[0, graph.ImportCounts.Length][source] += 1;
+    return true;
+}
+
+internal fn void LogicalPackageOwnershipClearIndices(mut borrow dynamic u32[0 max] values)
+{
+    while willexit (values.Length > 0)
+    {
+        stack u32[0 max] removed = values.MoveLast();
+    }
+    return;
+}
+
+internal fn void LogicalPackageOwnershipClearSelection(
+    mut borrow LogicalPackageOwnedModuleSelection selection)
+{
+    LogicalPackageOwnershipClearIndices(selection.ModuleIndices);
+    LogicalPackageOwnershipClearIndices(selection.DependencyModuleIndices);
+    return;
+}
+
+internal fn bool LogicalPackageOwnershipAppendIndex(
+    mut borrow dynamic u32[0 max] values,
+    u32[0 max] value)
+{
+    if (!values.TryReserve(1))
+    {
+        return false;
+    }
+
+    init values[values.Length] = value;
+    return true;
+}
+
+internal fn bool LogicalPackageOwnershipAppendState(
+    mut borrow dynamic u8[0 1] values,
+    u8[0 1] value)
+{
+    if (!values.TryReserve(1))
+    {
+        return false;
+    }
+
+    init values[values.Length] = value;
+    return true;
+}
+
+internal finite law bool LogicalPackageOwnershipRootUsesNamespace(ascii rootModuleName)
+{
+    return Equals(rootModuleName, "System")
+        || StartsWith(rootModuleName, "System.")
+        || StartsWith(rootModuleName, "Vendor.");
+}
+
+internal fn bool LogicalPackageOwnershipCandidateIsOwned(
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    u32[0 max] candidateIndex,
+    u32[0 max] rootIndex,
+    bool usesNamespace,
+    mut borrow OwnedAscii namespacePrefix,
+    mut borrow OwnedAscii sourceRootPrefix)
+{
+    if (graph.OriginAt(candidateIndex) != LogicalPackageModuleOwnershipOrigin.Source)
+    {
+        return false;
+    }
+
+    if (candidateIndex == rootIndex)
+    {
+        return true;
+    }
+
+    stack u64[0 2 ** 63 - 1] candidate = (u64[0 2 ** 63 - 1])candidateIndex;
+    if (usesNamespace)
+    {
+        return StartsWith(
+            graph.ModuleNames[0, graph.ModuleNames.Length][candidate].View(),
+            namespacePrefix.View());
+    }
+
+    if (sourceRootPrefix.IsEmpty())
+    {
+        return true;
+    }
+
+    return StartsWith(
+        graph.SourcePaths[0, graph.SourcePaths.Length][candidate].View(),
+        sourceRootPrefix.View());
+}
+
+internal fn bool LogicalPackageOwnershipModulePrecedes(
+    borrow LogicalPackageModuleOwnershipGraph graph,
+    u32[0 max] leftIndex,
+    u32[0 max] rightIndex)
+{
+    stack Ordering order = OwnedAscii.Compare(
+        graph.ModuleNames[0, graph.ModuleNames.Length][(u64[0 2 ** 63 - 1])leftIndex],
+        graph.ModuleNames[0, graph.ModuleNames.Length][(u64[0 2 ** 63 - 1])rightIndex]);
+    return order == Ordering.Less
+        || (order == Ordering.Equal && leftIndex < rightIndex);
+}
+
+internal fn bool LogicalPackageOwnershipDependencyPrecedes(
+    borrow LogicalPackageModuleOwnershipGraph graph,
+    u32[0 max] leftIndex,
+    u32[0 max] rightIndex)
+{
+    stack Ordering order = OwnedAscii.Compare(
+        graph.PackageIds[0, graph.PackageIds.Length][(u64[0 2 ** 63 - 1])leftIndex],
+        graph.PackageIds[0, graph.PackageIds.Length][(u64[0 2 ** 63 - 1])rightIndex]);
+    return order == Ordering.Less
+        || (order == Ordering.Equal && leftIndex < rightIndex);
+}
+
+internal fn bool LogicalPackageOwnershipHeapPush(
+    mut borrow dynamic u32[0 max] ready,
+    borrow LogicalPackageModuleOwnershipGraph graph,
+    u32[0 max] value,
+    bool comparePackageIds)
+{
+    if (!LogicalPackageOwnershipAppendIndex(ready, value))
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] position = ready.Length - 1;
+    while willexit (position > 0)
+    {
+        stack u64[0 2 ** 63 - 1] parent = (position - 1) / 2;
+        stack u32[0 max] childValue = ready[0, ready.Length][position];
+        stack u32[0 max] parentValue = ready[0, ready.Length][parent];
+        stack bool childPrecedes = comparePackageIds
+            ? LogicalPackageOwnershipDependencyPrecedes(graph, childValue, parentValue)
+            : LogicalPackageOwnershipModulePrecedes(graph, childValue, parentValue);
+        if (!childPrecedes)
+        {
+            return true;
+        }
+
+        ready[0, ready.Length][position] = parentValue;
+        ready[0, ready.Length][parent] = childValue;
+        position = parent;
+    }
+
+    return true;
+}
+
+internal fn bool LogicalPackageOwnershipHeapPop(
+    mut borrow dynamic u32[0 max] ready,
+    borrow LogicalPackageModuleOwnershipGraph graph,
+    bool comparePackageIds,
+    out u32[0 max] value)
+{
+    if (ready.Length == 0)
+    {
+        value = 0;
+        return false;
+    }
+
+    value = ready[0];
+    stack u32[0 max] tail = ready.MoveLast();
+    if (ready.Length == 0)
+    {
+        return true;
+    }
+
+    ready[0] = tail;
+    stack mut u64[0 2 ** 63 - 1] position = 0;
+    while willexit (true)
+    {
+        stack u64[0 2 ** 63 - 1] left = position * 2 + 1;
+        if (left >= ready.Length)
+        {
+            return true;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] best = left;
+        stack u64[0 2 ** 63 - 1] right = left + 1;
+        if (right < ready.Length)
+        {
+            stack bool rightPrecedes = comparePackageIds
+                ? LogicalPackageOwnershipDependencyPrecedes(
+                    graph,
+                    ready[0, ready.Length][right],
+                    ready[0, ready.Length][left])
+                : LogicalPackageOwnershipModulePrecedes(
+                    graph,
+                    ready[0, ready.Length][right],
+                    ready[0, ready.Length][left]);
+            if (rightPrecedes)
+            {
+                best = right;
+            }
+        }
+
+        stack bool bestPrecedes = comparePackageIds
+            ? LogicalPackageOwnershipDependencyPrecedes(
+                graph,
+                ready[0, ready.Length][best],
+                ready[0, ready.Length][position])
+            : LogicalPackageOwnershipModulePrecedes(
+                graph,
+                ready[0, ready.Length][best],
+                ready[0, ready.Length][position]);
+        if (!bestPrecedes)
+        {
+            return true;
+        }
+
+        stack u32[0 max] bestValue = ready[0, ready.Length][best];
+        ready[0, ready.Length][best] = ready[0, ready.Length][position];
+        ready[0, ready.Length][position] = bestValue;
+        position = best;
+    }
+}
+
+internal fn LogicalPackageOwnedModuleSelectionStatus LogicalPackageOwnershipOutOfMemory(
+    mut borrow LogicalPackageOwnedModuleSelection selection)
+{
+    LogicalPackageOwnershipClearSelection(selection);
+    return LogicalPackageOwnedModuleSelectionStatus.OutOfMemory;
+}
+
+// Mirrors Stage0's package ownership rule at the first Stage1 boundary that
+// currently exists. Official System/Vendor roots own their exact namespace;
+// ordinary packages own canonical source files beneath the root file's source
+// directory. Surface-bearing owned modules seed the set, and imports close over
+// private owned helpers. Package-backed imports become exact, deduplicated
+// dependency identities. Output order is ordinal and deterministic.
+public fn LogicalPackageOwnedModuleSelectionStatus BuildLogicalPackageOwnedModuleSelection(
+    mut borrow LogicalPackageOwnedModuleSelection selection,
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    ascii rootModuleName)
+    where overlap(graph, rootModuleName)
+{
+    LogicalPackageOwnershipClearSelection(selection);
+    stack u64[0 2 ** 63 - 1] moduleCount = graph.ModuleCount();
+    stack mut u32[0 max] rootIndex = 0;
+    stack mut bool foundRoot = false;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < moduleCount;
+        index += 1)
+    {
+        if (!foundRoot
+            && OwnedAsciiEqualsAscii(
+                graph.ModuleNames[0, graph.ModuleNames.Length][index],
+                rootModuleName))
+        {
+            rootIndex = (u32[0 max])index;
+            foundRoot = true;
+        }
+    }
+
+    if (!foundRoot)
+    {
+        return LogicalPackageOwnedModuleSelectionStatus.RootModuleMissing;
+    }
+    if (graph.OriginAt(rootIndex) != LogicalPackageModuleOwnershipOrigin.Source)
+    {
+        return LogicalPackageOwnedModuleSelectionStatus.RootModuleNotSource;
+    }
+
+    stack bool usesNamespace = LogicalPackageOwnershipRootUsesNamespace(rootModuleName);
+    stack mut OwnedAscii namespacePrefix = new();
+    stack mut OwnedAscii sourceRootPrefix = new();
+    if (usesNamespace)
+    {
+        if (namespacePrefix.AppendAscii(rootModuleName) != MemoryStatus.Ok
+            || namespacePrefix.AppendAscii(".") != MemoryStatus.Ok)
+        {
+            return LogicalPackageOwnershipOutOfMemory(selection);
+        }
+    }
+    else
+    {
+        stack ascii rootPath = graph.SourcePaths[0, graph.SourcePaths.Length][
+            (u64[0 2 ** 63 - 1])rootIndex].View();
+        stack ascii sourceRoot = DirectoryName(rootPath);
+        if (sourceRootPrefix.AppendAscii(sourceRoot) != MemoryStatus.Ok
+            || (!sourceRootPrefix.IsEmpty()
+                && sourceRootPrefix.AppendAscii(DirectorySeparator()) != MemoryStatus.Ok))
+        {
+            return LogicalPackageOwnershipOutOfMemory(selection);
+        }
+    }
+
+    stack mut dynamic u8[0 1] eligible = new();
+    stack mut dynamic u8[0 1] selected = new();
+    stack mut dynamic u32[0 max] pending = new();
+    stack mut dynamic u32[0 max] moduleHeap = new();
+    stack mut dynamic u32[0 max] dependencyHeap = new();
+    if (!eligible.TryReserve(moduleCount)
+        || !selected.TryReserve(moduleCount)
+        || !pending.TryReserve(moduleCount)
+        || !moduleHeap.TryReserve(moduleCount)
+        || !dependencyHeap.TryReserve(moduleCount)
+        || !selection.ModuleIndices.TryReserve(moduleCount)
+        || !selection.DependencyModuleIndices.TryReserve(moduleCount))
+    {
+        return LogicalPackageOwnershipOutOfMemory(selection);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < moduleCount;
+        index += 1)
+    {
+        stack u32[0 max] candidate = (u32[0 max])index;
+        stack bool isEligible = LogicalPackageOwnershipCandidateIsOwned(
+            graph,
+            candidate,
+            rootIndex,
+            usesNamespace,
+            namespacePrefix,
+            sourceRootPrefix);
+        if (!LogicalPackageOwnershipAppendState(
+                eligible,
+                isEligible ? (u8[0 1])1 : (u8[0 1])0)
+            || !LogicalPackageOwnershipAppendState(selected, 0))
+        {
+            return LogicalPackageOwnershipOutOfMemory(selection);
+        }
+
+        if (isEligible
+            && (candidate == rootIndex
+                || graph.HasPackageSurfaces[0, graph.HasPackageSurfaces.Length][index]))
+        {
+            selected[0, selected.Length][index] = 1;
+            if (!LogicalPackageOwnershipAppendIndex(pending, candidate))
+            {
+                return LogicalPackageOwnershipOutOfMemory(selection);
+            }
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = 0;
+    while willexit (cursor < pending.Length)
+    {
+        stack u32[0 max] sourceIndex = pending[cursor];
+        cursor += 1;
+        stack mut u32[0 max] importRow =
+            graph.FirstImportRows[0, graph.FirstImportRows.Length][
+                (u64[0 2 ** 63 - 1])sourceIndex];
+        while willexit (importRow != 0)
+        {
+            stack u64[0 2 ** 63 - 1] rowIndex =
+                (u64[0 2 ** 63 - 1])(importRow - 1);
+            if (rowIndex >= graph.ImportTargetIndices.Length
+                || rowIndex >= graph.NextImportRows.Length)
+            {
+                LogicalPackageOwnershipClearSelection(selection);
+                return LogicalPackageOwnedModuleSelectionStatus.InvalidImport;
+            }
+
+            stack u32[0 max] targetIndex =
+                graph.ImportTargetIndices[0, graph.ImportTargetIndices.Length][rowIndex];
+            stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])targetIndex;
+            if (target >= moduleCount)
+            {
+                LogicalPackageOwnershipClearSelection(selection);
+                return LogicalPackageOwnedModuleSelectionStatus.InvalidImport;
+            }
+
+            if (eligible[0, eligible.Length][target] != 0
+                && selected[0, selected.Length][target] == 0)
+            {
+                selected[0, selected.Length][target] = 1;
+                if (!LogicalPackageOwnershipAppendIndex(pending, targetIndex))
+                {
+                    return LogicalPackageOwnershipOutOfMemory(selection);
+                }
+            }
+
+            importRow = graph.NextImportRows[0, graph.NextImportRows.Length][rowIndex];
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0;
+        index < moduleCount;
+        index += 1)
+    {
+        if (selected[0, selected.Length][index] != 0
+            && !LogicalPackageOwnershipHeapPush(
+                moduleHeap,
+                graph,
+                (u32[0 max])index,
+                false))
+        {
+            return LogicalPackageOwnershipOutOfMemory(selection);
+        }
+    }
+
+    stack mut u32[0 max] orderedIndex = 0;
+    while willexit (LogicalPackageOwnershipHeapPop(
+        moduleHeap,
+        graph,
+        false,
+        orderedIndex))
+    {
+        if (!LogicalPackageOwnershipAppendIndex(selection.ModuleIndices, orderedIndex))
+        {
+            return LogicalPackageOwnershipOutOfMemory(selection);
+        }
+    }
+
+    stack mut Dictionary<OwnedAscii, u32[0 max]> dependencyByPackage = new();
+    for willexit (stack mut u64[0 2 ** 63 - 1] selectedOrdinal = 0;
+        selectedOrdinal < selection.ModuleIndices.Length;
+        selectedOrdinal += 1)
+    {
+        stack u32[0 max] sourceIndex = selection.ModuleIndices[selectedOrdinal];
+        stack mut u32[0 max] importRow =
+            graph.FirstImportRows[0, graph.FirstImportRows.Length][
+                (u64[0 2 ** 63 - 1])sourceIndex];
+        while willexit (importRow != 0)
+        {
+            stack u64[0 2 ** 63 - 1] rowIndex =
+                (u64[0 2 ** 63 - 1])(importRow - 1);
+            if (rowIndex >= graph.ImportTargetIndices.Length
+                || rowIndex >= graph.NextImportRows.Length)
+            {
+                LogicalPackageOwnershipClearSelection(selection);
+                return LogicalPackageOwnedModuleSelectionStatus.InvalidImport;
+            }
+
+            stack u32[0 max] targetIndex =
+                graph.ImportTargetIndices[0, graph.ImportTargetIndices.Length][rowIndex];
+            stack u64[0 2 ** 63 - 1] target = (u64[0 2 ** 63 - 1])targetIndex;
+            if (target >= moduleCount)
+            {
+                LogicalPackageOwnershipClearSelection(selection);
+                return LogicalPackageOwnedModuleSelectionStatus.InvalidImport;
+            }
+
+            if (graph.Origins[0, graph.Origins.Length][target]
+                == LogicalPackageModuleOwnershipOrigin.Package)
+            {
+                stack ascii packageId =
+                    graph.PackageIds[0, graph.PackageIds.Length][target].View();
+                stack mut u32[0 max] existingIndex = 0;
+                if (TryGetAsciiKey(dependencyByPackage, packageId, existingIndex))
+                {
+                    stack u64[0 2 ** 63 - 1] existing =
+                        (u64[0 2 ** 63 - 1])existingIndex;
+                    if (!OwnedAscii.Equals(
+                            graph.ApiHashes[0, graph.ApiHashes.Length][existing],
+                            graph.ApiHashes[0, graph.ApiHashes.Length][target])
+                        || !OwnedAscii.Equals(
+                            graph.ContentHashes[0, graph.ContentHashes.Length][existing],
+                            graph.ContentHashes[0, graph.ContentHashes.Length][target]))
+                    {
+                        LogicalPackageOwnershipClearSelection(selection);
+                        return LogicalPackageOwnedModuleSelectionStatus.ConflictingDependencyIdentity;
+                    }
+                }
+                else
+                {
+                    stack mut OwnedAscii ownedPackageId = new();
+                    if (ownedPackageId.AppendAscii(packageId) != MemoryStatus.Ok
+                        || dependencyByPackage.Set(ownedPackageId, targetIndex) != MemoryStatus.Ok
+                        || !LogicalPackageOwnershipHeapPush(
+                            dependencyHeap,
+                            graph,
+                            targetIndex,
+                            true))
+                    {
+                        return LogicalPackageOwnershipOutOfMemory(selection);
+                    }
+                }
+            }
+
+            importRow = graph.NextImportRows[0, graph.NextImportRows.Length][rowIndex];
+        }
+    }
+
+    while willexit (LogicalPackageOwnershipHeapPop(
+        dependencyHeap,
+        graph,
+        true,
+        orderedIndex))
+    {
+        if (!LogicalPackageOwnershipAppendIndex(
+            selection.DependencyModuleIndices,
+            orderedIndex))
+        {
+            return LogicalPackageOwnershipOutOfMemory(selection);
+        }
+    }
+
+    return LogicalPackageOwnedModuleSelectionStatus.Ok;
+}
+
+// Applies only the selected module shells to the existing manifest builder.
+// The ordinal-to-candidate mapping remains in selection.ModuleIndexAt, so the
+// later driver can attach each module's complete source surface, typed facts,
+// compiler facts, generic templates, linkage, and native facts without copying
+// or silently dropping any family.
+public fn bool AddLogicalPackageOwnedModuleShells(
+    mut borrow LogicalPackageManifestJsonBuilder manifestBuilder,
+    mut borrow LogicalPackageModuleOwnershipGraph graph,
+    borrow LogicalPackageOwnedModuleSelection selection)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] ordinal = 0;
+        ordinal < selection.ModuleCount();
+        ordinal += 1)
+    {
+        stack u32[0 max] moduleIndex = selection.ModuleIndexAt(ordinal);
+        if ((u64[0 2 ** 63 - 1])moduleIndex >= graph.ModuleCount())
+        {
+            return false;
+        }
+
+        stack ascii moduleName =
+            graph.ModuleNames[0, graph.ModuleNames.Length][
+                (u64[0 2 ** 63 - 1])moduleIndex].View();
+        if (!manifestBuilder.AddModule(moduleName))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}

@@ -1,16 +1,18 @@
 # Phase 5 - Port Checklist
 
-Migration target root: when the self-hosted compiler source is introduced, the
-current C# host compiler directory moves from `/src` to `/old_src`, and the
-Stark compiler source is created in the new `/src`. This is the resolved OQ-01
-decision in `07-open-questions.md`.
+Source-layout decision: the current C# Stage0 compiler remains under `/src`,
+and the Stark self-hosted compiler remains under `/selfhost`. M6/M7 do not move
+either source tree. This is the resolved OQ-01 decision in
+`07-open-questions.md`.
 
 Test target paths still use `tests-stark/` as a planning convention until the
 test-layout cutover is decided.
 
-In compiler tables, `Source Path` names the current host compiler file before
-the migration rename. After cutover, those same host files live under
-`/old_src/...`.
+In compiler tables, `Source Path` names the retained C# Stage0 compiler file
+under `/src`. The `Migration Target Path` column is an early module-shape
+planning aid; older `src/*.stark` spellings in that column do not prescribe a
+directory move. Actual Stark compiler files remain under `/selfhost`, and their
+current repository paths are authoritative.
 
 Effort scale:
 
@@ -31,7 +33,7 @@ artifacts (`src/Parsing/StarkLexer.cs`, `StarkParser.cs`, `StarkVisitor.cs`,
 | Port | Source Path | Migration Target Path | Effort | Depends On Checklist Items | Gap Dependencies |
 |---|---|---|---|---|---|
 | - [ ] | `Stark.g4` | `Stark.g4` canonical reference | S | none | T01 |
-| - [x] | new handwritten lexer, informed by `Stark.g4` and `src/Parsing/StarkLexer.cs` behavior | `selfhost/Compiler/Lexing.stark` (pre-cutover staging; moves to `src/Parsing/StarkLexer.stark` at cutover). API: safe `LexText`/`Lex`, value accessors `KindAt`/`TokenAt`/`TokenAtProven` (contracted core)/`DiagnosticKindAt` + span/line accessors; 18 facts in `tests-stark/selfhost.Lexing`, all safe code | L | canonical grammar, parser tests | T01, S02, S03 |
+| - [x] | new handwritten lexer, informed by `Stark.g4` and `src/Parsing/StarkLexer.cs` behavior | `selfhost/Compiler/Lexing.stark`. API: safe `LexText`/`Lex`, value accessors `KindAt`/`TokenAt`/`TokenAtProven` (contracted core)/`DiagnosticKindAt` + span/line accessors; 18 facts in `tests-stark/selfhost.Lexing`, all safe code | L | canonical grammar, parser tests | T01, S02, S03 |
 | - [ ] | new handwritten parser, informed by `Stark.g4` and `src/Parsing/StarkParser.cs` behavior | `src/Parsing/StarkParser.stark` | XL | handwritten lexer, parser tests | T01, L04, L12 |
 | - [ ] | new Stark-native syntax tree / parse-event model | `src/Parsing/StarkSyntaxTree.stark` | L | handwritten parser | T01, L12, S06 |
 | - [ ] | `src/Parsing/StarkSyntax.cs` parser facade behavior | `src/Parsing/StarkSyntax.stark` | M | handwritten lexer/parser | T01, S02, S03, S18 |

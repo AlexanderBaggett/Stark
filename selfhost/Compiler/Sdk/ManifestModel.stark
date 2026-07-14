@@ -1,0 +1,403 @@
+import Compiler.Sdk.TargetDescriptor
+import System.Text
+module Compiler.Sdk.ManifestModel
+
+// Stage1's owned representation of the relocatable sdk.json contract. The
+// arrays intentionally retain manifest order and contiguous storage: later
+// indexing can build direct lookup tables without retaining the JSON tree or
+// performing reflection-based rescans.
+
+public enum SdkDistributionKind
+{
+    Unknown,
+    Release,
+    Development,
+    Stage,
+}
+
+public struct SdkModuleOwnership
+{
+    internal OwnedAscii ModuleNameValue;
+    internal OwnedAscii PackageIdValue;
+
+    SdkModuleOwnership()
+    {
+        self.ModuleNameValue = new();
+        self.PackageIdValue = new();
+    }
+
+    public fn ascii ModuleName(mut borrow SdkModuleOwnership self)
+    {
+        return self.ModuleNameValue.View();
+    }
+
+    public fn ascii PackageId(mut borrow SdkModuleOwnership self)
+    {
+        return self.PackageIdValue.View();
+    }
+}
+
+public struct SdkPackageDependency
+{
+    internal OwnedAscii PackageIdValue;
+    internal OwnedAscii ApiHashValue;
+    internal OwnedAscii ContentHashValue;
+    internal bool HasApiHashValue;
+    internal bool HasContentHashValue;
+
+    SdkPackageDependency()
+    {
+        self.PackageIdValue = new();
+        self.ApiHashValue = new();
+        self.ContentHashValue = new();
+        self.HasApiHashValue = false;
+        self.HasContentHashValue = false;
+    }
+
+    public fn ascii PackageId(mut borrow SdkPackageDependency self)
+    {
+        return self.PackageIdValue.View();
+    }
+
+    public inline finite law bool HasApiHash(borrow SdkPackageDependency self)
+    {
+        return self.HasApiHashValue;
+    }
+
+    public fn ascii ApiHash(mut borrow SdkPackageDependency self)
+    {
+        return self.ApiHashValue.View();
+    }
+
+    public inline finite law bool HasContentHash(borrow SdkPackageDependency self)
+    {
+        return self.HasContentHashValue;
+    }
+
+    public fn ascii ContentHash(mut borrow SdkPackageDependency self)
+    {
+        return self.ContentHashValue.View();
+    }
+}
+
+public struct SdkNativeFileChecksum
+{
+    internal OwnedAscii PathValue;
+    internal OwnedAscii Sha256Value;
+
+    SdkNativeFileChecksum()
+    {
+        self.PathValue = new();
+        self.Sha256Value = new();
+    }
+
+    public fn ascii Path(mut borrow SdkNativeFileChecksum self)
+    {
+        return self.PathValue.View();
+    }
+
+    public fn ascii Sha256(mut borrow SdkNativeFileChecksum self)
+    {
+        return self.Sha256Value.View();
+    }
+}
+
+public struct SdkNativePackageDescriptor
+{
+    internal dynamic OwnedAscii ArtifactPathValues;
+    internal dynamic OwnedAscii IncludeDirectoryValues;
+    internal dynamic OwnedAscii LibraryDirectoryValues;
+    internal dynamic OwnedAscii RuntimeFileValues;
+    internal dynamic OwnedAscii LicenseFileValues;
+    internal dynamic SdkNativeFileChecksum FileChecksumValues;
+    internal dynamic OwnedAscii LibraryValues;
+    internal dynamic OwnedAscii LinkArgumentValues;
+
+    SdkNativePackageDescriptor()
+    {
+        self.ArtifactPathValues = new();
+        self.IncludeDirectoryValues = new();
+        self.LibraryDirectoryValues = new();
+        self.RuntimeFileValues = new();
+        self.LicenseFileValues = new();
+        self.FileChecksumValues = new();
+        self.LibraryValues = new();
+        self.LinkArgumentValues = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ArtifactCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.ArtifactPathValues.Length;
+    }
+
+    public fn ascii ArtifactAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.ArtifactPathValues.Length)
+        {
+            return "";
+        }
+        return self.ArtifactPathValues[0, self.ArtifactPathValues.Length][index].View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] IncludeDirectoryCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.IncludeDirectoryValues.Length;
+    }
+
+    public fn ascii IncludeDirectoryAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.IncludeDirectoryValues.Length)
+        {
+            return "";
+        }
+        return self.IncludeDirectoryValues[0, self.IncludeDirectoryValues.Length][index].View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LibraryDirectoryCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.LibraryDirectoryValues.Length;
+    }
+
+    public fn ascii LibraryDirectoryAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.LibraryDirectoryValues.Length)
+        {
+            return "";
+        }
+        return self.LibraryDirectoryValues[0, self.LibraryDirectoryValues.Length][index].View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] RuntimeFileCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.RuntimeFileValues.Length;
+    }
+
+    public fn ascii RuntimeFileAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.RuntimeFileValues.Length)
+        {
+            return "";
+        }
+        return self.RuntimeFileValues[0, self.RuntimeFileValues.Length][index].View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LicenseFileCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.LicenseFileValues.Length;
+    }
+
+    public fn ascii LicenseFileAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.LicenseFileValues.Length)
+        {
+            return "";
+        }
+        return self.LicenseFileValues[0, self.LicenseFileValues.Length][index].View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FileChecksumCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.FileChecksumValues.Length;
+    }
+
+    public finite retborrow mut SdkNativeFileChecksum FileChecksumAt(
+        mut borrow SdkNativePackageDescriptor self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        return self.FileChecksumValues[0, self.FileChecksumValues.Length][index];
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LibraryCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.LibraryValues.Length;
+    }
+
+    public fn ascii LibraryAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.LibraryValues.Length)
+        {
+            return "";
+        }
+        return self.LibraryValues[0, self.LibraryValues.Length][index].View();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LinkArgumentCount(borrow SdkNativePackageDescriptor self)
+    {
+        return self.LinkArgumentValues.Length;
+    }
+
+    public fn ascii LinkArgumentAt(mut borrow SdkNativePackageDescriptor self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.LinkArgumentValues.Length)
+        {
+            return "";
+        }
+        return self.LinkArgumentValues[0, self.LinkArgumentValues.Length][index].View();
+    }
+}
+
+public struct SdkPackageDescriptor
+{
+    internal OwnedAscii IdValue;
+    internal OwnedAscii VersionValue;
+    internal OwnedAscii ProfileValue;
+    internal OwnedAscii ImagePathValue;
+    internal OwnedAscii LibraryPathValue;
+    internal OwnedAscii ApiHashValue;
+    internal OwnedAscii ContentHashValue;
+    internal OwnedAscii ImageSha256Value;
+    internal OwnedAscii LibrarySha256Value;
+    internal bool HasLibraryPathValue;
+    internal bool HasApiHashValue;
+    internal bool HasContentHashValue;
+    internal bool HasImageSha256Value;
+    internal bool HasLibrarySha256Value;
+    internal dynamic SdkPackageDependency DependencyValues;
+    internal SdkNativePackageDescriptor NativeValue;
+
+    SdkPackageDescriptor()
+    {
+        self.IdValue = new();
+        self.VersionValue = new();
+        self.ProfileValue = new();
+        self.ImagePathValue = new();
+        self.LibraryPathValue = new();
+        self.ApiHashValue = new();
+        self.ContentHashValue = new();
+        self.ImageSha256Value = new();
+        self.LibrarySha256Value = new();
+        self.HasLibraryPathValue = false;
+        self.HasApiHashValue = false;
+        self.HasContentHashValue = false;
+        self.HasImageSha256Value = false;
+        self.HasLibrarySha256Value = false;
+        self.DependencyValues = new();
+        self.NativeValue = new();
+    }
+
+    public fn ascii Id(mut borrow SdkPackageDescriptor self) { return self.IdValue.View(); }
+    public fn ascii Version(mut borrow SdkPackageDescriptor self) { return self.VersionValue.View(); }
+    public fn ascii Profile(mut borrow SdkPackageDescriptor self) { return self.ProfileValue.View(); }
+    public fn ascii ImagePath(mut borrow SdkPackageDescriptor self) { return self.ImagePathValue.View(); }
+    public inline finite law bool HasLibraryPath(borrow SdkPackageDescriptor self) { return self.HasLibraryPathValue; }
+    public fn ascii LibraryPath(mut borrow SdkPackageDescriptor self) { return self.LibraryPathValue.View(); }
+    public inline finite law bool HasApiHash(borrow SdkPackageDescriptor self) { return self.HasApiHashValue; }
+    public fn ascii ApiHash(mut borrow SdkPackageDescriptor self) { return self.ApiHashValue.View(); }
+    public inline finite law bool HasContentHash(borrow SdkPackageDescriptor self) { return self.HasContentHashValue; }
+    public fn ascii ContentHash(mut borrow SdkPackageDescriptor self) { return self.ContentHashValue.View(); }
+    public inline finite law bool HasImageSha256(borrow SdkPackageDescriptor self) { return self.HasImageSha256Value; }
+    public fn ascii ImageSha256(mut borrow SdkPackageDescriptor self) { return self.ImageSha256Value.View(); }
+    public inline finite law bool HasLibrarySha256(borrow SdkPackageDescriptor self) { return self.HasLibrarySha256Value; }
+    public fn ascii LibrarySha256(mut borrow SdkPackageDescriptor self) { return self.LibrarySha256Value.View(); }
+
+    public inline finite law u64[0 2 ** 63 - 1] DependencyCount(borrow SdkPackageDescriptor self)
+    {
+        return self.DependencyValues.Length;
+    }
+
+    public finite retborrow mut SdkPackageDependency DependencyAt(
+        mut borrow SdkPackageDescriptor self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        return self.DependencyValues[0, self.DependencyValues.Length][index];
+    }
+
+    public finite retborrow mut SdkNativePackageDescriptor Native(mut borrow SdkPackageDescriptor self)
+    {
+        return self.NativeValue;
+    }
+}
+
+public struct SdkManifest
+{
+    internal u32[0 max] SchemaVersionValue;
+    internal SdkDistributionKind KindValue;
+    internal OwnedAscii SdkVersionValue;
+    internal OwnedAscii CompilerCompatibilityValue;
+    internal u32[0 max] PackageFormatVersionValue;
+    internal SdkTargetDescriptor TargetValue;
+    internal dynamic SdkModuleOwnership ModuleValues;
+    internal dynamic SdkPackageDescriptor PackageValues;
+    internal dynamic OwnedAscii DevelopmentSourceRootValues;
+
+    SdkManifest()
+    {
+        self.SchemaVersionValue = 0;
+        self.KindValue = SdkDistributionKind.Unknown;
+        self.SdkVersionValue = new();
+        self.CompilerCompatibilityValue = new();
+        self.PackageFormatVersionValue = 0;
+        self.TargetValue = new();
+        self.ModuleValues = new();
+        self.PackageValues = new();
+        self.DevelopmentSourceRootValues = new();
+    }
+
+    public inline finite law u32[0 max] SchemaVersion(borrow SdkManifest self)
+    {
+        return self.SchemaVersionValue;
+    }
+
+    public inline finite law SdkDistributionKind Kind(borrow SdkManifest self)
+    {
+        return self.KindValue;
+    }
+
+    public fn ascii SdkVersion(mut borrow SdkManifest self)
+    {
+        return self.SdkVersionValue.View();
+    }
+
+    public fn ascii CompilerCompatibility(mut borrow SdkManifest self)
+    {
+        return self.CompilerCompatibilityValue.View();
+    }
+
+    public inline finite law u32[0 max] PackageFormatVersion(borrow SdkManifest self)
+    {
+        return self.PackageFormatVersionValue;
+    }
+
+    public finite retborrow mut SdkTargetDescriptor Target(mut borrow SdkManifest self)
+    {
+        return self.TargetValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ModuleCount(borrow SdkManifest self)
+    {
+        return self.ModuleValues.Length;
+    }
+
+    public finite retborrow mut SdkModuleOwnership ModuleAt(
+        mut borrow SdkManifest self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        return self.ModuleValues[0, self.ModuleValues.Length][index];
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] PackageCount(borrow SdkManifest self)
+    {
+        return self.PackageValues.Length;
+    }
+
+    public finite retborrow mut SdkPackageDescriptor PackageAt(
+        mut borrow SdkManifest self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        return self.PackageValues[0, self.PackageValues.Length][index];
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DevelopmentSourceRootCount(borrow SdkManifest self)
+    {
+        return self.DevelopmentSourceRootValues.Length;
+    }
+
+    public fn ascii DevelopmentSourceRootAt(mut borrow SdkManifest self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.DevelopmentSourceRootValues.Length)
+        {
+            return "";
+        }
+        return self.DevelopmentSourceRootValues[0, self.DevelopmentSourceRootValues.Length][index].View();
+    }
+}

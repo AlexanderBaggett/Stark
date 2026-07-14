@@ -1,0 +1,222 @@
+import System.Memory
+import System.Text
+module Compiler.Sdk.Diagnostics
+
+public enum SdkDiagnosticCode
+{
+    None,
+    RootNotFound,
+    ManifestMissing,
+    ManifestMalformed,
+    SchemaIncompatible,
+    CompilerIncompatible,
+    PackageFormatIncompatible,
+    TargetIncompatible,
+    PathEmpty,
+    PathSeparator,
+    PathAbsolute,
+    PathTraversal,
+    PathResolution,
+    PathWhitespace,
+    DuplicatePackageId,
+    DuplicateModuleOwner,
+    ModulePackageMissing,
+    DependencyMissing,
+    SelfDependency,
+    DependencyCycle,
+    PackageImageMissing,
+    PackageLibraryMissing,
+    PackageChecksumMismatch,
+    PathUnsafe,
+    NativeArtifactMissing,
+    NativeIncludeDirectoryMissing,
+    NativeLibraryDirectoryMissing,
+    NativeRuntimeFileMissing,
+    NativeLicenseFileMissing,
+    NativeChecksumMismatch,
+    ArtifactMissing,
+    ArtifactCorrupt,
+}
+
+public finite law ascii SdkDiagnosticIdentifier(SdkDiagnosticCode code)
+{
+    switch (code)
+    {
+        case SdkDiagnosticCode.None:
+            return "";
+        case SdkDiagnosticCode.RootNotFound:
+            return "STK7400";
+        case SdkDiagnosticCode.ManifestMissing:
+            return "STK7400";
+        case SdkDiagnosticCode.ManifestMalformed:
+            return "STK7401";
+        case SdkDiagnosticCode.SchemaIncompatible:
+            return "STK7402";
+        case SdkDiagnosticCode.CompilerIncompatible:
+            return "STK7405";
+        case SdkDiagnosticCode.PackageFormatIncompatible:
+            return "STK7406";
+        case SdkDiagnosticCode.TargetIncompatible:
+            return "STK7430";
+        case SdkDiagnosticCode.PathEmpty:
+            return "STK7410";
+        case SdkDiagnosticCode.PathSeparator:
+            return "STK7411";
+        case SdkDiagnosticCode.PathAbsolute:
+            return "STK7412";
+        case SdkDiagnosticCode.PathTraversal:
+            return "STK7413";
+        case SdkDiagnosticCode.PathResolution:
+            return "STK7414";
+        case SdkDiagnosticCode.PathWhitespace:
+            return "STK7415";
+        case SdkDiagnosticCode.DuplicatePackageId:
+            return "STK7422";
+        case SdkDiagnosticCode.DuplicateModuleOwner:
+            return "STK7432";
+        case SdkDiagnosticCode.ModulePackageMissing:
+            return "STK7450";
+        case SdkDiagnosticCode.DependencyMissing:
+            return "STK7451";
+        case SdkDiagnosticCode.SelfDependency:
+            return "STK7452";
+        case SdkDiagnosticCode.DependencyCycle:
+            return "STK7453";
+        case SdkDiagnosticCode.PackageImageMissing:
+            return "STK7460";
+        case SdkDiagnosticCode.PackageLibraryMissing:
+            return "STK7464";
+        case SdkDiagnosticCode.PackageChecksumMismatch:
+            return "STK7468";
+        case SdkDiagnosticCode.PathUnsafe:
+            return "STK7469";
+        case SdkDiagnosticCode.NativeArtifactMissing:
+            return "STK7470";
+        case SdkDiagnosticCode.NativeIncludeDirectoryMissing:
+            return "STK7471";
+        case SdkDiagnosticCode.NativeLibraryDirectoryMissing:
+            return "STK7472";
+        case SdkDiagnosticCode.NativeRuntimeFileMissing:
+            return "STK7473";
+        case SdkDiagnosticCode.NativeLicenseFileMissing:
+            return "STK7474";
+        case SdkDiagnosticCode.NativeChecksumMismatch:
+            return "STK7475";
+        case SdkDiagnosticCode.ArtifactMissing:
+            return "STK7474";
+        case SdkDiagnosticCode.ArtifactCorrupt:
+            return "STK7475";
+    }
+}
+
+public struct SdkDiagnostic
+{
+    SdkDiagnosticCode CodeValue;
+    OwnedAscii MessageValue;
+    OwnedAscii PathValue;
+
+    SdkDiagnostic()
+    {
+        self.CodeValue = SdkDiagnosticCode.None;
+        self.MessageValue = new();
+        self.PathValue = new();
+    }
+
+    public inline finite law SdkDiagnosticCode Code(borrow SdkDiagnostic self)
+    {
+        return self.CodeValue;
+    }
+
+    public fn ascii Identifier(mut borrow SdkDiagnostic self)
+    {
+        return SdkDiagnosticIdentifier(self.CodeValue);
+    }
+
+    public fn ascii Message(mut borrow SdkDiagnostic self)
+    {
+        return self.MessageValue.View();
+    }
+
+    public fn ascii Path(mut borrow SdkDiagnostic self)
+    {
+        return self.PathValue.View();
+    }
+}
+
+public struct SdkDiagnosticList
+{
+    dynamic SdkDiagnostic Items;
+
+    SdkDiagnosticList()
+    {
+        self.Items = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow SdkDiagnosticList self)
+    {
+        return self.Items.Length;
+    }
+
+    public finite law SdkDiagnosticCode CodeAt(borrow SdkDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Items.Length)
+        {
+            return SdkDiagnosticCode.None;
+        }
+
+        return self.Items[0, self.Items.Length][index].CodeValue;
+    }
+
+    public fn ascii MessageAt(mut borrow SdkDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Items.Length)
+        {
+            return "";
+        }
+
+        return self.Items[0, self.Items.Length][index].MessageValue.View();
+    }
+
+    public fn ascii PathAt(mut borrow SdkDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Items.Length)
+        {
+            return "";
+        }
+
+        return self.Items[0, self.Items.Length][index].PathValue.View();
+    }
+
+    public fn MemoryStatus Append(
+        mut borrow SdkDiagnosticList self,
+        SdkDiagnosticCode code,
+        ascii message,
+        ascii path)
+        where overlap_all(message),
+              overlap_all(path)
+    {
+        stack mut SdkDiagnostic diagnostic = new();
+        diagnostic.CodeValue = code;
+        switch (diagnostic.MessageValue.AppendAscii(message))
+        {
+            case MemoryStatus.Err(var messageError):
+                return MemoryStatus.Err(messageError);
+            case MemoryStatus.Ok:
+        }
+
+        switch (diagnostic.PathValue.AppendAscii(path))
+        {
+            case MemoryStatus.Err(var pathError):
+                return MemoryStatus.Err(pathError);
+            case MemoryStatus.Ok:
+        }
+
+        if (!self.Items.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.Items[self.Items.Length] = diagnostic;
+        return MemoryStatus.Ok;
+    }
+}

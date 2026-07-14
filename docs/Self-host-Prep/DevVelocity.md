@@ -10,7 +10,7 @@ mechanisms are documented in `docs/Internals/`.
 **Issue.** Stage1 correctness is verified fact-by-fact against hand-ported
 tests. That is O(n) human effort per behavior, and host-vs-selfhost
 divergences surface late — the "compare stage outputs" gate is currently
-scheduled at cutover, after all porting is done.
+scheduled for M6 qualification, after all porting is done.
 
 **Resolution.** A checked-in differential harness: lower the same source
 module with stage0 and with stage1, normalize the emitted text (strip

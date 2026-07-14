@@ -362,7 +362,7 @@ public sealed class PackageImageTryPropagationIntegrationTests
                         .ToArray()
                 };
 
-                await File.WriteAllTextAsync(manifestPath, typedOnlyManifest.ToJson());
+                await File.WriteAllBytesAsync(manifestPath, PackageImageBinaryFormat.Encode(typedOnlyManifest));
             }
 
             // The consumer must work from the package image alone.

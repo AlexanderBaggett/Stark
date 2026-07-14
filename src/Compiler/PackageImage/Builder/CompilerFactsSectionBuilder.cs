@@ -58,7 +58,12 @@ internal static partial class PackageImageBuilder
 
         manifest = new StarkPackageAbiFunctionManifest(
             QualifiedResolvedName: $"{module.SyntaxModel.ModuleName}.{resolvedLocalName}",
-            SymbolName: abiFunction.SymbolName,
+            SymbolName: ComputePublishedPackageAbiSymbolName(
+                module.SyntaxModel.ModuleName,
+                declaration,
+                resolvedLocalName,
+                abiFunction.SymbolName,
+                abiFunction.IsFfi),
             SourceReturnType: BuildPublishedAbiTypeReference(abiFunction.SourceReturnType, module),
             LlvmReturnType: BuildPublishedAbiTypeReference(abiFunction.LlvmReturnType, module),
             Parameters: abiFunction.Parameters

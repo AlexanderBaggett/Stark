@@ -99,7 +99,7 @@ Different parts of the repository need different tools.
 | Build the website | pinned Hugo v0.160.1 at `tools/hugo/hugo` |
 | Deploy the website | site build requirements, `rsync`, `ssh`, and Caddy on the server |
 | Regenerate parser files | Java plus the `antlr4` command |
-| Native-backed examples | whatever the example declares, commonly `pkg-config`, OpenSSL, or Raylib |
+| Native-backed examples built from source | whatever the source package declares, commonly `pkg-config` or OpenSSL; official release-SDK vendor packages carry their advertised native payloads |
 
 The compiler shells out to `clang` for host target detection and native output.
 If `clang` is not on `PATH`, `--check`, `--emit-mir`, `--emit-ssa`, and
@@ -135,20 +135,26 @@ export fn i32[min max] main() {
 }
 ```
 
-Build the standard library package and compile the program:
+Compile the program through the generated repository development SDK:
 
 ```bash
-./scripts/build-stdlib.sh
-dotnet run --project src -- hello.stark --emit-exe -I stdlib/dist -o hello
+./stark hello.stark --emit-exe -o hello
 ./hello
 ```
 
-The `-I stdlib/dist` argument tells the compiler where to find the packaged
-`System` standard library. During compiler or standard-library development, it
-is also common to import from source:
+`dotnet build` writes a local `sdk.json` and makes `./stark` select it. Installed
+releases use the same manifest contract with a conventional layout: extract the
+complete archive, add its `bin` directory to `PATH`, and run `stark doctor`. The
+root-level `./stark` launcher is a repository development convenience, not the
+installed release layout. See
+[Installing the Stark SDK](docs/Userfacing/InstallingTheStarkSdk.md).
+
+No `-I`, `STARK_PATH`, or standard-library dependency is required. Contributors
+who invoke the compiler DLL without the generated launcher can select the same
+repository development SDK explicitly:
 
 ```bash
-dotnet run --project src -- hello.stark --check -I stdlib/src
+dotnet run --project src -- hello.stark --check --sdk-root . --no-stark-path
 ```
 
 Useful first examples:

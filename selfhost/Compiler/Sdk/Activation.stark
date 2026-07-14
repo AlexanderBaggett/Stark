@@ -1,0 +1,233 @@
+import Compiler.Sdk.Diagnostics
+import Compiler.Sdk.IntegrityValidation
+import Compiler.Sdk.ManifestLoading
+import Compiler.Sdk.ManifestModel
+import Compiler.Sdk.PackageIndex
+import Compiler.Sdk.RootResolution
+import Compiler.Sdk.TargetCompatibility
+import Compiler.Sdk.TargetDescriptor
+import System.Memory
+import System.Text
+module Compiler.Sdk.Activation
+
+// Normal compiler startup must not scan every bundled vendor payload. Deferred
+// sessions validate selected package indices through ValidatePackagePayloadAt;
+// the eager mode is reserved for doctor/release validation.
+public enum SdkPayloadValidationMode
+{
+    Deferred,
+    EagerAllPackages,
+}
+
+public enum SdkActivationError
+{
+    Diagnostics(SdkDiagnosticList),
+    Memory(MemoryError),
+}
+
+public enum SdkActivationResult
+{
+    [Ok] Ok(SdkActivationSession),
+    [Err] Err(SdkActivationError),
+}
+
+// Owns the decoded manifest and its allocation-once lookup index. Index values
+// remain manifest-order indices, so package/native/backend facts are borrowed
+// directly from ManifestValue rather than copied into an activation DTO.
+public struct SdkActivationSession
+{
+    internal SdkRootResolution RootValue;
+    internal SdkManifest ManifestValue;
+    internal SdkPackageIndex PackageIndexValue;
+    internal SdkPayloadValidationMode PayloadValidationModeValue;
+
+    SdkActivationSession()
+    {
+        self.RootValue = new();
+        self.ManifestValue = new();
+        self.PackageIndexValue = new();
+        self.PayloadValidationModeValue = SdkPayloadValidationMode.Deferred;
+    }
+
+    public finite retborrow mut SdkRootResolution Root(mut borrow SdkActivationSession self)
+    {
+        return self.RootValue;
+    }
+
+    public finite retborrow mut SdkManifest Manifest(mut borrow SdkActivationSession self)
+    {
+        return self.ManifestValue;
+    }
+
+    public finite law retborrow SdkPackageIndex PackageIndex(borrow SdkActivationSession self)
+    {
+        return self.PackageIndexValue;
+    }
+
+    public inline finite law SdkPayloadValidationMode PayloadValidationMode(
+        borrow SdkActivationSession self)
+    {
+        return self.PayloadValidationModeValue;
+    }
+
+    public inline fn bool TryGetPackageIndex(
+        borrow SdkActivationSession self,
+        ascii packageId,
+        out u64[0 2 ** 63 - 1] packageIndex)
+        where overlap(self, packageId),
+              overlap(packageId, packageIndex)
+    {
+        return self.PackageIndexValue.TryGetPackageIndex(packageId, packageIndex);
+    }
+
+    public inline fn bool TryGetPackageIndexForModule(
+        borrow SdkActivationSession self,
+        ascii moduleName,
+        out u64[0 2 ** 63 - 1] packageIndex)
+        where overlap(self, moduleName),
+              overlap(moduleName, packageIndex)
+    {
+        return self.PackageIndexValue.TryGetPackageIndexForModule(moduleName, packageIndex);
+    }
+
+    // Validates only one index returned by this session's package/module index.
+    // The manifest remains the source of every package/native fact; no paths,
+    // link arguments, or backend target facts are flattened into the index.
+    public fn MemoryStatus ValidatePackagePayloadAt(
+        mut borrow SdkActivationSession self,
+        u64[0 2 ** 63 - 1] packageIndex,
+        mut borrow SdkDiagnosticList diagnostics,
+        out bool found)
+    {
+        // The integrity API's strict default contract requires root text in a
+        // distinct allocation from the manifest aggregate. Its own canonical
+        // path buffer dominates this short copy and keeps this facade safe.
+        stack mut OwnedAscii sdkRoot = new();
+        switch (sdkRoot.AppendAscii(self.RootValue.RootPath()))
+        {
+            case MemoryStatus.Err(var error):
+                found = false;
+                return MemoryStatus.Err(error);
+            case MemoryStatus.Ok:
+        }
+
+        return ValidateSdkPackagePayloadAt(
+            sdkRoot.View(),
+            self.ManifestValue,
+            packageIndex,
+            diagnostics,
+            found);
+    }
+}
+
+internal fn SdkActivationResult SdkActivationDiagnosticFailure(
+    SdkDiagnosticCode code,
+    ascii message,
+    ascii path)
+    where overlap(message, path)
+{
+    stack mut SdkDiagnosticList diagnostics = new();
+    switch (diagnostics.Append(code, message, path))
+    {
+        case MemoryStatus.Err(var error):
+            return SdkActivationResult.Err(SdkActivationError.Memory(error));
+        case MemoryStatus.Ok:
+            return SdkActivationResult.Err(SdkActivationError.Diagnostics(diagnostics));
+    }
+}
+
+// Resolves and owns one SDK activation. EagerAllPackages calls Stage1's current
+// doctor-style integrity boundary: it verifies safe paths, payload kind and
+// existence, streamed SHA-256 bytes, and checksum-to-native-file mapping.
+// Deferred keeps ordinary compiler startup allocation/index-only so an unused
+// vendor package cannot impose filesystem-scan or hashing cost.
+public unsafe fn SdkActivationResult ActivateSdkSession(
+    ascii commandLineRoot,
+    ascii environmentRoot,
+    ascii stageRoot,
+    ascii executablePath,
+    mut borrow SdkTargetDescriptor activeTarget,
+    SdkPayloadValidationMode payloadValidationMode)
+    where overlap_all(activeTarget)
+{
+    stack mut SdkRootResolution root = new();
+    switch (ResolveSdkRootSelection(
+        root,
+        commandLineRoot,
+        environmentRoot,
+        stageRoot,
+        executablePath))
+    {
+        case MemoryStatus.Err(var error):
+            if (error == MemoryError.InvalidLayout)
+            {
+                return SdkActivationDiagnosticFailure(
+                    SdkDiagnosticCode.RootNotFound,
+                    "SDK root selection did not produce an sdk.json path.",
+                    executablePath);
+            }
+            return SdkActivationResult.Err(SdkActivationError.Memory(error));
+        case MemoryStatus.Ok:
+    }
+
+    switch (LoadSdkManifestFile(root.ManifestPath()))
+    {
+        case SdkManifestLoadResult.Err(var diagnostics):
+            return SdkActivationResult.Err(SdkActivationError.Diagnostics(diagnostics));
+        case SdkManifestLoadResult.Ok(var loaded):
+            stack mut SdkManifest manifest = loaded;
+            stack SdkTargetCompatibilityReason targetReason =
+                CompareSdkTargets(manifest.Target(), activeTarget);
+            if (targetReason != SdkTargetCompatibilityReason.Compatible)
+            {
+                return SdkActivationDiagnosticFailure(
+                    SdkDiagnosticCode.TargetIncompatible,
+                    "SDK target is incompatible with the active compilation target.",
+                    SdkTargetCompatibilityReasonName(targetReason));
+            }
+
+            stack mut SdkPackageIndex packageIndex = new();
+            stack mut SdkDiagnosticList diagnostics = new();
+            switch (BuildSdkPackageIndex(packageIndex, manifest, diagnostics))
+            {
+                case MemoryStatus.Err(var error):
+                    return SdkActivationResult.Err(SdkActivationError.Memory(error));
+                case MemoryStatus.Ok:
+            }
+            if (diagnostics.Count() != 0)
+            {
+                return SdkActivationResult.Err(SdkActivationError.Diagnostics(diagnostics));
+            }
+
+            if (payloadValidationMode == SdkPayloadValidationMode.EagerAllPackages)
+            {
+                stack mut OwnedAscii integrityRoot = new();
+                switch (integrityRoot.AppendAscii(root.RootPath()))
+                {
+                    case MemoryStatus.Err(var error):
+                        return SdkActivationResult.Err(SdkActivationError.Memory(error));
+                    case MemoryStatus.Ok:
+                }
+                switch (ValidateSdkPackagePayloads(
+                    integrityRoot.View(),
+                    manifest,
+                    diagnostics))
+                {
+                    case MemoryStatus.Err(var error):
+                        return SdkActivationResult.Err(SdkActivationError.Memory(error));
+                    case MemoryStatus.Ok:
+                }
+                if (diagnostics.Count() != 0)
+                {
+                    return SdkActivationResult.Err(SdkActivationError.Diagnostics(diagnostics));
+                }
+            }
+
+            stack mut SdkActivationSession session = new();
+            session.RootValue = root;
+            session.ManifestValue = manifest;
+            session.PackageIndexValue = packageIndex;
+            session.PayloadValidationModeValue = payloadValidationMode;
+            return SdkActivationResult.Ok(session);
+    }
+}

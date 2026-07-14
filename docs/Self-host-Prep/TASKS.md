@@ -9,7 +9,8 @@ Use `[x]` for complete, `[~]` for partially implemented, and `[ ]` for open.
 Track status by flipping checkboxes only; put evidence, counts, and triage notes
 in [TestPassLedger.md](TestPassLedger.md) or the relevant companion document.
 Do not read raw checkbox counts as percent completion; tasks intentionally vary
-in size, and self-hosting is not online until the cutover gates are complete.
+in size, and self-hosted releases are not online until the bootstrap and
+release-adoption gates are complete.
 Keep each checkbox to one sentence-sized deliverable; split larger work into
 child checkboxes instead of expanding the sentence. Parent checkboxes may group
 a workstream, but executable work belongs in child checkboxes.
@@ -1580,7 +1581,7 @@ family lands):
   - [x] Validate aggregate layout before backend use.
   - [x] Validate package compatibility before backend use.
 
-- [x] Complete release packaging, `stark doctor`, and clean-machine archive verification.
+- [~] Complete release packaging, `stark doctor`, and clean-machine archive verification.
   - [x] Include the compiler in the release archive layout.
   - [x] Include the standard library in the release archive layout.
   - [x] Include the vendor library in the release archive layout.
@@ -1611,6 +1612,9 @@ family lands):
   - [x] Add clean-machine archive smoke tests for executable output.
   - [x] Add clean-machine archive smoke tests for native dependencies.
   - [x] Add clean-machine archive smoke tests for runtime basics.
+  - [ ] Complete the relocatable SDK, official bundled-library resolution, and
+    real vendor-package release gates tracked in
+    [31-relocatable-sdk-and-bundled-vendor-resolution.md](31-relocatable-sdk-and-bundled-vendor-resolution.md).
 
 - [ ] Sync editor syntax and completions with the self-hosting language surface.
   - [ ] Update grammar-derived syntax highlighting, completions, snippets, and stdlib symbol data.
@@ -2087,12 +2091,14 @@ Defer each item until its API/spelling lands.
 No open decisions currently tracked.
 
 
-## 10. Cutover - Deferred Until All Other Work Is Complete
+## 10. Bootstrap Completion And Self-Hosted Release Adoption
 
-- [ ] Keep the C# compiler in `/src` until Stage1 can build the Stark compiler.
+- [x] Retain the C# Stage0 compiler in `/src` and the Stark compiler in `/selfhost`; M6/M7 do not rename source directories or remove the Stage0 implementation.
 - [ ] Build the Stage1 Stark compiler with Stage0 and emit the expected compiler executable.
 - [ ] Build the Stage2 Stark compiler with Stage1 and emit the expected compiler executable.
 - [ ] Compare Stage1 and Stage2 package images, diagnostics, artifacts, and executable behavior.
 - [ ] Run compiler benchmarks for Stage0, Stage1, and Stage2.
-- [ ] Address cutover-only divergences discovered by Stage1/Stage2 comparison.
+- [ ] Address bootstrap-only divergences discovered by Stage1/Stage2 comparison.
+- [ ] Re-establish or update release builds to publish the qualified self-hosted compiler, stdlib package, and native tooling while keeping Stage0 explicitly buildable.
+- [ ] Add release and CI smoke coverage for explicit compiler-stage selection so published artifacts use the self-hosted compiler without silently disabling Stage0 maintenance builds.
 - [ ] Migrate durable Self-host-Prep content to Userfacing/Internals and retire this folder: fold the surviving parts of the numbered companion documents, TASKS.md, and TestPassLedger.md into docs/Userfacing or docs/Internals (append to existing documents where one fits), then delete the Self-host-Prep documents. (The pain-points tracker was retired 2026-07-01 after its durable rationale — the widened `--check`, `overlap_all`, the module-facts bundle, the probe recipe — landed in Userfacing/Internals; its resolution log survives as the 2026-07-01 pain-point-fixes entry in TestPassLedger.md.)

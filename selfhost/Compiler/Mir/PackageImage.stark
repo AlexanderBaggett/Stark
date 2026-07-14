@@ -5,6 +5,7 @@ export import Compiler.Mir.PackageImage.Loader.TypedInterfaceSectionLoader
 export import Compiler.Mir.PackageImage.Loader.CompilerFactsSectionLoader
 export import Compiler.Mir.PackageImage.Loader.GenericTemplateSectionLoader
 export import Compiler.Mir.PackageImage.Builder.ManifestJsonBuilder
+export import Compiler.Mir.PackageImage.Builder.OwnedModuleSelection
 export import Compiler.Mir.PackageImage.Builder.PackageImageBuilder
 export import Compiler.Mir.PackageImage.Builder.LegacyMirSectionWriter
 export import Compiler.Mir.PackageImage.Inspection.PackageImageInspection

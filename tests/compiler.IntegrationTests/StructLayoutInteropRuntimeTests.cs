@@ -41,10 +41,20 @@ public sealed class StructLayoutInteropRuntimeTests
                 [FieldOffset(2)] u16[0 max] High;
             }
 
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
             unsafe ffi(c) fn i32[min max] stark_check_layout(
                 NormalRecord normal,
                 PackedRecord packed,
                 WordParts word);
+            unsafe ffi(c) fn Color stark_roundtrip_color(Color color);
 
             export unsafe fn i32[min max] main()
             {
@@ -64,6 +74,18 @@ public sealed class StructLayoutInteropRuntimeTests
                 {
                     Whole = 305419896
                 };
+                stack Color color = new Color()
+                {
+                    R = 230,
+                    G = 41,
+                    B = 55,
+                    A = 255
+                };
+                stack Color returned = stark_roundtrip_color(color);
+                if (returned.R != 7) return 31;
+                if (returned.G != 11) return 32;
+                if (returned.B != 13) return 33;
+                if (returned.A != 17) return 34;
 
                 return stark_check_layout(normal, packed, word);
             }
@@ -91,6 +113,21 @@ public sealed class StructLayoutInteropRuntimeTests
             struct WordParts {
                 uint32_t Whole;
             };
+
+            struct Color {
+                uint8_t R;
+                uint8_t G;
+                uint8_t B;
+                uint8_t A;
+            };
+
+            struct Color stark_roundtrip_color(struct Color color)
+            {
+                struct Color failed = { 0, 0, 0, 0 };
+                struct Color succeeded = { 7, 11, 13, 17 };
+                if (color.R != 230 || color.G != 41 || color.B != 55 || color.A != 255) return failed;
+                return succeeded;
+            }
 
             int stark_check_layout(
                 struct NormalRecord normal,

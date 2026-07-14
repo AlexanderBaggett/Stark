@@ -1093,6 +1093,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return value switch
         {
             SsaUseRValue => true,
+            // A local can be represented as a direct alias of a fresh indirect aggregate
+            // payload. Once that alias is installed, loading the local only names the
+            // same storage; consumers that passed the materialization walk can keep
+            // forwarding its address instead of forcing a dead whole-aggregate load.
+            SsaLoadLocalRValue loadLocal => _localSlotAliases.TryGetValue(loadLocal.LocalName, out var alias)
+                && NormalizeAggregateType(alias.Type) == NormalizeAggregateType(loadLocal.Type),
             SsaExtractFieldRValue extractField => IsFreshIndirectAggregateValueReference(extractField.Target),
             SsaExtractIndexRValue extractIndex => IsFreshIndirectAggregateValueReference(extractIndex.Target),
             // Deferral skips the insertvalue emission entirely, so every
@@ -1892,8 +1898,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var parameter = calleeAbi.UserParameters[argumentIndex];
-        return AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
-            && NormalizeAggregateType(parameter.SourceType) == NormalizeAggregateType(valueType);
+        if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
+        {
+            return NormalizeAggregateType(parameter.SourceType) == NormalizeAggregateType(valueType);
+        }
+
+        return StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)
+            && NormalizeAggregateType(StarkTypeSymbols.BorrowReturnValueType(parameter.SourceType))
+                == NormalizeAggregateType(valueType);
     }
 
     private bool CanForwardAggregateValueToAddress(StarkTypeSymbol destinationType, StarkTypeSymbol valueType)

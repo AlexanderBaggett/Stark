@@ -1,4 +1,5 @@
 using Stark.Compiler;
+using Stark.Parsing;
 
 namespace compiler.Tests;
 
@@ -79,6 +80,63 @@ public sealed class DependencyLlvmCacheTests
         }
     }
 
+    [Fact]
+    public async Task DependencyCacheKeyIncludesActiveSdkManifestIdentity()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-dep-cache-sdk-");
+        var sdkRoot = Path.Combine(tempDirectory.FullName, "sdk");
+        Directory.CreateDirectory(Path.Combine(sdkRoot, "vendor", "src"));
+        Directory.CreateDirectory(Path.Combine(sdkRoot, "stdlib", "src"));
+        Directory.CreateDirectory(Path.Combine(sdkRoot, "stdlib", "templates"));
+        Assert.True(
+            DevelopmentSdkManifestWriter.TryWrite(sdkRoot, out var sdkManifestPath, out var error),
+            error);
+
+        try
+        {
+            const string source = "module Dep\n";
+            var parse = StarkSyntax.ParseCompilationUnit(source);
+            var document = new LoadedModuleDocument(
+                new ResolvedModuleReference("Dep", "Dep.stark", IsExternal: false, IsRoot: false),
+                parse,
+                SyntaxModelFactory.Create(parse));
+            var graph = new Dictionary<string, LoadedModuleDocument>(StringComparer.Ordinal)
+            {
+                ["Dep"] = document
+            };
+            var firstIdentity = DependencyLlvmCache.ComputeSdkManifestIdentity(sdkManifestPath);
+            var firstKey = DependencyLlvmCache.ComputeKey(
+                "Dep",
+                source,
+                graph,
+                new CompilerOptions(SdkManifestIdentity: firstIdentity),
+                importedInlineCloneSeedFunctions: null);
+
+            await File.AppendAllTextAsync(sdkManifestPath, Environment.NewLine);
+            var secondIdentity = DependencyLlvmCache.ComputeSdkManifestIdentity(sdkManifestPath);
+            var secondKey = DependencyLlvmCache.ComputeKey(
+                "Dep",
+                source,
+                graph,
+                new CompilerOptions(SdkManifestIdentity: secondIdentity),
+                importedInlineCloneSeedFunctions: null);
+
+            Assert.NotEqual(firstIdentity, secondIdentity);
+            Assert.NotEqual(firstKey, secondKey);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     private static async Task CompileAppAsync(string appPath, string outputPath)
     {
         var stdout = new StringWriter();
@@ -90,4 +148,5 @@ public sealed class DependencyLlvmCacheTests
             stderr);
         Assert.True(exitCode == 0, $"compile failed:\n{stderr}");
     }
+
 }

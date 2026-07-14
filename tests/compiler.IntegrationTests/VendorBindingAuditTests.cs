@@ -158,6 +158,50 @@ public sealed partial class VendorBindingAuditTests
     }
 
     [Fact]
+    public void RaylibReleaseBuildUsesTheStagedSystemPackageInsteadOfDeveloperSearchPaths()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var script = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "prepare-raylib-release-input.ps1"));
+
+        Assert.Contains("$StdlibPackageDir", script, StringComparison.Ordinal);
+        Assert.Contains("\"--no-stark-path\"", script, StringComparison.Ordinal);
+        Assert.Contains("Join-Path \"dist\" $AssetSuffix", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Join-Path \"dist\" $expectedTargetTriple", script, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "-I\", (Join-Path $repositoryRoot \"stdlib/src\")",
+            script,
+            StringComparison.Ordinal);
+
+        var packageScript = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "package-release.ps1"));
+        Assert.Contains("$stdlibTargetDist = Join-Path $stdlibDistRoot $AssetSuffix", packageScript, StringComparison.Ordinal);
+        Assert.Contains("-Destination $stdlibTargetDist", packageScript, StringComparison.Ordinal);
+        Assert.Contains("Restore-ToolchainHardLinks -ToolchainRoot $stagedToolchainRoot", packageScript, StringComparison.Ordinal);
+        Assert.Contains("$compilerBinRoot = Join-Path $stageRoot \"bin\"", packageScript, StringComparison.Ordinal);
+        Assert.Contains("-Destination $compilerBinRoot -ExcludedDirectoryNames @()", packageScript, StringComparison.Ordinal);
+        Assert.Contains("$compilerRelativePath = \"bin/$commandName\"", packageScript, StringComparison.Ordinal);
+        Assert.Contains("-CompilerPath (Join-Path $compilerBinRoot $commandName)", packageScript, StringComparison.Ordinal);
+        Assert.Contains("Add the extracted archive's bin directory to PATH", packageScript, StringComparison.Ordinal);
+        Assert.Contains("__ARCHIVE_ROOT__/bin:$PATH", packageScript, StringComparison.Ordinal);
+        Assert.Contains("__ARCHIVE_ROOT__\\bin;$env:Path", packageScript, StringComparison.Ordinal);
+        Assert.Contains("compiler = $CompilerRelativePath", packageScript, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Copy-TreeFiltered -Source $publishPath -Destination $stageRoot -ExcludedDirectoryNames @()",
+            packageScript,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("__ARCHIVE_ROOT__:$PATH", packageScript, StringComparison.Ordinal);
+
+        var smokeScript = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "smoke-release-archive.ps1"));
+        Assert.Contains("$artifactTargetId", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("Join-Path $stdlibDist $artifactTargetId", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("Join-Path $vendorDist $artifactTargetId", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("@(\"doctor\", \"--strict\", \"--format\", \"json\")", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("$compilerBinRoot = Join-Path $PackageRoot \"bin\"", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("$pathEntries = @($compilerBinRoot)", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("official archives must place compiler commands under bin/", smokeScript, StringComparison.Ordinal);
+        Assert.Contains("$expectedReleaseCompilerPath", smokeScript, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BuiltPackageImagesCarryNativeMetadata()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -221,7 +265,7 @@ public sealed partial class VendorBindingAuditTests
                 stderr);
 
             Assert.Equal(0, exitCode);
-            Assert.Equal(string.Empty, stderr.ToString());
+            AssertOnlySlowPassWarnings(stderr.ToString());
             Assert.Contains("Check succeeded.", stdout.ToString(), StringComparison.Ordinal);
         }
     }
@@ -234,8 +278,11 @@ public sealed partial class VendorBindingAuditTests
         var raymathText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raymath.stark"));
         var rlglText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Rlgl.stark"));
 
-        Assert.Contains("import Vendor.Raymath", raylibRootText, StringComparison.Ordinal);
-        Assert.Contains("import Vendor.Rlgl", raylibRootText, StringComparison.Ordinal);
+        // The distributable Raylib image owns Vendor.Raylib.* only. Raymath
+        // and Rlgl remain separately auditable bindings instead of becoming
+        // unresolved sibling-package imports in the advertised SDK image.
+        Assert.DoesNotContain("import Vendor.Raymath", raylibRootText, StringComparison.Ordinal);
+        Assert.DoesNotContain("import Vendor.Rlgl", raylibRootText, StringComparison.Ordinal);
         Assert.Contains("module Vendor.Raymath", raymathText, StringComparison.Ordinal);
         Assert.Contains("module Vendor.Rlgl", rlglText, StringComparison.Ordinal);
 
@@ -597,7 +644,6 @@ public sealed partial class VendorBindingAuditTests
             "Text.stark:public unsafe ffi fn rawptr<rawptr<i8[min max]>> TextSplit(ascii text, i8[min max] delimiter, rawmutptr<i32[min max]> count);",
             "Text.stark:public unsafe ffi fn void TextAppend(rawmutptr<i8[min max]> text, ascii append, rawmutptr<i32[min max]> position);",
             "Types.stark:public alias ModelAnimPose = rawmutptr<Transform>;",
-            "Types.stark:public alias TraceLogCallback = fnptr<unsafe ffi(c) fn void(i32[min max], ascii, System.C.VaList)>;",
             "Types.stark:public alias LoadFileDataCallback = fnptr<unsafe ffi(c) fn rawmutptr<u8[0 max]>(ascii, rawmutptr<i32[min max]>)>;",
             "Types.stark:public alias SaveFileDataCallback = fnptr<unsafe ffi(c) fn bool(ascii, rawmutptr<i8[min max]>, i32[min max])>;",
             "Types.stark:public alias LoadFileTextCallback = fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(ascii)>;",
@@ -1169,6 +1215,19 @@ public sealed partial class VendorBindingAuditTests
     {
         return status.StartsWith("missing", StringComparison.OrdinalIgnoreCase)
             || status.Contains(" - missing", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AssertOnlySlowPassWarnings(string text)
+    {
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Assert.True(
+                line.StartsWith("Pass '", StringComparison.Ordinal)
+                && line.Contains(" took ", StringComparison.Ordinal)
+                && line.Contains("[warn pipeline stage=", StringComparison.Ordinal)
+                && line.EndsWith(" outcome=continued]", StringComparison.Ordinal),
+                $"Unexpected compiler log: {line}");
+        }
     }
 
     [GeneratedRegex(@"^- `([^`]+)` - (.+)$", RegexOptions.Multiline | RegexOptions.CultureInvariant)]

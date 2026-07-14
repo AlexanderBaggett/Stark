@@ -72,6 +72,38 @@ public sealed class ModuleResolutionProvenanceTests
     }
 
     [Fact]
+    public void ResolverPrefersExplicitPackageOverImplicitSourceFallback()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-provenance-package-over-fallback-");
+
+        try
+        {
+            var packageDirectory = Path.Combine(tempDirectory.FullName, "dist");
+            var sourceDirectory = Path.Combine(tempDirectory.FullName, "ambient-src");
+            WriteSingleModulePackageImage(packageDirectory, "Dep");
+            Directory.CreateDirectory(sourceDirectory);
+            File.WriteAllText(Path.Combine(sourceDirectory, "Dep.stark"), DependencyModuleSource);
+
+            var resolver = new FileSystemModuleResolver(
+                [packageDirectory, sourceDirectory],
+                targetInfo: null,
+                implicitSearchDirectories: [sourceDirectory]);
+
+            Assert.True(resolver.TryResolveModule("Dep", out var module));
+            Assert.NotNull(module.ManifestPath);
+            Assert.Equal(module.ManifestPath, module.FilePath);
+
+            var note = Assert.Single(resolver.SnapshotResolutionNotes());
+            Assert.NotNull(note.ManifestPath);
+            Assert.Null(note.SourceFilePath);
+        }
+        finally
+        {
+            CleanUp(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task CliPrefersExplicitSourceOverRootDirectoryPackage()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-provenance-cli-shadow-");

@@ -40,7 +40,7 @@ public sealed class TestProgressProtocolTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                ["build"],
+                WithRepositorySdk("build"),
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -84,7 +84,7 @@ public sealed class TestProgressProtocolTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                ["test", "--test-progress"],
+                WithRepositorySdk("test", "--test-progress"),
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -134,7 +134,7 @@ public sealed class TestProgressProtocolTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                ["test"],
+                WithRepositorySdk("test"),
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -177,7 +177,7 @@ public sealed class TestProgressProtocolTests
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                ["test", "--test-progress", "--test-timeout", "5"],
+                WithRepositorySdk("test", "--test-progress", "--test-timeout", "5"),
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -308,14 +308,24 @@ public sealed class TestProgressProtocolTests
             projectKey);
     }
 
+    private static string[] WithRepositorySdk(params string[] arguments)
+    {
+        return [.. arguments, "--sdk-root", RepositoryRoot()];
+    }
+
     private static string FixtureDirectory(string name)
+    {
+        return Path.Combine(RepositoryRoot(), "tests", "fixtures", "test-progress", name);
+    }
+
+    private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
             if (File.Exists(Path.Combine(directory.FullName, "Stark.slnx")))
             {
-                return Path.Combine(directory.FullName, "tests", "fixtures", "test-progress", name);
+                return directory.FullName;
             }
 
             directory = directory.Parent;

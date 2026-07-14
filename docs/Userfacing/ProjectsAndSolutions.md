@@ -87,6 +87,7 @@ everything that can change the result:
 
 * the project's own `*.stark` sources and its manifest
 * the standard-library sources it compiles against
+* the selected SDK root and the content identity of `sdk.json`
 * every dependency project's own stamp (so a transitive source change propagates)
 * the selected target triple, profile, and `--filter`s
 * the compiler binary itself, so a newer compiler invalidates every stamp
@@ -169,18 +170,15 @@ build/<profile>/<target-triple>/<stage>/
 The current host driver writes Stage0 executable/library outputs under `bin`,
 saved native intermediates under `obj`, and test executables plus generated
 `[Fact]` runners under `tests`. Library package images go under `pkg` and can
-refer back to the static library with a relative path. Project builds search
-bundled library roots by import family: `System.*` uses `stdlib`, and `Vendor.*`
-uses `vendor`. For each root, discovery checks the active stage directory first,
-then the nearest repo `dist` package images, then the nearest repo `src` source
-tree for source-tree development, then bundled artifacts next to the active
-compiler distribution. Project builds do not use `STARK_PATH`; use manifest
-dependencies for ordinary packages, future explicit bundled-library overrides,
-or direct low-level compiler `-I` inputs instead. Stdlib artifact
-generation/routing, diagnostic, and artifact-export routing are still part of
-self-hosting prep.
+refer back to the static library with a relative path. `System.*` and official
+`Vendor.*` imports resolve from the active SDK's exact `sdk.json` package index.
+Project ancestors are not searched for directories named `stdlib` or `vendor`.
+A compiler contributor selects source fallback explicitly with a development
+SDK manifest; bootstrap packages use a stage SDK or the stage-local build
+directory. Project builds do not use `STARK_PATH`; use manifest dependencies
+for ordinary packages or direct low-level compiler `-I` inputs instead.
 When a `System.*` or `Vendor.*` import cannot be resolved, project builds report
-the searched bundled-library paths and the active profile, target, and stage.
+the selected SDK/stage context and the active profile, target, and stage.
 
 ## `Stark.toml`
 
@@ -193,22 +191,22 @@ kind = "executable"
 [executable]
 root = "BreakoutRaylib.stark"
 output = "breakout-raylib"
-
-[dependencies]
-raylib = { path = "../raylib" }
 ```
+
+`BreakoutRaylib.stark` can import `Vendor.Raylib` directly from the active SDK;
+the application does not declare it as a path dependency.
 
 Library form:
 
 ```toml
 [project]
-name = "vendor"
+name = "game-core"
 version = "0.1.0"
 kind = "library"
 
 [library]
-root = "src/Vendor/Raylib.stark"
-output = "VendorRaylib"
+root = "src/GameCore.stark"
+output = "GameCore"
 ```
 
 Test form:
@@ -290,22 +288,22 @@ finite law bool AddsMemberExamples(i32[min max] left, i32[min max] right, i32[mi
 
 ```toml
 [solution]
-name = "StarkRepo"
+name = "MyGame"
 members = [
-  "stdlib",
-  "vendor",
+  "game-core",
+  "game-core-tests",
   "examples/breakout"
 ]
 
 [defaults]
 build = ["examples/breakout"]
 run = "examples/breakout"
-test = ["examples/standard-library-tests"]
+test = ["game-core-tests"]
 
 [aliases]
 breakout = "examples/breakout"
-vendor = "vendor"
-stdlib = "stdlib"
+core = "game-core"
+tests = "game-core-tests"
 ```
 
 The solution file stays small. It answers five questions:
@@ -325,15 +323,18 @@ Path dependencies cover v1:
 math-core = { path = "../math-core" }
 ```
 
-That handles multi project repos and native backed packages inside the same
-solution. `System.*` modules come from the standard library discovery path, and
-`Vendor.*` modules come from bundled vendor discovery, so projects do not list
-`stdlib` or the official bundled vendor library as ordinary dependencies.
+That handles multi-project repositories and custom native-backed packages in
+the same solution. `System.*` and official `Vendor.*` modules come from the
+active SDK's exact package index, so applications do not list `stdlib`,
+`Vendor.Raylib`, or another official SDK package as an ordinary dependency.
 Versioned and registry dependencies come later.
 
-## Native Packages
+## Custom Native Packages
 
-Native dependency metadata belongs to the package that needs it.
+Native dependency metadata belongs to the custom package that needs it. An
+official SDK package already carries resolved, relocatable native payload and
+link facts in `sdk.json`; an application consuming `Vendor.Raylib` does not use
+this source-package configuration.
 
 A package manifest declares its own:
 
@@ -344,21 +345,21 @@ A package manifest declares its own:
 
 ```toml
 [project]
-name = "vendor"
+name = "acme-image"
 version = "0.1.0"
 kind = "library"
 
 [library]
-root = "src/Vendor/Raylib.stark"
-output = "VendorRaylib"
+root = "src/Acme/Image.stark"
+output = "AcmeImage"
 
 [native]
-pkg-config = ["raylib"]
+pkg-config = ["acme-image"]
 
 [native.fallback.linux]
-include-dirs = ["${native.paths.raylib-src}"]
-library-dirs = ["${native.paths.raylib-src}"]
-libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"]
+include-dirs = ["${native.paths.acme-image}"]
+library-dirs = ["${native.paths.acme-image}"]
+libraries = ["acme-image"]
 ```
 
 Fallback `link-args` use the same array form; write each linker token as its
@@ -368,64 +369,48 @@ User config supplies the machine path:
 
 ```toml
 [native.paths]
-raylib-src = "/tmp/stark-raylib-research/raylib-6.0/src"
+acme-image = "/opt/acme-image"
 ```
 
 The everyday command stays short:
 
 ```bash
-stark run breakout
+stark build
 ```
 
 No `--native-library`, `--native-include-dir`, or shell scripts.
 
 ## Native Resolution Order
 
-For a native backed dependency, the build driver tries:
+For a source-based custom native dependency, the build driver tries:
 
 1. package declared discovery (`pkg-config` and similar)
 2. user local native path overrides
 3. stop with a friendly message
 
-The error names the next step in plain English: install the native package, set a config value such as `native.paths.raylib-src`, or pick a different local path.
+The error names the next step in plain English: install the native package, set
+a config value such as `native.paths.acme-image`, or pick a different local
+path. An official SDK package instead validates its bundled native artifact and
+checksum and reports an SDK-integrity diagnostic when the archive is damaged.
 
 ## Output Layout
 
 Build artifacts live under a tool owned directory:
 
 ```text
-.stark/
-  build/
-    dev/
-    release/
-  cache/
-  packages/
+build/
+  <profile>/
+    <target-triple>/
+      <stage>/
+        bin/
+        obj/
+        pkg/
+        tests/
 ```
 
 Stable output locations, no stray binaries in source folders, room for package images and cached metadata.
 
 ## Example: Breakout and Vendor.Raylib
-
-### `vendor/Stark.toml`
-
-```toml
-[project]
-name = "vendor"
-version = "0.1.0"
-kind = "library"
-
-[library]
-root = "src/Vendor/Raylib.stark"
-output = "VendorRaylib"
-
-[native]
-pkg-config = ["raylib"]
-
-[native.fallback.linux]
-include-dirs = ["${native.paths.raylib-src}"]
-library-dirs = ["${native.paths.raylib-src}"]
-libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11", "Xrandr", "Xi", "Xcursor", "Xinerama"]
-```
 
 ### `examples/breakout/Stark.toml`
 
@@ -446,7 +431,6 @@ output = "breakout-raylib"
 [solution]
 name = "Examples"
 members = [
-  "vendor",
   "examples/breakout",
   "examples/standard-library-tests"
 ]
@@ -458,7 +442,6 @@ test = ["examples/standard-library-tests"]
 
 [aliases]
 breakout = "examples/breakout"
-vendor = "vendor"
 standard-library-tests = "examples/standard-library-tests"
 ```
 
@@ -477,10 +460,11 @@ stark run breakout
 
 ## Low Level Escape Hatch
 
-The lower level compiler CLI is still available. The split:
+Direct-file compiler mode is still available through the same command. The
+split is:
 
-* `stark`: projects, solutions, dependencies, builds, runs, and tests
-* `starkc`: direct low level compilation
+* `stark build|run|test`: projects, solutions, dependencies, and build outputs
+* `stark <file>.stark --check|--emit-*`: direct low-level compilation
 
 ## Summary
 

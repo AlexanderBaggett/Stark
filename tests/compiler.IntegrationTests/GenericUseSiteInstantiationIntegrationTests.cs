@@ -258,9 +258,10 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
             Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn Pair<T> Relay<T>(Box box, T value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn Pair<T> Relay<T>(Box box, T value) {", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("return box.MakePair<T>(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("stack Facade.Pair<T> pair = new Facade.Pair<T>(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return box.MakePair(value);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("return pair;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
             Assert.NotNull(mir);
             Assert.Contains(
@@ -451,7 +452,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 static template => template,
                 omitCompilerFacts: true);
 
-            await File.WriteAllTextAsync(manifestPath, typedOnlyManifest.ToJson());
+            await File.WriteAllBytesAsync(manifestPath, PackageImageBinaryFormat.Encode(typedOnlyManifest));
             File.Delete(facadeSourcePath);
 
             await File.WriteAllTextAsync(

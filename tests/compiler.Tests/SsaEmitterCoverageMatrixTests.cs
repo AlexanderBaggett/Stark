@@ -89,6 +89,10 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(nameof(SsaCopyMemoryInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.LargeAddressableAggregateCopyUsesInlineMemcpy", "LlvmIrEmissionTests.BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmove"),
             Row(nameof(SsaStoreGlobalInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.MutableGlobalsEmitRealDefinitionsStoresAndLoads", "LlvmIrEmissionTests.PointerOperatorsAndExplicitConversionsEmitRawMemoryAccess"),
 
+            Row("UnsupportedSsaInstruction", CoverageKind.ValidationRejectsBeforeEmission, "SsaIrValidationTests.UnsupportedSsaInstructionFailsBeforeLlvmEmission"),
+            Row("UnsupportedSsaRValue", CoverageKind.ValidationRejectsBeforeEmission, "SsaIrValidationTests.UnsupportedSsaRValueFailsBeforeLlvmEmission"),
+            Row("UnsupportedSsaValue", CoverageKind.ValidationRejectsBeforeEmission, "SsaIrValidationTests.UnsupportedSsaValueFailsBeforeLlvmEmission"),
+
             Row(nameof(SsaTerminator), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.StraightLineFunctionEmitsOptimizedLlvmBody"),
             Row(TerminatorName(SsaTerminatorKind.Goto), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.ShortCircuitAndTernaryEmitBranchesAndPhi"),
             Row(TerminatorName(SsaTerminatorKind.Branch), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.ShortCircuitAndTernaryEmitBranchesAndPhi"),
